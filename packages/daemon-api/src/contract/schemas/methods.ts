@@ -8,8 +8,8 @@ import { messageContent } from "./records.js";
 import { revisionMarker, state } from "./state.js";
 import { bytes, channelId, contactId, didId, eventCid, executionId, hold, mediationId, messageId } from "./values.js";
 
-/** The codes every method may return, before or instead of running: they are not repeated per method. */
-export const COMMON_ERROR_CODES = ["NotAttached", "NoSuchMethod", "InvalidArgument", "OperationFailed"] as const satisfies readonly DaemonErrorCode[];
+/** The codes every method may return before or instead of running, a request over the advertised bounds among them: they are not repeated per method. */
+export const COMMON_ERROR_CODES = ["NotAttached", "NoSuchMethod", "InvalidArgument", "ResourceLimit", "OperationFailed"] as const satisfies readonly DaemonErrorCode[];
 
 export interface MethodSchema<Name extends MethodName> {
   input: z.ZodType<MethodInput<Name>>;
@@ -43,7 +43,8 @@ export const sendResult: z.ZodType<SendResult> = dispatched.extend({ messageId, 
 export const contactReached: z.ZodType<ContactReached> = dispatched.extend({ messageId, channelId, contactId });
 export const rotateResult: z.ZodType<RotateResult> = z.object({ outcome: z.enum(COMPLETION_OUTCOMES), because: z.string().nullable(), channelId });
 
-export const sendTarget: z.ZodType<SendTarget> = z.union([z.object({ channelId }), z.object({ contactId })]);
+const absent = z.never().optional();
+export const sendTarget: z.ZodType<SendTarget> = z.union([z.object({ channelId, contactId: absent }), z.object({ contactId, channelId: absent })]);
 
 export const invitation: z.ZodType<Invitation> = z.object({
   type: z.literal(OOB_INVITATION),
@@ -75,12 +76,13 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   refresh: { input: empty, result: revisionMarker, errors: ["StateChanged"], bytes: noBytes },
 
   createIdentity: { input: z.object({ name: z.string(), passphrase }), result: nothing, errors: lifecycle, bytes: noBytes },
-  restoreIdentity: { input: z.object({ backup: bytes, passphrase }), result: nothing, errors: ["WrongPhase", "ResourceLimit"], bytes: { input: ["backup"], result: [] } },
+  restoreIdentity: { input: z.object({ backup: bytes, passphrase }), result: nothing, errors: lifecycle, bytes: { input: ["backup"], result: [] } },
   unlock: { input: z.object({ passphrase }), result: nothing, errors: lifecycle, bytes: noBytes },
   lock: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
   forgetIdentity: { input: z.object({ hold }), result: nothing, errors: ["WrongPhase", "StaleHold"], bytes: noBytes },
-  exportBackup: { input: empty, result: z.object({ name: z.string(), bytes }), errors: ["WrongPhase", "ResourceLimit"], bytes: { input: [], result: ["bytes"] } },
-  mergeBackup: { input: z.object({ backup: bytes }), result: mergeResult, errors: ["WrongPhase", "ResourceLimit"], bytes: { input: ["backup"], result: [] } },
+  /** an export over `maxBackupBytes` is refused whole, under the common `ResourceLimit`, as a request over the bounds is */
+  exportBackup: { input: empty, result: z.object({ name: z.string(), bytes }), errors: lifecycle, bytes: { input: [], result: ["bytes"] } },
+  mergeBackup: { input: z.object({ backup: bytes }), result: mergeResult, errors: lifecycle, bytes: { input: ["backup"], result: [] } },
   explainedRestore: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
 
   setMediator: { input: z.object({ mediatorDid: z.string() }), result: z.object({ mediationId }), errors: lifecycle, bytes: noBytes },

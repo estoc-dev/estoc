@@ -18,7 +18,8 @@ export interface Hello {
 
 /**
  * The daemon's request acceptance bounds. They bound client-to-daemon
- * frames only; state, lines, logs and replies are not subject to them.
+ * frames, and `maxBackupBytes` an export result as well; state, lines,
+ * logs and other replies are not subject to them.
  */
 export interface Limits {
   /** maximum UTF-8 length of one client-to-daemon JSON frame on a text port; null on a structured-clone port */

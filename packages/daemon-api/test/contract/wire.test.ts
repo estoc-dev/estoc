@@ -75,6 +75,15 @@ describe("an application frame", () => {
     expect(frame.safeParse({ kind: "bootstrap", value: {} }).success).toBe(false);
   });
 
+  it("keeps a __proto__ key of a value at every level as data", () => {
+    const body = JSON.parse('{"__proto__":{"kept":"outer"},"nested":{"__proto__":{"kept":"inner"}},"constructor":"ordinary"}');
+    const call = { kind: "call", id: 1, method: "send", input: { target: { contactId: "c-1" }, content: { type: "https://example.test/custom", body } } };
+    expect(frame.parse(call)).toEqual(call);
+    const result = frame.parse({ kind: "result", id: 1, value: body });
+    expect(result.kind === "result" && Object.hasOwn(result.value as object, "__proto__")).toBe(true);
+    expect(result.kind === "result" && Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+  });
+
   it("rejects a non-finite number anywhere in a value", () => {
     expect(frame.safeParse({ kind: "result", id: 1, value: { n: NaN } }).success).toBe(false);
     expect(frame.safeParse({ kind: "call", id: 1, method: "m", input: { n: [Infinity] } }).success).toBe(false);

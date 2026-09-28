@@ -5,13 +5,17 @@ import { schemas } from "../../src/contract/index.js";
 const { displayTime, isDisplayTime } = schemas;
 
 describe("a display time", () => {
-  it.each(["2026-09-28T10:00:00.000Z", "2024-02-29T23:59:59.999Z", "1970-01-01T00:00:00.000Z", "9999-12-31T23:59:59.999Z"])("accepts %s", (text) => {
+  it.each(["2026-09-28T10:00:00.000Z", "2024-02-29T23:59:59.999Z", "1970-01-01T00:00:00.000Z", "9999-12-31T23:59:59.999Z", "0000-02-29T00:00:00.000Z", "0001-01-01T00:00:00.000Z", "0099-12-31T23:59:59.999Z", "0100-01-01T00:00:00.000Z"])("accepts %s", (text) => {
     expect(displayTime.parse(text)).toBe(text);
   });
 
   it.each([
     ["a day the month does not have", "2026-02-30T10:00:00.000Z"],
     ["a leap day in a common year", "2023-02-29T10:00:00.000Z"],
+    ["a leap day in year 1", "0001-02-29T00:00:00.000Z"],
+    ["a leap day in year 100", "0100-02-29T00:00:00.000Z"],
+    ["an expanded year", "+002026-09-28T10:00:00.000Z"],
+    ["a negative year", "-000001-01-01T00:00:00.000Z"],
     ["a 60th second", "2026-09-28T10:00:60.000Z"],
     ["a 13th month", "2026-13-01T10:00:00.000Z"],
     ["a 24th hour", "2026-09-28T24:00:00.000Z"],

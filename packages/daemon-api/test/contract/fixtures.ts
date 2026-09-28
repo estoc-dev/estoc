@@ -63,6 +63,17 @@ export const outbound: MessageRecord = {
   summary: "hi back",
 };
 
+export const adrift: MessageRecord = {
+  ...outbound,
+  messageId: as("m-adrift"),
+  channelId: null,
+  contactIds: [],
+  at: as("2026-09-28T10:02:00.000Z"),
+  body: { state: "available", body: { content: "which pair?" }, attachments: [] },
+  diagnostics: [],
+  summary: "which pair?",
+};
+
 export const observation: ObservationRecord = {
   sourceEventCid: as("bafyobs"),
   messageId: as("m-in"),
@@ -140,7 +151,7 @@ export const snapshot: Snapshot = {
   dids: [localDid],
   contacts: [contact],
   channels: [oldChannel, headChannel],
-  messages: [inbound, outbound],
+  messages: [inbound, outbound, adrift],
   observations: [observation, unadmitted],
   conversations: [conversation],
   invitations: [invitation],

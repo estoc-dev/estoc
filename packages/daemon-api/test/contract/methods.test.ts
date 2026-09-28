@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { DAEMON_ERROR_CODES, OOB_INVITATION, OUTCOMES, PLAIN_TYP, schemas, type MethodName } from "../../src/contract/index.js";
-import { HEAD_CHANNEL, linesState, openState } from "./fixtures.js";
+import { DAEMON_ERROR_CODES, OOB_INVITATION, OUTCOMES, PLAIN_TYP, schemas, type ContactId, type MethodName, type SendTarget } from "../../src/contract/index.js";
+import { HEAD_CHANNEL, as, linesState, openState } from "./fixtures.js";
 
 const { methods, METHOD_NAMES, isMethodName, COMMON_ERROR_CODES, sendTarget, invitation, DISPATCH_OUTCOMES, COMPLETION_OUTCOMES, CANCEL_OUTCOMES } = schemas;
 
@@ -31,6 +31,11 @@ describe("the method table", () => {
       expect(new Set(method.errors).size).toBe(method.errors.length);
       expect(method.bytes.input.every((key) => typeof key === "string")).toBe(true);
     }
+  });
+
+  it("lets every method refuse a request over the daemon's bounds", () => {
+    expect(COMMON_ERROR_CODES).toContain("ResourceLimit");
+    for (const name of METHOD_NAMES) expect([...COMMON_ERROR_CODES, ...methods[name].errors]).toContain("ResourceLimit");
   });
 
   it.each(["attach", "refresh", "lock", "exportBackup", "explainedRestore", "publicDid", "reconnect", "traceLevel"] as const)("%s takes an empty input", (name) => {
@@ -129,6 +134,27 @@ describe("method inputs", () => {
     expect(sendTarget.safeParse({ contactId: "c-1" }).success).toBe(true);
     expect(sendTarget.safeParse({}).success).toBe(false);
     expect(sendTarget.safeParse({ channel: { localDid: "a", peerDid: "b" } }).success).toBe(false);
+  });
+
+  it("refuse a send naming both a channel and a contact rather than choosing one", () => {
+    expect(sendTarget.safeParse({ channelId: HEAD_CHANNEL, contactId: "c-1" }).success).toBe(false);
+    expect(sendTarget.safeParse({ channelId: HEAD_CHANNEL, contactId: 3 }).success).toBe(false);
+    expect(sendTarget.safeParse({ channelId: 3, contactId: "c-1" }).success).toBe(false);
+    expect(sendTarget.parse({ channelId: HEAD_CHANNEL, contactId: undefined })).toEqual({ channelId: HEAD_CHANNEL });
+    const content = { type: "https://didcomm.org/basicmessage/2.0/message", body: { content: "hi" } };
+    expect(ok("send", "input", { target: { channelId: HEAD_CHANNEL, contactId: "c-1" }, content })).toBe(false);
+    // @ts-expect-error one target names one selector
+    const both: SendTarget = { channelId: HEAD_CHANNEL, contactId: as<ContactId>("c-1") };
+    expect(sendTarget.safeParse(both).success).toBe(false);
+  });
+
+  it("keep a __proto__ key of a send's body at every level as data", () => {
+    const body = JSON.parse('{"__proto__":{"kept":"outer"},"nested":{"__proto__":{"kept":"inner"}},"constructor":"ordinary"}');
+    const parsed = methods.send.input.parse({ target: { contactId: "c-1" }, content: { type: "https://example.test/custom", body } });
+    expect(parsed.content.body).toEqual(body);
+    expect(Object.hasOwn(parsed.content.body, "__proto__")).toBe(true);
+    expect(Object.hasOwn(parsed.content.body.nested as object, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(parsed.content.body)).toBe(Object.prototype);
   });
 
   it("take a send's content with its body kept whole", () => {

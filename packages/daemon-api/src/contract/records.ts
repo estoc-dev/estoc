@@ -33,7 +33,6 @@ export interface Snapshot {
   unplaced: UnplacedRecord;
 }
 
-/** An arrangement with a mediator. */
 export interface MediationRecord {
   mediationId: MediationId;
   mediatorDid: string | null;
@@ -44,7 +43,6 @@ export interface MediationRecord {
   diagnostics: string[];
 }
 
-/** A communication DID of this vault. */
 export interface LocalDidRecord {
   didId: DidId;
   /** the canonical spelling; null while the entity is created but its DID is not readable here */
@@ -316,4 +314,3 @@ export interface MessageContent {
   /** headers no dedicated field models; none of them a reserved DIDComm name */
   headers?: JsonObject;
 }
-

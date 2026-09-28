@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { schemas } from "../../src/contract/index.js";
+import { schemas, type JsonObject } from "../../src/contract/index.js";
 import { HEAD_CHANNEL, LOCAL, PEER_HEAD, conversation, headChannel, inbound, linesState, outbound, snapshot, withPath } from "./fixtures.js";
 
 const { snapshot: snapshotSchema, messageRecord, channelRecord, channelId, linesState: linesStateSchema, jsonValue, deliveryOutcome, conversationRecord } = schemas;
@@ -18,6 +18,16 @@ describe("the snapshot schema", () => {
   it("keeps every key of a message body, including ones an unknown member would drop", () => {
     const parsed = messageRecord.parse(inbound);
     expect(parsed.body).toEqual(inbound.body);
+  });
+
+  it("keeps a __proto__ key of a message body at every level as data", () => {
+    const body = JSON.parse('{"__proto__":{"kept":"outer"},"nested":{"__proto__":{"kept":"inner"}},"constructor":"ordinary"}') as JsonObject;
+    const parsed = messageRecord.parse(withPath(inbound, ["body", "body"], body));
+    const kept = parsed.body.state === "available" ? parsed.body.body : {};
+    expect(kept).toEqual(body);
+    expect(Object.hasOwn(kept, "__proto__")).toBe(true);
+    expect(Object.hasOwn(kept.nested as object, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(kept)).toBe(Object.prototype);
   });
 
   it("rejects a snapshot missing a required list", () => {

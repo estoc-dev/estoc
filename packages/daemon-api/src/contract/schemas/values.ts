@@ -9,16 +9,34 @@ export const finite: z.ZodType<number> = z.number().transform((value) => (value 
 /** A positive safe integer: what counts, correlates and measures. */
 export const count: z.ZodType<number> = z.int().positive();
 
-export const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([z.null(), z.boolean(), finite, z.string(), z.array(jsonValue), z.record(z.string(), jsonValue)]));
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
-export const jsonObject: z.ZodType<JsonObject> = z.record(z.string(), jsonValue);
+/** Every own key kept, `__proto__` among them: a record here is data, and the library's record parser drops that key. */
+const record = <Value>(value: z.ZodType<Value>): z.ZodType<{ [key: string]: Value }> =>
+  z.custom<Record<string, unknown>>(isRecord, { message: "expected a record" }).transform((input, ctx) => {
+    const entries: [string, Value][] = [];
+    for (const key of Object.keys(input)) {
+      const parsed = value.safeParse(input[key]);
+      if (parsed.success) entries.push([key, parsed.data]);
+      else for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, path: [key, ...issue.path] });
+    }
+    return Object.fromEntries(entries);
+  });
+
+export const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([z.null(), z.boolean(), finite, z.string(), z.array(jsonValue), record(jsonValue)]));
+
+export const jsonObject: z.ZodType<JsonObject> = record(jsonValue);
 
 /** Bytes at a location a method schema names; anywhere else a byte array is not wire data. */
 export const bytes: z.ZodType<Uint8Array> = z.instanceof(Uint8Array);
 
-export const apiValue: z.ZodType<ApiValue> = z.lazy(() => z.union([z.null(), z.boolean(), finite, z.string(), bytes, z.array(apiValue), z.record(z.string(), apiValue)]));
+export const apiValue: z.ZodType<ApiValue> = z.lazy(() => z.union([z.null(), z.boolean(), finite, z.string(), bytes, z.array(apiValue), record(apiValue)]));
 
-export const apiObject: z.ZodType<ApiObject> = z.record(z.string(), apiValue);
+export const apiObject: z.ZodType<ApiObject> = record(apiValue);
 
 const id = <Id extends string>(): z.ZodType<Id, string> => z.string().min(1).transform((value) => value as Id);
 
@@ -35,15 +53,12 @@ export const epoch = id<Epoch>();
 export const channelId = id<ChannelId>();
 export const revision: z.ZodType<Revision> = count;
 
-const DISPLAY_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
+const DISPLAY_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /** The spelling, and the instant it names: a day the month does not have, or a 60th second, is no time. */
 export function isDisplayTime(text: string): text is DisplayTime {
-  const match = DISPLAY_TIME.exec(text);
-  if (match === null) return false;
-  const [year, month, day, hours, minutes, seconds, milliseconds] = match.slice(1).map(Number) as [number, number, number, number, number, number, number];
-  if (seconds > 59) return false;
-  const instant = Date.UTC(year, month - 1, day, hours, minutes, seconds, milliseconds);
+  if (!DISPLAY_TIME.test(text)) return false;
+  const instant = Date.parse(text);
   return Number.isFinite(instant) && new Date(instant).toISOString() === text;
 }
 

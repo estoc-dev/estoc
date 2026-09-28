@@ -55,7 +55,7 @@ export interface ContactReached extends SendResult {
   contactId: ContactId;
 }
 
-export type SendTarget = { channelId: ChannelId } | { contactId: ContactId };
+export type SendTarget = { channelId: ChannelId; contactId?: never } | { contactId: ContactId; channelId?: never };
 
 export interface SendInput {
   target: SendTarget;
