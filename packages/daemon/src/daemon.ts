@@ -1,6 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
 import { DamagedHistory, DatabaseBusy, ForkedAuthor, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
-import type { Hold } from "@estoc/daemon-api/contract";
+import type { Hold, Lines, Snapshot } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
   Keys,
@@ -37,14 +37,15 @@ import {
   selectMediation,
   type AgentLines,
   type Called,
-  type ChannelRecord,
   type EffectOutcome,
   type InspectedRuntime,
 } from "@estoc/agent-core";
 
-import type { ContactSummary, Daemon, Lines, Outcome, Phase, SendResult, Snapshot } from "./api.js";
+import type { Daemon, Outcome, Phase, SendResult } from "./api.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { legacyEvents, type Emit } from "./legacy.js";
+import { linesOf } from "./lines.js";
+import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
 
 export type { Emit } from "./legacy.js";
@@ -323,42 +324,13 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
     const fold = await scanVault(vault, keys, SCAN);
     const records = recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES));
-    const channels = new Map<string, ChannelRecord>();
-    const keyOf = (channel: Channel) => JSON.stringify([channel.localDid, channel.peerDid]);
-    const contacts: ContactSummary[] = [];
-    for (const contactId of records.contactIds()) {
-      const { channels: shown, ...contact } = await records.contact(contactId);
-      for (const { selected: _selected, ...record } of shown) channels.set(keyOf(record.channel), record);
-      contacts.push({ ...contact, channels: shown.map(({ channel, selected }) => ({ channel, selected })) });
-    }
-    for (const channel of records.channels()) if (!channels.has(keyOf(channel))) channels.set(keyOf(channel), await records.channel(channel));
-    return {
-      anchor: runtime.metadata.anchor as Did,
+    return project(records, {
+      anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
       restoreUnexplained: !(await explained(runtime)),
-      mediations: [...fold.mediations.mediations.values()].map((mediation) => ({
-        mediationId: mediation.mediationId,
-        mediatorDid: mediation.mediatorDid,
-        selected: fold.mediations.selected === mediation.mediationId,
-        usable: fold.mediations.usable(mediation.mediationId),
-        retired: mediation.retired,
-        faults: [...mediation.faults],
-      })),
-      dids: [...fold.routes.dids.values()].map((entity) => ({
-        didId: entity.didId,
-        did: entity.created?.did ?? null,
-        longFormDid: entity.created?.longFormDid ?? null,
-        live: entity.live,
-        retired: entity.retired,
-        disclosures: entity.disclosures.map(({ data }) => ({ as: data.as, uses: data.uses })),
-        faults: [...entity.faults],
-      })),
-      contacts,
-      channels: [...channels.values()],
-      unplaced: await records.unplaced(),
-      invitations: records.invitations(),
-      pending: records.pending(),
-    };
+      mediations: mediationRecords(fold.mediations),
+      dids: localDidRecords(fold.routes),
+    });
   }
 
   /**
@@ -398,7 +370,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       (...args: A) => {
         if (!attached.ended) say(...args);
       };
-    const tellLines = whileAttached((lines: AgentLines) => publisher.lines(lines));
+    const tellLines = whileAttached((lines: AgentLines) => publisher.lines(linesOf(lines)));
     // The agent's lines take the place of whatever agent's were shown before, empty or not: it says them again only once they change.
     const opening = async (): Promise<Agent> => {
       const agent = await Agent.open(
