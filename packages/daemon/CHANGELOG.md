@@ -27,7 +27,8 @@
   they change — a socket the mediator drops among them — and the daemon
   publishes them as they come, with no call of the UI's and no read of
   the vault. Lines said while the runtime's first read is under way
-  follow that read out.
+  follow that read out, and an agent that takes another's place over
+  the runtime, as after a merge, says its own first, empty or not.
 - **A read that fails leaves the state stale**, not replaced: every view
   is told (`log`, for this RPC), a UI joining meanwhile is refused its
   `boot()` with the failure, and the next call or `refresh()` reads

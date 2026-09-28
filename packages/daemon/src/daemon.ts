@@ -35,6 +35,7 @@ import {
   recorder,
   sameDid,
   selectMediation,
+  type AgentLines,
   type Called,
   type ChannelRecord,
   type EffectOutcome,
@@ -397,6 +398,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       (...args: A) => {
         if (!attached.ended) say(...args);
       };
+    const tellLines = whileAttached((lines: AgentLines) => publisher.lines(lines));
+    // The agent's lines take the place of whatever agent's were shown before, empty or not: it says them again only once they change.
     const opening = async (): Promise<Agent> => {
       const agent = await Agent.open(
         { runtime, keys },
@@ -409,9 +412,10 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
           didcomm: await host.didcomm(),
           trace,
           log: whileAttached(log),
-          onLines: whileAttached((lines) => publisher.lines(lines)),
+          onLines: tellLines,
         }
       );
+      tellLines(agent.lines());
       return agent;
     };
     const agent = opening();

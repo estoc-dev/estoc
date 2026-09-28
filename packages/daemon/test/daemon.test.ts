@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultHeldRoots, type Channel, type DidId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type DidId, type MediationId, type MintedDid } from "@estoc/vault";
 
-import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE } from "@estoc/agent-core";
+import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
@@ -702,6 +702,61 @@ describe("a daemon whose mediator drops the socket", () => {
   });
 });
 
+describe("a backup merged that retires the only mediator", () => {
+  /** The daemon's backup restored elsewhere, its one mediation retired there, and that replica exported: a backup with one event to merge. */
+  async function backupRetiring(backup: Uint8Array, mediationId: MediationId): Promise<Uint8Array> {
+    const root = await folder();
+    await writeFile(path.join(root, "backup.sqlite"), backup);
+    const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
+    let runtime: SqliteVault;
+    let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
+    try {
+      const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
+        heldRoots: vaultHeldRoots(null),
+        anchor: async (wrapped) => {
+          seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
+          return Keys.anchorOf(seedKey);
+        },
+      });
+      runtime = new SqliteVault(restored.runtime);
+    } finally {
+      source.close();
+    }
+    try {
+      const keys = await Keys.open(seedKey, runtime.metadata.anchor);
+      await decide(runtime, keys, () => [vaultDraft("mediation.retired", { mediationId, because: "no longer used" })]);
+      await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "retired.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+    } finally {
+      await runtime.close();
+    }
+    return new Uint8Array(await readFile(path.join(root, "retired.sqlite")));
+  }
+
+  it("leaves the agent that takes over nothing to connect, and shows its lines empty without a call: the UI there and one that joins see no connection where the old agent's stood", async () => {
+    const mediator = await newMediator();
+    const root = await folder();
+    const alice = daemonOver(root, mediator);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    const mediationId = await alice.daemon.setMediator(mediator.did);
+    await until("the line is live", () => alice.heard.lines()?.connections[0]?.live === true);
+
+    const retiring = await backupRetiring((await alice.daemon.exportBackup()).bytes, mediationId);
+    const merging = alice.heard.events.length;
+    expect(await alice.daemon.mergeBackup(retiring)).toMatchObject({ added: 1, renewed: false });
+    await until("the old agent's connection is gone from the UI", () => alice.heard.lines()?.connections.length === 0);
+    await until("the mediator has let the socket go", () => mediator.liveAccounts().length === 0);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(alice.heard.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
+    expect(alice.heard.events.slice(merging).map(([name]) => name)).toEqual(["changed", "lines"]);
+
+    const late = told();
+    await alice.daemon.replayTo(late.emit);
+    expect(late.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
+    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+  });
+});
+
 describe("two daemons over a mediator", () => {
   const stillWaiting = (work: Promise<unknown>) => Promise.race([work.then(() => false), new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 300))]);
 
@@ -1025,7 +1080,7 @@ describe("two daemons over a mediator", () => {
       const merged = await again.daemon.mergeBackup(backup.bytes);
       expect(merged).toMatchObject({ added: 0, objects: 0 });
       expect(merged.duplicates).toBeGreaterThan(0);
-      await until("the agent over the merged vault is live", () => again.heard.events.at(-1)![0] === "lines" && again.heard.lines()!.connections[0]!.live);
+      await until("the agent over the merged vault is live", () => again.heard.events.at(-1)![0] === "lines" && again.heard.lines()?.connections[0]?.live === true);
       const bobs = await bob.daemon.exportBackup();
       await bob.daemon.eraseMessage(reply.messageId);
       expect(await bob.daemon.mergeBackup(bobs.bytes)).toMatchObject({ added: 0, objects: 0 });
