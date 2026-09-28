@@ -9,6 +9,7 @@ operation when it executes.
 | Entry point | What it owns |
 | --- | --- |
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
+| `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
 | `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, bytes on a text port, frame reading and writing, port adapters, and the daemon's side of a session |
 
 The types and JSDoc of the entry point define the API. The `schemas`
@@ -34,7 +35,24 @@ waits for the socket to drain below a bound before it takes the next
 frame, since a socket's `send` only queues; the message port adapter
 closes with the port's other end.
 
+`connect(port)` gives a client that says hello, attaches after the
+welcome and is `connected` once the attachment's baseline is in; before
+that, and after the connection ends, a call is refused as `NotConnected`.
+`client.daemon` holds one method per entry of the method table, each
+checked against the advertised bounds before the port takes it, and
+`client.refresh()` resolves once a state covering every change committed
+before the request is consumed, or rejects with `StateChanged` when the
+epoch moves first. Every failure is a `CallError`: the daemon's own
+under `origin: "daemon"`, the SDK's under `origin: "client"`, with the
+effect the operation may have had; a reply lost with the connection is
+`TransportDisconnected` with a possible effect, none for a refresh. The
+last state stays in place through a disconnection, stale, until a new
+baseline replaces it. A daemon that stops speaking the contract ends the
+session as a `ProtocolError`. `reconnecting(openPort)` opens another
+port after a delay whenever a connection ends, negotiates and attaches
+afresh, and never resends a call the old connection lost.
+
 `pnpm consumer-check` packs the package, installs it into an empty
 project outside the workspace, compiles and runs a small view against
-it with no Node or DOM types, and fails when any package of the daemon
-side came along.
+it with no Node or DOM types, a client stopping at an incompatible daemon
+included, and fails when any package of the daemon side came along.

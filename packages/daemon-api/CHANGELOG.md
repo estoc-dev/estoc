@@ -29,6 +29,22 @@ view installs alone.
   with a newer one of the same epoch, drops logs first and closes the
   port when what it owes no longer fits, and a `StateUnavailable` fault
   when the baseline or a state cannot be written.
+- `@estoc/daemon-api/client`: `connect(port)`, the view's side of a
+  session: hello, attachment after the welcome, `connected` once the
+  baseline is in and `NotConnected` for a call before that or after the
+  connection ends; the daemon's methods typed from the method table
+  under `client.daemon`, each checked against the advertised bounds
+  before the port takes it; `refresh()` as a barrier on the reply's
+  revision or a greater one of its epoch, lost as `StateChanged` when the
+  epoch moves; publications applied in order, a state or lines already
+  shown ignored; every failure a `CallError` with `isCallError` to
+  narrow it, the daemon's errors under `origin: "daemon"` and the SDK's
+  under `origin: "client"`, a lost reply `TransportDisconnected` with a
+  possible effect and none for a refresh or the attachment; a daemon
+  that stops speaking the contract ends the session as a
+  `ProtocolError`; and `reconnecting(openPort, { delayMs })`, a client
+  that opens another port after a delay when a connection ends,
+  attaches afresh and never resends a call the old connection lost.
 - Requires Node 26 or later, whose `Uint8Array` has the strict base64
   conversion the text port relies on; browsers and workers without it
   fall back to `atob` and `btoa` under the same acceptance rule.

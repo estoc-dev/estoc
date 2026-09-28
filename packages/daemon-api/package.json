@@ -15,6 +15,10 @@
       "types": "./dist/contract/index.d.ts",
       "default": "./dist/contract/index.js"
     },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
     "./wire": {
       "types": "./dist/wire/index.d.ts",
       "default": "./dist/wire/index.js"
