@@ -118,6 +118,31 @@ async function closeSheet(page) {
   await page.waitForSelector("[data-new-sheet]", { state: "detached", timeout: 5000 });
 }
 
+/** The sheet is modal: opened from the keyboard it takes the focus, keeps it, and hands it back. */
+async function sheetKeepsFocus(page) {
+  await page.focus("[data-new-conversation]");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("[data-new-sheet]", { timeout: 5000 });
+  const inSheet = () => page.evaluate(() => document.activeElement?.closest("[data-new-sheet]") !== null);
+  let kept = await inSheet();
+  if (!kept) fail("opening the sheet should move the focus into it");
+  for (const key of ["Tab", "Tab", "Tab", "Tab", "Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    if (!(await inSheet())) {
+      fail(`${key} should keep the focus inside the sheet`);
+      kept = false;
+      break;
+    }
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("[data-new-sheet]", { state: "detached", timeout: 5000 });
+  if (!(await page.evaluate(() => document.activeElement?.hasAttribute("data-new-conversation")))) {
+    fail("closing the sheet should hand the focus back to the button that opened it");
+  } else if (kept) {
+    ok("the new-conversation sheet takes the keyboard focus, keeps it, and hands it back on Escape");
+  }
+}
+
 /** Paste someone's link under a name for them; the conversation opens. */
 async function acceptLink(page, name, link) {
   await page.click("[data-new-conversation]");
@@ -177,6 +202,7 @@ try {
   }
   await createIdentity(alice, "Alice", invitationUrl);
   await createIdentity(bob, "Bob");
+  await sheetKeepsFocus(bob);
 
   // Bob hands Alice a link; she pastes it under a name of her own for him.
   const bobLink = await invite(bob);
@@ -376,17 +402,19 @@ try {
   await alice2.setInputFiles("[data-backup-file]", backupPath);
   await alice2.fill("[data-backup-passphrase]", PASS.Alice);
   await alice2.click("[data-restore]");
+  // the notice heads the list, before any conversation is opened
+  await alice2.waitForSelector("[data-restore-notice]", { timeout: 45000 });
   await alice2.waitForSelector(row("Bob"), { timeout: 45000 });
   await openConversation(alice2, "Bob");
-  await alice2.waitForSelector("[data-restore-notice]", { timeout: 15000 });
   await expectBubble(alice2, "hello bob");
   await expectBubble(alice2, "hi alice");
-  if (!(await alice2.isDisabled("[data-composer]"))) {
-    fail("sending should wait for the restore to be explained");
+  if (!(await alice2.isDisabled("[data-composer]")) || !(await alice2.isVisible("[data-chat] [data-sends-closed]"))) {
+    fail("sending should wait for the restore to be explained, and the conversation should say so by the composer");
   }
   ok("a fresh browser restored Alice from the file: full history, sending closed until the restore is explained");
   await alice2.click("[data-restore-understood]");
   await alice2.waitForSelector("[data-restore-notice]", { state: "detached", timeout: 15000 });
+  await alice2.waitForSelector("[data-chat] [data-sends-closed]", { state: "detached", timeout: 5000 });
   await waitLive(alice2);
   await send(alice2, "back from a backup");
   await expectBubble(bob, "back from a backup", 45000);
@@ -452,6 +480,33 @@ try {
     fail("a new identity should find nothing of what the forgotten one was writing");
   }
   ok("Bob forgotten, Dora made on the same page: his draft went with his vault");
+
+  // A backup with no conversation in it: the restore still asks to be read, and a first conversation can follow.
+  await mediate(bob, "Dora");
+  await bob.click("[data-you]");
+  const [doraDownload] = await Promise.all([bob.waitForEvent("download"), bob.click("[data-export]")]);
+  const doraBackup = join(await mkdtemp(join(tmpdir(), "estoc-e2e-")), doraDownload.suggestedFilename());
+  await copyFile(await doraDownload.path(), doraBackup);
+  await bobCtx.close();
+  const doraCtx = await browser.newContext();
+  const dora = await doraCtx.newPage();
+  watch(dora, "dora");
+  await dora.goto(APP_URL);
+  await dora.click("[data-tab-restore]");
+  await dora.setInputFiles("[data-backup-file]", doraBackup);
+  await dora.fill("[data-backup-passphrase]", "dora-dries-dates");
+  await dora.click("[data-restore]");
+  await dora.waitForSelector("[data-restore-notice]", { timeout: 45000 });
+  if ((await dora.locator(".convo-row").count()) !== 0) fail("Dora's backup held no conversation");
+  await dora.click("[data-new-conversation]");
+  if (!(await dora.isDisabled("[data-new-sheet] [data-show-qr]"))) fail("inviting should wait for the restore to be explained");
+  await dora.click("[data-new-sheet] [data-cancel]");
+  await dora.click("[data-restore-understood]");
+  await dora.waitForSelector("[data-restore-notice]", { state: "detached", timeout: 15000 });
+  await waitLive(dora);
+  await invite(dora);
+  await closeSheet(dora);
+  ok("a backup with no conversation restores to a list headed by the notice; read, a first invitation follows");
 
   if (process.exitCode !== 1) {
     console.log("\nall green");

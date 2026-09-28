@@ -10,6 +10,7 @@ import { useAttention } from "./attention.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { go, keyOf, layout, screen } from "./nav.js";
+import RestoreNotice from "./RestoreNotice.vue";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
 import { failedToSend, initialOf, labelOf, whenOf } from "./util.js";
@@ -18,6 +19,7 @@ const { mediation, lamp, word } = useStatus();
 const { count: attention } = useAttention();
 
 const current = computed(() => keyOf(screen.value));
+const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
 const openLinks = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.uses === "one" && i.state.status === "available").length);
 
 interface Row {
@@ -73,6 +75,7 @@ const rows = computed<Row[]>(() =>
     </button>
 
     <div class="screen-body flush">
+      <div v-if="sendsClosed" class="list-card"><RestoreNotice /></div>
       <div v-if="rows.length === 0 && mediation === null" class="empty" data-choose-mediator>
         <p>You are {{ state.snapshot?.label }}. To be reached, pick a mediator: it holds sealed envelopes until you fetch them.</p>
         <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :pick="chooseMediator" />

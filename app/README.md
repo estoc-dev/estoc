@@ -19,27 +19,30 @@ your data never touches the place the app was served from.
   passphrase, nothing else: it generates a 32-byte seed and seals it under
   the passphrase ([@estoc/keystore]). Every key is derived from that seed.
   You type the passphrase once; the unlocked seed stays in this browser as
-  a non-extractable WebCrypto key. **Lock** forgets it and asks again.
+  a non-extractable WebCrypto key. *Lock*, on the You screen behind the
+  gear, forgets it and asks again.
 - **A mediator, chosen after.** An identity exists before it can be
-  reached. The rail says *not reachable yet* until you pick a mediator
-  there. Choosing another later changes where the DIDs you mint from then
+  reached. The list says *no mediator* until you pick one, there or on
+  the You screen. Choosing another later changes where the DIDs you mint from then
   on are reached; the ones you have stay where they are until you rotate
   them, a conversation at a time.
 - **Invitation links, and no public DID.** There is no address of yours
-  for strangers to write to. *New invitation link* on the rail mints a DID
-  for one person and puts it in a link (and a QR code): this deployment's
-  URL carrying `?_oob=`, the DIDComm out-of-band invitation, which any
-  Estoc opens. Whoever opens it names you and accepts, from a DID minted
-  for you alone; the first to write takes the link and a second is turned
-  away. A pasted link works in *+ contact*.
+  for strangers to write to. The **+** button opens the new-conversation
+  sheet: *Show my QR code* and *Copy an invitation link* mint a DID for
+  one person and put it in a link (and a QR code): this deployment's URL
+  carrying `?_oob=`, the DIDComm out-of-band invitation, which any Estoc
+  opens. Whoever opens it names you and accepts, from a DID minted for you
+  alone; the first to write takes the link and a second is turned away.
+  Someone else's link goes into the same sheet, scanned or pasted.
 - **Channels, and a DID per conversation.** A conversation is one or more
   channels, each a pair of one DID of yours and one of theirs. The DID in a
   link was disclosed, so the first message written to it moves you to a
   private one for that person, announced the DIDComm way with `from_prior`
-  so their side follows. *Rotate my DID* under a conversation's channels
-  does the same by hand. The chat head lists the channels: which one is
-  current, which are history, and what stands in the way of writing in
-  one (blocked, in conflict, the peer moved on).
+  so their side follows. *Use a fresh address* in a conversation's
+  details does the same by hand. *Under the hood*, one step further in,
+  lists the channels: which one is current, which are history, and what
+  stands in the way of writing in one (blocked, in conflict, the peer
+  moved on).
 - **Names are yours.** Someone who arrives over a link of yours shows up
   under what they call themself, quoted as the claim it is, until you name
   the conversation; that makes them a contact. Contacts can be renamed,
@@ -50,20 +53,21 @@ your data never touches the place the app was served from.
   cancelled, conflict), whether an input has been taken in, and what
   became of a continuity proof it brought. Opening a vault sends nothing:
   a message a transport was never called for, a reply still owed, a
-  rotation the peer was never told of, each waits under *Left to do by
-  hand* on the rail for the step named beside it.
+  rotation the peer was never told of, each waits under *Needs you*,
+  the banner over the list, for the step named beside it.
 - **A vault in the browser.** Everything lives in one SQLite database in
   this origin's private file system, through SQLite's access-handle pool
   in the daemon's worker ([@estoc/event-store]). Nothing about you is
   stored anywhere else.
-- **Backups you own.** **Export backup** writes the vault as one portable
-  `.sqlite` file. The passphrase seals the seed in it and nothing else:
-  whoever has the file reads the messages. **Restore a backup** on a fresh
-  install brings back that moment and nothing after it, and says so before
-  anything can be sent: DIDs minted since, addresses contacts moved to
-  since, and what tied old to new are not in it, and mail for or from
-  those is discarded on arrival (the rail lists what was turned away).
-  **Import backup** into a live vault *merges*: events the vault lacks are
+- **Backups you own.** *Export a backup*, on the You screen, writes the
+  vault as one portable `.sqlite` file. The passphrase seals the seed in
+  it and nothing else: whoever has the file reads the messages. *Restore*
+  on a fresh install brings back that moment and nothing after it, and
+  says so at the head of the list before anything can be sent: DIDs
+  minted since, addresses contacts moved to since, and what tied old to
+  new are not in it, and mail for or from those is discarded on arrival
+  (*Needs you* lists what was turned away).
+  *Import a backup* into a live vault *merges*: events the vault lacks are
   added, nothing already here is touched, so backups from two devices fold
   together. A message a backup holds unsent is not sent on its own.
 - **Offline.** Installed, Estoc opens with no network at all: the app
@@ -92,7 +96,7 @@ pnpm dev             # tsc --watch on every library + vite here
 
 or `pnpm dev` in this directory once the libraries have been built.
 
-The rail's mediator dropdown defaults to `mediator.estoc.dev`
+The mediator picker defaults to `mediator.estoc.dev`
 ([didcomm-mediator] on Cloudflare Workers) and also offers a local one
 (`npm run dev` in the [didcomm-mediator] repo, minted with
 `MEDIATOR_PUBLIC_URL=http://localhost:8080`), or paste any mediator's
@@ -130,17 +134,20 @@ node scripts/e2e.mjs https://<your deployment>
 
 The e2e script (playwright-core, system chromium) mints Alice, Bob and
 Carol in isolated browser contexts (unreachable first, then each picks
-the mediator) and walks the whole surface: an invitation link pasted into
-*+ contact*, the inviter seeing the arrival under a claimed name and
+the mediator) and walks the whole surface: the new-conversation sheet
+holding the keyboard focus, an invitation link pasted into it, the
+inviter seeing the arrival under a claimed name and
 naming it, live delivery without a reload, the disclosed DID giving way
 to a private one, a rotation by hand with the thread going on over it, a
 link opened before its reader has an identity, history surviving a reload
 with no passphrase, a second tab yielding to the first, lock and unlock
 (a wrong passphrase refused), a backup merged into the live vault with
 nothing new, the same backup restored in a fresh browser where sending
-waits for the restore to be explained, and, when a service worker is
-serving, a message written with the network off that is still there after
-an offline reload and goes out by hand once the network is back.
+waits for the restore to be explained, a backup with no conversation in
+it restored and explained before a first invitation, and, when a service
+worker is serving, a message written with the network off that is still
+there after an offline reload and goes out by hand once the network is
+back.
 
 `scripts/e2e-daemon.mjs` drives the app against `estoc serve`, using
 `@estoc/daemon` and the public mediator at `mediator.estoc.dev`.
@@ -173,8 +180,8 @@ at the top of the script; an optional first argument sets the app URL.
 - **PWA**: [vite-plugin-pwa] generates the manifest and a Workbox service
   worker precaching the shell (scripts, styles, WASM). Updates wait for a
   nod (a chip offers to reload); `navigator.storage.persist()` is asked
-  for when the vault is created, and the rail says whether the browser
-  granted it. Icons render from `public/icon.svg` via `pnpm icons`.
+  for when the vault is created, and the You screen says whether the
+  browser granted it. Icons render from `public/icon.svg` via `pnpm icons`.
 - **Renderers by type**: a thread is the message records of every channel
   a conversation shows. `src/renderers/` maps message types to Vue
   components: basicmessage bubbles, profile introductions, a generic one
@@ -191,8 +198,8 @@ at the top of the script; an optional first argument sets the app URL.
   conversation's details list every observation of a channel with what
   the vault made of it.
 - **Trace**: how much the device keeps of what its agent observes is the
-  rail's level (off / normal / verbose), local state of this copy and in
-  no backup. Nothing in this build reads the trace back yet.
+  level on the You screen (off / normal / verbose), local state of this
+  copy and in no backup. Nothing in this build reads the trace back yet.
 - **The didcomm WASM** is instantiated by `src/didcomm/wasm.ts` (the npm
   package's entry is webpack-shaped) and handed to the agent.
 

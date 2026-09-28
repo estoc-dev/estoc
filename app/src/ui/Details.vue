@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 
 import { blockChannels, deleteContact, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
 import type { ConversationChannel, DidId } from "../core/types.js";
+import { editableFrom } from "./editable.js";
 import Icon from "./Icon.vue";
 import { go, layout, swap } from "./nav.js";
+import Sheet from "./Sheet.vue";
 import Topbar from "./Topbar.vue";
 import { initialOf, labelOf, shortDid, shortFormOf } from "./util.js";
 
@@ -18,8 +20,7 @@ const props = defineProps<{ conversationKey: string }>();
 const conversation = computed(() => state.conversations.find((c) => c.key === props.conversationKey) ?? null);
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
 
-const petname = ref("");
-watch(conversation, (c) => (petname.value = c?.petname ?? c?.claimedName ?? ""), { immediate: true });
+const petname = editableFrom(computed(() => conversation.value?.petname ?? conversation.value?.claimedName ?? ""));
 
 const busy = ref(false);
 const failure = ref<string | null>(null);
@@ -168,16 +169,13 @@ function remove() {
       </div>
     </div>
 
-    <div v-if="deleting && conversation" class="sheet-scrim" @click.self="deleting = false">
-      <div class="sheet" role="dialog" aria-label="Delete contact">
-        <div class="grip"></div>
-        <div class="sheet-title">Delete {{ labelOf(conversation) }}?</div>
-        <p class="note">Their channels stay in the vault unless you also erase their messages.</p>
-        <label class="check"><input v-model="alsoBlock" type="checkbox" /> Block their addresses too</label>
-        <label class="check"><input v-model="alsoErase" type="checkbox" /> Erase their messages</label>
-        <button class="btn-danger" type="button" data-delete-confirm @click="remove">Delete</button>
-        <button class="btn-quiet" type="button" @click="deleting = false">Cancel</button>
-      </div>
-    </div>
+    <Sheet v-if="deleting && conversation" label="Delete contact" @close="deleting = false">
+      <div class="sheet-title">Delete {{ labelOf(conversation) }}?</div>
+      <p class="note">Their channels stay in the vault unless you also erase their messages.</p>
+      <label class="check"><input v-model="alsoBlock" type="checkbox" /> Block their addresses too</label>
+      <label class="check"><input v-model="alsoErase" type="checkbox" /> Erase their messages</label>
+      <button class="btn-danger" type="button" data-delete-confirm @click="remove">Delete</button>
+      <button class="btn-quiet" type="button" @click="deleting = false">Cancel</button>
+    </Sheet>
   </div>
 </template>

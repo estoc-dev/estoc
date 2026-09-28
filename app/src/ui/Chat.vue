@@ -9,7 +9,7 @@ import type { Channel, Conversation } from "../core/types.js";
 import { rendererFor, showsInThread, typeOf } from "../renderers/index.js";
 import Icon from "./Icon.vue";
 import { FINE_POINTER, go, layout } from "./nav.js";
-import RestoreNotice from "./RestoreNotice.vue";
+import Sheet from "./Sheet.vue";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
 import { dayOf, initialOf, labelOf, shortDid } from "./util.js";
@@ -247,7 +247,6 @@ const details = () => go({ kind: "details", key: props.conversationKey });
     </Topbar>
 
     <div ref="threadEl" class="thread" @scroll.passive="noteScroll">
-      <RestoreNotice v-if="sendsClosed" />
       <p v-if="conversation && mediation === null" class="thread-note error">
         No mediator yet: nothing leaves and nothing arrives.
         <button class="link" type="button" @click="go({ kind: 'you' })">Choose one</button>
@@ -285,6 +284,7 @@ const details = () => go({ kind: "details", key: props.conversationKey });
         <blockquote v-if="!writable" class="draft-text" style="flex-basis: 100%" data-draft-text>{{ kept.text }}</blockquote>
       </div>
       <p v-if="sendError" class="composer-line error" data-send-error>{{ sendError }}</p>
+      <p v-if="sendsClosed" class="composer-line" data-sends-closed>Restored from a backup: sending opens once you have read what that means, above your conversations.</p>
       <p v-if="closedBecause" class="composer-line error" data-closed>Nothing can be written here: {{ closedBecause }}</p>
       <p v-else-if="mustPick" class="composer-line" data-must-pick>
         {{ conversation.writeTo.length === 1 ? "Their only open channel is not under the address you prefer." : "Several channels take a send." }}
@@ -313,22 +313,19 @@ const details = () => go({ kind: "details", key: props.conversationKey });
       </form>
     </div>
 
-    <div v-if="choosing && conversation" class="sheet-scrim" @click.self="choosing = false">
-      <div class="sheet" role="dialog" aria-label="Where this goes">
-        <div class="grip"></div>
-        <div class="sheet-title">Send as which address?</div>
-        <p class="note">Each channel pairs one address of yours with one of theirs. The message goes out in the one you pick.</p>
-        <div class="group">
-          <button v-for="channel in conversation.writeTo" :key="pairKey(channel)" class="row" type="button" :title="`${channel.localDid} → ${channel.peerDid}`" data-channel-option @click="pick(channel)">
-            <span class="row-main">
-              <span class="mono">you {{ shortDid(channel.localDid) }}</span>
-              <span class="mono" style="color: var(--steel)">them {{ shortDid(channel.peerDid) }}</span>
-            </span>
-            <Icon v-if="target && pairKey(channel) === pairKey(target)" name="check" class="chevron" :size="20" />
-          </button>
-        </div>
-        <button class="btn-quiet" type="button" @click="choosing = false">Cancel</button>
+    <Sheet v-if="choosing && conversation" label="Where this goes" @close="choosing = false">
+      <div class="sheet-title">Send as which address?</div>
+      <p class="note">Each channel pairs one address of yours with one of theirs. The message goes out in the one you pick.</p>
+      <div class="group">
+        <button v-for="channel in conversation.writeTo" :key="pairKey(channel)" class="row" type="button" :title="`${channel.localDid} → ${channel.peerDid}`" data-channel-option @click="pick(channel)">
+          <span class="row-main">
+            <span class="mono">you {{ shortDid(channel.localDid) }}</span>
+            <span class="mono" style="color: var(--steel)">them {{ shortDid(channel.peerDid) }}</span>
+          </span>
+          <Icon v-if="target && pairKey(channel) === pairKey(target)" name="check" class="chevron" :size="20" />
+        </button>
       </div>
-    </div>
+      <button class="btn-quiet" type="button" @click="choosing = false">Cancel</button>
+    </Sheet>
   </div>
 </template>

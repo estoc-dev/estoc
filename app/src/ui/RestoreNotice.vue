@@ -4,8 +4,9 @@ import { ref } from "vue";
 import { explainedRestore } from "../core/store.js";
 
 /**
- * Shown over a vault restored from a backup until the person says they
- * have read it. Until then the daemon refuses what the person would
+ * Shown at the head of the list of a vault restored from a backup, until
+ * the person says they have read it: there whether or not the backup
+ * held a conversation. Until then the daemon refuses what the person would
  * send: a message, accepting an invitation, a rotation, and sending
  * again or completing by hand. Receiving goes on underneath, with the
  * acknowledgements it answers by itself, and steps that send nothing,

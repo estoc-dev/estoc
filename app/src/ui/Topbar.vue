@@ -2,7 +2,6 @@
 import Icon from "./Icon.vue";
 import { back } from "./nav.js";
 
-/** The bar over a screen: a way back when the screen was stepped into, its title, and whatever acts on it. */
 defineProps<{ title?: string; canBack?: boolean; closes?: boolean }>();
 </script>
 

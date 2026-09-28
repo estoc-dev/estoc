@@ -2,7 +2,7 @@
  * What the page itself asks the browser about its storage. The vault is
  * the daemon's (src/daemon/worker.ts: a SQLite database in a directory of
  * this origin's private file system); these two calls are Window-only, so
- * the UI makes them and shows the answer in the rail.
+ * the UI makes them and shows the answer on the You screen.
  */
 
 /**

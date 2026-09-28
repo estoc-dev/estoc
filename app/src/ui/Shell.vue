@@ -10,16 +10,10 @@ import UnderTheHood from "./UnderTheHood.vue";
 import You from "./You.vue";
 import { back, keyOf, layout, screen } from "./nav.js";
 
-/**
- * How much of the person's place fits in the window: one screen at a
- * time on a phone; the list beside the screen when there is room, with
- * the details drawn over the chat; the details as a column of their own
- * when there is room for that too.
- */
 const kind = computed(() => screen.value.kind);
 const key = computed(() => keyOf(screen.value));
 
-// A screen about no conversation, on a window that shows one beside the list, keeps the last one shown.
+// The invitation sheet opens over whatever was on screen; a window with room for a conversation beside the list keeps it there under the sheet.
 const lastKey = ref<string | null>(null);
 watch(key, (k) => (k === null ? undefined : (lastKey.value = k)), { immediate: true });
 const chatKey = computed(() => (kind.value === "new" ? lastKey.value : key.value));
