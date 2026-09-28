@@ -293,9 +293,26 @@ function profileOf(snapshot: Snapshot | null): { type: string; body: { profile: 
   return { type: PROFILE, body: { profile: { displayName: snapshot?.label ?? "" } } };
 }
 
-/** Say who we are in `channel`: the name this vault goes by, which the peer holds as a claim of ours. */
-export async function introduce(channel: Channel): Promise<void> {
-  said("introduction", await running().send({ channel }, profileOf(state.snapshot)));
+/** Say who we are: the name this vault goes by, which the peer holds as a claim of ours. */
+async function introduceTo(target: { channel: Channel } | { contactId: ContactId }): Promise<void> {
+  said("introduction", await running().send(target, profileOf(state.snapshot)));
+}
+
+/** Our introduction in `channel`, the one a person picks on the screen. */
+export const introduce = (channel: Channel): Promise<void> => introduceTo({ channel });
+
+/**
+ * Our introduction after the Ping that opened a contact: by the contact,
+ * so it goes to whatever address the peer holds by the time it is sent.
+ * The peer may already have answered from a private address that replaced
+ * the one the Ping went to, and a send to the replaced one is refused.
+ */
+async function introduceAfterPing(contactId: ContactId): Promise<void> {
+  try {
+    await introduceTo({ contactId });
+  } catch (err) {
+    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 /**
@@ -311,11 +328,7 @@ export async function acceptInvitation(input: string | Invitation, petname: stri
   if (state.pendingInvitation?.id === invitation.id) {
     state.pendingInvitation = null;
   }
-  try {
-    await introduce(accepted.channel);
-  } catch (err) {
-    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
-  }
+  await introduceAfterPing(accepted.contactId);
   return accepted.contactId;
 }
 
@@ -323,11 +336,7 @@ export async function acceptInvitation(input: string | Invitation, petname: stri
 export async function addContactByDid(did: string, petname: string): Promise<ContactId> {
   const added = await running().addContactByDid(did, petname);
   said("contact added by DID", added);
-  try {
-    await introduce(added.channel);
-  } catch (err) {
-    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
-  }
+  await introduceAfterPing(added.contactId);
   return added.contactId;
 }
 
@@ -346,6 +355,20 @@ export async function addContactFrom(input: string, petname: string): Promise<Co
 
 export function dismissPendingInvitation(): void {
   state.pendingInvitation = null;
+}
+
+/**
+ * The DID this vault hands out to anyone, as the snapshot shows it: the
+ * live one disclosed directly for many uses, or null before one is
+ * minted. `known` is false when the daemon is from before DIDs were
+ * handed out this way and reports nothing about disclosures: this app
+ * keeps working against it, with that one feature withheld.
+ */
+export function handedOutDid(snapshot: Snapshot | null): { did: Did | null; known: boolean } {
+  const dids = snapshot?.dids ?? [];
+  if (!dids.every((did) => Array.isArray(did.disclosures))) return { did: null, known: false };
+  const handedOut = dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"));
+  return { did: handedOut?.longFormDid ?? null, known: true };
 }
 
 /** The DID this vault hands out to anyone, in the long form that carries its document; minted the first time it is asked for. */

@@ -13,6 +13,7 @@ import {
   type Channel,
   type ContactId,
   type Did,
+  type DidId,
   type VaultDraft,
   type VaultFold,
 } from "@estoc/vault";
@@ -559,6 +560,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
   const commit = ({ runtime, keys }: Open, choose: (fold: VaultFold) => VaultDraft[]) => decide(runtime, keys, choose);
 
+  const handingOut = new WeakMap<Open, Promise<{ didId: DidId; did: Did }>>();
+
   function contactOf(fold: VaultFold, contactId: ContactId): void {
     const contact = fold.contacts.contacts.get(contactId);
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Error(`no contact ${contactId}`);
@@ -570,11 +573,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     return ensureRoute(runtime, keys, preferred);
   }
 
-  /**
-   * A contact under `petname` for the peer `recipientDid` names: a fresh
-   * DID of ours toward them alone, the contact selecting the pair, and a
-   * Ping to them, under the invitation's ID when one brought us here.
-   */
   async function reach(agent: Agent, running: Open, recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
     await refuseUnexplained(running);
     const peerDid = canonicalDidOf(recipientDid);
@@ -904,13 +902,20 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     addContactByDid: (did, petname) => act((agent, running) => reach(agent, running, did, null, petname)),
 
     publicDid: () =>
-      act(async (agent, running) => {
-        const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
-        const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct" && data.uses === "many"));
-        if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
-        const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
-        const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct", uses: "many" });
-        return { didId: created.data.didId, did: longFormDid };
+      act((agent, running) => {
+        // two callers before any disclosure is written would each mint one: the first call's outcome is every concurrent caller's
+        const pending = handingOut.get(running);
+        if (pending !== undefined) return pending;
+        const minting = (async () => {
+          const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+          const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct" && data.uses === "many"));
+          if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
+          const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+          const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct", uses: "many" });
+          return { didId: created.data.didId, did: longFormDid };
+        })().finally(() => handingOut.delete(running));
+        handingOut.set(running, minting);
+        return minting;
       }),
 
     createContact: (petname, channels) =>

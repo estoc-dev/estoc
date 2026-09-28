@@ -4,7 +4,7 @@ import type { TraceLevel } from "@estoc/agent-core";
 
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetDevice, markExported } from "../core/seen.js";
-import { chooseMediator, downloadBackup, forgetIdentity, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useRemoval } from "./removal.js";
@@ -32,8 +32,8 @@ async function moveMediator(did: string) {
   changingMediator.value = false;
 }
 
-// The one DID handed to anyone, as against a link for one person: whoever writes to it first is answered from a private address.
-const address = computed(() => snapshot.value?.dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"))?.longFormDid ?? null);
+const handedOut = computed(() => handedOutDid(snapshot.value));
+const address = computed(() => handedOut.value.did);
 const copiedAddress = ref(false);
 const readableAddress = ref<string | null>(null);
 const addressNote = ref<string | null>(null);
@@ -170,12 +170,12 @@ function forget() {
             <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :current="mediation.mediatorDid" :pick="moveMediator" />
             <p class="note" style="margin-top: 10px">Addresses minted from here on go through the new mediator. The ones you have stay put until you use a fresh address in that conversation.</p>
           </div>
-          <button class="row" type="button" :disabled="minting" :title="address ?? ''" data-public-did @click="copyAddress">
+          <button class="row" type="button" :disabled="minting || !handedOut.known" :title="address ?? ''" data-public-did @click="copyAddress">
             <span class="row-main">
               <span>Your DID</span>
-              <span class="row-sub">{{ address === null ? "for anyone: minted when you first copy it" : shortDid(address) }}</span>
+              <span class="row-sub">{{ !handedOut.known ? "the estoc-daemon here predates it: update it" : address === null ? "for anyone: minted when you first copy it" : shortDid(address) }}</span>
             </span>
-            <span class="row-end">{{ copiedAddress ? "copied" : minting ? "minting…" : address === null ? "mint and copy" : "copy" }}</span>
+            <span class="row-end">{{ copiedAddress ? "copied" : minting ? "minting…" : !handedOut.known ? "" : address === null ? "mint and copy" : "copy" }}</span>
           </button>
           <input v-if="readableAddress" class="field mono" readonly :value="readableAddress" aria-label="Your DID" data-public-did-text style="margin: 0 16px 12px; width: calc(100% - 32px)" @focus="selectAll" />
           <p v-if="addressNote" class="note" style="padding: 0 16px 12px" data-public-did-note>{{ addressNote }}</p>

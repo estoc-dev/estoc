@@ -8,7 +8,8 @@
   of this vault's is refused, by this call and by `acceptInvitation`.
 - **`publicDid()`**: the DID this vault hands out to anyone, in its long
   form: the live one disclosed directly for many uses, minted on the
-  selected arrangement's route and disclosed when there is none.
+  selected arrangement's route and disclosed when there is none. Calls
+  that overlap share the one minting and get the same DID.
 - `Snapshot.dids[]` carries `longFormDid` and `disclosures` (each
   disclosure's `as` and `uses`) in place of `disclosed`.
 - **`forgetIdentity(hold)`** names the vault it removes. The `hold` is

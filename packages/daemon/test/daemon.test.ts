@@ -865,14 +865,15 @@ describe("two daemons over a mediator", () => {
   );
 
   test(
-    "a DID handed out on its own is one address for anyone, minted once; a contact added by it is reached like an invitee, and a DID of one's own is refused",
+    "a DID handed out on its own is one address for anyone, minted once even when asked for twice at once; a contact added by it is reached like an invitee, introduced by the contact once the peer answers privately, and a DID of one's own is refused",
     async () => {
       const mediator = await newMediator();
       const alice = await person(mediator, "Alice");
       const bob = await person(mediator, "Bob");
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
 
-      const handedOut = await alice.daemon.publicDid();
+      const [handedOut, alongside] = await Promise.all([alice.daemon.publicDid(), alice.daemon.publicDid()]);
+      expect(alongside).toEqual(handedOut);
       expect(await alice.daemon.publicDid()).toEqual(handedOut);
       expect(alice.heard.snapshot().dids.filter((did) => did.disclosures.length > 0)).toMatchObject([{ didId: handedOut.didId, longFormDid: handedOut.did, live: true, disclosures: [{ as: "direct", uses: "many" }] }]);
       expect(alice.heard.snapshot().invitations).toEqual([]);
@@ -899,6 +900,14 @@ describe("two daemons over a mediator", () => {
       const hello = await alice.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "hello" } });
       expect(hello).toMatchObject({ outcome: "submitted", channel: head });
       await until("bob reads the hello", () => messagesOf(bob.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
+
+      // Bob's introduction after the Ping goes by the contact, not the Ping's channel: Alice has answered from a replacement, and the address the Ping went to takes nothing more from him.
+      await until("bob holds alice's replacement", () => bob.heard.snapshot().channels.some((channel) => channel.head !== null && channel.head.peerDid !== channel.channel.peerDid));
+      const profile = { type: PROFILE, body: { profile: { displayName: "Bob" } } };
+      await expect(bob.daemon.send({ channel: added.channel }, profile)).rejects.toThrow("the peer has replaced its DID");
+      const introduced = await bob.daemon.send({ contactId: added.contactId }, profile);
+      expect(introduced).toMatchObject({ outcome: "submitted", channel: { localDid: added.channel.localDid, peerDid: head.localDid } });
+      await until("alice hears bob's name", () => alice.heard.snapshot().channels.some((channel) => channel.peerName?.name === "Bob"));
     },
     LONG
   );
