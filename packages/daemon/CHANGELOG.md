@@ -11,8 +11,11 @@
   API does; `attachTo(publisher, session)` subscribes a session and
   hands it its baseline. The bounds follow from `maxBackupBytes`
   (`limitsOf`; 512 MiB unless the host sets it), an export over it is
-  refused whole (`ResourceLimit`) and leaves no file, and a socket that
-  has not attached is one of at most sixteen. The host boots the
+  refused whole (`ResourceLimit`) before the file is built, or before
+  one built within it is read whole, and leaves no file, and a socket
+  that has not attached is one of at most sixteen. A frame a socket
+  will not take — over the frame bound, text that is not UTF-8 —
+  closes that socket and nothing else. The host boots the
   daemon: there is no `boot()` over the socket, and `boot`, `pending`,
   `replayTo` and `close` are no methods of the API. The old RPC over
   the socket is gone with it; `serve`/`connect` of `rpc.ts` still
@@ -30,8 +33,10 @@
   `acceptInvitation` and `addContactByDid` a possible one, the contact
   being recorded first. Whatever else the domain throws is
   `OperationFailed` with a possible effect, its text kept for the
-  host's log. An error of `retry` or `cancel` names its message when
-  the state published shows it recorded.
+  host's log; so is a call of an intent that threw, which the
+  procedure once answered as the `threw` outcome. An error of `send`,
+  `retry`, `cancel` or a completion names its message when the state
+  published shows it recorded.
 - **`rotateChannel(channel)`**: the user's rotation away from a pair,
   the one DID of the vault at its local end resolved there; refused
   when none or more than one is. It answers the successor pair, which

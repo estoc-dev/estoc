@@ -5,6 +5,7 @@ import { DatabaseExists, type SqliteDriver } from "@estoc/event-store";
 import type { DidcommApi } from "@estoc/agent-core";
 
 import { guardedFetch } from "./guarded-fetch.js";
+import { TooLarge } from "../errors.js";
 import type { DaemonHost, DaemonStorage } from "../host.js";
 
 /** Where a folder keeps its vault: beside the person's files, never among them. */
@@ -63,7 +64,11 @@ export function nodeHost(root: string, options: NodeHostOptions = {}): DaemonHos
     return {
       has: (name) => exists(fileOf(name)),
       open: async (name, mode, kind) => openNodeSqlite(fileOf(name), { mode, journal: kind === "runtime" ? "wal" : "delete" }),
-      exportFile: async (name) => new Uint8Array(await readFile(fileOf(name))),
+      exportFile: async (name, maxBytes) => {
+        const { size } = await stat(fileOf(name));
+        if (maxBytes !== undefined && size > maxBytes) throw new TooLarge(`the backup file is ${size} bytes, over the ${maxBytes} this daemon delivers`);
+        return new Uint8Array(await readFile(fileOf(name)));
+      },
       importFile: (name, bytes) => writeFile(fileOf(name), bytes, { flag: "wx", mode: 0o600 }),
       async remove(name) {
         for (const suffix of ["", "-wal", "-shm", "-journal"]) await rm(fileOf(name) + suffix, { force: true });

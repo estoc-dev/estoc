@@ -62,3 +62,13 @@ export class Unmet extends Refused {
     this.name = "Unmet";
   }
 }
+
+/** A backup past the bound the daemon delivers one within, found before it is read whole: none of it is delivered. */
+export class TooLarge extends Refused {
+  readonly code = "ResourceLimit";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "TooLarge";
+  }
+}

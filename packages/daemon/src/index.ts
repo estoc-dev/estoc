@@ -7,7 +7,7 @@
 export type { ContactSummary, CreatedInvitation, Daemon, DaemonEvents, Hold, Lines, LocalDidSummary, MediationSummary, Merged, Outcome, Phase, SendResult, Snapshot } from "./api.js";
 export { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 export { DAMAGE_RECOURSE, RESTORE_EXPLAINED, createDaemon, type DaemonCore, type Emit } from "./daemon.js";
-export { InvalidArgument, Refused, RestoreUnexplained, StaleHold, Unmet, WrongPhase } from "./errors.js";
+export { InvalidArgument, Refused, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 export { DEFAULT_MAX_BACKUP_BYTES, attachTo, limitsOf, methodsOf } from "./adapter.js";
 export { Publisher, StateChanged, type BaselineOf, type LinesStateOf, type NonOpenValue, type Publishing, type Source, type StateOf, type StateValueOf, type Subscriber } from "./publisher.js";
 export { connect, serve, type Port } from "./rpc.js";

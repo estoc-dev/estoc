@@ -9,12 +9,12 @@
  */
 
 import { NoTarget, Unusable, type Content, type Invitation as DomainInvitation } from "@estoc/agent-core";
-import type { ApiError, Baseline, CancelOutcome, ChannelId, CompletionOutcome, DispatchOutcome, Limits, Lines, MessageId, Snapshot } from "@estoc/daemon-api/contract";
+import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, Limits, Lines, MessageId, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type MethodHandlers, type Session, type Transport } from "@estoc/daemon-api/wire";
 import { DamagedHistory } from "@estoc/event-store";
 import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference } from "@estoc/vault";
 
-import type { Outcome, SendResult } from "./api.js";
+import type { CompletionWord, DispatchWord, Outcome, SendResult } from "./api.js";
 import { InvalidChannelId, channelIdOf, channelOf } from "./channels.js";
 import type { DaemonCore } from "./daemon.js";
 import { Refused } from "./errors.js";
@@ -62,14 +62,13 @@ interface Guard<Input> {
   messageId?(input: Input): MessageId | null;
 }
 
-/** The IDs and outcomes as the API spells them are the vault's own text under another brand. */
+/** The IDs as the API spells them are the vault's own text under another brand. */
 const spelled = <T extends string>(id: string): T => id as T;
 
-const dispatched = ({ outcome, because }: Outcome): { outcome: DispatchOutcome; because: string | null } => ({ outcome: outcome as DispatchOutcome, because });
-
-const completed = ({ outcome, because }: Outcome): { outcome: CompletionOutcome; because: string | null } => ({ outcome: outcome as CompletionOutcome, because });
-
-const sent = (result: SendResult) => ({ messageId: spelled<MessageId>(result.messageId), channelId: channelIdOf(result.channel), ...dispatched(result) });
+export interface AdapterOptions {
+  /** what a call threw inside the daemon, for the host's log; the view is told only that it did */
+  failed?(error: unknown): void;
+}
 
 function didOf(presented: string): Did {
   try {
@@ -91,7 +90,7 @@ function canonicalPair(localDid: string, peerDid: string): Channel {
 }
 
 /** The daemon's methods as the API's table, each answering in the API's terms; `limits` bounds the backup an export delivers. */
-export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes">): MethodHandlers {
+export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes">, options: AdapterOptions = {}): MethodHandlers {
   const guarded =
     <Input, Result>(run: (input: Input) => Promise<Result>, guard: Guard<Input> = {}) =>
     async (input: Input): Promise<Result> => {
@@ -102,11 +101,29 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       }
     };
 
-  /** `messageId` when the state published shows the message recorded: known to be in the vault, not merely named by the input. */
-  const known = ({ messageId }: { messageId: MessageId }): MessageId | null => {
+  /** `messageId` when the state published shows the message recorded: known to be in the vault, not merely named by the input or the procedure. */
+  const known = (messageId: MessageId | null): MessageId | null => {
     const { value } = core.publisher.current.state;
-    return value.phase === "open" && value.snapshot.messages.some((message) => message.messageId === messageId) ? messageId : null;
+    return messageId !== null && value.phase === "open" && value.snapshot.messages.some((message) => message.messageId === messageId) ? messageId : null;
   };
+
+  /** A call that threw inside the daemon is a failure of the call, not a word of the procedure's: the intent stands committed, so the call may have had its effect. */
+  const threw = ({ because, messageId }: Outcome): Refusal => {
+    options.failed?.(new Error(`the call${messageId === null ? "" : ` of ${messageId}`} threw: ${because ?? "for no reason given"}`));
+    return new Refusal({ code: "OperationFailed", message: "the call threw inside the daemon; the daemon's log has what it threw", effect: "possible", messageId: known(messageId === null ? null : spelled<MessageId>(messageId)) });
+  };
+
+  const dispatched = (result: Outcome<DispatchWord>): { outcome: DispatchOutcome; because: string | null } => {
+    if (result.outcome === "threw") throw threw(result);
+    return { outcome: result.outcome, because: result.because };
+  };
+
+  const completed = (result: Outcome<CompletionWord>): { outcome: CompletionOutcome; because: string | null } => {
+    if (result.outcome === "threw") throw threw(result);
+    return { outcome: result.outcome, because: result.because };
+  };
+
+  const sent = (result: SendResult) => ({ messageId: spelled<MessageId>(result.messageId), channelId: channelIdOf(result.channel), ...dispatched(result) });
 
   const pairs = (channelIds: ChannelId[]): Channel[] => channelIds.map(channelOf);
 
@@ -140,11 +157,7 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       await core.forgetIdentity(hold);
       return null;
     }),
-    exportBackup: guarded(async () => {
-      const { name, bytes } = await core.exportBackup();
-      if (bytes.byteLength > limits.maxBackupBytes) throw new Refusal({ code: "ResourceLimit", message: `the backup is ${bytes.byteLength} bytes, over the ${limits.maxBackupBytes} this daemon delivers`, effect: "none" });
-      return { name, bytes };
-    }),
+    exportBackup: guarded(() => core.exportBackup(limits.maxBackupBytes)),
     mergeBackup: guarded(({ backup }) => core.mergeBackup(backup)),
     explainedRestore: guarded(async () => {
       await core.explainedRestore();
@@ -199,13 +212,13 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
     }),
 
     send: guarded(async ({ target, content }) => sent(await core.send(target.channelId !== undefined ? { channel: channelOf(target.channelId) } : { contactId: spelled(target.contactId) }, content as Content)), { resolution: "none" }),
-    retry: guarded(async ({ messageId }) => dispatched(await core.retry(spelled(messageId))), { messageId: known }),
+    retry: guarded(async ({ messageId }) => dispatched(await core.retry(spelled(messageId))), { messageId: ({ messageId }) => known(messageId) }),
     cancel: guarded(
       async ({ messageId }) => {
         const { outcome, because } = await core.cancel(spelled(messageId));
-        return { outcome: outcome as CancelOutcome, because };
+        return { outcome, because };
       },
-      { messageId: known }
+      { messageId: ({ messageId }) => known(messageId) }
     ),
     completeResponse: guarded(async ({ executionId, effectType }) => completed(await core.completeResponse(spelled(executionId), effectType))),
     completeNotification: guarded(async ({ rotationEventCid }) => completed(await core.completeNotification(rotationEventCid as string as EventReference<"did.rotationSelected">))),

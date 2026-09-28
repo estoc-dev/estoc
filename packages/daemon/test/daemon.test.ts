@@ -130,8 +130,7 @@ async function view(url: string): Promise<View> {
   };
 }
 
-/** A socket spoken over frame by frame, for what no client would send. */
-async function talker(url: string): Promise<{ say(text: string): void; next(): Promise<unknown>; closed: Promise<number> }> {
+async function frameClient(url: string): Promise<{ say(text: string): void; next(): Promise<unknown>; closed: Promise<number> }> {
   const ws = new WebSocket(url);
   const received: unknown[] = [];
   const waiting: ((frame: unknown) => void)[] = [];
@@ -203,12 +202,12 @@ describe("the daemon over a folder", () => {
     try {
       await served.daemon.boot();
       for (const first of ['{"kind":"call","id":1,"method":"send","args":[{"$bytes":"not base64!"}]}', "junk", '{"kind":"hello","wire":2,"apis":[1]}', '{"kind":"welcome","wire":1,"api":1}']) {
-        const raw = await talker(served.url);
+        const raw = await frameClient(served.url);
         raw.say(first);
         await raw.closed;
       }
 
-      const raw = await talker(served.url);
+      const raw = await frameClient(served.url);
       raw.say(HELLO);
       expect(await raw.next()).toMatchObject({ kind: "welcome", wire: 1, api: 1, implementation: expect.stringMatching(/^estoc-daemon \d/) });
       raw.say(call(1, "attach"));
@@ -1376,7 +1375,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       expect([forwardsSeen(mediator), bob.inbounds.length]).toEqual([forwards, inbounds]);
 
       const { executionId } = again.heard.snapshot().pending.missingResponses[0]!;
-      expect(await again.daemon.completeResponse(executionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null });
+      expect(await again.daemon.completeResponse(executionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null, messageId: expect.any(String) as string });
       await until("bob holds the acknowledgement", () => bob.inbounds.length === inbounds + 1);
       expect(forwardsSeen(mediator)).toBe(forwards + 1);
       await until("the acknowledgement is no longer owed", () => again.heard.snapshot().pending.missingResponses.length === 0);

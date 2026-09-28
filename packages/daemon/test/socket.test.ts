@@ -43,8 +43,7 @@ async function connected(url: string): Promise<Client> {
   return client;
 }
 
-/** A socket spoken over frame by frame. */
-async function talker(url: string): Promise<{ say(frame: unknown): void; next(): Promise<unknown>; closed: Promise<number>; close(): void }> {
+async function frameClient(url: string): Promise<{ say(frame: unknown): void; text(data: string | Buffer): void; next(): Promise<unknown>; closed: Promise<number>; close(): void }> {
   const ws = new WebSocket(url);
   const received: unknown[] = [];
   const waiting: ((frame: unknown) => void)[] = [];
@@ -61,6 +60,7 @@ async function talker(url: string): Promise<{ say(frame: unknown): void; next():
   });
   return {
     say: (frame) => ws.send(JSON.stringify(frame)),
+    text: (data) => ws.send(data, { binary: false }),
     next: () => (received.length > 0 ? Promise.resolve(received.shift()) : new Promise((resolve) => waiting.push(resolve))),
     closed,
     close: () => ws.close(),
@@ -111,7 +111,7 @@ describe("the endpoint", () => {
     expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 64, maxValueBytes: 64 + 64 * 1024, maxFrameBytes: Math.ceil((64 * 4) / 3) + 64 * 1024 } });
     await expect(client.daemon.restoreIdentity({ backup: new Uint8Array(65), passphrase: PASSPHRASE })).rejects.toMatchObject({ origin: "client", code: "ResourceLimit", effect: "none" });
 
-    const raw = await talker(server.url);
+    const raw = await frameClient(server.url);
     raw.say(HELLO);
     await raw.next();
     raw.say({ kind: "call", id: 1, method: "attach", input: {} });
@@ -131,8 +131,8 @@ describe("the endpoint", () => {
     const server = await serve(nodeHost(await folder()));
     await server.daemon.boot();
     const idle = [];
-    for (let i = 0; i < 16; i++) idle.push(await talker(server.url));
-    const over = await talker(server.url);
+    for (let i = 0; i < 16; i++) idle.push(await frameClient(server.url));
+    const over = await frameClient(server.url);
     expect(await over.closed).toBe(1013);
     const attached = await connected(server.url).catch((error: unknown) => error);
     expect(attached).toMatchObject({ origin: "client", code: "TransportDisconnected" });
@@ -143,6 +143,25 @@ describe("the endpoint", () => {
     expect(await idle[0]!.next()).toMatchObject({ kind: "result", id: 1 });
     const room = await connected(server.url);
     expect(room.connection.state).toBe("connected");
+    for (const talk of idle) talk.close();
+  });
+
+  it("closes the socket a frame it will not take came over, and goes on serving the rest", async () => {
+    const server = await serve(nodeHost(await folder()), { maxBackupBytes: 64 });
+    await server.daemon.boot();
+    const oversized = await frameClient(server.url);
+    oversized.text("x".repeat(Math.ceil((64 * 4) / 3) + 64 * 1024 + 1));
+    expect(await oversized.closed).toBe(1009);
+    const garbled = await frameClient(server.url);
+    garbled.text(Buffer.from([0xff]));
+    expect(await garbled.closed).toBe(1007);
+
+    const client = await connected(server.url);
+    expect(client.state?.value.phase).toBe("onboarding");
+    const idle = [];
+    for (let i = 0; i < 16; i++) idle.push(await frameClient(server.url));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    for (const talk of idle) expect(await Promise.race([talk.closed, "open"])).toBe("open");
     for (const talk of idle) talk.close();
   });
 

@@ -1,5 +1,5 @@
 import { v7 as uuidv7 } from "uuid";
-import { DamagedHistory, DatabaseBusy, ForkedAuthor, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
+import { DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
 import type { Hold, Lines, Snapshot } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
@@ -41,8 +41,8 @@ import {
   type InspectedRuntime,
 } from "@estoc/agent-core";
 
-import type { Daemon, Outcome, Phase, SendResult } from "./api.js";
-import { InvalidArgument, RestoreUnexplained, StaleHold, Unmet, WrongPhase } from "./errors.js";
+import type { CompletionWord, Daemon, DispatchWord, Outcome, Phase, SendResult } from "./api.js";
+import { InvalidArgument, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { legacyEvents, type Emit } from "./legacy.js";
 import { linesOf } from "./lines.js";
@@ -64,7 +64,7 @@ export interface DaemonCore extends Daemon {
    * successor minted and its notification called. Refused when no DID
    * of the vault is at that end, or more than one is.
    */
-  rotateChannel(channel: Channel): Promise<Outcome & { successor: Channel }>;
+  rotateChannel(channel: Channel): Promise<Outcome<CompletionWord> & { successor: Channel }>;
   /**
    * The agent closed and the files let go of, for the host that is
    * shutting down; the seed stays cached where the host keeps it. A wait
@@ -200,11 +200,12 @@ function damageOf(runtime: SqliteVault): DamagedHistory | null {
 
 const failure = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const outcomeOf = (called: Called): Outcome => ({ outcome: called.outcome, because: "because" in called ? called.because : "reason" in called ? called.reason : null });
+const outcomeOf = (called: Called): Outcome<DispatchWord> => ({ outcome: called.outcome, because: "because" in called ? called.because : "reason" in called ? called.reason : null, messageId: called.messageId });
 
-function effectOutcomeOf(effect: EffectOutcome): Outcome {
-  if (effect.outcome === "none" || effect.outcome === "refused") return { outcome: effect.outcome, because: effect.because };
-  return effect.dispatched === null ? { outcome: effect.outcome, because: null } : outcomeOf(effect.dispatched);
+function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
+  if (effect.outcome === "none" || effect.outcome === "refused") return { outcome: effect.outcome, because: effect.because, messageId: null };
+  if (effect.outcome === "created") return outcomeOf(effect.dispatched);
+  return effect.dispatched === null ? { outcome: "existing", because: null, messageId: effect.messageId } : outcomeOf(effect.dispatched);
 }
 
 /**
@@ -577,7 +578,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     const contactId = uuidv7() as ContactId;
     await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
     const sent = await agent.send({ channel, recipientDid }, { type: PING_TYPE, body: { response_requested: true }, pthid, pleaseAck: [""] });
-    return { contactId, messageId: sent.messageId, channel: sent.channel, ...outcomeOf(sent.dispatched) };
+    return { contactId, ...outcomeOf(sent.dispatched), messageId: sent.messageId, channel: sent.channel };
   }
 
   /**
@@ -796,16 +797,22 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         phase("onboarding");
       }),
 
-    exportBackup: () =>
+    exportBackup: (maxBytes) =>
       exclusively(async () => {
         const { runtime, keys } = vault();
         const store = files();
         await store.remove(EXPORT_FILE);
         try {
-          await exportVault(runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: vaultHeldRoots(keys, SCAN) });
+          await exportVault(runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: vaultHeldRoots(keys, SCAN), maxBytes }).catch((err: unknown) => {
+            if (err instanceof SnapshotTooLarge) throw new TooLarge(`the backup's events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} this daemon delivers`);
+            throw err;
+          });
           const label = (await scanVault(runtime.vault, keys, SCAN)).label ?? "";
           const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
-          return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes: await store.exportFile(EXPORT_FILE) };
+          const bytes = await store.exportFile(EXPORT_FILE, maxBytes);
+          // A host that reads the file without minding the bound is still held to it.
+          if (maxBytes !== undefined && bytes.byteLength > maxBytes) throw new TooLarge(`the backup file is ${bytes.byteLength} bytes, over the ${maxBytes} this daemon delivers`);
+          return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
         } finally {
           await store.remove(EXPORT_FILE);
         }
@@ -940,7 +947,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       act(async (agent, running) => {
         await refuseUnexplained(running);
         const sent = await agent.send(target, content);
-        return { messageId: sent.messageId, channel: sent.channel, ...outcomeOf(sent.dispatched) };
+        return { ...outcomeOf(sent.dispatched), messageId: sent.messageId, channel: sent.channel };
       }),
 
     retry: (messageId) =>
@@ -952,7 +959,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     cancel: (messageId) =>
       act(async (agent) => {
         const cancelled = await agent.manual.cancel(messageId);
-        return { outcome: cancelled.outcome, because: cancelled.outcome === "none" ? cancelled.because : null };
+        return { outcome: cancelled.outcome, because: cancelled.outcome === "none" ? cancelled.because : null, messageId: cancelled.messageId };
       }),
 
     completeResponse: (executionId, effectType) =>

@@ -58,8 +58,8 @@ const { version } = createRequire(import.meta.url)("../../package.json") as { ve
  */
 export async function serveOver(options: SocketOptions, daemon: DaemonCore): Promise<ServedOver> {
   const limits = limitsOf("text", options.maxBackupBytes);
-  const methods = methodsOf(daemon, limits);
   const failed = options.failed ?? (() => undefined);
+  const methods = methodsOf(daemon, limits, { failed });
   const pending = new Set<Session>();
 
   const files = options.appDir === undefined ? null : staticHandler(options.appDir);
@@ -90,6 +90,8 @@ export async function serveOver(options: SocketOptions, daemon: DaemonCore): Pro
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // A frame the socket will not take — over `maxPayload`, text that is not UTF-8 — is an error on it, which closes it; unheard, the error would end the process.
+      ws.on("error", () => undefined);
       if (pending.size >= MAX_PENDING) {
         ws.close(TRY_AGAIN_LATER, "too many sockets waiting to attach");
         return;
