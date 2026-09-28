@@ -14,6 +14,17 @@ view installs alone.
   Message bodies pass through with every key kept; display times are
   checked as instants, not spellings only; a channel is referred to by
   its ID and never taken apart.
+- `@estoc/daemon-api/wire`: one reading of a value as wire data on both
+  transports, with its logical size and depth charged against a budget
+  as it is read; strict padded base64 for bytes on a text port, and the
+  bytes of a view copied out of a larger buffer; bootstrap and
+  application frame reading and writing; port adapters for a message
+  port and a WebSocket; and `serveApi`, the daemon's side of a session:
+  negotiation with a 10 second bootstrap timeout, attachment, dispatch
+  from the method table with input validation before any handler runs,
+  typed refusals, and a bounded send queue of 64 frames per port that
+  replaces an unsent state or lines with a newer one of the same epoch,
+  drops logs first and closes the port when what it owes no longer fits.
 - `scripts/consumer-check.mjs`: installs the packed package outside the
   workspace, compiles and runs a view against it, and fails when any
   daemon-side package came along.
