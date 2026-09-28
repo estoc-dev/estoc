@@ -7,6 +7,11 @@ import { ref } from "vue";
  * stood. The state is one for the whole app: a refusal that comes back
  * after the vault changed hands, and the screen with it, is shown over
  * whatever screen there is by then, until the person dismisses it.
+ *
+ * What is kept is the reason the removal was not confirmed, which is
+ * not the same as a promise that nothing was removed: a connection that
+ * drops after the daemon removed the vault and before it answered fails
+ * the same way as a refusal, and only the daemon knows which it was.
  */
 const failed = ref<string | null>(null);
 const busy = ref(false);

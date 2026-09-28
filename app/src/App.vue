@@ -97,7 +97,7 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
   </div>
 
   <div v-if="removalFailed" class="update-chip alarm" data-removal-failed>
-    <span>Nothing was removed: {{ removalFailed }}</span>
+    <span>The removal was not confirmed: {{ removalFailed }}</span>
     <button class="btn" type="button" @click="dismissRemoval">OK</button>
   </div>
 </template>

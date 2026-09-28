@@ -265,6 +265,54 @@ try {
   ok("a removal confirmed after the vault changed hands removed nothing, and said so on the screen Alice was on");
   await other.close();
 
+  // a removal that went through but whose answer was lost: the socket drops
+  // after the daemon removed the vault and before its reply reached the page.
+  // The page cannot tell this from a refusal, so it must not claim the vault
+  // is still there.
+  const lost = await aliceCtx.newPage();
+  watch(lost, "alice@lost");
+  lost.on("dialog", (d) => void d.accept());
+  let removing = null;
+  await lost.routeWebSocket(/./, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      if (wire?.kind === "call" && wire.method === "forgetIdentity") removing = wire.id;
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      if (removing !== null && wire?.id === removing && (wire.kind === "result" || wire.kind === "error")) {
+        removing = null;
+        ws.close();
+        return;
+      }
+      ws.send(message);
+    });
+  });
+  await lost.goto(new URL(link.own).origin + "/");
+  await lost.waitForSelector("[data-you]", { timeout: 15000 });
+  await lost.click("[data-you]");
+  await lost.click("[data-forget]");
+  await lost.waitForSelector("[data-removal-failed]", { timeout: 15000 });
+  const said = await lost.textContent("[data-removal-failed]");
+  if (!/not confirmed/.test(said) || /nothing was removed/i.test(said)) {
+    fail(`with the answer lost, the page must not say what became of the vault: "${said}"`);
+  }
+  await stat(join(root, ".estoc", "vault.sqlite")).then(
+    () => fail("the daemon should have removed the vault before its answer was lost"),
+    () => {},
+  );
+  await lost.close();
+  ok("a removal whose answer was lost is reported as unconfirmed, not as undone");
+  // the other tab heard the daemon: the vault is gone, and a new one can be made
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await alice.fill("[data-your-name]", "Alice");
+  await alice.fill("[data-passphrase]", PASS.Alice);
+  await alice.fill("[data-passphrase-again]", PASS.Alice);
+  await alice.click("[data-create]");
+  await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+
   // the daemon gone: the page says so
   daemon.child.kill("SIGTERM");
   await alice.waitForSelector('[data-status]:has-text("daemon away")', { timeout: 10000 });
