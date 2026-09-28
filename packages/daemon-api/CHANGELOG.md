@@ -29,6 +29,9 @@ view installs alone.
   with a newer one of the same epoch, drops logs first and closes the
   port when what it owes no longer fits, and a `StateUnavailable` fault
   when the baseline or a state cannot be written.
+- Requires Node 26 or later, whose `Uint8Array` has the strict base64
+  conversion the text port relies on; browsers and workers without it
+  fall back to `atob` and `btoa` under the same acceptance rule.
 - `scripts/consumer-check.mjs`: installs the packed package outside the
   workspace, compiles and runs a view against it, and fails when any
   daemon-side package came along.
