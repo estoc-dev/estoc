@@ -11,6 +11,7 @@ operation when it executes.
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
 | `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
 | `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, bytes on a text port, frame reading and writing, port adapters, and the daemon's side of a session |
+| `@estoc/daemon-api/views` | Pure snapshot lookups, conversation record joins, navigation successors, invitation parsing and links, message-content builders and protocol constants |
 
 The types and JSDoc of the entry point define the API. The `schemas`
 namespace holds a zod schema per declared type; each is annotated with
@@ -52,7 +53,35 @@ session as a `ProtocolError`. `reconnecting(openPort)` opens another
 port after a delay whenever a connection ends, negotiates and attaches
 afresh, and never resends a call the old connection lost.
 
+`indexSnapshot(snapshot)` indexes each published table by its primary
+ID. `conversationOf(index, id)` joins a conversation to its contact,
+channels, messages, unadmitted observations and send choices, retaining
+the original records and published order. An absent conversation gives
+null; a broken relationship throws. Treat records as read-only and
+create a new index for every snapshot. The helpers derive no names,
+summaries, admission decisions or send eligibility.
+
+For navigation within the same vault anchor, keep the selected ID when
+it still exists. Otherwise `successorOf(before, after, id)` returns the
+sole new conversation sharing any of the old one's shown channels,
+including derived history. It returns null across anchors, for an absent
+old conversation, or for zero or several matches. Drafts remain the
+view's responsibility.
+
+`parseInvitation(text)` accepts plaintext JSON, base64url or a URL with
+`_oob`, validates the API invitation shape and throws on malformed input.
+Omitted `typ` and `body` take plaintext defaults; malformed present fields
+are refused. `invitationUrl(base, invitation)` encodes a link, and
+`invitationOf(from, id, goal?)` formats an already disclosed DID and ID.
+Neither resolves a DID or creates a disclosure. `basicMessage(text)` and
+`profileMessage(displayName)` build `MessageContent` for a command with
+the text kept exactly. Protocol constants are also exported from `/views`;
+received messages already carry the daemon's `summary` and name claims.
+
 `pnpm consumer-check` packs the package, installs it into an empty
 project outside the workspace, compiles and runs a small view against
-it with no Node or DOM types, a client stopping at an incompatible daemon
-included, and fails when any package of the daemon side came along.
+all four entry points with no Node or DOM types, including record joins,
+navigation, invitations and a client stopping at an incompatible daemon,
+and fails when any package of the daemon side came along. A separate
+`/views` consumer also checks its full declaration graph with
+`skipLibCheck: false` under the same ES2022-only libraries.

@@ -45,9 +45,17 @@ view installs alone.
   `ProtocolError`; and `reconnecting(openPort, { delayMs })`, a client
   that opens another port after a delay when a connection ends,
   attaches afresh and never resends a call the old connection lost.
+- `@estoc/daemon-api/views`: snapshot indexes and conversation joins
+  retaining the published records, reference order and selected/history
+  flags; `successorOf` for an unambiguous channel overlap within the same
+  vault anchor; invitation parsing from JSON, base64url or `_oob` links
+  and link formatting; basic-message and profile content builders; and
+  the API's protocol constants. Helpers neither derive domain decisions
+  nor import a daemon runtime.
 - Requires Node 26 or later, whose `Uint8Array` has the strict base64
   conversion the text port relies on; browsers and workers without it
   fall back to `atob` and `btoa` under the same acceptance rule.
 - `scripts/consumer-check.mjs`: installs the packed package outside the
-  workspace, compiles and runs a view against it, and fails when any
-  daemon-side package came along.
+  workspace, compiles and runs a view against all four entry points
+  with no Node or DOM types, and fails when any daemon-side package
+  came along.

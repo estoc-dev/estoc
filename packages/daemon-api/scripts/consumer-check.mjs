@@ -34,6 +34,7 @@ try {
     `import { connect, isCallError, type Client } from "@estoc/daemon-api/client";
 import { API_VERSION, WIRE_VERSION, schemas, type Hello, type MethodName, type State } from "@estoc/daemon-api/contract";
 import { readFrame, readPayload, writeFrame, type Port, type PortHandlers } from "@estoc/daemon-api/wire";
+import { BASIC_MESSAGE, PROFILE, basicMessage, conversationOf, indexSnapshot, invitationOf, invitationUrl, parseInvitation, profileMessage, successorOf, type ConversationView, type SnapshotIndex } from "@estoc/daemon-api/views";
 
 // The view is compiled with no Node or DOM library, so that the package's own declarations are shown to need neither.
 declare const console: { log(message: string): void };
@@ -58,11 +59,50 @@ const port: Port = {
 const client: Client = connect(port);
 const failure: unknown = await client.connected().catch((error: unknown) => error);
 if (client.connection.state !== "incompatible" || !isCallError(failure) || failure.code !== "Incompatible" || failure.origin !== "client") throw new Error("the client did not behave");
+const snapshot = schemas.snapshot.parse({
+  anchor: "did:key:vault", label: "Our vault", restoreUnexplained: false,
+  mediations: [], dids: [], contacts: [{ contactId: "c", origin: "user", flags: {}, preference: null }],
+  channels: [{ channelId: "opaque", localDid: "did:peer:local", peerDid: "did:peer:remote", headChannelId: null, superseded: false, blocked: false, conflicted: false, send: { status: "open" }, peerName: null, profileSubmitted: null, messageIds: [], observationIds: [] }],
+  messages: [], observations: [], invitations: [],
+  conversations: [{ id: "contact:c", contactId: "c", petname: "A friend", claimedName: null, channels: [{ channelId: "opaque", selected: true }], writeTo: ["opaque"], defaultWriteTo: "opaque", messageIds: [], unadmittedObservationIds: [], diagnostics: [] }],
+  pending: { pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] },
+  unplaced: { observationIds: [], outputs: [] },
+});
+const index: SnapshotIndex = indexSnapshot(snapshot);
+const selected = snapshot.conversations[0]!;
+const view: ConversationView | null = conversationOf(index, selected.id);
+if (view?.contact !== snapshot.contacts[0] || view?.channels[0]?.channel !== snapshot.channels[0] || view?.defaultWriteTo !== snapshot.channels[0]) throw new Error("the record joins did not behave");
+const moved = { ...selected, id: schemas.conversationId.parse("contact:moved") };
+if (successorOf(snapshot, { ...snapshot, conversations: [moved] }, selected.id) !== moved) throw new Error("navigation did not behave");
+const invitation = invitationOf("did:peer:inviter", "invitation", "Hello 👋");
+if (parseInvitation(invitationUrl("https://example.invalid/", invitation)).body.goal !== "Hello 👋") throw new Error("invitations did not behave");
+if (schemas.messageContent.parse(basicMessage("hello")).type !== BASIC_MESSAGE || schemas.messageContent.parse(profileMessage("Our name")).type !== PROFILE) throw new Error("message content did not behave");
 console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes, a client that stops at \${client.connection.message}\`);
+`
+  );
+  // Check the pure helpers' full declaration graph separately: it needs
+  // no platform globals, including those the schema library uses itself.
+  writeFileSync(
+    path.join(consumer, "tsconfig.views.json"),
+    JSON.stringify({ extends: "./tsconfig.json", compilerOptions: { noEmit: true, skipLibCheck: false }, include: ["views.ts"] }, null, 2)
+  );
+  writeFileSync(
+    path.join(consumer, "views.ts"),
+    `import { basicMessage, conversationOf, indexSnapshot, invitationOf, invitationUrl, parseInvitation, profileMessage, successorOf } from "@estoc/daemon-api/views";
+declare const snapshot: Parameters<typeof indexSnapshot>[0];
+const selected = snapshot.conversations[0];
+if (selected !== undefined) {
+  conversationOf(indexSnapshot(snapshot), selected.id);
+  successorOf(snapshot, snapshot, selected.id);
+}
+parseInvitation(invitationUrl("https://example.invalid/", invitationOf("did:peer:inviter", "id")));
+basicMessage("hello");
+profileMessage("Our name");
 `
   );
   run("pnpm", ["install", "--ignore-workspace", "--no-frozen-lockfile", "--reporter=silent"], consumer);
   run("pnpm", ["exec", "tsc", "-p", "tsconfig.json"], consumer);
+  run("pnpm", ["exec", "tsc", "-p", "tsconfig.views.json"], consumer);
   const output = run("node", ["out/view.js"], consumer).trim();
   if (!output.startsWith("ok:")) throw new Error(`the view did not run: ${output}`);
 
