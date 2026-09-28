@@ -31,8 +31,9 @@ try {
   );
   writeFileSync(
     path.join(consumer, "view.ts"),
-    `import { API_VERSION, WIRE_VERSION, schemas, type Hello, type MethodName, type State } from "@estoc/daemon-api/contract";
-import { readFrame, readPayload, writeFrame, type Port } from "@estoc/daemon-api/wire";
+    `import { connect, isCallError, type Client } from "@estoc/daemon-api/client";
+import { API_VERSION, WIRE_VERSION, schemas, type Hello, type MethodName, type State } from "@estoc/daemon-api/contract";
+import { readFrame, readPayload, writeFrame, type Port, type PortHandlers } from "@estoc/daemon-api/wire";
 
 // The view is compiled with no Node or DOM library, so that the package's own declarations are shown to need neither.
 declare const console: { log(message: string): void };
@@ -44,9 +45,20 @@ if (state.value.phase !== "onboarding" || !names.includes("attach") || schemas.h
 const text = writeFrame({ kind: "call", id: 1, method: "restoreIdentity", input: { backup: new Uint8Array([1, 2, 3]), passphrase: "p" } }, "text", schemas.methods.restoreIdentity.bytes.input);
 const frame = readFrame(text, "text");
 const read = frame?.kind === "call" ? readPayload(frame.input, "text", { bytesAt: schemas.methods.restoreIdentity.bytes.input, maxBytes: 3 }) : null;
-const port: Port | null = null;
-if (typeof text !== "string" || read === null || !read.ok || !schemas.methods.restoreIdentity.input.safeParse(read.value).success || port !== null) throw new Error("the wire did not behave");
-console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes\`);
+if (typeof text !== "string" || read === null || !read.ok || !schemas.methods.restoreIdentity.input.safeParse(read.value).success) throw new Error("the wire did not behave");
+let handlers: PortHandlers | null = null;
+const port: Port = {
+  transport: "clone",
+  async send(data) {
+    if ((data as Hello).kind === "hello") handlers?.message({ kind: "incompatible", wire: WIRE_VERSION, supported: [API_VERSION + 1], message: "a daemon from the future" });
+  },
+  listen: (installed) => (handlers = installed),
+  close() {},
+};
+const client: Client = connect(port);
+const failure: unknown = await client.connected().catch((error: unknown) => error);
+if (client.connection.state !== "incompatible" || !isCallError(failure) || failure.code !== "Incompatible" || failure.origin !== "client") throw new Error("the client did not behave");
+console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes, a client that stops at \${client.connection.message}\`);
 `
   );
   run("pnpm", ["install", "--ignore-workspace", "--no-frozen-lockfile", "--reporter=silent"], consumer);

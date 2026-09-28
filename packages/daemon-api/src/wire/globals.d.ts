@@ -8,3 +8,4 @@ declare function btoa(data: string): string;
 declare class TextEncoder {
   encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
 }
+declare function queueMicrotask(callback: () => void): void;
