@@ -66,7 +66,7 @@ async function shown() {
 const open = (state: StateOf<Snap>): Snap => (state.value.phase === "open" ? state.value.snapshot : (expect.fail(`${state.value.phase} shows no snapshot`) as never));
 
 describe("the publisher", () => {
-  it("shows a runtime as the open state of a fresh epoch once its first read is done, then as increasing revisions; a view attached meanwhile starts from what is published and sees what follows", async () => {
+  it("shows a runtime as the open state of a fresh epoch once its first read is done, the lines said meanwhile following it, then as increasing revisions; a view attached meanwhile starts from what is published and sees what follows", async () => {
     const { publisher: p } = publisher();
     const first = view(p);
     expect(first.baseline.state).toMatchObject({ revision: 1, value: BOOTING });
@@ -82,12 +82,13 @@ describe("the publisher", () => {
     captures[0]!.cut();
     captures[0]!.resolve({ n: 1 });
     await publishing.ready;
-    const [opened, lines] = first.heard;
+    const [opened, lines, said] = first.heard;
     expect(opened).toEqual(["state", { epoch: expect.any(String), revision: 1, value: { phase: "open", hold: HOLD, snapshot: { n: 1 } } }]);
     const epoch = (opened as ["state", StateOf<Snap>])[1].epoch;
     expect(epoch).not.toBe(first.baseline.state.epoch);
     expect(lines).toEqual(["lines", { epoch, revision: 1, value: NO_LINES }]);
-    expect(first.heard).toHaveLength(2);
+    expect(said).toEqual(["lines", { epoch, revision: 2, value: ["too soon"] }]);
+    expect(first.heard).toHaveLength(3);
 
     p.invalidate();
     await tick();
@@ -103,7 +104,7 @@ describe("the publisher", () => {
     p.lines(["live"]);
     p.log("said");
     expect(second.heard.slice(1)).toEqual([
-      ["lines", { epoch, revision: 2, value: ["live"] }],
+      ["lines", { epoch, revision: 3, value: ["live"] }],
       ["log", { epoch, line: "said" }],
     ]);
     expect(captures).toHaveLength(2);

@@ -89,11 +89,13 @@ export interface PublisherOptions<L> {
   maxRevision?: number;
 }
 
-interface Opened<S> {
+interface Opened<S, L> {
   hold: Hold;
   source: Source<S>;
   /** whether the first read stands published, as the epoch this runtime is shown in */
   installed: boolean;
+  /** the lines said while the first read was under way, to follow it out */
+  lines: L | null;
   resolve(): void;
   reject(error: unknown): void;
 }
@@ -118,7 +120,7 @@ export class Publisher<S, L> {
   private covered = 0;
   /** the last read that failed, and how many changes it would have covered: not tried again on its own until there are more */
   private failure: { covered: number; error: unknown } | null = null;
-  private opened: Opened<S> | null = null;
+  private opened: Opened<S, L> | null = null;
   private building = false;
   private waiters: Waiter[] = [];
   private readonly subscribers = new Set<Subscriber<S, L>>();
@@ -174,7 +176,7 @@ export class Publisher<S, L> {
       resolve = done;
       reject = failed;
     });
-    const opened: Opened<S> = { hold, source, installed: false, resolve, reject };
+    const opened: Opened<S, L> = { hold, source, installed: false, lines: null, resolve, reject };
     this.opened = opened;
     this.schedule();
     return {
@@ -191,10 +193,12 @@ export class Publisher<S, L> {
     this.schedule();
   }
 
-  /** The lines of the runtime shown, replaced whole; nothing while no runtime is shown, as an agent's word after its runtime was left is nothing. */
+  /** The lines of the runtime shown, replaced whole; said while its first read is under way, they follow that read out. Nothing while no runtime is shown, as an agent's word after its runtime was left is nothing. */
   lines(value: L): void {
-    if (this.opened === null || !this.opened.installed) return;
-    this.publishLines(value);
+    const opened = this.opened;
+    if (opened === null) return;
+    if (opened.installed) this.publishLines(value);
+    else opened.lines = value;
   }
 
   log(line: string): void {
@@ -245,7 +249,7 @@ export class Publisher<S, L> {
     });
   }
 
-  private async build(opened: Opened<S>): Promise<void> {
+  private async build(opened: Opened<S, L>): Promise<void> {
     let covering = this.changes;
     let snapshot: S;
     try {
@@ -271,6 +275,7 @@ export class Publisher<S, L> {
     else {
       opened.installed = true;
       this.renew(value);
+      if (opened.lines !== null) this.publishLines(opened.lines);
       opened.resolve();
     }
     this.covered = covering;

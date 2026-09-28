@@ -22,6 +22,12 @@
   closed while a `refresh()` waits on a read of it answers
   `StateChanged`, so the call that waits settles and the vault is let go
   of.
+- **The lines come from the agent**: `AgentOptions.onLines` tells the
+  daemon the connections, waiting deliveries and discards whole whenever
+  they change — a socket the mediator drops among them — and the daemon
+  publishes them as they come, with no call of the UI's and no read of
+  the vault. Lines said while the runtime's first read is under way
+  follow that read out.
 - **A read that fails leaves the state stale**, not replaced: every view
   is told (`log`, for this RPC), a UI joining meanwhile is refused its
   `boot()` with the failure, and the next call or `refresh()` reads

@@ -389,8 +389,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
   const settle = (): Promise<void> => publisher.refresh().then(() => undefined, () => undefined);
 
-  const linesOf = (agent: Agent): Lines => ({ connections: agent.connections(), waiting: agent.waitingDeliveries(), discarded: agent.discardedDeliveries() });
-
   function attach(runtime: SqliteVault, keys: Keys, trace: AgentTrace): Attached {
     const attached = { ended: false, work: new Set<Promise<void>>() };
     const reach = host.agentOptions?.fetch ?? globalThis.fetch;
@@ -411,7 +409,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
           didcomm: await host.didcomm(),
           trace,
           log: whileAttached(log),
-          onInbound: whileAttached(() => publisher.lines(linesOf(agent))),
+          onLines: whileAttached((lines) => publisher.lines(lines)),
         }
       );
       return agent;
@@ -450,7 +448,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     const { attached } = running;
     during(attached, async (agent) => {
       await agent.connect();
-      if (open === running && running.attached === attached) publisher.lines(linesOf(agent));
     }).catch((err) => {
       if (!attached.ended) log(`the agent did not come up: ${failure(err)}`);
     });
@@ -555,10 +552,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         if (err instanceof DamagedHistory) void giveUpDamaged(err);
         throw err;
       } finally {
-        if (open === running) {
-          await settle();
-          if (running.attached === attached) publisher.lines(linesOf(agent));
-        }
+        if (open === running) await settle();
       }
     });
   }
@@ -988,11 +982,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     refresh: () => publisher.refresh(),
 
     async reconnect() {
-      const running = vault();
-      const { attached } = running;
-      await during(attached, async (agent) => {
+      await during(vault().attached, async (agent) => {
         await agent.connect();
-        if (open === running && running.attached === attached) publisher.lines(linesOf(agent));
       });
     },
 

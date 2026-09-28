@@ -682,6 +682,26 @@ describe("two copies of one runtime, both written to", () => {
   );
 });
 
+describe("a daemon whose mediator drops the socket", () => {
+  it("shows the connection as not live without a call or a commit, the same to the UI there and to one that joins, and the records unchanged", async () => {
+    const mediator = await newMediator();
+    const alice = await person(mediator, "Alice");
+    await until("the line is live", () => alice.heard.lines()?.connections[0]?.live === true);
+    const shown = alice.heard.events.length;
+    const [account] = mediator.liveAccounts();
+
+    mediator.dropSocket(account!);
+    await until("the drop is shown", () => alice.heard.lines()?.connections[0]?.live === false);
+    expect(alice.heard.events.slice(shown).map(([name]) => name)).toEqual(["lines"]);
+    expect(mediator.liveAccounts()).toEqual([]);
+
+    const late = told();
+    await alice.daemon.replayTo(late.emit);
+    expect(late.lines()).toEqual(alice.heard.lines());
+    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+  });
+});
+
 describe("two daemons over a mediator", () => {
   const stillWaiting = (work: Promise<unknown>) => Promise.race([work.then(() => false), new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 300))]);
 

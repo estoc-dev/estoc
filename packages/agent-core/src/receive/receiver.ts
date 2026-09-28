@@ -150,6 +150,8 @@ export interface ReceiverOptions {
   maxHeldBytes?: number;
   trace?: AgentTrace;
   log?: (line: string) => void;
+  /** told when what `waiting()` or `discarded()` says changed: a delivery come to wait or done waiting, its bytes held or let go of, or one discarded */
+  changed?: () => void;
 }
 
 export const MAX_WAITING = 1024;
@@ -443,13 +445,14 @@ export class Receiver {
     if (!this.waits.has(key) && this.waits.size >= this.maxWaiting) return this.leave(key, delivery, `${reason}; as many deliveries wait as may`);
     this.hold(key, delivery);
     this.waits.set(key, { source: delivery.source, reason, watch, seen, retry: false });
+    this.options.changed?.();
     await this.diag(delivery, { outcome: "deferred", reason });
     return { outcome: "deferred", key, reason };
   }
 
   /** A delivery not kept: a wait it had is let go with its bytes, and it comes again from where it came. */
   private async leave(key: string, delivery: Pick<Delivery, "source" | "parent">, reason: string): Promise<Received> {
-    this.waits.delete(key);
+    this.stopWaiting(key);
     this.release(key);
     const left = bounded(`${reason}; the delivery is left where it came from`);
     await this.diag(delivery, { outcome: "deferred", reason: left });
@@ -457,7 +460,7 @@ export class Receiver {
   }
 
   private async record(key: string, delivery: Delivery, cid: EventReference<"message.in">, live: boolean): Promise<Received> {
-    this.waits.delete(key);
+    this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "received", key, cid, live };
     if (!this.closed) this.remember(key, ended);
@@ -466,12 +469,16 @@ export class Receiver {
   }
 
   private async finish(key: string, delivery: Delivery, reason: string): Promise<Received> {
-    this.waits.delete(key);
+    this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "terminal", key, reason: bounded(reason) };
     if (!this.closed) this.remember(key, ended);
     await this.discard(delivery, reason);
     return ended;
+  }
+
+  private stopWaiting(key: string): void {
+    if (this.waits.delete(key)) this.options.changed?.();
   }
 
   private remember(key: string, ended: Ended): void {
@@ -490,6 +497,7 @@ export class Receiver {
     if (this.heldBytes + bytes > this.maxHeldBytes) return;
     this.held.set(key, { delivery, bytes });
     this.heldBytes += bytes;
+    if (this.waits.has(key)) this.options.changed?.();
   }
 
   private release(key: string): void {
@@ -497,6 +505,7 @@ export class Receiver {
     if (held === undefined) return;
     this.held.delete(key);
     this.heldBytes -= held.bytes;
+    if (this.waits.has(key)) this.options.changed?.();
   }
 
   private discard(delivery: Delivery, reason: string): Promise<unknown> {
@@ -504,6 +513,7 @@ export class Receiver {
     if (!this.closed) {
       this.discardedRing.push({ source: delivery.source, reason: kept });
       if (this.discardedRing.length > DISCARDED_KEPT) this.discardedRing.shift();
+      this.options.changed?.();
     }
     return this.diag(delivery, { outcome: "terminal", reason: kept });
   }
