@@ -1,4 +1,4 @@
-import type { Channel, ContactId, Did, DidId, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
+import type { Channel, ContactId, Did, DidId, DisclosureAs, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
 import type {
   ChannelRecord,
   Connection,
@@ -71,9 +71,11 @@ export interface MediationSummary {
 export interface LocalDidSummary {
   didId: DidId;
   did: Did | null;
+  /** the spelling that carries its document, the one handed to a stranger */
+  longFormDid: Did | null;
   live: boolean;
   retired: string | null;
-  disclosed: boolean;
+  disclosures: { as: DisclosureAs; uses: DisclosureUses }[];
   faults: string[];
 }
 
@@ -185,6 +187,10 @@ export interface Daemon {
   createInvitation(uses: DisclosureUses, goal?: string): Promise<CreatedInvitation>;
   /** A fresh DID of ours toward the inviter, a contact that selects the pair, and a Ping under the invitation's ID. */
   acceptInvitation(invitation: Invitation, petname: string): Promise<SendResult & { contactId: ContactId }>;
+  /** The same toward a DID handed over on its own, the Ping naming no invitation; a DID of this vault's is refused. */
+  addContactByDid(did: string, petname: string): Promise<SendResult & { contactId: ContactId }>;
+  /** The DID this vault hands out to anyone, in its long form: the live one disclosed directly for many uses, minted on the selected arrangement's route and disclosed when there is none. */
+  publicDid(): Promise<{ didId: DidId; did: Did }>;
   createContact(petname: string, channels: Channel[]): Promise<ContactId>;
   renameContact(contactId: ContactId, petname: string): Promise<void>;
   setContactChannels(contactId: ContactId, channels: Channel[]): Promise<void>;

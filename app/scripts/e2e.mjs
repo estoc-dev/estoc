@@ -5,7 +5,7 @@
  * own promises get exercised: a conversation is named, an address is
  * rotated by hand and the thread goes on over it, a draft stays with the
  * peer who rotates under it, history survives a reload, a second tab
- * yields to the first, lock asks for the passphrase, a backup file
+ * yields to the first, a DID handed out on its own reaches its owner, lock asks for the passphrase, a backup file
  * restores the identity in a fresh browser, where sending waits for the
  * restore to be explained, importing a backup into a live vault merges
  * instead of clobbering, and (where a service worker is serving) the shell
@@ -151,6 +151,16 @@ async function acceptLink(page, name, link) {
   await page.fill("[data-invitation-link]", link);
   await page.click("[data-accept]");
   await page.waitForSelector(`[data-chat] [data-name]:has-text("${name}")`, { timeout: 30000 });
+}
+
+/** Copy the DID the You screen hands out, minted the first time; the screen closes again. */
+async function copyDid(page) {
+  await page.click("[data-you]");
+  await page.click("[data-you-screen] [data-public-did]");
+  await page.waitForFunction(() => (document.querySelector("[data-public-did]")?.getAttribute("title") ?? "") !== "", undefined, { timeout: 30000 });
+  const did = await page.getAttribute("[data-public-did]", "title");
+  await page.click("[data-you-screen] [data-back]");
+  return did;
 }
 
 const row = (name) => `.convo-row:has(.convo-name:has-text("${name}"))`;
@@ -327,6 +337,23 @@ try {
   }
   await bob.fill("[data-composer]", "");
   ok("Carol rotated while Bob was elsewhere: his draft for her was there when he came back");
+
+  // Alice hands out her DID itself, the one address for anyone; Carol
+  // pastes it where a link goes, and is answered from a private one.
+  const aliceDid = await copyDid(alice);
+  if (!aliceDid.startsWith("did:peer:4") || (await copyDid(alice)) !== aliceDid) {
+    fail("the DID handed out should be a did:peer:4 long form, minted once and copied again as it is");
+  }
+  await acceptLink(carol, "Alice (by DID)", aliceDid);
+  await alice.waitForSelector(namelessRow("Carol"), { timeout: 45000 });
+  await alice.click(namelessRow("Carol"));
+  await channelsShown(carol, 2);
+  await send(carol, "found you by your DID");
+  await expectBubble(alice, "found you by your DID", 45000);
+  await send(alice, "and here I am");
+  await expectBubble(carol, "and here I am", 45000);
+  await openConversation(alice, "Bob");
+  ok("Carol reached Alice by her DID alone; Alice answered from an address minted for Carol");
   await carolCtx.close();
 
   // Reload: history and identity come back from the vault, no passphrase.

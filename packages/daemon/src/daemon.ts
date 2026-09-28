@@ -13,6 +13,7 @@ import {
   type Channel,
   type ContactId,
   type Did,
+  type DidId,
   type VaultDraft,
   type VaultFold,
 } from "@estoc/vault";
@@ -39,7 +40,7 @@ import {
   type InspectedRuntime,
 } from "@estoc/agent-core";
 
-import type { ContactSummary, Daemon, Hold, Lines, Outcome, Phase, Snapshot } from "./api.js";
+import type { ContactSummary, Daemon, Hold, Lines, Outcome, Phase, SendResult, Snapshot } from "./api.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 
 /** How the daemon raises an event: a name and its arguments, to whoever listens. */
@@ -314,9 +315,10 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       dids: [...fold.routes.dids.values()].map((entity) => ({
         didId: entity.didId,
         did: entity.created?.did ?? null,
+        longFormDid: entity.created?.longFormDid ?? null,
         live: entity.live,
         retired: entity.retired,
-        disclosed: entity.disclosures.length > 0,
+        disclosures: entity.disclosures.map(({ data }) => ({ as: data.as, uses: data.uses })),
         faults: [...entity.faults],
       })),
       contacts,
@@ -558,6 +560,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
   const commit = ({ runtime, keys }: Open, choose: (fold: VaultFold) => VaultDraft[]) => decide(runtime, keys, choose);
 
+  const handingOut = new WeakMap<Open, Promise<{ didId: DidId; did: Did }>>();
+
   function contactOf(fold: VaultFold, contactId: ContactId): void {
     const contact = fold.contacts.contacts.get(contactId);
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Error(`no contact ${contactId}`);
@@ -567,6 +571,19 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
     if (preferred === null) throw new Error("no mediator is set");
     return ensureRoute(runtime, keys, preferred);
+  }
+
+  async function reach(agent: Agent, running: Open, recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
+    await refuseUnexplained(running);
+    const peerDid = canonicalDidOf(recipientDid);
+    const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+    if ([...fold.routes.dids.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new Error("that is an address of your own");
+    const { minted } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+    const channel: Channel = { localDid: minted.did, peerDid };
+    const contactId = uuidv7() as ContactId;
+    await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
+    const sent = await agent.send({ channel, recipientDid }, { type: PING_TYPE, body: { response_requested: true }, pthid, pleaseAck: [""] });
+    return { contactId, messageId: sent.messageId, channel: sent.channel, ...outcomeOf(sent.dispatched) };
   }
 
   /**
@@ -880,16 +897,25 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         return { didId: created.data.didId, invitation };
       }),
 
-    acceptInvitation: (invitation, petname) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
-        const peerDid = canonicalDidOf(invitation.from as Did);
-        const { minted } = await createDid(running.runtime, running.keys, await preferredRoute(running));
-        const channel: Channel = { localDid: minted.did, peerDid };
-        const contactId = uuidv7() as ContactId;
-        await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
-        const sent = await agent.send({ channel, recipientDid: invitation.from }, { type: PING_TYPE, body: { response_requested: true }, pthid: invitation.id, pleaseAck: [""] });
-        return { contactId, messageId: sent.messageId, channel: sent.channel, ...outcomeOf(sent.dispatched) };
+    acceptInvitation: (invitation, petname) => act((agent, running) => reach(agent, running, invitation.from, invitation.id, petname)),
+
+    addContactByDid: (did, petname) => act((agent, running) => reach(agent, running, did, null, petname)),
+
+    publicDid: () =>
+      act((agent, running) => {
+        // two callers before any disclosure is written would each mint one: the first call's outcome is every concurrent caller's
+        const pending = handingOut.get(running);
+        if (pending !== undefined) return pending;
+        const minting = (async () => {
+          const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+          const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct" && data.uses === "many"));
+          if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
+          const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+          const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct", uses: "many" });
+          return { didId: created.data.didId, did: longFormDid };
+        })().finally(() => handingOut.delete(running));
+        handingOut.set(running, minting);
+        return minting;
       }),
 
     createContact: (petname, channels) =>

@@ -4,13 +4,13 @@ import type { TraceLevel } from "@estoc/agent-core";
 
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetDevice, markExported } from "../core/seen.js";
-import { chooseMediator, downloadBackup, forgetIdentity, lock, mergeBackup, reconnect, setTraceLevel, state } from "../core/store.js";
+import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useRemoval } from "./removal.js";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
-import { bytesOf, whenOf } from "./util.js";
+import { bytesOf, shortDid, whenOf } from "./util.js";
 
 /**
  * The person's own place: how they are reached, where their vault is
@@ -31,6 +31,35 @@ async function moveMediator(did: string) {
   await chooseMediator(did);
   changingMediator.value = false;
 }
+
+const handedOut = computed(() => handedOutDid(snapshot.value));
+const address = computed(() => handedOut.value.did);
+const copiedAddress = ref(false);
+const readableAddress = ref<string | null>(null);
+const addressNote = ref<string | null>(null);
+const minting = ref(false);
+
+async function copyAddress() {
+  minting.value = true;
+  addressNote.value = null;
+  try {
+    const did = address.value ?? (await publicDid());
+    try {
+      await navigator.clipboard.writeText(did);
+      copiedAddress.value = true;
+      setTimeout(() => (copiedAddress.value = false), 1500);
+    } catch {
+      readableAddress.value = did;
+      addressNote.value = "It could not be copied from here: select the address below and copy it yourself.";
+    }
+  } catch (err) {
+    addressNote.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    minting.value = false;
+  }
+}
+
+const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
 
 const storage = computed(() => {
   if (state.daemonAt !== null) return `a file on this machine, via estoc-daemon at ${new URL(state.daemonAt).host}`;
@@ -141,7 +170,17 @@ function forget() {
             <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :current="mediation.mediatorDid" :pick="moveMediator" />
             <p class="note" style="margin-top: 10px">Addresses minted from here on go through the new mediator. The ones you have stay put until you use a fresh address in that conversation.</p>
           </div>
+          <button class="row" type="button" :disabled="minting || !handedOut.known" :title="address ?? ''" data-public-did @click="copyAddress">
+            <span class="row-main">
+              <span>Your DID</span>
+              <span class="row-sub">{{ !handedOut.known ? "the estoc-daemon here predates it: update it" : address === null ? "for anyone: minted when you first copy it" : shortDid(address) }}</span>
+            </span>
+            <span class="row-end">{{ copiedAddress ? "copied" : minting ? "minting…" : !handedOut.known ? "" : address === null ? "mint and copy" : "copy" }}</span>
+          </button>
+          <input v-if="readableAddress" class="field mono" readonly :value="readableAddress" aria-label="Your DID" data-public-did-text style="margin: 0 16px 12px; width: calc(100% - 32px)" @focus="selectAll" />
+          <p v-if="addressNote" class="note" style="padding: 0 16px 12px" data-public-did-note>{{ addressNote }}</p>
         </div>
+        <p class="note">A link invites one person. Your DID is for anyone who pastes it: each one is answered from an address minted for them alone.</p>
       </div>
 
       <div class="section">

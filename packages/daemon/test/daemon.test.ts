@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, vaultHeldRoots, type Channel, type DidId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultHeldRoots, type Channel, type DidId, type MintedDid } from "@estoc/vault";
 
 import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE } from "@estoc/agent-core";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
@@ -860,6 +860,54 @@ describe("two daemons over a mediator", () => {
       await again.daemon.forgetIdentity(again.heard.hold()!);
       expect(again.heard.phases().at(-1)).toBe("onboarding");
       await expect(stat(path.join(root, ".estoc", "vault.sqlite"))).rejects.toThrow();
+    },
+    LONG
+  );
+
+  test(
+    "a DID handed out on its own is one address for anyone, minted once even when asked for twice at once; a contact added by it is reached like an invitee, introduced by the contact once the peer answers privately, and a DID of one's own is refused",
+    async () => {
+      const mediator = await newMediator();
+      const alice = await person(mediator, "Alice");
+      const bob = await person(mediator, "Bob");
+      await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
+
+      const [handedOut, alongside] = await Promise.all([alice.daemon.publicDid(), alice.daemon.publicDid()]);
+      expect(alongside).toEqual(handedOut);
+      expect(await alice.daemon.publicDid()).toEqual(handedOut);
+      expect(alice.heard.snapshot().dids.filter((did) => did.disclosures.length > 0)).toMatchObject([{ didId: handedOut.didId, longFormDid: handedOut.did, live: true, disclosures: [{ as: "direct", uses: "many" }] }]);
+      expect(alice.heard.snapshot().invitations).toEqual([]);
+      expect(mediator.recipients.has(alice.heard.snapshot().dids[0]!.did!)).toBe(true);
+
+      await expect(alice.daemon.addContactByDid(handedOut.did, "me")).rejects.toThrow("an address of your own");
+      await expect(bob.daemon.addContactByDid("not a did", "Alice")).rejects.toThrow(/not a DID/);
+      expect(bob.heard.snapshot().contacts).toEqual([]);
+
+      const added = await bob.daemon.addContactByDid(handedOut.did, "Alice");
+      expect(added).toMatchObject({ outcome: "submitted", because: null });
+      expect(bob.heard.snapshot().contacts).toMatchObject([{ petname: "Alice", channels: [{ channel: added.channel, selected: true }] }]);
+      expect(added.channel.peerDid).toBe(canonicalDidOf(handedOut.did));
+
+      await until("alice holds bob's Ping", () => messagesOf(alice.heard.snapshot()).some((message) => message.direction === "in" && message.msg?.type === PING_TYPE && message.msg.pthid === null));
+      await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === added.messageId && message.acknowledged));
+
+      // The address stays for the next stranger: Alice answers Bob from a private successor and keeps handing out the same DID.
+      const moved = (snapshot: Snapshot) => snapshot.channels.find((channel) => channel.head !== null && channel.head.localDid !== channel.channel.localDid);
+      await until("alice's successor is the head of the pair bob wrote in", () => moved(alice.heard.snapshot()) !== undefined);
+      expect(await alice.daemon.publicDid()).toEqual(handedOut);
+      const head = moved(alice.heard.snapshot())!.head as Channel;
+      const contactId = await alice.daemon.createContact("Bob", [head]);
+      const hello = await alice.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+      expect(hello).toMatchObject({ outcome: "submitted", channel: head });
+      await until("bob reads the hello", () => messagesOf(bob.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
+
+      // Bob's introduction after the Ping goes by the contact, not the Ping's channel: Alice has answered from a replacement, and the address the Ping went to takes nothing more from him.
+      await until("bob holds alice's replacement", () => bob.heard.snapshot().channels.some((channel) => channel.head !== null && channel.head.peerDid !== channel.channel.peerDid));
+      const profile = { type: PROFILE, body: { profile: { displayName: "Bob" } } };
+      await expect(bob.daemon.send({ channel: added.channel }, profile)).rejects.toThrow("the peer has replaced its DID");
+      const introduced = await bob.daemon.send({ contactId: added.contactId }, profile);
+      expect(introduced).toMatchObject({ outcome: "submitted", channel: { localDid: added.channel.localDid, peerDid: head.localDid } });
+      await until("alice hears bob's name", () => alice.heard.snapshot().channels.some((channel) => channel.peerName?.name === "Bob"));
     },
     LONG
   );

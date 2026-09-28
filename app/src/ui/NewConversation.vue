@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import qrcode from "qrcode-generator";
 import { type Invitation } from "@estoc/agent-core";
 
-import { acceptInvitation, createInvitation, dismissPendingInvitation, invitationLink, state } from "../core/store.js";
+import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, invitationLink, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
 import { back, go, swap } from "./nav.js";
@@ -14,8 +14,9 @@ import { useStatus } from "./status.js";
 /**
  * How a conversation starts: a link of ours for one person, shown as a
  * QR code or copied, or theirs for us, scanned or pasted, and accepted
- * under the name we give them. A link this page was opened with is
- * offered here too.
+ * under the name we give them; a DID they handed over on its own is
+ * pasted the same way. A link this page was opened with is offered
+ * here too.
  */
 const { mediation } = useStatus();
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
@@ -107,7 +108,7 @@ async function accept(input: string | Invitation) {
   accepting.value = true;
   error.value = null;
   try {
-    const contactId = await acceptInvitation(input, label);
+    const contactId = typeof input === "string" ? await addContactFrom(input, label) : await acceptInvitation(input, label);
     name.value = "";
     link.value = "";
     swap({ kind: "chat", key: contactId });
@@ -120,7 +121,7 @@ async function accept(input: string | Invitation) {
 
 function paste() {
   if (link.value.trim() === "") {
-    error.value = "Paste the invitation link they made for you.";
+    error.value = "Paste the invitation link they made for you, or their DID.";
     return;
   }
   void accept(link.value.trim());
@@ -207,7 +208,7 @@ const offered = computed(() => scanned.value ?? pending.value);
           </button>
           <button class="row" type="button" :disabled="!ready" data-paste-link @click="show('paste')">
             <Icon name="paste" class="chevron" style="color: var(--accent)" />
-            <span class="row-main">Paste their link</span>
+            <span class="row-main"><span>Paste their link</span><span class="row-sub">or the DID they handed you</span></span>
           </button>
         </div>
       </div>
@@ -248,10 +249,10 @@ const offered = computed(() => scanned.value ?? pending.value);
     </template>
 
     <template v-else-if="mode === 'paste'">
-      <div class="sheet-title">Paste their link</div>
+      <div class="sheet-title">Paste their link or DID</div>
       <form class="form" @submit.prevent="paste">
         <input v-model="name" class="field" placeholder="What you call them" autocomplete="off" data-contact-name />
-        <input v-model="link" class="field" placeholder="Their invitation link" autocomplete="off" data-invitation-link />
+        <input v-model="link" class="field" placeholder="Their invitation link, or their DID" autocomplete="off" data-invitation-link />
         <p v-if="error" class="error-text">{{ error }}</p>
         <button class="btn" type="submit" :disabled="accepting || !ready" data-accept>{{ accepting ? "Adding…" : "Add them" }}</button>
         <button class="btn-quiet" type="button" @click="show('menu')">Back</button>

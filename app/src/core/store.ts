@@ -146,6 +146,10 @@ export async function boot(): Promise<void> {
       void daemon?.refresh().catch(() => undefined);
     }
   });
+  // The daemon in a worker hears `online` only where the browser tells workers; the page's is passed on as well.
+  window.addEventListener("online", () => {
+    if (state.phase === "open") void daemon?.reconnect().catch(() => undefined);
+  });
   await daemon.boot();
 }
 
@@ -289,9 +293,25 @@ function profileOf(snapshot: Snapshot | null): { type: string; body: { profile: 
   return { type: PROFILE, body: { profile: { displayName: snapshot?.label ?? "" } } };
 }
 
-/** Say who we are in `channel`: the name this vault goes by, which the peer holds as a claim of ours. */
-export async function introduce(channel: Channel): Promise<void> {
-  said("introduction", await running().send({ channel }, profileOf(state.snapshot)));
+/** Say who we are: the name this vault goes by, which the peer holds as a claim of ours. */
+async function introduceTo(target: { channel: Channel } | { contactId: ContactId }): Promise<void> {
+  said("introduction", await running().send(target, profileOf(state.snapshot)));
+}
+
+export const introduce = (channel: Channel): Promise<void> => introduceTo({ channel });
+
+/**
+ * Our introduction after the Ping that opened a contact: by the contact,
+ * so it goes to whatever address the peer holds by the time it is sent.
+ * The peer may already have answered from a private address that replaced
+ * the one the Ping went to, and a send to the replaced one is refused.
+ */
+async function introduceAfterPing(contactId: ContactId): Promise<void> {
+  try {
+    await introduceTo({ contactId });
+  } catch (err) {
+    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 /**
@@ -307,16 +327,52 @@ export async function acceptInvitation(input: string | Invitation, petname: stri
   if (state.pendingInvitation?.id === invitation.id) {
     state.pendingInvitation = null;
   }
-  try {
-    await introduce(accepted.channel);
-  } catch (err) {
-    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
-  }
+  await introduceAfterPing(accepted.contactId);
   return accepted.contactId;
+}
+
+/** A contact under the name we give them, by a DID they handed over on its own: our DID for them alone, a Ping, and our introduction after it. */
+export async function addContactByDid(did: string, petname: string): Promise<ContactId> {
+  const added = await running().addContactByDid(did, petname);
+  said("contact added by DID", added);
+  await introduceAfterPing(added.contactId);
+  return added.contactId;
+}
+
+/** Whatever was pasted for a person: their DID, or the invitation link they made for us. */
+export async function addContactFrom(input: string, petname: string): Promise<ContactId> {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("did:")) return addContactByDid(trimmed, petname);
+  let invitation: Invitation;
+  try {
+    invitation = parseInvitation(trimmed);
+  } catch {
+    throw new Error("That is neither a DID (did:…) nor an invitation link.");
+  }
+  return acceptInvitation(invitation, petname);
 }
 
 export function dismissPendingInvitation(): void {
   state.pendingInvitation = null;
+}
+
+/**
+ * The DID this vault hands out to anyone, as the snapshot shows it: the
+ * live one disclosed directly for many uses, or null before one is
+ * minted. `known` is false when the daemon is from before DIDs were
+ * handed out this way and reports nothing about disclosures: this app
+ * keeps working against it, with that one feature withheld.
+ */
+export function handedOutDid(snapshot: Snapshot | null): { did: Did | null; known: boolean } {
+  const dids = snapshot?.dids ?? [];
+  if (!dids.every((did) => Array.isArray(did.disclosures))) return { did: null, known: false };
+  const handedOut = dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"));
+  return { did: handedOut?.longFormDid ?? null, known: true };
+}
+
+/** The DID this vault hands out to anyone, in the long form that carries its document; minted the first time it is asked for. */
+export async function publicDid(): Promise<Did> {
+  return (await running().publicDid()).did;
 }
 
 /** A name of ours for a conversation that has none: a contact that selects its channels. */
