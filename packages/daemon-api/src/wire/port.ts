@@ -28,12 +28,17 @@ export interface Port {
 
 export interface MessagePortLike {
   postMessage(message: unknown): void;
-  addEventListener(type: "message" | "messageerror", listener: (event: { data: unknown }) => void): void;
+  addEventListener(type: "message" | "messageerror" | "close", listener: (event: { data?: unknown }) => void): void;
   start?(): void;
   close?(): void;
 }
 
-/** A `MessagePort`, a `Worker` or a worker's own global scope as a structured-clone port. */
+/**
+ * A `MessagePort`, a `Worker` or a worker's own global scope as a
+ * structured-clone port. A message port says when its other end is
+ * gone and the port closes with it; a worker says nothing, and whoever
+ * ends the worker closes this port.
+ */
 export function messagePortOf(target: MessagePortLike): Port {
   let handlers: PortHandlers | null = null;
   let closed = false;
@@ -54,6 +59,7 @@ export function messagePortOf(target: MessagePortLike): Port {
         if (!closed) installed.message(event.data);
       });
       target.addEventListener("messageerror", close);
+      target.addEventListener("close", close);
       target.start?.();
     },
     close,
@@ -62,16 +68,33 @@ export function messagePortOf(target: MessagePortLike): Port {
 
 export interface WebSocketLike {
   readonly readyState: number;
+  /** the bytes handed to `send` and not yet written to the network */
+  readonly bufferedAmount: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "close" | "error", listener: (event: { data?: unknown }) => void): void;
 }
 
+export interface WebSocketOptions {
+  /** the most bytes the socket may hold unwritten before a send waits for it to drain; 1 MiB unless set */
+  maxBufferedBytes?: number;
+}
+
 const CONNECTING = 0;
 const OPEN = 1;
+const DEFAULT_MAX_BUFFERED_BYTES = 1 << 20;
+const DRAIN_POLL_MS = 20;
 
-/** A WebSocket, connecting or open, as a text port; a frame sent before it opens waits for that. */
-export function webSocketOf(socket: WebSocketLike): Port {
+const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A WebSocket, connecting or open, as a text port. A frame sent before
+ * the socket opens waits for that; a frame sent while the socket holds
+ * more than `maxBufferedBytes` unwritten waits until it does not, since
+ * `send` only queues and a slow reader is felt nowhere else.
+ */
+export function webSocketOf(socket: WebSocketLike, options: WebSocketOptions = {}): Port {
+  const maxBuffered = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
   const opened =
     socket.readyState === CONNECTING
       ? new Promise<void>((resolve) => {
@@ -83,7 +106,9 @@ export function webSocketOf(socket: WebSocketLike): Port {
     transport: "text",
     async send(data) {
       await opened;
-      if (socket.readyState === OPEN) socket.send(data as string);
+      if (socket.readyState !== OPEN) return;
+      socket.send(data as string);
+      while (socket.readyState === OPEN && socket.bufferedAmount > maxBuffered) await pause(DRAIN_POLL_MS);
     },
     listen(handlers) {
       let ended = false;

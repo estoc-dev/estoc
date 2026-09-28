@@ -5,3 +5,6 @@ declare function setTimeout(callback: () => void, delay: number): unknown;
 declare function clearTimeout(timer: unknown): void;
 declare function atob(data: string): string;
 declare function btoa(data: string): string;
+declare class TextEncoder {
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
+}

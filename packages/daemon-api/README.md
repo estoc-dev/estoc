@@ -22,11 +22,17 @@ The wire reads every value the same way on both transports: a plain,
 finite, acyclic tree, negative zero as zero, an undefined member left
 out, bytes only where a method's schema places them and copied to the
 view selected. A request is charged as it is read and refused at the
-advertised bound before the rest is read. `serveApi` answers calls from
-the method table alone, queues publications behind their replies, and
-replaces, drops or ends what a slow port cannot take: a newer state or
-lines of the same epoch takes the place of an unsent one, logs go first,
-and a port that can no longer take what it is owed is closed.
+advertised bound before the rest is read, the whole frame counted,
+the attachment request like any other. `serveApi` answers calls from
+the method table alone, puts the attachment baseline ahead of every
+later publication, and replaces, drops or ends what a slow port cannot
+take: a newer state or lines of the same epoch takes the place of an
+unsent one, logs go first, and a port that can no longer take what it
+is owed is closed. A baseline or a state that cannot be written ends
+the session with a `StateUnavailable` fault. The WebSocket adapter
+waits for the socket to drain below a bound before it takes the next
+frame, since a socket's `send` only queues; the message port adapter
+closes with the port's other end.
 
 `pnpm consumer-check` packs the package, installs it into an empty
 project outside the workspace, compiles and runs a small view against

@@ -33,17 +33,16 @@ class Refused extends Error {
   }
 }
 
-/** The UTF-8 length of `text`, a lone surrogate charged as the replacement character it encodes to. */
+const encoder = new TextEncoder();
+const scratch = new Uint8Array(8192);
+
+/** The UTF-8 length of `text` as the platform encoder writes it, a lone surrogate as the replacement character; measured through a small buffer, never encoded whole. */
 export function utf8Length(text: string): number {
   let length = 0;
-  for (let i = 0; i < text.length; i++) {
-    const unit = text.charCodeAt(i);
-    if (unit < 0x80) length += 1;
-    else if (unit < 0x800) length += 2;
-    else if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
-      length += 4;
-      i++;
-    } else length += 3;
+  for (let from = 0; from < text.length; ) {
+    const { read, written } = encoder.encodeInto(from === 0 ? text : text.slice(from), scratch);
+    from += read;
+    length += written;
   }
   return length;
 }
@@ -51,6 +50,12 @@ export function utf8Length(text: string): number {
 const isPlainRecord = (value: object): boolean => {
   const prototype: unknown = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+};
+
+/** What an own property holds, read from its descriptor: an accessor is not wire data, whatever it would return, and is never run. */
+const held = (descriptor: PropertyDescriptor): unknown => {
+  if (!("value" in descriptor)) throw new Refused("InvalidArgument", "an accessor is not wire data");
+  return descriptor.value;
 };
 
 /** The bytes the view selects, and no other: a view of part of a buffer is copied out of it. */
@@ -75,6 +80,7 @@ class Walk {
       case "boolean":
         return value;
       case "string":
+        // The shorter UTF-16 length first, so that a string far over the budget is refused unmeasured.
         this.charge(value.length);
         this.charge(utf8Length(value) - value.length);
         return value;
@@ -101,10 +107,12 @@ class Walk {
   }
 
   private readArray(value: unknown[], depth: number): ApiValue[] {
+    if (Object.getPrototypeOf(value) !== Array.prototype) throw new Refused("InvalidArgument", "an array of a class is not wire data");
     const items: ApiValue[] = [];
     for (let i = 0; i < value.length; i++) {
-      if (!(i in value)) throw new Refused("InvalidArgument", "an array has a hole");
-      const item = value[i];
+      const descriptor = Object.getOwnPropertyDescriptor(value, i);
+      if (descriptor === undefined) throw new Refused("InvalidArgument", "an array has a hole");
+      const item = held(descriptor);
       if (item === undefined) throw new Refused("InvalidArgument", "an array element is undefined");
       items.push(this.read(item, depth + 1, false));
     }
@@ -116,8 +124,8 @@ class Walk {
     const entries: [string, ApiValue][] = [];
     for (const key of Object.keys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor?.get !== undefined) throw new Refused("InvalidArgument", "a getter is not wire data");
-      const member: unknown = descriptor?.value;
+      if (descriptor === undefined) continue;
+      const member = held(descriptor);
       if (member === undefined) continue;
       this.charge(VALUE_CHARGE + utf8Length(key));
       entries.push([key, this.read(member, depth + 1, depth === 1 && this.bytesAt.has(key))]);
@@ -125,7 +133,6 @@ class Walk {
     return Object.fromEntries(entries);
   }
 
-  /** Stops at the first charge over the budget: a string is charged by its shorter UTF-16 length first, so that a long one is never scanned. */
   private charge(amount: number): void {
     this.size += amount;
     if (this.budget !== null && this.size > this.budget.maxValueBytes) throw new Refused("ResourceLimit", `the value is larger than ${this.budget.maxValueBytes} bytes`);

@@ -63,6 +63,39 @@ describe("a value read as wire data", () => {
     expect(refused(ring).message).toMatch(/contains itself/);
   });
 
+  it("reads an array by its own elements alone: an accessor is refused unrun, an inherited index is a hole, a subclass is no array", () => {
+    let ran = 0;
+    const withGetter: unknown[] = [];
+    Object.defineProperty(withGetter, "0", {
+      enumerable: true,
+      get() {
+        ran++;
+        return "value";
+      },
+    });
+    expect(refused(withGetter).message).toMatch(/accessor/);
+    const throwing: unknown[] = [];
+    Object.defineProperty(throwing, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("never run");
+      },
+    });
+    expect(refused(throwing).message).toMatch(/accessor/);
+    expect(ran).toBe(0);
+    const inherited: unknown[] = [];
+    inherited.length = 1;
+    (Array.prototype as unknown as Record<number, unknown>)[0] = "filled in";
+    try {
+      expect(refused(inherited).message).toMatch(/hole/);
+    } finally {
+      delete (Array.prototype as unknown as Record<number, unknown>)[0];
+    }
+    class Tuple extends Array<number> {}
+    expect(refused(Tuple.of(1, 2)).message).toMatch(/class/);
+    expect(read([1, "two", [3]]).value).toEqual([1, "two", [3]]);
+  });
+
   it("reads a shared reference at each occurrence and charges it each time", () => {
     const shared = { x: "shared" };
     const { value, size } = read([shared, shared]);

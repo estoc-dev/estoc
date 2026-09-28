@@ -1,8 +1,8 @@
 /**
  * One session of the daemon's side of a port: the bootstrap, then calls
- * answered from an explicit table and publications queued behind their
- * replies. The queue is bounded, and what a slow port cannot take is
- * replaced by a newer value, dropped when it is a log, or ends the
+ * answered from an explicit table, and publications from the attachment
+ * baseline on. The queue is bounded, and what a slow port cannot take
+ * is replaced by a newer value, dropped when it is a log, or ends the
  * session when it is owed.
  */
 
@@ -60,6 +60,8 @@ interface Queued {
   write(): unknown;
   /** a reply's call: what it is answered under when it cannot be written */
   id: CallId | null;
+  /** state of the daemon's own, the attachment baseline included: the session ends when it cannot be written */
+  publication: boolean;
   /** an event a newer value of the same epoch takes the place of */
   replaces: { name: "state" | "lines"; epoch: string } | null;
   droppable: boolean;
@@ -97,12 +99,12 @@ class Served implements Session {
     if (!this.attached) return;
     const frame: RawFrame = { kind: "event", name, value };
     const replaces = name === "log" ? null : { name: name as "state" | "lines", epoch: (value as Events["state" | "lines"]).epoch };
-    this.enqueue({ write: () => writeFrame(frame, this.port.transport), id: null, replaces, droppable: name === "log", terminal: false });
+    this.enqueue({ write: () => writeFrame(frame, this.port.transport), id: null, publication: true, replaces, droppable: name === "log", terminal: false });
   }
 
   fault(error: ApiError): void {
     if (this.closed || this.ending) return;
-    this.last(this.faultEntry(error));
+    this.endWith(this.faultEntry(error));
   }
 
   close(): void {
@@ -155,36 +157,40 @@ class Served implements Session {
     this.negotiated = true;
     if (!hello.apis.includes(API_VERSION)) {
       const refused: Incompatible = { kind: "incompatible", wire: WIRE_VERSION, supported: [API_VERSION], message: `this daemon speaks API ${API_VERSION}; update the view or the daemon` };
-      this.last({ write: () => writeBootstrap(refused, this.port.transport), id: null, replaces: null, droppable: false, terminal: true });
+      this.endWith({ write: () => writeBootstrap(refused, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true });
       return;
     }
     const welcome: Welcome = { kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: this.options.implementation, limits: this.options.limits };
-    this.enqueue({ write: () => writeBootstrap(welcome, this.port.transport), id: null, replaces: null, droppable: false, terminal: false });
+    this.enqueue({ write: () => writeBootstrap(welcome, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
   }
 
   private serve(call: Extract<RawFrame, { kind: "call" }>): void {
     const { id, method } = call;
     const refuse = (code: string, message: string): void => this.reply({ kind: "error", id, error: { code, message, effect: "none", messageId: null } });
     if (!schemas.isMethodName(method)) return refuse("NoSuchMethod", `${method} is no method of this API`);
-    if (method === "attach") {
-      if (this.attached) return refuse("AlreadyAttached", "this port is attached");
-      let baseline: Baseline;
-      try {
-        baseline = this.options.attach(this);
-      } catch (error) {
-        this.options.failed?.(error);
-        return refuse("OperationFailed", "the daemon could not attach the port");
-      }
-      this.attached = true;
-      return this.reply({ kind: "result", id, value: baseline });
-    }
-    if (!this.attached) return refuse("NotAttached", "attach first");
+    if (method === "attach" && this.attached) return refuse("AlreadyAttached", "this port is attached");
+    if (method !== "attach" && !this.attached) return refuse("NotAttached", "attach first");
     const schema = schemas.methods[method];
-    const read = readPayload(call.input, this.port.transport, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes, budget: requestBudget(this.options.limits, id, method) });
+    const budget = requestBudget(this.options.limits, call);
+    if (!budget.ok) return refuse(budget.code, budget.message);
+    const read = readPayload(call.input, this.port.transport, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes, budget: budget.value });
     if (!read.ok) return refuse(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return refuse("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
+    if (method === "attach") return this.attach(id);
     void this.invoke(method, parsed.data, id, schema.bytes.result);
+  }
+
+  private attach(id: CallId): void {
+    let baseline: Baseline;
+    try {
+      baseline = this.options.attach(this);
+    } catch (error) {
+      this.options.failed?.(error);
+      return this.reply({ kind: "error", id, error: { code: "OperationFailed", message: "the daemon could not attach the port", effect: "none", messageId: null } });
+    }
+    this.attached = true;
+    this.reply({ kind: "result", id, value: baseline }, [], true);
   }
 
   private async invoke(method: ServedMethod, input: unknown, id: CallId, bytesAt: readonly string[]): Promise<void> {
@@ -202,9 +208,9 @@ class Served implements Session {
     }
   }
 
-  private reply(frame: Extract<RawFrame, { kind: "result" | "error" }>, bytesAt: readonly string[] = []): void {
+  private reply(frame: Extract<RawFrame, { kind: "result" | "error" }>, bytesAt: readonly string[] = [], publication = false): void {
     this.inFlight.delete(frame.id);
-    this.enqueue({ write: () => writeFrame(frame, this.port.transport, bytesAt), id: frame.id, replaces: null, droppable: false, terminal: false });
+    this.enqueue({ write: () => writeFrame(frame, this.port.transport, bytesAt), id: frame.id, publication, replaces: null, droppable: false, terminal: false });
   }
 
   private enqueue(entry: Queued): void {
@@ -247,27 +253,26 @@ class Served implements Session {
     );
   }
 
-  /** A reply that cannot be written is answered as a failure; a publication that cannot be is the end of the session, ahead of anything else queued. */
+  /** A publication that cannot be written ends the session, ahead of anything else queued; a reply that cannot be is answered as a failure. */
   private unwritable(entry: Queued): void {
-    if (entry.id !== null) {
-      const frame: RawFrame = { kind: "error", id: entry.id, error: unexpected };
-      this.queue.unshift({ write: () => writeFrame(frame, this.port.transport), id: null, replaces: null, droppable: false, terminal: false });
-      this.pump();
-    } else if (entry.terminal) {
-      this.close();
-    } else {
+    if (entry.publication) {
       this.queue.length = 0;
-      this.last(this.faultEntry(unpublishable));
+      this.endWith(this.faultEntry(unpublishable));
+    } else if (entry.id !== null) {
+      const frame: RawFrame = { kind: "error", id: entry.id, error: unexpected };
+      this.queue.unshift({ write: () => writeFrame(frame, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
+      this.pump();
+    } else {
+      this.close();
     }
   }
 
   private faultEntry(error: ApiError): Queued {
     const frame: RawFrame = { kind: "fault", error };
-    return { write: () => writeFrame(frame, this.port.transport), id: null, replaces: null, droppable: false, terminal: true };
+    return { write: () => writeFrame(frame, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true };
   }
 
-  /** The last frame of the session: nothing is queued behind it, and the port closes once it is written. */
-  private last(entry: Queued): void {
+  private endWith(entry: Queued): void {
     this.ending = true;
     this.queue.push(entry);
     this.pump();

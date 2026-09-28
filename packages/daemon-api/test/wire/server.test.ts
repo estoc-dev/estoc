@@ -162,6 +162,45 @@ describe("attachment", () => {
     ]);
   });
 
+  it.each(transports)("validates the attach request as it does every other, before the hook runs, on a %s port", async (transport) => {
+    let hooked = 0;
+    const t = talk(transport, {
+      attach: () => {
+        hooked++;
+        return baseline;
+      },
+    });
+    await t.greet();
+    for (const input of [null, [], "attach"]) {
+      await t.say(writeFrame({ kind: "call", id: 1, method: "attach", input }, transport));
+      seen(t, "InvalidArgument");
+    }
+    await t.call(2, "attach", { extra: "x".repeat(limits.maxValueBytes) });
+    seen(t, "ResourceLimit");
+    expect(hooked).toBe(0);
+    expect(t.session.attached).toBe(false);
+    await t.call(3, "attach", {});
+    expect(last(t)).toEqual({ kind: "result", id: 3, value: baseline });
+    expect(hooked).toBe(1);
+    expect(t.session.attached).toBe(true);
+  });
+
+  it("ends the session with a StateUnavailable fault when the baseline cannot be written, so that no session is left without one", async () => {
+    const open = openState.value as Extract<State["value"], { phase: "open" }>;
+    const broken: Baseline = { ...baseline, state: { ...openState, value: { ...open, snapshot: { ...open.snapshot, label: NaN as never } } } };
+    const t = talk("text", { attach: () => broken, methods: handlers({ lock: () => null }) });
+    let closed = 0;
+    t.session.onClose(() => closed++);
+    await t.attach();
+    expect(last(t)).toEqual({ kind: "fault", error: { code: "StateUnavailable", message: expect.any(String) as string, effect: "none", messageId: null } });
+    expect(t.received().filter((f) => f?.kind === "result" || f?.kind === "error")).toHaveLength(0);
+    expect(t.session.closed).toBe(true);
+    expect(closed).toBe(1);
+    expect(t.failures).toHaveLength(1);
+    await t.call(2, "lock", {}).catch(() => {});
+    expect(last(t)).toEqual({ kind: "fault", error: expect.objectContaining({ code: "StateUnavailable" }) as ApiError });
+  });
+
   it("answers a failing attach hook as an operation that did nothing, and tells the host", async () => {
     const t = talk("clone", {
       attach: () => {
@@ -249,6 +288,34 @@ describe("a call", () => {
     expect(ran).toBe(0);
   });
 
+  it.each(transports)("is charged whole, the members of its frame the envelope does not know included, on a %s port", async (transport) => {
+    let ran = 0;
+    const t = talk(transport, {
+      methods: handlers({
+        lock: () => {
+          ran++;
+          return null;
+        },
+      }),
+    });
+    await t.attach();
+    const frame = (rest: Record<string, unknown>) => {
+      const record = { ...rest, kind: "call", id: 2, method: "lock", input: {} };
+      return transport === "text" ? JSON.stringify(record) : record;
+    };
+    await t.say(frame({ extra: "x".repeat(limits.maxValueBytes) }));
+    seen(t, "ResourceLimit");
+    let deep: unknown = "x";
+    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
+    await t.say(frame({ deep }));
+    seen(t, "ResourceLimit");
+    expect(ran).toBe(0);
+    await t.say(frame({ extra: "ignored" }));
+    expect(last(t)).toEqual({ kind: "result", id: 2, value: null });
+    expect(ran).toBe(1);
+    expect(t.session.closed).toBe(false);
+  });
+
   it("answers a refusal with the handler's own code, effect and message ID", async () => {
     const t = talk("clone", {
       methods: handlers({
@@ -330,7 +397,7 @@ describe("a call", () => {
     finish!();
   });
 
-  it("may reuse an ID once its reply is queued", async () => {
+  it("is not held against an ID whose reply is queued: the receiver keeps no settled IDs", async () => {
     const t = talk("clone", { methods: handlers({ lock: () => null }) });
     await t.attach();
     await t.call(2, "lock", {});

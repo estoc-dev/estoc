@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { API_VERSION, WIRE_VERSION, schemas, type Hello, type Limits, type Welcome } from "../../src/contract/index.js";
+import { API_VERSION, WIRE_VERSION, schemas, type CallId, type Hello, type Limits, type Welcome } from "../../src/contract/index.js";
 import { MAX_BOOTSTRAP_BYTES, readBootstrap, readFrame, readPayload, requestBudget, toBase64, VALUE_CHARGE, writeBootstrap, writeFrame, type Transport } from "../../src/wire/index.js";
 import { openState } from "../contract/fixtures.js";
 
@@ -137,8 +137,8 @@ describe("bytes crossing a port", () => {
     expect(readPayload({ backup: new Uint8Array(3) }, "clone", { bytesAt: ["backup"], maxBytes: 3 }).ok).toBe(true);
   });
 
-  it("refuse base64 that is not strict and padded", () => {
-    for (const data of ["AQI", "AQ ID", "AQID\n", "AQ=", "A==="]) {
+  it("refuse base64 that is not strict and padded, unused bits of a padded chunk that are set among it", () => {
+    for (const data of ["AQI", "AQ ID", "AQID\n", "AQ=", "A===", "AB==", "AAB="]) {
       const read = readPayload({ backup: { encoding: "base64", data } }, "text", { bytesAt: ["backup"], maxBytes: 100 });
       expect(read).toEqual({ ok: false, code: "InvalidArgument", message: expect.stringMatching(/base64/) as string });
     }
@@ -152,26 +152,54 @@ describe("bytes crossing a port", () => {
     expect(over).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
   });
 
-  it("leave a getter at a byte member for the reading to refuse", () => {
+  it("leave a getter at a byte member for the reading to refuse, unrun", () => {
+    let ran = 0;
     const input = {
       get backup() {
+        ran++;
         return new Uint8Array(1);
       },
     };
-    expect(readPayload(input, "clone", { bytesAt: ["backup"], maxBytes: 10 })).toEqual({ ok: false, code: "InvalidArgument", message: expect.stringMatching(/getter/) as string });
+    expect(readPayload(input, "clone", { bytesAt: ["backup"], maxBytes: 10 })).toEqual({ ok: false, code: "InvalidArgument", message: expect.stringMatching(/accessor/) as string });
+    expect(ran).toBe(0);
   });
 });
 
 describe("a request's budget", () => {
+  const call = (id: number, method: string, rest: Record<string, unknown> = {}) => ({ ...rest, kind: "call" as const, id: id as CallId, method, input: {} });
+
   it("charges the call's envelope against the frame bound and its input at depth 2", () => {
-    const budget = requestBudget(limits, 12, "unlock");
+    const budget = requestBudget(limits, call(12, "unlock"));
     const envelope = VALUE_CHARGE + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 2) + VALUE_CHARGE + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 5);
-    expect(budget).toEqual({ maxValueBytes: limits.maxValueBytes - envelope, maxDepth: limits.maxDepth - 1 });
+    expect(budget).toEqual({ ok: true, value: { maxValueBytes: limits.maxValueBytes - envelope, maxDepth: limits.maxDepth - 1 }, size: envelope + VALUE_CHARGE });
   });
 
-  it("leaves nothing for the input when the envelope alone is over the bound", () => {
-    const budget = requestBudget({ ...limits, maxValueBytes: 10 }, 1, "x");
-    expect(budget.maxValueBytes).toBeLessThan(0);
-    expect(readPayload({}, "clone", { bytesAt: [], maxBytes: 0, budget })).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
+  it("charges the members of the frame the envelope does not know, and refuses the frame at the bound", () => {
+    const plain = requestBudget(limits, call(1, "lock"));
+    const extra = requestBudget(limits, call(1, "lock", { extra: "x".repeat(100) }));
+    expect(plain.ok && extra.ok && plain.value.maxValueBytes - extra.value.maxValueBytes).toBe(VALUE_CHARGE + 5 + VALUE_CHARGE + 100);
+    const over = requestBudget(limits, call(1, "lock", { extra: "x".repeat(limits.maxValueBytes) }));
+    expect(over).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
+    let deep: unknown = "x";
+    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
+    expect(requestBudget(limits, call(1, "lock", { deep }))).toEqual({ ok: false, code: "ResourceLimit", message: expect.stringMatching(/deeper/) as string });
+    expect(requestBudget(limits, call(1, "lock", { when: new Date(0) }))).toEqual({ ok: false, code: "InvalidArgument", message: expect.any(String) as string });
+  });
+
+  it("keeps the members the envelope does not know on the frame it reads, for the bound to see", () => {
+    const frame = readFrame({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 }, "clone");
+    expect(frame).toEqual({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 });
+    expect(writeFrame(frame!, "clone")).toEqual({ kind: "call", id: 1, method: "lock", input: {} });
+  });
+
+  it("refuses the frame when the envelope alone is over the bound, and leaves the input exactly the rest", () => {
+    const envelope = requestBudget(limits, call(1, "x"));
+    const size = envelope.ok ? envelope.size : 0;
+    expect(requestBudget({ ...limits, maxValueBytes: size - 1 }, call(1, "x"))).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
+    const exact = requestBudget({ ...limits, maxValueBytes: size }, call(1, "x"));
+    expect(exact.ok && exact.value.maxValueBytes).toBe(VALUE_CHARGE);
+    const budget = exact.ok ? exact.value : { maxValueBytes: 0, maxDepth: 0 };
+    expect(readPayload({}, "clone", { bytesAt: [], maxBytes: 0, budget }).ok).toBe(true);
+    expect(readPayload({ a: 1 }, "clone", { bytesAt: [], maxBytes: 0, budget })).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
   });
 });

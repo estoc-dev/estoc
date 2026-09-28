@@ -42,7 +42,8 @@
   },
   "devDependencies": {
     "typescript": "~5.8.0",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "ws": "^8.18.0"
   },
   "keywords": [
     "estoc",

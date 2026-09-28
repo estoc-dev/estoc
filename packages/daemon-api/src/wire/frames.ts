@@ -52,22 +52,27 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 
 const isEventName = (name: unknown): name is EventName => typeof name === "string" && Object.hasOwn(schemas.events, name);
 
-/** The envelope of `data`, or null when it is no frame at all: bad JSON, no record, no such kind, or a member missing or of the wrong type. */
+/**
+ * The envelope of `data`, or null when it is no frame at all: bad JSON,
+ * no record, no such kind, or a member missing or of the wrong type.
+ * Members the envelope does not know stay on the frame, unread: they
+ * mean nothing, but a bound on the whole frame charges them too.
+ */
 export function readFrame(data: unknown, transport: Transport): RawFrame | null {
   const record = transport === "text" ? parse(data) : data;
   if (!isRecord(record)) return null;
   const { kind, id, method, name, input, value, error } = record;
   switch (kind) {
     case "call":
-      return isCallId(id) && typeof method === "string" && input !== undefined ? { kind, id, method, input } : null;
+      return isCallId(id) && typeof method === "string" && input !== undefined ? { ...record, kind, id, method, input } : null;
     case "result":
-      return isCallId(id) && value !== undefined ? { kind, id, value } : null;
+      return isCallId(id) && value !== undefined ? { ...record, kind, id, value } : null;
     case "error":
-      return isCallId(id) && error !== undefined ? { kind, id, error } : null;
+      return isCallId(id) && error !== undefined ? { ...record, kind, id, error } : null;
     case "event":
-      return isEventName(name) && value !== undefined ? { kind, name, value } : null;
+      return isEventName(name) && value !== undefined ? { ...record, kind, name, value } : null;
     case "fault":
-      return error !== undefined ? { kind, error } : null;
+      return error !== undefined ? { ...record, kind, error } : null;
     default:
       return null;
   }
@@ -94,12 +99,15 @@ export function readPayload(raw: unknown, transport: Transport, options: Payload
     const descriptors = Object.getOwnPropertyDescriptors(raw);
     let translated = false;
     for (const member of options.bytesAt) {
-      const held: unknown = descriptors[member]?.get === undefined ? descriptors[member]?.value : undefined;
+      const descriptor = descriptors[member];
+      const held: unknown = descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
       if (transport === "text" && isByteWrapper(held)) {
         const length = base64Length(held.data);
-        if (length === null) return { ok: false, code: "InvalidArgument", message: `${member} is not padded base64` };
+        if (length === null) return { ok: false, code: "InvalidArgument", message: `${member} is not strict padded base64` };
         if (length > options.maxBytes) return { ok: false, code: "ResourceLimit", message: `${member} decodes to ${length} bytes, over ${options.maxBytes}` };
-        descriptors[member] = { value: fromBase64(held.data), enumerable: true, configurable: true, writable: true };
+        const bytes = fromBase64(held.data);
+        if (bytes === null) return { ok: false, code: "InvalidArgument", message: `${member} is not strict padded base64` };
+        descriptors[member] = { value: bytes, enumerable: true, configurable: true, writable: true };
         translated = true;
       } else if (held instanceof Uint8Array && held.byteLength > options.maxBytes) {
         return { ok: false, code: "ResourceLimit", message: `${member} carries ${held.byteLength} bytes, over ${options.maxBytes}` };
@@ -110,11 +118,12 @@ export function readPayload(raw: unknown, transport: Transport, options: Payload
   return readValue(payload, { bytesAt: options.bytesAt, budget: options.budget });
 }
 
-/** What a call's input may still charge once its envelope has: the bound is on the whole frame. */
-export function requestBudget(limits: Limits, id: CallId, method: string): Budget {
-  const envelope = readValue({ kind: "call", id, method, input: null });
-  if (!envelope.ok) throw new Error(envelope.message);
-  return { maxValueBytes: limits.maxValueBytes - (envelope.size - VALUE_CHARGE), maxDepth: limits.maxDepth - 1 };
+/** What a call's input may still charge once the rest of its frame has, unknown members included: the bound is on the whole frame. */
+export function requestBudget(limits: Limits, call: Extract<RawFrame, { kind: "call" }>): Reading<Budget> {
+  const envelope = readValue({ ...call, input: null }, { budget: limits });
+  if (!envelope.ok) return envelope;
+  const budget = { maxValueBytes: limits.maxValueBytes - (envelope.size - VALUE_CHARGE), maxDepth: limits.maxDepth - 1 };
+  return { ok: true, value: budget, size: envelope.size };
 }
 
 /**

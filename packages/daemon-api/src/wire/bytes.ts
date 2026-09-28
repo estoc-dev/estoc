@@ -9,26 +9,42 @@ export interface ByteWrapper {
   data: string;
 }
 
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 type Base64Statics = { fromBase64?: (text: string, options: { lastChunkHandling: "strict" }) => Uint8Array };
 type Base64Methods = { toBase64?: () => string };
 
-/** The decoded length of strict padded base64, or null when `text` is none: known before decoding, so that an oversized backup is refused unread. */
+/**
+ * The decoded length of strict padded base64, or null when `text` is
+ * none: known before decoding, so that an oversized backup is refused
+ * unread. Strict as the platform's own strict decoder is, the bits a
+ * padded last chunk leaves unused required to be zero, so that every
+ * platform accepts the same texts whether it has that decoder or not.
+ */
 export function base64Length(text: string): number | null {
   if (!BASE64.test(text)) return null;
   const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  if (padding > 0) {
+    const last = ALPHABET.indexOf(text[text.length - 1 - padding]!);
+    if ((last & (padding === 2 ? 0b1111 : 0b11)) !== 0) return null;
+  }
   return (text.length / 4) * 3 - padding;
 }
 
-/** `text`, already known to be strict base64, decoded. */
-export function fromBase64(text: string): Uint8Array {
-  const { fromBase64: native } = Uint8Array as unknown as Base64Statics;
-  if (native !== undefined) return native.call(Uint8Array, text, { lastChunkHandling: "strict" });
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+/** `text` decoded, or null when it is not strict padded base64 by the rule of `base64Length`, on every platform alike. */
+export function fromBase64(text: string): Uint8Array | null {
+  if (base64Length(text) === null) return null;
+  try {
+    const { fromBase64: native } = Uint8Array as unknown as Base64Statics;
+    if (native !== undefined) return native.call(Uint8Array, text, { lastChunkHandling: "strict" });
+    const binary = atob(text);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
 }
 
 const CHUNK = 0x8000;
