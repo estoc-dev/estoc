@@ -151,7 +151,7 @@ export const snapshot: Snapshot = {
   dids: [localDid],
   contacts: [contact],
   channels: [oldChannel, headChannel],
-  messages: [inbound, outbound, adrift],
+  messages: [adrift, inbound, outbound],
   observations: [observation, unadmitted],
   conversations: [conversation],
   invitations: [invitation],

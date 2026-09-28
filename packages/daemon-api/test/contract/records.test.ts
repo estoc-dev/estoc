@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { schemas, type JsonObject } from "../../src/contract/index.js";
-import { HEAD_CHANNEL, LOCAL, PEER_HEAD, conversation, headChannel, inbound, linesState, outbound, snapshot, withPath } from "./fixtures.js";
+import { HEAD_CHANNEL, LOCAL, PEER_HEAD, contact, conversation, headChannel, inbound, linesState, outbound, snapshot, withPath } from "./fixtures.js";
 
-const { snapshot: snapshotSchema, messageRecord, channelRecord, channelId, linesState: linesStateSchema, jsonValue, deliveryOutcome, conversationRecord } = schemas;
+const { snapshot: snapshotSchema, messageRecord, channelRecord, channelId, linesState: linesStateSchema, jsonValue, deliveryOutcome, conversationRecord, contactRecord, frame } = schemas;
 
 describe("the snapshot schema", () => {
   it("accepts a complete snapshot and returns it unchanged", () => {
@@ -11,8 +11,8 @@ describe("the snapshot schema", () => {
   });
 
   it("ignores a member it does not know on a record", () => {
-    const parsed = snapshotSchema.parse(withPath(snapshot, ["messages", 0, "laterAddition"], "ignored"));
-    expect(parsed.messages[0]).toEqual(inbound);
+    const parsed = snapshotSchema.parse(withPath(snapshot, ["messages", 1, "laterAddition"], "ignored"));
+    expect(parsed.messages[1]).toEqual(inbound);
   });
 
   it("keeps every key of a message body, including ones an unknown member would drop", () => {
@@ -28,6 +28,16 @@ describe("the snapshot schema", () => {
     expect(Object.hasOwn(kept, "__proto__")).toBe(true);
     expect(Object.hasOwn(kept.nested as object, "__proto__")).toBe(true);
     expect(Object.getPrototypeOf(kept)).toBe(Object.prototype);
+  });
+
+  it("keeps a contact flag named __proto__ through a frame and the record, and holds every flag to a boolean", () => {
+    const flags = JSON.parse('{"__proto__":true,"constructor":false,"muted":true}') as Record<string, boolean>;
+    const carried = frame.parse({ kind: "result", id: 1, value: { ...contact, flags } });
+    const parsed = contactRecord.parse(carried.kind === "result" ? carried.value : null);
+    expect(parsed.flags).toEqual(flags);
+    expect(Object.hasOwn(parsed.flags, "__proto__")).toBe(true);
+    expect(contactRecord.safeParse({ ...contact, flags: JSON.parse('{"__proto__":"yes"}') }).success).toBe(false);
+    expect(contactRecord.safeParse({ ...contact, flags: { muted: 1 } }).success).toBe(false);
   });
 
   it("rejects a snapshot missing a required list", () => {

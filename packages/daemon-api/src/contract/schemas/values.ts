@@ -15,8 +15,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return prototype === Object.prototype || prototype === null;
 };
 
-/** Every own key kept, `__proto__` among them: a record here is data, and the library's record parser drops that key. */
-const record = <Value>(value: z.ZodType<Value>): z.ZodType<{ [key: string]: Value }> =>
+/** A dictionary keyed by data: every own key kept, `__proto__` among them, which the library's own record parser drops. */
+export const record = <Value>(value: z.ZodType<Value>): z.ZodType<{ [key: string]: Value }> =>
   z.custom<Record<string, unknown>>(isRecord, { message: "expected a record" }).transform((input, ctx) => {
     const entries: [string, Value][] = [];
     for (const key of Object.keys(input)) {

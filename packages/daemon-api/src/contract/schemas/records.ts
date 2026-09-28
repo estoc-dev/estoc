@@ -33,7 +33,7 @@ import type {
   UnplacedRecord,
   VerificationStatus,
 } from "../records.js";
-import { channelId, contactId, conversationId, didId, displayTime, eventCid, executionId, finite, jsonObject, mediationId, messageId } from "./values.js";
+import { channelId, contactId, conversationId, didId, displayTime, eventCid, executionId, finite, jsonObject, mediationId, messageId, record } from "./values.js";
 
 const because = z.object({ because: z.string() });
 const strings = z.array(z.string());
@@ -60,7 +60,7 @@ export const localDidRecord: z.ZodType<LocalDidRecord> = z.object({
 export const contactRecord: z.ZodType<ContactRecord> = z.object({
   contactId,
   origin: z.enum(["user", "automatic"]).nullable(),
-  flags: z.record(z.string(), z.boolean()),
+  flags: record(z.boolean()),
   preference: z.object({ didId, channelIds: z.array(channelId) }).nullable(),
 });
 
