@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
+import { forgetDevice } from "../core/seen.js";
 import { forgetIdentity, unlock } from "../core/store.js";
 
+/** The vault is here with its seed sealed: the passphrase opens it, and nothing else does. */
 const passphrase = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
 
 async function submit() {
-  if (passphrase.value === "" || busy.value) {
-    return;
-  }
+  if (passphrase.value === "" || busy.value) return;
   busy.value = true;
   error.value = null;
   try {
@@ -23,39 +23,27 @@ async function submit() {
 }
 
 function forget() {
-  if (
-    confirm(
-      "Delete this identity from this browser? Its keys and messages here are gone for good — only a backup could bring them back."
-    )
-  ) {
+  if (confirm("Delete this identity from this device? Its keys and messages here are gone for good. Only a backup brings them back.")) {
+    forgetDevice();
     void forgetIdentity();
   }
 }
 </script>
 
 <template>
-  <div class="hollow" style="height: 100%">
+  <div class="hollow" data-locked>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Locked</h1>
-      <p>Your vault is here; its seed is sealed. The passphrase opens it.</p>
-      <form @submit.prevent="submit">
-        <input
-          v-model="passphrase"
-          class="field"
-          type="password"
-          placeholder="passphrase"
-          autocomplete="current-password"
-          autofocus
-        />
-        <p v-if="error" class="status-line error">{{ error }}</p>
-        <button class="btn" type="submit" :disabled="busy || passphrase === ''">
-          {{ busy ? "Opening…" : "Unlock" }}
-        </button>
+      <p>The passphrase opens your vault.</p>
+      <form class="form" @submit.prevent="submit">
+        <input v-model="passphrase" class="field" type="password" placeholder="Passphrase" autocomplete="current-password" autofocus data-passphrase />
+        <p v-if="error" class="error-text">{{ error }}</p>
+        <button class="btn" type="submit" :disabled="busy || passphrase === ''" data-unlock>{{ busy ? "Opening…" : "Unlock" }}</button>
       </form>
-      <p class="fine">
-        Forgot it? There is no reset — the passphrase is the only thing that opens
-        the seed. You can <button class="link" @click="forget">start over</button>
+      <p class="note">
+        Forgot it? There is no reset. You can
+        <button class="link" type="button" data-start-over @click="forget">start over</button>
         with a new identity.
       </p>
     </div>

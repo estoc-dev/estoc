@@ -1222,6 +1222,11 @@ a.row:hover {
   color: var(--steel);
 }
 
+.hollow-card code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
 .tabs {
   display: flex;
   gap: 4px;
