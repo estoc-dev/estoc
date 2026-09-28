@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
+import Attention from "./Attention.vue";
 import Chat from "./Chat.vue";
 import ConversationList from "./ConversationList.vue";
 import Details from "./Details.vue";
@@ -35,6 +36,7 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
         <Details v-else-if="kind === 'details' && key !== null" :key="key" :conversation-key="key" />
         <UnderTheHood v-else-if="kind === 'hood' && key !== null" :key="key" :conversation-key="key" />
         <You v-else-if="kind === 'you'" />
+        <Attention v-else-if="kind === 'attention'" />
         <ConversationList v-else />
       </div>
     </template>
@@ -43,6 +45,7 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
       <div class="pane pane-list"><ConversationList /></div>
       <div class="pane pane-main">
         <You v-if="kind === 'you'" />
+        <Attention v-else-if="kind === 'attention'" />
         <Chat v-else-if="chatKey !== null" :key="chatKey" :conversation-key="chatKey" />
         <div v-else class="screen">
           <div class="empty" style="margin: auto">
