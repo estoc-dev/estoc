@@ -11,6 +11,13 @@ The capitalized requirement words have their BCP 14 meanings. The TypeScript
 shapes describe public data, not imports from the current implementation.
 Normative rules apply equally to an embedded daemon and an attached one.
 
+This is a temporary design and implementation handoff, not a second source
+of truth to maintain beside the code. The lasting contract belongs in public
+types, executable schemas, explicit program structure and focused behavioural
+tests. Comments retain only reasons and constraints those cannot express,
+without depending on this document's names or section numbers. Once the
+contract is implemented and verified there, this draft is removed.
+
 ## 1. Responsibilities and trust
 
 A daemon owns one vault, its unlocked keys, domain procedures and read
@@ -24,6 +31,11 @@ These decisions are rechecked when an operation executes. A view decides
 layout, navigation, grouping by date, localization, drafts and scroll position.
 The same vault state can support different screens without changing facts or
 granting different authority.
+
+For a new projection, disagreement about a fact or permitted action belongs
+in the daemon: two views must not produce conflicting answers from the same
+evidence and policy. Choices that only change how those facts are presented
+belong in the view.
 
 Normal API records and replies MUST NOT contain plaintext seeds, private
 keys, keystore handles or runtime objects. Portable backups are an explicit
@@ -51,6 +63,10 @@ points in one package:
 | `/client` | The typed proxy, negotiation, attachment, pending calls and local connection state |
 | `/wire` | Framing, validation, encoding, port adapters and the server dispatcher over an explicit public handler table |
 | `/views` | Pure record lookup, navigation helpers and invitation/message helpers usable without a daemon runtime |
+
+`/wire` is shared by the client and daemon; the daemon does not import a
+client session to serve requests. These are entry points of one package,
+not separate packages with separate release cycles.
 
 The following arrows mean source dependencies, not network calls:
 
@@ -121,12 +137,10 @@ type Hold = string;
 type Epoch = string;
 type Revision = number;
 
-type NonOpenPhase =
-  | "booting" | "elsewhere" | "onboarding" | "foreign"
-  | "unreadable" | "damaged" | "locked";
-
 type StateValue =
-  | { phase: NonOpenPhase; hold: Hold | null; detail: string | null }
+  | { phase: "booting" | "unreadable"; hold: Hold | null; detail: string | null }
+  | { phase: "elsewhere" | "onboarding" | "foreign"; hold: null; detail: string | null }
+  | { phase: "damaged" | "locked"; hold: Hold; detail: string | null }
   | { phase: "open"; hold: Hold; snapshot: Snapshot };
 
 interface State {
@@ -157,6 +171,13 @@ unlock reply or optimistically patch a snapshot after a command.
 `damaged` must explain that only history in a usable backup returns, and
 that the seed alone cannot recover missing history. No phase promises a
 backup can be exported from an unreadable or damaged runtime.
+
+`booting` covers both acquisition and opening checks. Its hold is null until
+a particular vault file is held, and non-null if opening that held file is
+still in progress. `elsewhere`, `onboarding` and `foreign` always have null
+holds; `damaged`, `locked` and `open` always name a held file. `unreadable`
+names a hold only when the failed open still leaves that file in this
+daemon's ownership. Holding the location alone does not create a file hold.
 
 `hold` names the particular vault file held by this daemon. It is stable
 through lock/unlock and other phases while that file remains held, and is
@@ -192,7 +213,12 @@ type Welcome = {
   wire: 1;
   api: number;
   implementation: string;
-  limits: { maxFrameBytes: number; maxBackupBytes: number };
+  limits: {
+    maxFrameBytes: number | null;
+    maxBackupBytes: number;
+    maxValueBytes: number;
+    maxDepth: number;
+  };
 };
 type Incompatible = {
   kind: "incompatible";
@@ -251,46 +277,47 @@ The publisher MUST satisfy all of these invariants:
    revisions of that epoch, or a new epoch's complete state. Intermediate
    revisions may be coalesced. Old-epoch state never follows a new epoch.
 
-A sufficient implementation serializes snapshot capture and publication.
-It reads under the vault's operation lock, capturing all inputs needed for
-the DTOs before releasing that protection. An implementation may instead
-build from an immutable, pinned read cut with equivalent guarantees. Reading
-events at one cut and bodies or erasure state at another is not equivalent.
-No network wait occurs while holding the vault's operation lock.
-
-Lifecycle transitions and publisher work also coordinate ownership: a
-runtime cannot close while a protected capture still reads it. Before
-publishing, the builder rechecks its epoch and hold. Assigning a larger
-revision to a stale result does not make that result current.
-
-The publisher retains its current immutable state. Attachment copies that
-published baseline in the same ordering mechanism used to register future
-updates. It does not start a second read and then flush an arbitrary queue
-of whole snapshots behind it.
+These invariants can be implemented by serializing capture and publication
+or by using an immutable pinned read cut. Neither strategy is required.
+Attachment and lifecycle transitions obey the same ordering: mixing events,
+content or erasure state from different cuts is not a coherent snapshot,
+and assigning a larger revision to a stale result cannot make it current.
 
 ### 5.2 Automatic updates and coalescing
 
 Every committed change that can affect public records MUST invalidate the
 projection and schedule publication. This includes user commands, inbound
 receipt/admission, dispatch completion, background recovery, import, content
-repair/erasure and relevant local options. Notification belongs at the write
-boundary; watching only completed view calls or inbound delivery callbacks
-is insufficient. Failed calls that committed something also invalidate it.
+repair/erasure and relevant local options. Failed calls that committed
+something also invalidate it.
 
 The daemon MAY combine several commits into one complete snapshot. It MUST
-make progress while changes continue: a completed current-epoch capture may
-be published even if another capture is already needed. Changes during a
-build schedule a subsequent build; they cannot clear its dirty notification.
-Once writes quiesce, a healthy connected view eventually receives a state
-covering all of them without a call to `refresh()` or a visibility event.
+make publication progress while changes continue, and changes during a
+capture cannot be lost. Once writes quiesce, a healthy connected view
+eventually receives a state covering all of them without a call to
+`refresh()` or a visibility event.
 
 Command replies report the procedure's result, independently of when a view
 renders the corresponding state. Views MUST NOT infer rollback from an
-error or assume a reply is the next snapshot. `refresh()` requests a fresh
-publication and returns its `{ epoch, revision }` after that state is queued
-to the calling port. A later already-queued state may subsume it. If the epoch
-changes before this barrier completes, the call fails with `StateChanged`;
-the new epoch's state arrives through the normal stream.
+error or assume a reply is the next snapshot.
+
+The `refresh` RPC requests a capture no earlier than the request's execution
+and returns its `{ epoch, revision }`. The daemon queues that complete state,
+or a newer state of the same epoch, before queuing the reply. Coalescing may
+replace the state only with a greater revision of the same epoch, still
+ahead of that reply. If the epoch changes before this publication and reply
+are queued, the RPC fails with `StateChanged`.
+
+The SDK's `refresh(): Promise<void>` resolves only after receiving a matching
+RPC result and consuming a state of that epoch whose revision is **greater
+than or equal to** the returned revision. It includes states already
+received when the reply arrives; it never waits for an exact revision or
+requires a new event after the reply. For example, revision 8 satisfies a
+target of 7 even if 7 was coalesced away. If the SDK moves to another epoch
+before satisfying the barrier, it rejects with `StateChanged`; a closed
+connection rejects under the disconnection rules. Views use this operation
+without implementing their own revision wait. Success does not freeze the
+state against later changes.
 
 ### 5.3 Runtime lines and logs
 
@@ -326,15 +353,15 @@ Lines have their own revision counter, starting at 1 in every state epoch.
 They belong to the current state epoch and their three lists are empty in
 non-open phases. An epoch transition initializes its lines before a port can
 attach, queues the new state before that epoch's lines, clears the prior
-lines, and invalidates old
-agent callbacks. An attached view MUST NOT apply lines from another epoch.
+lines, and invalidates old agent callbacks. An attached view MUST NOT apply
+lines from another epoch.
 Changes in runtime lines publish automatically without rebuilding the vault
 snapshot. Updating state and lines is not a cross-stream atomic observation.
 
 `log(LogLine)` appends a display line with its epoch. It has no authority,
-is not an audit log and has no replay guarantee. A session's logs cannot precede its
-initial baseline or arrive from a retired epoch. Views own bounded log
-buffers; no application decision depends on receiving every line.
+is not an audit log and has no replay guarantee. A session's logs cannot
+precede its initial baseline or arrive from a retired epoch. Views own
+bounded log buffers; no application decision depends on receiving every line.
 
 Each port has bounded output buffering. A slow view cannot delay the agent,
 the writer lock or other views. The daemon may replace an unsent state or
@@ -353,6 +380,9 @@ The snapshot is normalized within one complete value. Normalization does not
 introduce diffs, subscriptions to individual records or cross-snapshot caches.
 
 ```ts
+type ChannelId = string;
+type DisplayTime = string;
+
 interface Snapshot {
   anchor: string;
   label: string;
@@ -366,10 +396,12 @@ interface Snapshot {
   conversations: ConversationRecord[];
   invitations: InvitationRecord[];
   pending: PendingWork;
-  unplaced: {
-    observationIds: string[];
-    outputs: { messageId: string; candidateChannelIds: string[] }[];
-  };
+  unplaced: UnplacedRecord;
+}
+
+interface UnplacedRecord {
+  observationIds: string[];
+  outputs: { messageId: string; candidateChannelIds: ChannelId[] }[];
 }
 
 interface ConversationRecord {
@@ -377,9 +409,9 @@ interface ConversationRecord {
   contactId: string | null;
   petname: string | null;
   claimedName: { name: string; messageId: string } | null;
-  channels: { channelId: string; selected: boolean }[];
-  writeTo: string[];
-  defaultWriteTo: string | null;
+  channels: { channelId: ChannelId; selected: boolean }[];
+  writeTo: ChannelId[];
+  defaultWriteTo: ChannelId | null;
   messageIds: string[];
   unadmittedObservationIds: string[];
   diagnostics: string[];
@@ -394,11 +426,12 @@ fixes the public information to preserve and the normalization to apply:
 | `MediationRecord` | `mediationId`, mediator DID, selection, usability, retirement and diagnostics |
 | `LocalDidRecord` | `didId`, canonical DID, liveness, retirement, disclosure and diagnostics |
 | `ContactRecord` | `contactId`, origin, petname, flags, shown channel references with `selected`, eligible `writeTo`, `defaultWriteTo`, saved DID preference and diagnostics |
-| `ChannelRecord` | `id`, canonical local/peer pair, head reference, superseded/blocked/conflicted state, send gate, sourced peer name claim, submitted-profile ID, message and observation reference lists |
-| `MessageRecord` | `messageId`, direction, nullable channel reference, exact selecting contact IDs, display time `at`, agreed headers, body availability/content/attachments, protocol kind, effect type, execution/delivery status, ACK/late/verification state, available manual steps, diagnostics and summary |
-| `ObservationRecord` | `sourceEventCid`, logical `messageId`, nullable channel reference, `at`, authentication/verification state, admission disposition and contradiction indicator; no message body |
+| `ChannelRecord` | `channelId`, canonical `localDid` and `peerDid`, nullable `headChannelId`, superseded/blocked/conflicted state, send gate, sourced peer name claim, submitted-profile ID, message and observation reference lists |
+| `MessageRecord` | `messageId`, direction, nullable `channelId`, exact selecting contact IDs, display time `at: DisplayTime`, agreed headers, body availability/content/attachments, protocol kind, effect type, execution/delivery status, ACK/late/verification state, available manual steps, diagnostics and summary |
+| `ObservationRecord` | `sourceEventCid`, logical `messageId`, nullable `channelId`, `at: DisplayTime`, authentication/verification state, admission disposition and contradiction indicator; no message body |
 | `InvitationRecord` | Disclosure CID, OOB ID, local DID entity/string, use policy, availability and consumer |
 | `PendingWork` | Pending outbounds, missing responses/notifications, notification conflicts and waiting proofs, retaining the IDs and explicit manual entries needed to act on each |
+| `UnplacedRecord` | Unplaced observation references and output message references with their candidate channel IDs |
 
 Contact and channel DTOs contain references rather than embedded message,
 observation or channel records. `messages` has one record per `messageId`,
@@ -407,9 +440,12 @@ pair. Messages include admitted inputs and placed or unplaced outputs;
 an unadmitted observation MUST NOT cause a placeholder accepted message.
 Bodies and attachments appear only in their owning message record.
 
-Channel `id` is the canonical JSON text of `[localDid, peerDid]` under the
+`ChannelId` is the canonical JSON text of `[localDid, peerDid]` under the
 [channel identity rule](replica-model/channels.md#channel-identity).
-Views treat it as opaque. The channel table includes every pair referenced
+The daemon constructs it; views treat it as opaque. All channel references,
+command targets and command results use this ID, not a pair object. The DID
+fields on `ChannelRecord` describe its endpoints and are not an alternative
+target encoding. The channel table includes every pair referenced
 by contact membership, message/observation placement, heads, send choices
 and unplaced-output candidates, even when a pair has no messages.
 
@@ -420,9 +456,19 @@ channel `messageIds` resolve in `messages`, observation lists in
 domain entity and need not have an accepted MessageRecord. Normalization
 MUST NOT manufacture facts just to fill such references.
 
+`DisplayTime` is a string naming a valid Gregorian UTC instant in exactly
+`YYYY-MM-DDTHH:mm:ss.sssZ`, with seconds from 00 to 59 and three fractional
+digits. The schema validates the date as well as the spelling. An observation
+uses its source event's `at`; an inbound message uses the admitted source
+observation chosen by the domain display projection; an outbound uses the
+earliest `at` among its intents. These values preserve the source event
+format, not a peer's header time or a view's localized time. Views localize
+only for presentation and never feed the localized value back into ordering.
+
 The arrays of records sort by their primary IDs using literal string
 comparison. Message reference lists sort by ascending `(at, messageId)`;
 observation reference lists sort by ascending `(at, sourceEventCid)`.
+The fixed UTC format makes the time component's lexical order chronological.
 These are deterministic presentation orders, not arrival order, causality
 or authority. Equal timestamps do not leave iteration order as a tie-break.
 
@@ -440,8 +486,8 @@ over the captured read model. It follows
    results. A display-only contact-merge hint does not merge these records.
 2. Mark every channel **shown** by any contact conversation as assigned,
    including channels with `selected: false`. Group remaining channels by
-   `head ?? id`. Each group has a conversation whose ID is `channel:` followed
-   by that key, with null contact and petname.
+   `headChannelId ?? channelId`. Each group has a conversation whose ID is
+   `channel:` followed by that key, with null contact and petname.
 3. A nameless group writes only to its head when that head is a member of
    the group and its send gate is open. Otherwise its `writeTo` is empty and
    `defaultWriteTo` is null. It never falls back to a superseded predecessor.
@@ -459,8 +505,9 @@ A channel's peer name is a claim derived under the supported profile
 protocol from effectively admitted, consistent source evidence. It retains
 the claiming message ID. For a conversation, take these non-null channel
 claims and select the largest `(claiming MessageRecord.at, messageId)` by
-literal string comparison. A candidate must resolve to an available claiming
-message in its source channel. No candidates means null. Erased or missing
+literal string comparison of the canonical UTC time, then message ID. A
+candidate must resolve to an available claiming message in its source
+channel. No candidates means null. Erased or missing
 content supplies no name. With two claims at the same time, the greater
 message ID wins; IDs otherwise express no chronology. A claim never renames
 a contact or establishes a relationship.
@@ -503,7 +550,7 @@ receives `{}` on the wire. The initial inventory preserves these capabilities:
 
 | Methods | Input and result responsibility |
 | --- | --- |
-| `attach`, `refresh` | Establish a baseline/subscription; request a publication barrier |
+| `attach`, `refresh` | Establish a baseline/subscription; synchronize the SDK's state through a publication barrier |
 | `createIdentity` | Name and passphrase; create only in `onboarding` |
 | `restoreIdentity` | Complete backup bytes and its passphrase; restore only into an unused destination |
 | `unlock`, `lock` | Unlock with a passphrase; lock by stopping identity use and forgetting cached unlocked key material |
@@ -511,18 +558,46 @@ receives `{}` on the wire. The initial inventory preserves these capabilities:
 | `exportBackup`, `mergeBackup` | Deliver a complete validated portable file; import a same-anchor file and return added/duplicate/object/repair counts plus whether the local author was renewed |
 | `explainedRestore` | Record that the person has received the required recovery explanation |
 | `setMediator`, `createInvitation`, `acceptInvitation` | Configure mediation; create an OOB invitation under its use policy; accept one with a petname and return contact/message/channel identity plus the send result |
-| `createContact`, `renameContact`, `setContactChannels` | Create or update explicit contact naming and selected canonical pairs |
-| `deleteContact`, `blockChannels`, `eraseMessage` | Apply the requested deletion, denial/successor policy or erasure without deriving broader targets from display grouping |
-| `send`, `retry`, `cancel` | Submit a new intent to a concrete pair or contact selection; act on an existing message ID without retargeting it |
-| `completeResponse`, `completeNotification`, `rotate` | Name the execution/effect, rotation decision or local DID/peer context; return the procedure's result |
-| `pending`, `reconnect`, `traceLevel`, `setTraceLevel` | Inspect current pending work; reconnect mediator transports; read or set trace policy |
+| `resolveChannel` | Validate/canonicalize explicit local/peer DIDs and return their `channelId` without creating history or granting send eligibility |
+| `createContact`, `renameContact`, `setContactChannels` | Create or update explicit contact naming; channel selections are `channelIds: ChannelId[]` |
+| `deleteContact`, `blockChannels`, `eraseMessage` | Apply deletion, denial/successor policy or erasure; `blockChannels` takes `channelIds: ChannelId[]`, without deriving broader targets from display grouping |
+| `send`, `retry`, `cancel` | Submit a new intent to `{ channelId }` or `{ contactId }`; act on an existing message ID without retargeting it |
+| `completeResponse`, `completeNotification`, `rotate` | Name the execution/effect or rotation decision; `rotate` selects its predecessor by `channelId`; return the procedure's result |
+| `reconnect`, `traceLevel`, `setTraceLevel` | Reconnect mediator transports; read or set trace policy |
 
 `reconnect` concerns the daemon's mediator connections, not the client's port.
-`pending` is a read of the same domain projection used in `Snapshot.pending`;
-its result does not patch a view's snapshot. Trace levels are `off`, `normal`
-and `verbose`. The initial API schemas must explicitly describe every method's
-fields, nullability, result and known error codes before version 1 is released;
-the inventory is not permission to forward arbitrary backend arguments.
+Pending work is read from `Snapshot.pending`; a client needing a fresh cut
+awaits `refresh()`. There is no separate `pending()` RPC. All clients,
+including bots, attach before using operations. Trace levels are `off`,
+`normal` and `verbose`. The initial API schemas must explicitly describe
+every method's fields, nullability, result and known error codes before
+version 1 is released; the inventory is not permission to forward arbitrary
+backend arguments.
+
+Channel inputs and results include these shapes:
+
+```ts
+type SendTarget = { channelId: ChannelId } | { contactId: string };
+interface SendInput { target: SendTarget; content: Content }
+interface ResolveChannelInput { localDid: string; peerDid: string }
+interface ResolvedChannel { channelId: ChannelId }
+interface CreateContactInput { petname: string; channelIds: ChannelId[] }
+interface SetContactChannelsInput { contactId: string; channelIds: ChannelId[] }
+interface BlockChannelsInput { channelIds: ChannelId[]; includeSuccessors: boolean }
+interface RotateInput { channelId: ChannelId }
+```
+
+`resolveChannel` provides an ID for an explicitly supplied pair even if no
+record of it has appeared in a snapshot. It only validates and canonicalizes
+the supplied DID spellings under the domain rules; it does not fetch a
+document, mint a DID, create a contact or authorize an operation. Returning
+an ID does not insert a record into the snapshot. Commands decode IDs and
+recheck their own domain requirements; prior snapshot membership is not an
+additional requirement. `rotate` resolves the pair's local DID entity in the
+current vault and refuses an absent or ambiguous eligible entity. Procedures
+that create a relationship, including invitation acceptance, return its
+`channelId` directly. Views never parse or construct channel IDs to bridge
+one operation to another.
 
 Requests operate on this daemon's vault. Views invalidate outstanding UI
 actions when its hold changes, and destructive confirmations carry the hold
@@ -550,13 +625,13 @@ the daemon revalidates every action against current evidence and policy.
 interface Outcome {
   outcome:
     | "submitted" | "pending" | "failed" | "uncertain" | "expired"
-    | "spent" | "threw" | "none" | "refused" | "existing" | "cancelled";
+    | "spent" | "none" | "refused" | "existing" | "cancelled";
   because: string | null;
 }
 
 interface SendResult extends Outcome {
   messageId: string;
-  channel: { localDid: string; peerDid: string };
+  channelId: ChannelId;
 }
 ```
 
@@ -566,8 +641,7 @@ application ACK. `pending` is deferred work; `none`, `refused`, `spent` and
 `existing` retain their procedure-specific no-new-action meanings.
 `failed` is a non-acceptance transport answer; `uncertain` is a transport
 attempt whose arrival is unknown. `expired` and `cancelled` describe the
-recorded termination. `threw` reports a procedure attempt that raised an
-exception after the message was identified; it does not assert rollback.
+recorded termination. Unexpected exceptions are not procedure outcomes.
 `because` is explanatory text. Clients branch on the outcome tag, not that text.
 
 A normal result is distinct from an RPC failure. A view must surface the
@@ -583,6 +657,7 @@ interface ApiError {
   code: string;
   message: string;
   effect: "none" | "possible";
+  messageId: string | null;
 }
 ```
 
@@ -593,6 +668,21 @@ side effect; otherwise it reports `possible`. An exception after an earlier
 commit is not a refusal with no effect. Error details contain no secret or
 raw thrown object. Internal stacks stay on the host.
 
+Unexpected execution failures use `OperationFailed` for every method,
+including `send`, `acceptInvitation`, `rotate`, `retry` and completions.
+There is no public `threw` outcome. An adapter translates an internal caught
+exception result into this error rather than forwarding its internal tag.
+Known refusals retain their specific codes; ordinary transport outcomes
+such as `failed` and `uncertain` remain procedure data.
+
+`messageId` is non-null only when the daemon can identify one relevant,
+already recorded message in the operation's vault; a generated but uncommitted
+ID or an unchecked input ID is insufficient. It is diagnostic context, not
+proof of dispatch, a deduplication key or permission to retry. Its presence
+does not change error classification or imply `effect: "none"`. Operations
+with no such single known message return null. This rule applies regardless
+of whether the successful method result would have contained a message ID.
+
 The baseline codes are:
 
 | Code | Meaning |
@@ -602,7 +692,7 @@ The baseline codes are:
 | `WrongPhase`, `StaleHold`, `RestoreUnexplained` | A lifecycle or recovery guard refused the requested operation |
 | `NoTarget`, `SendClosed` | Current contact selection or channel policy supplies no permitted target |
 | `StateChanged` | A refresh barrier lost its epoch |
-| `ResourceLimit` | The operation exceeds the advertised size bounds |
+| `ResourceLimit` | The operation exceeds the advertised resource bounds |
 | `OperationFailed` | An operation failed outside a normal procedure outcome; inspect `effect` |
 | `StateUnavailable` | A complete state cannot be published; terminal session fault |
 
@@ -636,7 +726,7 @@ lookup/deduplication requires a separate future design and is not promised here.
 
 ### 8.1 A transport-independent data domain
 
-Wire values are finite, acyclic JSON data trees: null, booleans, strings,
+Ordinary values are finite, acyclic JSON data trees: null, booleans, strings,
 finite numbers, dense arrays and own string-keyed plain records. Negative
 zero is normalized to zero on both transports. Object identity, property
 insertion order and shared references carry no meaning. An optional member
@@ -652,38 +742,47 @@ turn `NaN` into null. The daemon also validates received frames and inputs.
 Unknown optional record fields are ignored within a compatible API version.
 Validation never changes message-body JSON keys or interprets them as tags.
 
-Backup byte parameters/results are explicit schema locations. On the wire
-they contain `{ encoding: "base64", data: string }`, using standard padded
-base64. The SDK presents those particular locations as `Uint8Array` and the
-adapter translates them in both directions. The same shape inside arbitrary
-message JSON is ordinary user content. There is no recursive `$bytes`/`$map`
-tag recognizer and no escaping of user keys beginning with `$`.
+Backup byte parameters/results are the only additional value kind, permitted
+only at explicit schema locations. The SDK presents them as `Uint8Array`.
+A structured-clone port carries that byte array directly; a text port encodes
+it as `{ encoding: "base64", data: string }` using standard padded base64.
+Only the selected array view's bytes are payload; unrelated backing-buffer
+bytes must not be exposed or carried around the limits.
 
-Both transports use these wire records: a structured-clone port clones them,
-and a text port encodes one record as one JSON text. Embedded transport does
-not widen the contract to all values structured clone happens to support.
-The full-frame representation includes backup base64 even on an embedded
-port; a binary or streaming extension needs an explicit future contract.
+The adapter translates these locations according to the negotiated method
+or event schema. The same object shape inside arbitrary message JSON is
+ordinary user content. There is no recursive `$bytes`/`$map` tag recognizer
+and no escaping of user keys beginning with `$`. Byte arrays elsewhere,
+including inside arbitrary message JSON, are invalid on both paths.
+
+The transports share the same logical data domain and preserve bytes exactly.
+They need not use the same physical representation or have the same encoded
+size. A structured-clone adapter validates values without
+JSON serialization or base64 conversion. A text port carries one frame as
+one JSON text. Embedded transport does not widen the contract to other
+values structured clone happens to support. Streaming is a future extension.
 
 ### 8.2 Application frames
 
-After bootstrap, API version 1 uses these envelopes. `JsonValue` and
-`JsonObject` denote the validated domain above; the method/event schema
-determines their actual fields.
+After bootstrap, API version 1 uses these logical envelopes. `ApiValue` and
+`ApiObject` denote the validated data domain, including bytes only at the
+schema locations above; the method/event schema determines their actual
+fields. Text encoding replaces those bytes before JSON serialization.
 
 ```ts
 type Frame =
-  | { kind: "call"; id: number; method: string; input: JsonObject }
-  | { kind: "result"; id: number; value: JsonValue }
+  | { kind: "call"; id: number; method: string; input: ApiObject }
+  | { kind: "result"; id: number; value: ApiValue }
   | { kind: "error"; id: number; error: ApiError }
-  | { kind: "event"; name: "state" | "lines" | "log"; value: JsonValue }
+  | { kind: "event"; name: "state" | "lines" | "log"; value: ApiValue }
   | { kind: "fault"; error: ApiError };
 ```
 
 Call IDs are positive safe integers, unique for the lifetime of one port.
 Each valid dispatched call produces one result or error with that ID while
 the port remains writable; delivery is not guaranteed after a connection
-failure. A void method returns `value: null`. Events have no replies. A fault
+failure. A void wire result is `value: null`; the SDK's void-returning
+`refresh()` instead consumes the RPC's revision marker. Events have no replies. A fault
 is terminal and the daemon closes that port; unresolved calls remain uncertain.
 
 Malformed encoding or frame structure closes the port and becomes a local
@@ -699,19 +798,41 @@ misrepresented as a daemon's `Outcome` or remote `ApiError` reply.
 
 ### 8.3 Bounds and backup delivery
 
-The welcome message advertises positive safe-integer `maxFrameBytes` and
-`maxBackupBytes`. Frame size is the UTF-8 byte length of the JSON encoding,
-including for structured-clone ports; backup size is the decoded byte count.
-Both endpoints reject excess input before invoking a method. Encoders,
-decoders and backup construction enforce bounds before unbounded allocation;
-base64 expansion and envelope overhead count against the frame bound.
+The welcome message advertises these bounds on application frames:
 
-Limits must allow the advertised maximum backup plus its encoding and
-envelope overhead. An export exceeding a bound returns `ResourceLimit` and
-does not deliver a partial backup. Bounds also apply to inbound restore and
-merge before the destination is changed. A backup is reported delivered to
-the view only when its entire validated reply arrives. Saving it durably to
-a user-selected destination is a separate responsibility of that view.
+| Limit | Meaning |
+| --- | --- |
+| `maxFrameBytes` | Positive safe integer for a text port: the UTF-8 byte length of its encoded JSON frame; null for a structured-clone port |
+| `maxBackupBytes` | Positive safe integer on both transports: the backup's decoded byte count |
+| `maxValueBytes` | Positive safe integer on both transports: the logical size of a complete decoded frame, under the accounting below |
+| `maxDepth` | Positive safe integer on both transports: maximum nesting, with the frame root at depth 1 |
+
+Logical size charges 8 bytes for each value (including each array or record),
+plus the UTF-8 length of string values, plus 8 bytes and the UTF-8 length of
+each record key, plus the `byteLength` of a byte value. Children are charged
+recursively, and shared references are counted at each occurrence. A byte
+array is one value, not an array of numeric children. This is a deterministic
+resource budget, not a claim about a JavaScript engine's exact heap usage.
+It bounds metadata, collection size and binary payload on either transport
+without requiring a JSON representation of an embedded frame. Depth also
+bounds a deeply nested value whose byte charge is small.
+
+Both endpoints enforce the advertised bounds on received and sent frames;
+excess input is rejected before invoking a method.
+Validation, encoding and backup construction stop at the limits rather than
+first materializing an unbounded result. On text ports, base64 expansion and
+envelope overhead also count against `maxFrameBytes`; logical accounting uses
+the decoded bytes instead of the base64 wrapper. Embedded snapshots remain
+bounded by `maxValueBytes` and `maxDepth`, and all ports retain bounded output
+queues. Representation differences do not relax the accepted value domain.
+
+Limits must accommodate `maxBackupBytes` plus the required reply metadata
+under the logical bound and, for a text port, its encoded frame bound. An
+backup operation whose actual metadata or payload exceeds a bound returns
+`ResourceLimit`; it never delivers a partial backup. Bounds apply to inbound
+restore and merge before the destination is changed. A backup is delivered
+to a view only when its entire validated reply arrives. Saving it durably
+to a user-selected destination is a separate responsibility of that view.
 
 The existing [bounded export requirement](replica-model/vault-sqlite.md#snapshot-and-export)
 still applies. An implementation may fail a bounded whole-file export; it
@@ -740,6 +861,12 @@ user (`0600` inside a `0700` directory on POSIX, or equivalent protection).
 Creating or replacing token material must be serialized; competing starts
 must not overwrite the owner's credential. A waiting endpoint may use a
 host-provided credential without changing the owned folder.
+
+The host delivers a waiting endpoint's address and credential to its chosen
+view, for example through a private CLI link or an embedding configuration.
+That endpoint is not discovered through the owner's `.estoc/daemon.url`;
+the file continues to identify only the folder owner. Printing a link is
+one host mechanism, not a requirement on every kind of host.
 
 The folder owner publishes its token-bearing endpoint in
 `.estoc/daemon.url` with the same file protection. It writes and removes that
@@ -782,10 +909,10 @@ several and advertises only those it can decode and honour completely. No
 partial match, silent downgrade of method semantics or mutation probe is used
 to discover compatibility. Reconnection always negotiates again.
 
-## 11. Implementation sequence and acceptance
+## 11. Implementation handoff
 
-The migration is complete only when a view can be built and operated using
-the public package alone. The work is staged in this order:
+The following sequence is implementation guidance. The resulting code must
+make the contract understandable without retaining this draft:
 
 1. Define API-owned DTOs, exact method/event schemas and explicit daemon
    adapters. Freeze field meanings, nullability and method outcomes before
@@ -801,29 +928,16 @@ the public package alone. The work is staged in this order:
    list conversations, read one and request a send. Its outcome display and
    reconnect behaviour must use the same contract as the web view.
 
+Focused tests cover observable ordering, validation, lifecycle and failure
+behaviour; they describe those behaviours directly without spec references.
+Temporary review checklists remain in the review channel. Once the public
+schemas, program structure and behavioural checks express the contract,
+remove this document instead of maintaining parallel prose definitions.
+
 A temporary adapter for an older first-party view must remain explicitly
 outside version 1. Legacy events and new frames are never mixed within a
 negotiated session. Moving a type into the API package does not justify
 moving the domain decision that produced it into a view.
-
-The implementation must demonstrate these cases through package checks and
-focused integration tests; this draft does not claim they pass today:
-
-| Case | Required observation |
-| --- | --- |
-| Independent consumer | A web/terminal consumer compiles and runs from the installed API package without backend, SQLite or DIDComm dependencies |
-| Boundary and trust | Normal records exclude key/runtime objects; backup transfer is explicit and retains the complete portable file, including its encrypted seed wrapper |
-| Startup and mismatch | Negotiation and attachment work during startup and ownership waits; incompatible clients receive no records; host-only methods cannot be invoked |
-| Attachment race | A commit between connection and attachment appears either in the baseline or a subsequent update, without rollback or replaying older whole values |
-| Slow capture | A delayed read cannot publish after a later cut or after lock, replacement or restart; stale agent callbacks cannot repopulate lines |
-| Background progress | Receipt, retries, dispatch completion, erasure and local-option commits publish without a view call; sustained writes still produce progress and quiescence produces the final cut |
-| Slow view | A blocked port cannot stall other views or the daemon; bounded buffering preserves required frames or closes that port, and oversized state is an explicit fault |
-| Normalized projection | Selected H and derived predecessor P stay in one contact conversation; overlapping contacts share references, nameless groups never write through an assigned predecessor, and all relationship references resolve |
-| Deterministic display | Equal-time profile claims use message ID, erased claims disappear, and record/reference ordering is stable across rebuilds |
-| Transport equivalence | Embedded and WebSocket paths accept the same valid values, reject non-finite or cyclic data before invocation, preserve literal user keys and carry backup bytes identically |
-| Unknown result | Dropping a reply after a send commits rejects the wait with uncertainty; reconnecting does not resubmit that send or treat a matching body as proof of its identity |
-| Lifecycle guards | A stale removal confirmation cannot delete a replacement vault; concurrent lifecycle calls recheck occupancy; every user-dispatch entry point enforces the restore explanation gate |
-| Complete backup | Export and import enforce advertised decoded and frame bounds, reject partial or invalid data, and never report a truncated file as complete |
 
 Delta streams, per-conversation subscriptions, durable command lookup,
 exactly-once execution, scoped client tokens, streaming backup transfer and
