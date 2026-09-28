@@ -206,9 +206,8 @@ export interface Daemon {
   /** The user's own rotation of `localDidId` toward `peerDid`: a fresh successor, and its notification called. */
   rotate(localDidId: DidId, peerDid: Did): Promise<Outcome & { successor: DidId; existed: boolean }>;
 
-  pending(): Promise<PendingWork>;
-  /** The snapshot as of now, to every listener: for what changed with no call of the UI's and no delivery, a retry the dispatcher made on its own. */
-  refresh(): Promise<void>;
+  /** Where a snapshot covering every change committed so far stands: published already, or once the read under way or the next one is. Reads and publishes only. */
+  refresh(): Promise<{ epoch: string; revision: number }>;
   /** Every arrangement connected again: reconciled, picked up, live. */
   reconnect(): Promise<void>;
 

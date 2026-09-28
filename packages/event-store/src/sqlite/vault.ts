@@ -19,6 +19,15 @@ import type { RuntimeDatabase } from "./open.js";
 export interface SqliteVaultOptions extends SqliteObjectStoreOptions {
   /** the wall clock in Unix milliseconds, for `at` and the trace; default `Date.now`, pinned by tests */
   now?: () => number;
+  /**
+   * Told of every commit and every ingest that accepted an event or
+   * landed an object, once, after its transaction has committed and
+   * before the operation resolves: whatever is derived from the
+   * vault's accepted state is out of date. Nothing is said of a
+   * transaction that landed nothing or failed, nor of local state,
+   * which is not the vault's. It must not throw.
+   */
+  changed?: () => void;
 }
 
 /**
@@ -56,12 +65,14 @@ export class SqliteVault extends Runtime {
       if (when !== "run" && closing.promise !== undefined) throw new VaultClosed();
       if (db.driver.uncertain !== undefined) throw db.driver.uncertain;
     };
-    const { now, ...objectOptions } = options;
+    const { now, changed, ...objectOptions } = options;
     const events = new SqliteEventStore(db, now === undefined ? {} : { now });
     const objects = new HistoryBoundObjects(db, objectOptions, events);
     // The cache is what was built from the accepted state; once that state changes under it — an object landed or repaired, an event accepted — it is dropped in the same transaction.
-    const publish = (prepared: SqlitePreparation, adding: number): void => {
-      if (prepared.publish() + adding > 0) dropCache(db.driver);
+    const publish = (prepared: SqlitePreparation, adding: number): boolean => {
+      const landed = prepared.publish() + adding > 0;
+      if (landed) dropCache(db.driver);
+      return landed;
     };
     super({
       author: db.author,
@@ -72,10 +83,14 @@ export class SqliteVault extends Runtime {
         objects,
         transaction: async (body) => {
           const prepared = objects.prepare();
+          let landed = false;
           try {
             const drafts = await body(prepared);
-            const published = await events.appendAll(drafts, (adding) => publish(prepared, adding));
+            const published = await events.appendAll(drafts, (adding) => {
+              landed = publish(prepared, adding);
+            });
             prepared.settle();
+            if (landed) changed?.();
             return published;
           } finally {
             prepared.discard();
@@ -83,10 +98,14 @@ export class SqliteVault extends Runtime {
         },
         ingestion: async (body) => {
           const prepared = objects.prepare();
+          let landed = false;
           try {
             const incoming = await body(prepared);
-            const outcome = await events.ingest(incoming, (adding) => publish(prepared, adding));
+            const outcome = await events.ingest(incoming, (adding) => {
+              landed = publish(prepared, adding);
+            });
             prepared.settle();
+            if (landed) changed?.();
             return outcome;
           } finally {
             prepared.discard();

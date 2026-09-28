@@ -449,17 +449,20 @@ describe("a vault whose history is damaged", () => {
 
     running.damageAnEvent();
 
-    await daemon.refresh();
+    // Nothing was committed since the last read, so a refresh reads nothing and the damage waits for the next read: the one the next commit makes.
+    expect(await daemon.refresh()).toEqual(await daemon.refresh());
+    expect(heard.events).toHaveLength(shown);
+    await expect(daemon.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow(/damaged/);
     await until("the daemon says damaged", () => heard.phases().at(-1) === "damaged");
     expect(heard.events.slice(shown).filter(([name]) => name === "changed")).toEqual([]);
-    await expect(daemon.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow("no open vault");
+    await expect(daemon.createContact("Dora", pairWith("Dora"))).rejects.toThrow("no open vault");
     await daemon.close();
     const next = daemonOver(root);
     await next.daemon.boot();
     expect(next.heard.phases()).toEqual(["damaged"]);
   });
 
-  it("met first by the read for a UI that joins stops the vault all the same: the one joining is shown no records and told damaged, and so is the one already there", async () => {
+  it("is shown as it was published to a UI that joins, since joining reads nothing; the read that meets the damage stops the vault for both", async () => {
     const root = await folder();
     const running = damageable(root);
     const served = await serveDaemon({ host: running.host, port: 0, token: "t0k3n" });
@@ -478,12 +481,17 @@ describe("a vault whose history is damaged", () => {
 
     const late = told();
     await (await joined(late)).ui.boot();
+    expect(late.snapshot()).toEqual(heard.snapshot());
+    expect(late.hold()).toBe(heard.hold());
+
     const damaged = ["phase", "damaged", expect.stringMatching(/^events\/.* is damaged/), expect.any(String)];
-    expect(late.events.filter(([name]) => name === "opened" || name === "changed")).toEqual([]);
-    expect(late.events.at(-1)).toEqual(damaged);
+    await expect(ui.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow(/damaged/);
     await until("the UI already there is told", () => heard.phases().at(-1) === "damaged");
+    await until("the UI that joined is told", () => late.phases().at(-1) === "damaged");
     expect(heard.events.at(-1)).toEqual(damaged);
-    await expect(ui.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow("no open vault");
+    expect(late.events.at(-1)).toEqual(damaged);
+    expect(late.events.filter(([name]) => name === "changed")).toEqual([]);
+    await expect(ui.createContact("Dora", pairWith("Dora"))).rejects.toThrow("no open vault");
     await served.close();
   });
 });
@@ -584,7 +592,10 @@ describe("two copies of one runtime, both written to", () => {
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(mediator.seenTypes.slice(asked)).toEqual([]);
         expect(heard.events.filter(([name]) => name === "opened")).toHaveLength(opened);
-        await expect(there.refresh()).rejects.toThrow("no open vault");
+        // No runtime is shown between the merges: a refresh answers with what was published last and reads nothing.
+        const said = heard.events.length;
+        expect(await there.refresh()).toEqual(await there.refresh());
+        expect(heard.events).toHaveLength(said);
       } finally {
         release();
       }
@@ -768,6 +779,74 @@ describe("two daemons over a mediator", () => {
     LONG
   );
 
+  /** Alice and Bob, contacts of each other by an invitation of Alice's, their Pings through. */
+  async function acquainted(mediator: FakeMediator, options: Partial<NonNullable<DaemonHost["agentOptions"]>> = {}) {
+    const alice = await person(mediator, "Alice");
+    const bobsRoot = await folder();
+    const bob = { root: bobsRoot, ...daemonOver(bobsRoot, mediator, options) };
+    await bob.daemon.boot();
+    await bob.daemon.createIdentity("Bob", PASSPHRASE);
+    await bob.daemon.setMediator(mediator.did);
+    const { invitation } = await alice.daemon.createInvitation("one");
+    const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
+    await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === accepted.messageId && message.acknowledged));
+    return { alice, bob, contactId: accepted.contactId };
+  }
+
+  const outcomeOf = (snapshot: Snapshot, messageId: string) => messagesOf(snapshot).find((message) => message.messageId === messageId)?.outcome?.status;
+
+  it(
+    "publishes what the dispatcher commits on its own timer, with no call of the UI's: the Ping a registration the mediator refused held up",
+    async () => {
+      const mediator = await newMediator();
+      const { alice, bob } = await acquainted(mediator, { retry: { firstWaitMs: 200 } });
+      const { invitation } = await alice.daemon.createInvitation("one");
+      // Every registration asked about meanwhile is refused, the one the Ping's address needs among them: the dispatcher tries the Ping again on its own.
+      let refusing = true;
+      mediator.intercept = async (message) => {
+        if (message.type !== RECIPIENT_QUERY || !refusing) return undefined;
+        throw new Error("not just now");
+      };
+      try {
+        const accepted = await bob.daemon.acceptInvitation(invitation, "Alice again");
+        refusing = false;
+        expect(accepted.outcome).toBe("pending");
+        expect(["queued", "prepared"]).toContain(outcomeOf(bob.heard.snapshot(), accepted.messageId));
+        await until("the retry's submission is published", () => outcomeOf(bob.heard.snapshot(), accepted.messageId) === "submitted", 10_000);
+      } finally {
+        refusing = false;
+        mediator.intercept = null;
+      }
+    },
+    LONG
+  );
+
+  it(
+    "shows the intent a send committed before the network answers to a refresh asked meanwhile, and the submission once it has",
+    async () => {
+      const mediator = await newMediator();
+      const { bob, contactId } = await acquainted(mediator);
+      const forward = holding(mediator, (message) => message.type === FORWARD);
+      try {
+        const sending = bob.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "in transit" } });
+        await until("the message is with the mediator", forward.reached);
+        expect(await stillWaiting(sending)).toBe(true);
+        const marker = await bob.daemon.refresh();
+        expect(marker.epoch).toBe(bob.daemon.publisher.current.state.epoch);
+        const held = messagesOf(bob.heard.snapshot()).find((message) => message.direction === "out" && message.body.state === "available" && message.body.body["content"] === "in transit");
+        expect(["queued", "prepared"]).toContain(held?.outcome?.status);
+        forward.release();
+        const sent = await sending;
+        expect(sent.outcome).toBe("submitted");
+        expect(outcomeOf(bob.heard.snapshot(), sent.messageId)).toBe("submitted");
+      } finally {
+        forward.release();
+        mediator.intercept = null;
+      }
+    },
+    LONG
+  );
+
   test(
     "an invitation accepted becomes a contact on one side and a channel to name on the other; a restored vault receives at once and sends only once the restore is explained",
     async () => {
@@ -831,7 +910,7 @@ describe("two daemons over a mediator", () => {
       expect(reply.outcome).toBe("submitted");
       await until("the restored vault reads bob", () => messagesOf(first.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "still there?"));
       await until("bob's message is acknowledged by the restored vault", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === reply.messageId && message.acknowledged));
-      expect(await first.daemon.pending()).toMatchObject({ pendingOutbounds: [] });
+      expect(first.heard.snapshot().pending).toMatchObject({ pendingOutbounds: [] });
 
       // The explanation is owed by this runtime, not by this process: another over the same file owes it still.
       await first.daemon.close();

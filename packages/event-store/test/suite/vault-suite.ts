@@ -43,8 +43,8 @@ export interface VaultUnderTest {
   corrupt(cid: Cid): Promise<void>;
 }
 
-/** Open a fresh, empty runtime of the kind under test, authored as `author`, its clock `now`, holding `WRAPPED`. */
-export type OpenVault = (options: { author: AuthorId; now: () => number }) => Promise<VaultUnderTest>;
+/** Open a fresh, empty runtime of the kind under test, authored as `author`, its clock `now`, holding `WRAPPED`, telling `changed` of what lands. */
+export type OpenVault = (options: { author: AuthorId; now: () => number; changed?: () => void }) => Promise<VaultUnderTest>;
 
 const T0 = "2026-09-07T10:00:00.000Z";
 const HELLO = new TextEncoder().encode("hello");
@@ -116,9 +116,9 @@ async function completeOrFailed(stream: ReadableStream<Uint8Array>, bytes: Uint8
 
 export function vaultSuite(name: string, opener: OpenVault): void {
   /** A runtime authored as `author` at a clock the test moves by hand. */
-  async function open(author: AuthorId = authorN(1)): Promise<VaultUnderTest & { now: ReturnType<typeof clock> }> {
+  async function open(author: AuthorId = authorN(1), changed?: () => void): Promise<VaultUnderTest & { now: ReturnType<typeof clock> }> {
     const now = clock(T0);
-    return { ...(await opener({ author, now: now.now })), now };
+    return { ...(await opener({ author, now: now.now, ...(changed === undefined ? {} : { changed }) })), now };
   }
 
   describe(name, () => {
@@ -1084,6 +1084,31 @@ export function vaultSuite(name: string, opener: OpenVault): void {
       }
       expect(vault.lock.held).toBe(false);
       expect(await vault.keystore.read()).toEqual(WRAPPED);
+    });
+  });
+
+  describe("a change told", () => {
+    it("is told once of each commit and ingest that landed something, before it resolves; nothing of one that landed nothing or failed", async () => {
+      const told: string[] = [];
+      let doing = "nothing";
+      const { vault } = await open(authorN(1), () => told.push(doing));
+      const other = (await open(authorN(2))).vault;
+      const [foreign] = await other.vault.commit([], [draft([], { from: "other" })]);
+
+      doing = "an event with its object";
+      const committing = vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])]);
+      expect(told).toEqual([]);
+      await committing;
+      expect(told).toEqual(["an event with its object"]);
+      doing = "the same envelope again";
+      await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])]);
+      doing = "a commit refused";
+      await expect(vault.vault.commit([], [draft([WORLD_CID])])).rejects.toThrow(MissingRoot);
+      doing = "an ingest";
+      expect(await vault.ingest([foreign])).toMatchObject({ added: 1 });
+      doing = "the same ingest again";
+      expect(await vault.ingest([foreign])).toMatchObject({ added: 0, duplicates: 1 });
+      expect(told).toEqual(["an event with its object", "an ingest"]);
     });
   });
 

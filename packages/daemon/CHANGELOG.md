@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **One publisher orders the state.** `DaemonCore.publisher` holds the
+  state as one value under an epoch and a revision, the runtime lines
+  under their own revision of the same epoch, and log lines with their
+  epoch; a fresh epoch comes with every runtime opened and every other
+  change of phase or hold. The open state is read in one coherent cut
+  under the vault's writer lock, once per burst of commits, from the
+  event store's `changed` callback: a commit the dispatcher makes on
+  its own timer, or a send's intent while the network is still owed an
+  answer, is published without a call of the UI's. A read begun for
+  one runtime or epoch is not published for another.
+- **`refresh()` answers `{ epoch, revision }`**: where a state covering
+  every change committed so far stands. With nothing unpublished it
+  answers the state published, without another read; a read under way
+  answers when its cut began late enough. A view that joins is handed
+  the state published, not a read of its own; damage the file meets
+  out of band is found by the next read, which the next commit makes.
+- **`pending()` is gone**: `Snapshot.pending` is the same, as of the
+  snapshot.
+- The `phase`, `opened`, `changed`, `lines` and `log` events are the
+  publisher's publications translated, for as long as this RPC is
+  served.
 - **`addContactByDid(did, petname)`**: a contact by a DID handed over on
   its own, reached as an invitee is — a fresh DID of ours toward them, the
   contact selecting the pair, a Ping — the Ping naming no invitation. A DID

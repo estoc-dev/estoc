@@ -19,8 +19,8 @@ const WORLD_CID = cidOf(WORLD);
 
 const draft = (roots: Cid[] = [], data: Record<string, unknown> = {}): Draft => ({ type: "test.event", roots, data: { n: 1, ...data } });
 
-vaultSuite("MemoryVault", async ({ author, now }) => {
-  const vault = new MemoryVault({ metadata: META, wrapped: WRAPPED, now, author });
+vaultSuite("MemoryVault", async ({ author, now, changed }) => {
+  const vault = new MemoryVault({ metadata: META, wrapped: WRAPPED, now, author, ...(changed === undefined ? {} : { changed }) });
   return { vault, corrupt: async (cid) => vault.stores.objects.damage(cid) };
 });
 

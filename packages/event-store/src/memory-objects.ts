@@ -88,11 +88,16 @@ export class MemoryObjectStore implements ObjectStore {
    * touching the new ones.
    */
   private accept(verified: Held): ObjectInfo {
+    return this.land(verified).info;
+  }
+
+  /** `accept`, saying as well whether the bytes landed — new, or replacing damaged ones — or an object held sound was kept as it was. */
+  private land(verified: Held): { info: ObjectInfo; landed: boolean } {
     const have = this.held.get(verified.cid.text);
-    if (have !== undefined && !this.damaged.has(verified.cid.text)) return info(have.cid, have.size);
+    if (have !== undefined && !this.damaged.has(verified.cid.text)) return { info: info(have.cid, have.size), landed: false };
     this.held.set(verified.cid.text, verified);
     this.damaged.delete(verified.cid.text);
-    return info(verified.cid, verified.size);
+    return { info: info(verified.cid, verified.size), landed: true };
   }
 
   /**
@@ -110,7 +115,7 @@ export class MemoryObjectStore implements ObjectStore {
       (cid) => {
         if (this.damaged.has(cid)) throw new DamagedObject(cid);
       },
-      (verified) => this.accept(verified)
+      (verified) => this.land(verified).landed
     );
   }
 
@@ -247,7 +252,7 @@ export class MemoryPreparation implements Preparation {
     private readonly verify: (cid: Cid, source: ByteSource) => Promise<Held>,
     private readonly stored: (cid: Cid) => Promise<boolean>,
     private readonly check: (cid: Cid) => void,
-    private readonly accept: (verified: Held) => ObjectInfo
+    private readonly accept: (verified: Held) => boolean
   ) {}
 
   async putObject(cid: Cid, source: ByteSource): Promise<ObjectInfo> {
@@ -266,12 +271,14 @@ export class MemoryPreparation implements Preparation {
     this.reused.add(cid);
   }
 
-  /** Checks every object declared reused, then accepts every prepared object, in one synchronous step; a throw accepts nothing, and the preparation is empty after a success. */
-  publish(): void {
+  /** Checks every object declared reused, then accepts every prepared object, in one synchronous step; a throw accepts nothing, and the preparation is empty after a success. Answers how many landed, as opposed to being held sound already. */
+  publish(): number {
     for (const cid of this.reused) if (!this.prepared.has(cid)) this.check(cid as Cid);
-    for (const verified of this.prepared.values()) this.accept(verified);
+    let landed = 0;
+    for (const verified of this.prepared.values()) if (this.accept(verified)) landed += 1;
     this.prepared.clear();
     this.reused.clear();
+    return landed;
   }
 }
 
