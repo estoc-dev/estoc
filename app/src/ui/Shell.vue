@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 
 import Chat from "./Chat.vue";
 import ConversationList from "./ConversationList.vue";
+import NewConversation from "./NewConversation.vue";
 import { back, keyOf, layout, screen } from "./nav.js";
 
 /**
@@ -48,5 +49,7 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
       </div>
       <div v-if="layout === 'wide' && aboutConversation" class="pane pane-side"></div>
     </template>
+
+    <NewConversation v-if="kind === 'new'" />
   </div>
 </template>

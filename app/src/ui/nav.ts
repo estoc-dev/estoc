@@ -101,6 +101,15 @@ watch(
   }
 );
 
+// A link this page was opened with is offered where a conversation starts.
+watch(
+  () => [state.phase, state.pendingInvitation] as const,
+  ([phase, invitation]) => {
+    if (phase === "open" && invitation !== null && screen.value.kind !== "new") go({ kind: "new" });
+  },
+  { immediate: true }
+);
+
 // How much fits beside the screen: one screen, list and screen, or the
 // details as a third column too.
 const MEDIUM = matchMedia("(min-width: 720px)");
