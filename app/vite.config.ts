@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { VitePWA } from "vite-plugin-pwa";
 
+import pkg from "./package.json" with { type: "json" };
+
 export default defineConfig({
   plugins: [
     vue(),
@@ -17,8 +19,8 @@ export default defineConfig({
         short_name: "Estoc",
         description:
           "An offline-first DIDComm messenger: one identity from one seed, your vault in this browser, a file you can walk away with.",
-        theme_color: "#1d2528",
-        background_color: "#eef0f1",
+        theme_color: "#fbfbfb",
+        background_color: "#f4f5f4",
         display: "standalone",
         start_url: "/",
         scope: "/",
@@ -47,4 +49,5 @@ export default defineConfig({
   // the worker imports the daemon as modules, some of them on demand
   worker: { format: "es" },
   build: { target: "es2022" },
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
 });

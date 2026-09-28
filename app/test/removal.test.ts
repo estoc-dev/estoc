@@ -36,6 +36,14 @@ describe("a removal a screen offers", () => {
     expect(asked).toHaveLength(2);
   });
 
+  it("keeps the refusal until it is dismissed", async () => {
+    const { failed, remove, dismiss } = useRemoval();
+    await remove("Remove it?", () => Promise.reject(new Error("that vault is gone already")));
+    expect(failed.value).toBe("that vault is gone already");
+    dismiss();
+    expect(failed.value).toBeNull();
+  });
+
   it("takes one removal at a time: a second ask while one is under way is neither put nor sent", async () => {
     const { busy, remove } = useRemoval();
     let finish!: () => void;

@@ -44,45 +44,64 @@ function watch(page, name) {
   page.on("pageerror", (err) => console.error(`[${name} pageerror] ${err}`));
 }
 
-const waitLive = (page) => page.waitForSelector("text=live delivery on", { timeout: 30000 });
+const waitLive = (page) => page.waitForSelector('[data-status]:has-text("live"), [data-status-sentence]:has-text("live delivery on")', { timeout: 30000 });
 
 async function createIdentity(page, name, startUrl) {
   await page.goto(startUrl);
-  await page.fill('input[placeholder="your name, e.g. Alice"]', name);
-  await page.fill('input[placeholder^="passphrase (seals"]', PASS[name]);
-  await page.fill('input[placeholder="passphrase again"]', PASS[name]);
-  await page.click('button:has-text("Create identity")');
+  await page.fill("[data-your-name]", name);
+  await page.fill("[data-passphrase]", PASS[name]);
+  await page.fill("[data-passphrase-again]", PASS[name]);
+  await page.click("[data-create]");
   await mediate(page, name);
 }
 
 /** A vault `estoc init` made: the page finds it locked and unlocks it. */
 async function unlockIdentity(page, name, startUrl) {
   await page.goto(startUrl);
-  await page.waitForSelector('input[placeholder="passphrase"]', { timeout: 15000 });
-  await page.fill('input[placeholder="passphrase"]', PASS[name]);
-  await page.click('button:has-text("Unlock")');
+  await page.waitForSelector("[data-locked] [data-passphrase]", { timeout: 15000 });
+  await page.fill("[data-locked] [data-passphrase]", PASS[name]);
+  await page.click("[data-unlock]");
   await mediate(page, name);
 }
 
+/** Name the mediator on the You screen, and stay there. */
 async function mediate(page, name) {
-  await page.waitForSelector("text=not reachable yet", { timeout: 30000 });
-  await page.selectOption(".rail-form select.field", { label: `via ${MEDIATOR_LABEL}` });
-  await page.click('button:has-text("Use this mediator")');
+  await page.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+  await page.click("[data-you]");
+  await page.selectOption("[data-you-screen] [data-mediator-choice]", { label: MEDIATOR_LABEL });
+  await page.click("[data-you-screen] [data-mediator-use]");
   await waitLive(page);
   ok(`${name} mediated: live delivery on`);
 }
 
+const leaveYou = (page) => page.click("[data-you-screen] [data-back]");
+
 async function invite(page) {
-  await page.click('button:has-text("New invitation link")');
+  await page.click("[data-new-conversation]");
+  await page.click("[data-new-sheet] [data-show-qr]");
   await page.waitForSelector("[data-invitation-url]", { timeout: 20000 });
-  return page.getAttribute("[data-invitation-url]", "title");
+  const url = await page.getAttribute("[data-invitation-url]", "title");
+  await page.click("[data-new-sheet] [data-done]");
+  await page.click("[data-new-sheet] [data-cancel]");
+  return url;
 }
 
-const channelsShown = (page, count) => page.waitForSelector(`[data-details-toggle]:has-text("${count} channel")`, { timeout: 45000 });
+async function acceptLink(page, name, link) {
+  await page.click("[data-new-conversation]");
+  await page.click("[data-new-sheet] [data-paste-link]");
+  await page.fill("[data-contact-name]", name);
+  await page.fill("[data-invitation-link]", link);
+  await page.click("[data-accept]");
+  await page.waitForSelector(`[data-chat] [data-name]:has-text("${name}")`, { timeout: 30000 });
+}
 
-async function send(page, contactLabel, text) {
-  await page.fill(`input[placeholder="Write to ${contactLabel}"]`, text);
-  await page.click('button:has-text("Send")');
+const row = (name) => `.convo-row:has(.convo-name:has-text("${name}"))`;
+const namelessRow = (name) => `.convo-row.nameless:has(.convo-name:has-text("${name}"))`;
+const channelsShown = (page, count) => page.waitForSelector(`[data-chat][data-channels="${count}"]`, { timeout: 45000 });
+
+async function send(page, text) {
+  await page.fill("[data-composer]", text);
+  await page.click("[data-send]");
 }
 async function expectBubble(page, text, timeout = 30000) {
   await page.waitForSelector(`.bubble:has-text("${text}")`, { timeout });
@@ -134,51 +153,50 @@ try {
     fail(`Alice should be at the daemon's own origin with the token taken off the URL, not ${alice.url()}`);
   }
   await stat(join(root, ".estoc", "vault.sqlite"));
-  ok("Alice's vault is the file estoc init made, unlocked in the daemon; the rail says so");
+  ok("Alice's vault is the file estoc init made, unlocked in the daemon; the You screen says so");
+  await leaveYou(alice);
   const status = execFileSync(process.execPath, [BIN, "status"], { cwd: root, encoding: "utf8" });
   if (!/^daemon\s+ws:\S+\s+open$/m.test(status) || !/^label\s+Alice$/m.test(status) || !/^anchor\s+did:key:/m.test(status) || status.includes("token=")) {
     fail(`estoc status should ask the daemon that holds the vault, and keep the token to itself:\n${status}`);
   }
   ok("estoc status, refused the folder, asked the daemon at its socket");
   await createIdentity(bob, "Bob", APP_URL);
+  await leaveYou(bob);
 
   // Bob hands Alice a link; she pastes it into the page the daemon serves.
   const bobLink = await invite(bob);
-  await alice.click('button:has-text("+ contact")');
-  await alice.fill('input[placeholder="name, e.g. Bob"]', "Bob");
-  await alice.fill('input[placeholder="paste their invitation link"]', bobLink);
-  await alice.click('button:has-text("Add contact")');
-  await alice.waitForSelector('.contact-chip.active:has-text("Bob")', { timeout: 30000 });
-  await bob.waitForSelector('.contact-chip.nameless:has-text("Alice")', { timeout: 45000 });
-  await bob.click('.contact-chip.nameless:has-text("Alice")');
-  await bob.click("[data-details-toggle]");
-  await bob.fill('[data-details] input[placeholder="what you call them"]', "Alice");
-  await bob.click('button:has-text("Name this conversation")');
-  await bob.waitForSelector('.contact-chip.active:not(.nameless):has-text("Alice")', { timeout: 15000 });
+  await acceptLink(alice, "Bob", bobLink);
+  await bob.waitForSelector(namelessRow("Alice"), { timeout: 45000 });
+  await bob.click(namelessRow("Alice"));
+  await bob.click("[data-chat] [data-details]");
+  await bob.fill("[data-details-screen] [data-petname]", "Alice");
+  await bob.click("[data-details-screen] [data-rename]");
+  await bob.waitForSelector(`${row("Alice")}:not(.nameless)`, { timeout: 15000 });
+  await bob.click("[data-details-screen] [data-back]");
   ok("the daemon accepted Bob's invitation; Bob named who arrived");
 
-  // Bob answers from a private DID that replaces the disclosed one; she writes once that reached her page.
+  // Bob answers from a private address that replaces the disclosed one; she writes once that reached her page.
   await channelsShown(alice, 2);
-  await send(alice, "Bob", "hello bob, from a laptop process");
+  await send(alice, "hello bob, from a laptop process");
   await expectBubble(alice, "hello bob");
   await expectBubble(bob, "hello bob");
   ok("Bob received a message the daemon sent");
-  await send(bob, "Alice", "hi alice, got it");
+  await send(bob, "hi alice, got it");
   await expectBubble(alice, "hi alice");
   ok("Alice's page shows what the daemon received, live over the socket");
 
   // history is the daemon's: a reload and a second tab both see it, neither yields
   await alice.reload();
-  await alice.waitForSelector('.contact-chip:has-text("Bob")', { timeout: 15000 });
-  await alice.click('.contact-chip:has-text("Bob")');
+  await alice.waitForSelector(row("Bob"), { timeout: 15000 });
+  await alice.click(row("Bob"));
   await expectBubble(alice, "hi alice");
   ok("Alice's history is there after a reload");
   const tab2 = await aliceCtx.newPage();
   // the bare origin, no token in the link: the page remembers it
   await tab2.goto(new URL(link.own).origin + "/");
-  await tab2.waitForSelector('.contact-chip:has-text("Bob")', { timeout: 15000 });
-  await send(bob, "Alice", "second tab too?");
-  await tab2.click('.contact-chip:has-text("Bob")');
+  await tab2.waitForSelector(row("Bob"), { timeout: 15000 });
+  await send(bob, "second tab too?");
+  await tab2.click(row("Bob"));
   await expectBubble(tab2, "second tab too?");
   await expectBubble(alice, "second tab too?");
   ok("a second tab is another client of the same daemon: both open, both live");
@@ -195,31 +213,112 @@ try {
   const elsewhere = await aliceCtx.newPage();
   watch(elsewhere, "alice@preview");
   await elsewhere.goto(link.elsewhere);
-  await elsewhere.waitForSelector('.contact-chip:has-text("Bob")', { timeout: 15000 });
+  await elsewhere.waitForSelector(row("Bob"), { timeout: 15000 });
   if (elsewhere.url().includes("_daemon=")) {
     fail("the _daemon parameter should be taken off the URL");
   }
+  await elsewhere.click("[data-you]");
   await elsewhere.waitForSelector("text=via estoc-daemon at", { timeout: 5000 });
   ok("the preview opened with ?_daemon= is a client of the same daemon (the link remembered, taken off the URL)");
   await elsewhere.close();
 
   // lock: the seed leaves the daemon's memory; the passphrase opens it again
-  await alice.click('button:has-text("Lock")');
-  await alice.waitForSelector('input[placeholder="passphrase"]', { timeout: 5000 });
-  await alice.fill('input[placeholder="passphrase"]', "wrong one");
-  await alice.click('button:has-text("Unlock")');
+  await alice.click("[data-you]");
+  await alice.click("[data-lock]");
+  await alice.waitForSelector("[data-locked] [data-passphrase]", { timeout: 5000 });
+  await alice.fill("[data-locked] [data-passphrase]", "wrong one");
+  await alice.click("[data-unlock]");
   await alice.waitForSelector("text=wrong passphrase", { timeout: 5000 });
-  await alice.fill('input[placeholder="passphrase"]', PASS.Alice);
-  await alice.click('button:has-text("Unlock")');
-  await alice.waitForSelector('.contact-chip:has-text("Bob")', { timeout: 15000 });
+  await alice.fill("[data-locked] [data-passphrase]", PASS.Alice);
+  await alice.click("[data-unlock]");
+  await alice.waitForSelector(row("Bob"), { timeout: 15000 });
   ok("lock and unlock go through the daemon");
+
+  // a removal confirmed after the vault changed hands: while Alice's tab holds the
+  // question open, another tab removes the vault and makes a new one there
+  await alice.click("[data-you]");
+  const held = new Promise((resolve) => alice.once("dialog", resolve));
+  const confirming = alice.click("[data-forget]", { noWaitAfter: true });
+  const dialog = await held;
+  const other = await aliceCtx.newPage();
+  watch(other, "alice@other");
+  other.on("dialog", (d) => void d.accept());
+  await other.goto(new URL(link.own).origin + "/");
+  await other.waitForSelector(row("Bob"), { timeout: 15000 });
+  await other.click("[data-you]");
+  await other.click("[data-forget]");
+  await other.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await other.fill("[data-your-name]", "Alice");
+  await other.fill("[data-passphrase]", PASS.Alice);
+  await other.fill("[data-passphrase-again]", PASS.Alice);
+  await other.click("[data-create]");
+  await other.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+  await dialog.accept();
+  await confirming;
+  await alice.waitForSelector("[data-removal-failed]", { timeout: 15000 });
+  if (await alice.$("[data-you-screen]")) {
+    fail("the refusal should show where Alice is now, which is no longer the You screen");
+  }
+  await other.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 5000 });
+  await alice.click("[data-removal-failed] button");
+  await alice.waitForSelector("[data-removal-failed]", { state: "detached", timeout: 5000 });
+  ok("a removal confirmed after the vault changed hands removed nothing, and said so on the screen Alice was on");
+  await other.close();
+
+  // a removal that went through but whose answer was lost: the socket drops
+  // after the daemon removed the vault and before its reply reached the page.
+  // The page cannot tell this from a refusal, so it must not claim the vault
+  // is still there.
+  const lost = await aliceCtx.newPage();
+  watch(lost, "alice@lost");
+  lost.on("dialog", (d) => void d.accept());
+  let removing = null;
+  await lost.routeWebSocket(/./, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      if (wire?.kind === "call" && wire.method === "forgetIdentity") removing = wire.id;
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      if (removing !== null && wire?.id === removing && (wire.kind === "result" || wire.kind === "error")) {
+        removing = null;
+        ws.close();
+        return;
+      }
+      ws.send(message);
+    });
+  });
+  await lost.goto(new URL(link.own).origin + "/");
+  await lost.waitForSelector("[data-you]", { timeout: 15000 });
+  await lost.click("[data-you]");
+  await lost.click("[data-forget]");
+  await lost.waitForSelector("[data-removal-failed]", { timeout: 15000 });
+  const said = await lost.textContent("[data-removal-failed]");
+  if (!/not confirmed/.test(said) || /nothing was removed/i.test(said)) {
+    fail(`with the answer lost, the page must not say what became of the vault: "${said}"`);
+  }
+  await stat(join(root, ".estoc", "vault.sqlite")).then(
+    () => fail("the daemon should have removed the vault before its answer was lost"),
+    () => {},
+  );
+  await lost.close();
+  ok("a removal whose answer was lost is reported as unconfirmed, not as undone");
+  // the other tab heard the daemon: the vault is gone, and a new one can be made
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await alice.fill("[data-your-name]", "Alice");
+  await alice.fill("[data-passphrase]", PASS.Alice);
+  await alice.fill("[data-passphrase-again]", PASS.Alice);
+  await alice.click("[data-create]");
+  await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
 
   // the daemon gone: the page says so
   daemon.child.kill("SIGTERM");
-  await alice.waitForSelector("text=is not answering", { timeout: 10000 });
+  await alice.waitForSelector('[data-status]:has-text("daemon away")', { timeout: 10000 });
   ok("Alice's page reports the daemon gone");
   await alice.goto(`${APP_URL}/?_daemon=off`);
-  await alice.waitForSelector('input[placeholder="your name, e.g. Alice"]', { timeout: 15000 });
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
   ok("?_daemon=off returns the preview to its own worker: a fresh install there");
 } finally {
   await browser.close();

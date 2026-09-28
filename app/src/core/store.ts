@@ -56,8 +56,8 @@ export const state = shallowReactive({
   offlineReady: false,
   /**
    * An invitation this page was opened with (`?_oob=` in the URL) and has
-   * not acted on yet: a person's waits for the chat pane to offer "add
-   * them"; a mediator's is offered where a mediator is chosen. Kept here,
+   * not acted on yet: a person's opens the new-conversation sheet to be
+   * accepted; a mediator's is offered where a mediator is chosen. Kept here,
    * not in the URL, so it survives onboarding and unlocking.
    */
   pendingInvitation: null as Invitation | null,

@@ -4,12 +4,21 @@ import { ref } from "vue";
  * A removal a screen offers. What is to be removed is settled by the
  * caller before the question is put, so that the answer removes what
  * was asked about and nothing that took its place while the question
- * stood. The state is one for every screen: a refusal that comes back
- * after the vault changed hands, and the screen with it, is shown on
- * the screen there is.
+ * stood. The state is one for the whole app: a refusal that comes back
+ * after the vault changed hands, and the screen with it, is shown over
+ * whatever screen there is by then, until the person dismisses it.
+ *
+ * What is kept is the reason the removal was not confirmed, which is
+ * not the same as a promise that nothing was removed: a connection that
+ * drops after the daemon removed the vault and before it answered fails
+ * the same way as a refusal, and only the daemon knows which it was.
  */
 const failed = ref<string | null>(null);
 const busy = ref(false);
+
+function dismiss(): void {
+  failed.value = null;
+}
 
 async function remove(question: string, removal: () => Promise<void>): Promise<void> {
   if (busy.value || !confirm(question)) return;
@@ -25,5 +34,5 @@ async function remove(question: string, removal: () => Promise<void>): Promise<v
 }
 
 export function useRemoval() {
-  return { failed, busy, remove };
+  return { failed, busy, remove, dismiss };
 }

@@ -1,171 +1,103 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 
-import { pairKey, successorOf } from "./core/conversations.js";
 import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
-import ChatPane from "./ui/ChatPane.vue";
 import Onboarding from "./ui/Onboarding.vue";
-import Rail from "./ui/Rail.vue";
+import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
 import { useRemoval } from "./ui/removal.js";
 
-const { failed: removalFailed, remove } = useRemoval();
+const { failed: removalFailed, remove, dismiss: dismissRemoval } = useRemoval();
 const removeVault = (question: string) => {
   const hold = state.hold;
   return remove(question, () => forgetIdentity(hold));
 };
 
-const startOver = () => remove("Delete the old vault from this browser? There is no way back except a backup made by the version that wrote it.", discardFolderVault);
-const removeUnreadable = () => removeVault("Remove this vault from here and begin a new identity? Nothing of it can be exported by this version; what you keep is what a backup holds.");
-const removeDamaged = () => removeVault("Remove the damaged vault from here? It cannot be opened again afterwards; what you keep is what your backup holds.");
+const startOver = () => remove("Delete the old vault from this device? Only a backup made by the version that wrote it brings it back.", discardFolderVault);
+const removeUnreadable = () => removeVault("Remove this vault from here and begin a new identity? Nothing of it can be exported by this version. What you keep is what a backup holds.");
+const removeDamaged = () => removeVault("Remove the damaged vault from here? It cannot be opened again afterwards. What you keep is what your backup holds.");
 
-// A conversation is selected by its key: a contact's ID, or for one not
-// named yet the pair it leads to. That pair moves when either side
-// rotates, so the conversation last open is remembered by the channels
-// it showed, and followed to whichever conversation shows them next.
-const selected = ref<string | null>(null);
-let lastShown: Set<string> | null = null;
-
-function select(key: string | null) {
-  selected.value = key;
-  const conversation = state.conversations.find((c) => c.key === key);
-  lastShown = conversation === undefined ? null : new Set(conversation.channels.map(({ channel }) => pairKey(channel)));
-}
-
-// The first conversation, opened by an invitation either way, becomes the
-// open one while nothing has been. One that was open and is gone is
-// followed; while nothing says which conversation it became, none is
-// open until the person opens one. A key selected ahead of the snapshot
-// that brings its conversation is waited for. Following is display
-// only: what is being written goes its own way, by channel.
-watch(
-  () => state.conversations,
-  (conversations) => {
-    if (conversations.some((c) => c.key === selected.value)) return select(selected.value);
-    if (lastShown === null) {
-      if (selected.value === null) select(conversations[0]?.key ?? null);
-      return;
-    }
-    selected.value = null;
-    const successor = successorOf(lastShown, conversations);
-    if (successor !== null) select(successor.key);
-  },
-  { immediate: true }
-);
-
-const mediated = computed(() => state.snapshot?.mediations.some((m) => m.selected) ?? false);
 const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new URL(state.daemonAt).host));
 </script>
 
 <template>
-  <div v-if="state.phase === 'booting'" class="hollow" style="height: 100%"></div>
+  <div v-if="state.phase === 'booting'" class="hollow"></div>
 
-  <div v-else-if="state.phase === 'elsewhere'" class="hollow" style="height: 100%">
+  <div v-else-if="state.phase === 'elsewhere'" class="hollow" data-elsewhere>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Open in another tab</h1>
-      <p>
-        Your vault is in use by another tab or window of this browser. One
-        agent at a time holds the vault: close the other one and this tab
-        takes over on its own.
-      </p>
+      <p>Another tab of this browser holds your vault. Close it and this one takes over on its own.</p>
     </div>
   </div>
 
   <Onboarding v-else-if="state.phase === 'onboarding'" />
 
-  <div v-else-if="state.phase === 'foreign'" class="hollow" style="height: 100%" data-foreign>
+  <div v-else-if="state.phase === 'foreign'" class="hollow" data-foreign>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Vault not readable</h1>
       <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
-      <p class="fine">
-        Nothing has been changed. A vault of the earlier folder format is not
-        read or converted: export a backup with the app version that wrote it
-        if you want to keep it<template v-if="state.daemonAt === null"
-          >, then <button class="link" data-start-over @click="startOver">start over</button> to delete it and begin a new identity</template
-        >.
+      <p class="note">
+        Nothing has been changed. A vault of the earlier folder format is not converted: export a backup with the version that wrote it if you want to keep
+        it<template v-if="state.daemonAt === null">, then <button class="link" type="button" data-start-over @click="startOver">start over</button> with a new identity</template>.
       </p>
-      <p v-if="removalFailed" class="status-line error" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
-  <div v-else-if="state.phase === 'unreadable'" class="hollow" style="height: 100%" data-unreadable>
+  <div v-else-if="state.phase === 'unreadable'" class="hollow" data-unreadable>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Vault not readable</h1>
       <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
-      <p class="fine">
-        Nothing has been changed. If the vault came from a newer version,
-        update the app. One written by an earlier version is not read or
-        converted, and nothing of it can be exported from here:
-        <button class="link" data-remove-unreadable @click="removeUnreadable">remove it and start over</button>
-        with a new identity, or restore a backup on the screen that follows.
+      <p class="note">
+        Nothing has been changed. If the vault came from a newer version, update the app. One written by an earlier version is not converted, and nothing of it
+        can be exported from here: <button class="link" type="button" data-remove-unreadable @click="removeUnreadable">remove it and start over</button> with a new
+        identity, or restore a backup on the screen that follows.
       </p>
-      <p v-if="removalFailed" class="status-line error" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
-  <div v-else-if="state.phase === 'damaged'" class="hollow" style="height: 100%" data-damaged>
+  <div v-else-if="state.phase === 'damaged'" class="hollow" data-damaged>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>This vault's history is damaged</h1>
-      <p>
-        Part of what this vault recorded no longer reads back as it was written{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}
+      <p>Part of what this vault recorded no longer reads back as it was written{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
+      <p>The vault has stopped: it takes nothing in and sends nothing, rather than build on a history with a hole in it. Nothing here has been changed.</p>
+      <p class="note">
+        The history comes back one way: by restoring a backup into a new vault. What the backup holds is what returns. The seed is in every backup, and the passphrase
+        still opens it there.
       </p>
-      <p>
-        The vault has stopped: it takes nothing in and sends nothing, because
-        it would be building on a history with a hole in it. Nothing here has
-        been changed.
+      <p class="note">
+        To restore, <button class="link" type="button" data-remove-damaged @click="removeDamaged">remove the damaged vault</button> and choose the backup on the
+        screen that follows.
       </p>
-      <p class="fine">
-        The history comes back one way only: by restoring a backup into a new
-        vault. What that backup holds is what returns; anything recorded after
-        it was made is not recovered, and with no usable backup none of the
-        history is. Your identity is a separate matter: the seed is in every
-        backup, and the passphrase still unlocks it there.
-      </p>
-      <p class="fine">
-        To restore, <button class="link" data-remove-damaged @click="removeDamaged">remove the damaged vault</button>
-        and choose the backup on the screen that follows.
-      </p>
-      <p v-if="removalFailed" class="status-line error" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
   <Unlock v-else-if="state.phase === 'locked'" />
 
-  <div v-else-if="state.phase === 'unreachable'" class="hollow" style="height: 100%">
+  <div v-else-if="state.phase === 'unreachable'" class="hollow" data-unreachable>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>No daemon is answering</h1>
-      <p>
-        This page expects a daemon at {{ daemonHost }}
-        and nothing there answers it. It keeps trying.
-      </p>
-      <p class="fine">
-        If <code>estoc serve</code> is running, open the link it printed — the
-        link carries the key this page needs, and this page remembers it once
-        opened that way. <code>?_daemon=off</code> returns this page to a vault
-        of its own in the browser.
+      <p>This page expects a daemon at {{ daemonHost }} and nothing there answers. It keeps trying.</p>
+      <p class="note">
+        If <code>estoc serve</code> is running, open the link it printed: it carries the key this page needs, and the page remembers it. <code>?_daemon=off</code>
+        returns this page to a vault of its own in the browser.
       </p>
     </div>
   </div>
 
-  <div v-else class="frame">
-    <Rail />
-    <ChatPane
-      v-if="state.snapshot"
-      :conversations="state.conversations"
-      :selected="selected"
-      :mediated="mediated"
-      :sends-closed="state.snapshot.restoreUnexplained"
-      @select="select"
-    />
+  <Shell v-else-if="state.snapshot" />
+
+  <div v-if="state.applyUpdate" class="update-chip" data-update>
+    <span>A new version of Estoc is ready.</span>
+    <button class="btn" type="button" @click="state.applyUpdate?.()">Reload</button>
   </div>
 
-  <div v-if="state.applyUpdate" class="update-chip">
-    <span>A new version of Estoc is ready.</span>
-    <button class="btn" @click="state.applyUpdate?.()">Reload</button>
+  <div v-if="removalFailed" class="update-chip alarm" data-removal-failed>
+    <span>The removal was not confirmed: {{ removalFailed }}</span>
+    <button class="btn" type="button" @click="dismissRemoval">OK</button>
   </div>
 </template>

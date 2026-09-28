@@ -6,7 +6,7 @@ import { MEDIATOR_CHOICES, resolveMediatorInput } from "../core/mediators.js";
 export const CUSTOM = "custom";
 
 /**
- * The mediator picker in the rail, shown until the identity has one: a
+ * The mediator picker, on the You screen and, until the identity has one, over the list: a
  * dropdown of known mediators plus a paste field that takes an OOB
  * invitation URL, a bare mediator URL, or a DID.
  */
