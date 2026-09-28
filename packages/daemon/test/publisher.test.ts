@@ -31,7 +31,7 @@ function runtime(): { captures: Capture[]; source: { capture(cut: () => void): P
   };
 }
 
-type Heard = ["state", StateOf<Snap>] | ["lines", LinesStateOf<Lines>] | ["log", { epoch: string; line: string }];
+type Heard = ["state", StateOf<Snap>] | ["lines", LinesStateOf<Lines>] | ["log", { epoch: string; line: string }] | ["unavailable", unknown];
 
 /** A view: what it was handed on attaching, and everything since. */
 function view(publisher: Publisher<Snap, Lines>): { baseline: BaselineOf<Snap, Lines>; heard: Heard[]; states(): StateOf<Snap>[] } {
@@ -40,6 +40,7 @@ function view(publisher: Publisher<Snap, Lines>): { baseline: BaselineOf<Snap, L
     state: (state) => heard.push(["state", state]),
     lines: (lines) => heard.push(["lines", lines]),
     log: (line) => heard.push(["log", line]),
+    unavailable: (error) => heard.push(["unavailable", error]),
   });
   return { baseline, heard, states: () => heard.filter((said): said is ["state", StateOf<Snap>] => said[0] === "state").map(([, state]) => state) };
 }
@@ -132,18 +133,39 @@ describe("the publisher", () => {
     expect(captures).toHaveLength(2);
   });
 
-  it("does not publish a read of a runtime that was closed meanwhile, nor its lines", async () => {
+  it("does not publish a read of a runtime that was closed meanwhile, nor its lines, and refuses the refresh that waited on it", async () => {
     const { publisher: p, captures, publishing } = await shown();
     const v = view(p);
     p.invalidate();
+    const refreshing = p.refresh();
     captures[1]!.cut();
     publishing.close();
+    await expect(refreshing).rejects.toThrow(StateChanged);
+    expect(await p.refresh()).toEqual({ epoch: v.baseline.state.epoch, revision: 1 });
     captures[1]!.resolve({ n: 2 });
     await tick();
     p.lines(["late"]);
     expect(v.heard).toEqual([]);
     p.invalidate();
     expect(captures).toHaveLength(2);
+  });
+
+  it("refuses the refresh waiting on a read of a runtime another runtime takes the place of, before the other is read", async () => {
+    const { publisher: p, captures } = await shown();
+    const v = view(p);
+    p.invalidate();
+    const refreshing = p.refresh();
+    captures[1]!.cut();
+    const next = runtime();
+    const opening = p.open(HOLD, next.source);
+    await expect(refreshing).rejects.toThrow(StateChanged);
+    expect(v.heard).toEqual([]);
+    captures[1]!.resolve({ n: 2 });
+    await tick();
+    next.captures[0]!.cut();
+    next.captures[0]!.resolve({ n: 10 });
+    await opening.ready;
+    expect(v.states().map(open)).toEqual([{ n: 10 }]);
   });
 
   it("keeps publishing while changes keep coming, and the last read covers them all", async () => {
@@ -207,27 +229,52 @@ describe("the publisher", () => {
     expect(v.states().map(({ revision }) => revision)).toEqual([2, 3]);
   });
 
-  it("refuses a refresh with the failure of the read it waited on, keeps the state as it was, and reads again only on the next change", async () => {
+  it("keeps the state as it was when a read fails, tells every view, refuses a view attaching meanwhile, and reads again when a refresh asks or the runtime changes, not on its own", async () => {
     const { publisher: p, captures, failures } = await shown();
     const v = view(p);
+    const gone = new Error("the disk went away");
     p.invalidate();
     const refreshing = p.refresh();
     captures[1]!.cut();
-    captures[1]!.reject(new Error("the disk went away"));
-    await expect(refreshing).rejects.toThrow("the disk went away");
-    expect(failures).toHaveLength(1);
-    expect(v.heard).toEqual([]);
+    captures[1]!.reject(gone);
+    await expect(refreshing).rejects.toThrow(gone);
+    expect(failures).toEqual([gone]);
+    expect(v.heard).toEqual([["unavailable", gone]]);
     await tick();
     expect(captures).toHaveLength(2);
-    await expect(p.refresh()).rejects.toThrow("the disk went away");
-    expect(captures).toHaveLength(2);
+    expect(p.unavailable).toEqual({ error: gone });
+    expect(() => view(p)).toThrow(gone);
+    expect(p.current.state).toBe(v.baseline.state);
 
-    p.invalidate();
+    const asked = p.refresh();
     expect(captures).toHaveLength(3);
     captures[2]!.cut();
-    captures[2]!.resolve({ n: 2 });
+    captures[2]!.reject(gone);
+    await expect(asked).rejects.toThrow(gone);
+    await tick();
+    expect(captures).toHaveLength(3);
+
+    p.invalidate();
+    expect(captures).toHaveLength(4);
+    captures[3]!.cut();
+    captures[3]!.resolve({ n: 2 });
     expect(await p.refresh()).toEqual({ epoch: v.baseline.state.epoch, revision: 2 });
     expect(v.states().map(open)).toEqual([{ n: 2 }]);
+    expect(p.unavailable).toBeNull();
+    expect(view(p).baseline.state).toMatchObject({ revision: 2 });
+    expect(failures).toEqual([gone, gone]);
+  });
+
+  it("leaves a failed read behind with the runtime: another phase attaches views again", async () => {
+    const { publisher: p, captures } = await shown();
+    p.invalidate();
+    captures[1]!.cut();
+    captures[1]!.reject(new Error("the disk went away"));
+    await tick();
+    expect(() => view(p)).toThrow("the disk went away");
+    p.set(LOCKED);
+    expect(view(p).baseline.state).toMatchObject({ revision: 1, value: LOCKED });
+    expect(p.unavailable).toBeNull();
   });
 
   it("shows nothing of a runtime whose first read fails: the state stays, and nothing more is read", async () => {

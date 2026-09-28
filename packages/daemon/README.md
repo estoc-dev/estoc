@@ -69,11 +69,13 @@ second UI removed and remade the vault removes nothing.
 ## What the UI is told
 
 The UI is told the vault whole: `opened(snapshot)` once, then
-`changed(snapshot)` after every call it makes and every delivery; what
-changed with neither — a retry the dispatcher made on its own — is read
-with `refresh()`. Nothing is sent on open: what an earlier run left
-unfinished is in `snapshot.pending`, each entry naming the call that
-takes it up.
+`changed(snapshot)` after every commit, whoever made it — a call of the
+UI's, a delivery, a retry the dispatcher made on its own — read in one
+cut under the vault's writer lock and shared by every UI. `refresh()`
+answers where a state covering every commit so far stands, and reads
+nothing when none is unpublished. Nothing is sent on open: what an
+earlier run left unfinished is in `snapshot.pending`, each entry naming
+the call that takes it up.
 
 A vault restored from a snapshot opens with `restoreUnexplained`. It
 receives, reconciles and answers from the first moment, and refuses the

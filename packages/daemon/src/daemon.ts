@@ -226,7 +226,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     noLines: NO_LINES,
     failed: (err) => {
       if (err instanceof DamagedHistory) void giveUpDamaged(err);
-      else log(`the snapshot could not be read: ${failure(err)}`);
     },
   });
   const legacy = legacyEvents(publisher, emit);
@@ -237,7 +236,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     publisher.set(nonOpen(p, held, why));
   };
   const log = (line: string) => publisher.log(line);
-  /** Every change of the runtime, wherever it was committed from, is the publisher's to show. */
   const changed = () => publisher.invalidate();
 
   let turn: Promise<void> = Promise.resolve();

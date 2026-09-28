@@ -496,6 +496,80 @@ describe("a vault whose history is damaged", () => {
   });
 });
 
+/** The reads of the runtime the daemon opens next, each handed to `wrap` once the vault's lock is let go of, to be held back or made to fail. */
+function readsOf(daemon: DaemonCore, wrap: (read: Promise<Snapshot>) => Promise<Snapshot>): void {
+  const { publisher } = daemon;
+  const opening = publisher.open.bind(publisher);
+  publisher.open = (hold, source) => opening(hold, { capture: (cut) => wrap(source.capture(cut)) });
+}
+
+describe("a vault let go of while a read of it is under way", () => {
+  for (const ending of ["lock", "forgetIdentity", "close"] as const) {
+    it(`by ${ending}: the call whose read it is settles, the vault is let go of, and nothing of the read is shown`, async () => {
+      const root = await folder();
+      const { daemon, heard } = daemonOver(root);
+      let holding = false;
+      let held: (() => void) | null = null;
+      readsOf(daemon, async (read) => {
+        const snapshot = await read;
+        if (holding) await new Promise<void>((resolve) => (held = resolve));
+        return snapshot;
+      });
+      await daemon.boot();
+      await daemon.createIdentity("Alice", PASSPHRASE);
+      const hold = heard.hold()!;
+
+      holding = true;
+      const creating = daemon.createContact("Bob", pairWith("Bob"));
+      await until("the read is held", () => held !== null);
+      await (ending === "forgetIdentity" ? daemon.forgetIdentity(hold) : daemon[ending]());
+      await creating;
+      const shown = heard.events.length;
+      if (ending !== "close") expect(heard.phases().at(-1)).toBe(ending === "lock" ? "locked" : "onboarding");
+
+      holding = false;
+      held!();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(heard.events.slice(shown)).toEqual([]);
+      if (ending === "lock") {
+        await daemon.unlock(PASSPHRASE);
+        expect(heard.snapshot().contacts).toHaveLength(1);
+      }
+    });
+  }
+});
+
+describe("a read of the vault that fails", () => {
+  it("leaves the state as it was and says so, refuses a UI joining meanwhile, and is made again by the next call", async () => {
+    const root = await folder();
+    const { daemon, heard } = daemonOver(root);
+    let failing = 0;
+    readsOf(daemon, async (read) => {
+      const snapshot = await read;
+      if (failing-- > 0) throw new Error("the disk went away");
+      return snapshot;
+    });
+    await daemon.boot();
+    await daemon.createIdentity("Alice", PASSPHRASE);
+    const before = heard.snapshot();
+    const shown = heard.events.length;
+
+    // the read the commit makes is the one the call waits for before it answers, and it fails
+    failing = 1;
+    await daemon.createContact("Bob", pairWith("Bob"));
+    expect(heard.events.slice(shown).filter(([name]) => name !== "lines")).toEqual([["log", "the snapshot could not be read: the disk went away"]]);
+    expect(heard.snapshot()).toBe(before);
+    await expect(daemon.boot()).rejects.toThrow("the disk went away");
+
+    await daemon.refresh();
+    expect(heard.snapshot().contacts).toHaveLength(1);
+    const late = told();
+    await daemon.boot();
+    await daemon.replayTo(late.emit);
+    expect(late.snapshot()).toEqual(heard.snapshot());
+  });
+});
+
 describe("two copies of one runtime, both written to", () => {
   it("merge once the one merged into has taken a replica ID of its own: nothing of either history is lost or rewritten, the merge says it renewed, and the next one does not", async () => {
     const original = await folder();

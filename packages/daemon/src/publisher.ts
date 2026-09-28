@@ -12,7 +12,13 @@
  * its writer lock, once per burst of commits: each commit counts, a
  * read notes the count as its cut begins, and what it covers is what
  * was counted by then. A read begun for one runtime or epoch is not
- * published for another, whenever it finishes.
+ * published for another, whenever it finishes, and a refresh that
+ * waited on it is refused once its runtime is gone.
+ *
+ * A read that fails after the runtime's first leaves the state
+ * published standing, stale: every view is told, none attaches until a
+ * read is done, and one is made when a refresh asks or when the runtime
+ * changes again.
  */
 
 import type { Epoch, Hold, LogLine, Revision, RevisionMarker, StateValue } from "@estoc/daemon-api/contract";
@@ -44,6 +50,8 @@ export interface Subscriber<S, L> {
   state(state: StateOf<S>): void;
   lines(lines: LinesStateOf<L>): void;
   log(line: LogLine): void;
+  /** the read that would have replaced the state published failed: the state stands, and is stale */
+  unavailable(error: unknown): void;
 }
 
 /**
@@ -75,7 +83,7 @@ export class StateChanged extends Error {
 export interface PublisherOptions<L> {
   /** the lines of an epoch before its agent has said anything, and of every epoch that has no agent */
   noLines: L;
-  /** a read of the open runtime, after its first, that failed: the state stays as it was until the next change */
+  /** a read of the open runtime, after its first, that failed; every subscriber is told the same */
   failed(error: unknown): void;
   /** the largest revision an epoch counts to before a fresh one takes its place; pinned low by tests */
   maxRevision?: number;
@@ -108,7 +116,7 @@ export class Publisher<S, L> {
   private changes = 0;
   /** how many of them the published open state covers */
   private covered = 0;
-  /** the last read that failed, and how many changes it would have covered: not tried again until there are more */
+  /** the last read that failed, and how many changes it would have covered: not tried again on its own until there are more */
   private failure: { covered: number; error: unknown } | null = null;
   private opened: Opened<S> | null = null;
   private building = false;
@@ -126,13 +134,18 @@ export class Publisher<S, L> {
     this.maxRevision = options.maxRevision ?? Number.MAX_SAFE_INTEGER;
   }
 
-  /** The state and the lines as they stand published. */
   get current(): BaselineOf<S, L> {
     return { state: this.state, lines: this.linesState };
   }
 
-  /** `subscriber` told of every publication from here on; what it starts from is returned, and nothing published after it is missed. */
+  /** The failure the state published stands under: the read that would have replaced it failed, and none has been done since. Null while the state is fit to attach to. */
+  get unavailable(): { readonly error: unknown } | null {
+    return this.failure === null ? null : { error: this.failure.error };
+  }
+
+  /** `subscriber` told of every publication from here on; what it starts from is returned, and nothing published after it is missed. Refused, with the failure, while the state is stale. */
   attach(subscriber: Subscriber<S, L>): BaselineOf<S, L> {
+    if (this.failure !== null) throw this.failure.error;
     this.subscribers.add(subscriber);
     return this.current;
   }
@@ -167,9 +180,7 @@ export class Publisher<S, L> {
     return {
       ready,
       close: () => {
-        if (this.opened !== opened) return;
-        this.opened = null;
-        if (!opened.installed) opened.reject(new Error("the runtime closed before its state was published"));
+        if (this.opened === opened) this.abandon("the runtime closed before its state was published");
       },
     };
   }
@@ -195,14 +206,14 @@ export class Publisher<S, L> {
    * Where a state covering every change so far stands: the one
    * published when it covers them already, else the first read to
    * cover them, once published. A read already under way answers
-   * when its cut began late enough. The answer is by revision within
-   * the epoch published now; an epoch that changes first answers
+   * when its cut began late enough; one that failed is made again.
+   * The answer is by revision within the epoch published now; an
+   * epoch that changes first, or a runtime that goes, answers
    * `StateChanged`, and a read that fails answers with its failure.
    */
   refresh(): Promise<RevisionMarker> {
     const opened = this.opened;
     if (opened === null || !opened.installed || this.covered >= this.changes) return Promise.resolve(markerOf(this.state));
-    if (this.failure !== null && this.failure.covered >= this.changes) return Promise.reject(this.failure.error);
     return new Promise((resolve, reject) => {
       this.waiters.push({ target: this.changes, resolve, reject });
       this.schedule();
@@ -210,17 +221,23 @@ export class Publisher<S, L> {
   }
 
   private leave(): void {
-    const opened = this.opened;
-    if (opened === null) return;
-    this.opened = null;
-    if (!opened.installed) opened.reject(new Error("another state took the place of the runtime being opened"));
+    if (this.opened !== null) this.abandon("another state took the place of the runtime being opened");
   }
 
+  /** The runtime shown is gone: what waits for a read of it is refused, and nothing more is read off it. */
+  private abandon(why: string): void {
+    const opened = this.opened!;
+    this.opened = null;
+    if (!opened.installed) return opened.reject(new Error(why));
+    for (const waiter of this.waiters.splice(0)) waiter.reject(new StateChanged());
+  }
+
+  /** A read that failed is not made again on its own; it is for a refresh, which asks, or for the next change. */
   private schedule(): void {
     if (this.building) return;
     const opened = this.opened;
     if (opened === null) return;
-    if (opened.installed && (this.covered >= this.changes || (this.failure !== null && this.failure.covered >= this.changes))) return;
+    if (opened.installed && (this.covered >= this.changes || (this.failure !== null && this.failure.covered >= this.changes && this.waiters.length === 0))) return;
     this.building = true;
     void this.build(opened).finally(() => {
       this.building = false;
@@ -244,6 +261,7 @@ export class Publisher<S, L> {
       }
       this.failure = { covered: covering, error };
       for (const waiter of this.waiters.splice(0)) waiter.reject(error);
+      for (const subscriber of this.subscribers) subscriber.unavailable(error);
       this.options.failed(error);
       return;
     }
@@ -273,6 +291,7 @@ export class Publisher<S, L> {
     const epoch = freshEpoch();
     this.state = { epoch, revision: 1, value };
     this.linesState = { epoch, revision: 1, value: this.options.noLines };
+    this.failure = null;
     for (const waiter of this.waiters.splice(0)) waiter.reject(new StateChanged());
     for (const subscriber of this.subscribers) subscriber.state(this.state);
     for (const subscriber of this.subscribers) subscriber.lines(this.linesState);

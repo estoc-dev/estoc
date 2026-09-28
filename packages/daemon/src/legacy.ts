@@ -7,13 +7,14 @@
 
 import type { BaselineOf, Publisher, StateOf } from "./publisher.js";
 
-/** How the daemon raises an event: a name and its arguments, to whoever listens. */
 export type Emit = (name: string, ...args: unknown[]) => void;
 
 export interface LegacyEvents {
-  /** Where things stand, to `to` alone: what a listener that was not there for the events so far is told first. */
+  /** Where things stand, to `to` alone: what a listener that was not there for the events so far is told first. Refused while the state is stale. */
   replayTo(to: Emit): Promise<void>;
 }
+
+const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function tell<S>(to: Emit, { value }: StateOf<S>, opened: boolean): void {
   if (value.phase !== "open") to("phase", value.phase, value.detail, value.hold);
@@ -29,9 +30,12 @@ export function legacyEvents<S, L>(publisher: Publisher<S, L>, emit: Emit): Lega
       if (shown(publisher.current)) emit("lines", lines.value);
     },
     log: (line) => emit("log", line.line),
+    unavailable: (error) => emit("log", `the snapshot could not be read: ${failure(error)}`),
   });
   return {
     async replayTo(to) {
+      const unavailable = publisher.unavailable;
+      if (unavailable !== null) throw unavailable.error;
       const current = publisher.current;
       tell(to, current.state, true);
       if (shown(current)) to("lines", current.lines.value);

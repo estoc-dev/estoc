@@ -15,9 +15,17 @@
 - **`refresh()` answers `{ epoch, revision }`**: where a state covering
   every change committed so far stands. With nothing unpublished it
   answers the state published, without another read; a read under way
-  answers when its cut began late enough. A view that joins is handed
-  the state published, not a read of its own; damage the file meets
-  out of band is found by the next read, which the next commit makes.
+  answers when its cut began late enough, and one that failed is made
+  again. A view that joins is handed the state published, not a read of
+  its own; damage the file meets out of band is found by the next read,
+  which the next commit makes. A runtime that is locked, removed or
+  closed while a `refresh()` waits on a read of it answers
+  `StateChanged`, so the call that waits settles and the vault is let go
+  of.
+- **A read that fails leaves the state stale**, not replaced: every view
+  is told (`log`, for this RPC), a UI joining meanwhile is refused its
+  `boot()` with the failure, and the next call or `refresh()` reads
+  again.
 - **`pending()` is gone**: `Snapshot.pending` is the same, as of the
   snapshot.
 - The `phase`, `opened`, `changed`, `lines` and `log` events are the
@@ -46,12 +54,11 @@
   `unreadable` is now only a vault the daemon could not open, such as
   one written under another schema version; `forgetIdentity` removes
   it. The host hook is `foreign()`.
-- The records are read again for every listener once the agent over
-  the vault has opened, when the pass it ran as it opened admitted,
-  consumed or acknowledged anything: an observation whose admission
-  waited for evidence a merged backup brought in is shown admitted,
-  with the message it carries and the response it earns listed as
-  owed, without another change to the vault.
+- What the pass the agent runs as it opens admits, consumes or
+  acknowledges is published like any other commit: an observation
+  whose admission waited for evidence a merged backup brought in is
+  shown admitted, with the message it carries and the response it
+  earns listed as owed, without a call of the UI's.
 - `Snapshot.channels[].observations` and `Snapshot.unplaced.inputs`
   are the agent's observation records: every observation with its
   disposition, apart from the messages, which are the admitted inputs
@@ -64,10 +71,9 @@
 - **Phase `damaged`**: a vault whose history no longer reads whole is
   not run. The daemon says so with the damage as the detail, whether it
   finds it locked, with its seed at hand, or while the vault runs,
-  whichever read meets it first — the one a vault opens with, the one
-  after a change, the one replayed to a listener that joins (the
-  records short of the damaged event are not shown, the agent is
-  stopped and the file let go of). `forgetIdentity` makes room for a
+  whichever read meets it first — the one a vault opens with, or the
+  one after a change (the records short of the damaged event are not
+  shown, the agent is stopped and the file let go of). `forgetIdentity` makes room for a
   restore. `DAMAGE_RECOURSE` is the explanation for a host with no
   words of its own.
 - `mergeBackup` recovers from a forked author: when the backup and the
