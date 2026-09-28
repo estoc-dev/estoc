@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **The snapshot is normalized, as the API spells it.** The published
+  state is the API's `Snapshot`: every message, observation, channel
+  and contact once, in a table of its own, the rest referring to them
+  by ID, and a channel named everywhere by its `ChannelId`, the
+  canonical text of its pair. The channel table has every pair anything
+  names — a contact's membership and send choices, a message's or an
+  observation's placement, a head, a pending item, an unplaced output's
+  candidates — whether or not the pair has a message. `conversations`
+  is the default projection: one per undeleted contact, with the
+  channels its view shows and each one's `selected`, and one per
+  nameless group of the channels no contact shows, under the head they
+  lead to, writing only to that head when it is one of them and takes a
+  send. A conversation's `claimedName` is the peer's latest readable
+  claim across its channels, by time then message ID; an erased or
+  missing claim gives no name. Every table sorts by its ID and every
+  reference list by time then ID. A message carries `summary`, one line
+  from its content for the types the daemon has a line for, and
+  describes its attachments without their payloads. The lines a view is
+  shown are the API's `Lines`. The old events of `rpc.ts` are still
+  served, their records made from the published ones.
 - **One publisher orders the state.** `DaemonCore.publisher` holds the
   state as one value under an epoch and a revision, the runtime lines
   under their own revision of the same epoch, and log lines with their

@@ -11,12 +11,15 @@ import { unlockSeedKeystore } from "@estoc/keystore";
 import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type DidId, type MediationId, type MintedDid } from "@estoc/vault";
 
 import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
+import type { Snapshot as Published } from "@estoc/daemon-api/contract";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { channelOf, forwarded, run, stopAll } from "../../agent-core/test/e2e/running.js";
 import { connect, createDaemon, decode, encode, type Daemon, type DaemonCore, type DaemonEvents, type DaemonHost, type Hold, type Lines, type Port, type Snapshot } from "../src/index.js";
 import { nodeHost, serveDaemon } from "../src/node/index.js";
+import { channelIdOf } from "../src/channels.js";
+import { published } from "./snapshots.js";
 
 const BASIC_MESSAGE = "https://didcomm.org/basicmessage/2.0/message";
 const PASSPHRASE = "alice-passes-the-salt";
@@ -497,7 +500,7 @@ describe("a vault whose history is damaged", () => {
 });
 
 /** The reads of the runtime the daemon opens next, each handed to `wrap` once the vault's lock is let go of, to be held back or made to fail. */
-function readsOf(daemon: DaemonCore, wrap: (read: Promise<Snapshot>) => Promise<Snapshot>): void {
+function readsOf(daemon: DaemonCore, wrap: (read: Promise<Published>) => Promise<Published>): void {
   const { publisher } = daemon;
   const opening = publisher.open.bind(publisher);
   publisher.open = (hold, source) => opening(hold, { capture: (cut) => wrap(source.capture(cut)) });
@@ -1024,6 +1027,27 @@ describe("two daemons over a mediator", () => {
       expect(alice.heard.snapshot().contacts).toEqual([]);
       const contactId = await alice.daemon.createContact("Bob", [head]);
       expect(alice.heard.snapshot().contacts).toMatchObject([{ petname: "Bob", defaultWriteTo: head }]);
+      // As a view is handed it: the contact's conversation shows the head selected and the pair Bob wrote in reached from it, and no nameless conversation stands for that pair.
+      const shown = published(alice.daemon);
+      expect(shown.conversations.map(({ id, contactId: of, petname, channels, writeTo, defaultWriteTo }) => ({ id, contactId: of, petname, channels, writeTo, defaultWriteTo }))).toEqual([
+        {
+          id: `contact:${contactId}`,
+          contactId,
+          petname: "Bob",
+          channels: [
+            { channelId: channelIdOf(head), selected: true },
+            { channelId: channelIdOf(moved(alice.heard.snapshot())!.channel), selected: false },
+          ],
+          writeTo: [channelIdOf(head)],
+          defaultWriteTo: channelIdOf(head),
+        },
+      ]);
+      expect(shown.channels.map(({ channelId, headChannelId }) => [channelId, headChannelId])).toEqual(
+        [
+          [channelIdOf(moved(alice.heard.snapshot())!.channel), channelIdOf(head)],
+          [channelIdOf(head), channelIdOf(head)],
+        ].sort(([a], [b]) => (a! < b! ? -1 : 1))
+      );
       await alice.daemon.renameContact(contactId, "Bobby");
       expect(alice.heard.snapshot().contacts[0]!.petname).toBe("Bobby");
 
@@ -1136,6 +1160,10 @@ describe("two daemons over a mediator", () => {
       const introduced = await bob.daemon.send({ contactId: added.contactId }, profile);
       expect(introduced).toMatchObject({ outcome: "submitted", channel: { localDid: added.channel.localDid, peerDid: head.localDid } });
       await until("alice hears bob's name", () => alice.heard.snapshot().channels.some((channel) => channel.peerName?.name === "Bob"));
+      const named = published(alice.daemon);
+      const claim = named.messages.find((message) => message.summary === "name: Bob")!;
+      expect(claim).toMatchObject({ direction: "in", channelId: channelIdOf({ localDid: head.localDid, peerDid: added.channel.localDid }) });
+      expect(named.conversations.find((conversation) => (conversation.contactId as string | null) === contactId)).toMatchObject({ claimedName: { name: "Bob", messageId: claim.messageId } });
     },
     LONG
   );
