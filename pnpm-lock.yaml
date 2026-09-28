@@ -129,6 +129,9 @@ importers:
       '@estoc/daemon':
         specifier: workspace:^
         version: link:../daemon
+      '@estoc/daemon-api':
+        specifier: workspace:^
+        version: link:../daemon-api
       '@estoc/event-store':
         specifier: workspace:^
         version: link:../event-store

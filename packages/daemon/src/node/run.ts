@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { DaemonHost } from "../host.js";
@@ -76,6 +76,7 @@ export async function runDaemon(options: RunOptions): Promise<Served> {
     port: options.port ?? 37862,
     token,
     appDir: options.appDir ?? undefined,
+    failed: (error) => log(`estoc-daemon: ${error instanceof Error ? error.message : String(error)}`),
   });
   try {
     log(`vault:  ${dir}`);
@@ -140,17 +141,41 @@ export function exitOnSignal(served: Served): void {
   process.on("SIGTERM", stop);
 }
 
+const TOKEN = /^[A-Za-z0-9_-]+$/;
+
+const errorCode = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
+
+/**
+ * The folder's token: the one in its file, or a fresh one published
+ * there whole. A fresh token is written to a file of its own first and
+ * linked under the token's name, so that two daemons starting on a
+ * fresh folder at once end up with one token, the first to link, and
+ * neither reads a file the other is still writing.
+ */
 async function storedToken(dir: string): Promise<string> {
   const file = path.join(dir, TOKEN_FILE);
   try {
-    const token = (await readFile(file, "utf8")).trim();
-    if (token !== "") {
-      return token;
-    }
-  } catch {
-    // none yet
+    return await tokenIn(file);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
   }
-  const token = randomBytes(24).toString("base64url");
-  await writeFile(file, token, { mode: 0o600 });
+  const minted = randomBytes(24).toString("base64url");
+  const draft = path.join(dir, `${TOKEN_FILE}.${randomBytes(6).toString("hex")}`);
+  await writeFile(draft, minted, { mode: 0o600, flag: "wx" });
+  try {
+    await link(draft, file);
+    return minted;
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") throw error;
+  } finally {
+    await rm(draft, { force: true });
+  }
+  return tokenIn(file);
+}
+
+/** The token `file` holds; one that holds anything else is nobody's credential, and the endpoint is not opened under it. */
+async function tokenIn(file: string): Promise<string> {
+  const token = (await readFile(file, "utf8")).trim();
+  if (!TOKEN.test(token)) throw new Error(`${file} does not hold a token; remove it to have a fresh one minted`);
   return token;
 }

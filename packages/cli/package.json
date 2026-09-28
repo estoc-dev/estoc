@@ -37,6 +37,7 @@
     "@estoc/agent-core": "workspace:^",
     "@estoc/app": "workspace:^",
     "@estoc/daemon": "workspace:^",
+    "@estoc/daemon-api": "workspace:^",
     "@estoc/event-store": "workspace:^",
     "@estoc/folder-object": "workspace:^",
     "@estoc/keystore": "workspace:^",

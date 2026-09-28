@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `Unusable` carries `what` and `id`, so that a host can tell which
+  kind of entity would not serve without reading the message.
 - **`AgentOptions.onLines`** tells the host the agent's lines whole —
   `Agent.lines()`: the connections, the waiting deliveries and the
   discards — once they changed: a connection made, reconciled, drained

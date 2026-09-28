@@ -9,8 +9,8 @@ export class UnknownEntity extends Error {
 /** The entity is there but cannot be used as asked: a conflict, a retirement, a missing prerequisite. The fold's faults say which. */
 export class Unusable extends Error {
   constructor(
-    what: string,
-    id: string,
+    readonly what: string,
+    readonly id: string,
     readonly faults: readonly string[]
   ) {
     super(`${what} ${id} is not usable: ${faults.join("; ") || "unknown"}`);

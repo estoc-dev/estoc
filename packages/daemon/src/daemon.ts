@@ -42,6 +42,7 @@ import {
 } from "@estoc/agent-core";
 
 import type { Daemon, Outcome, Phase, SendResult } from "./api.js";
+import { InvalidArgument, RestoreUnexplained, StaleHold, Unmet, WrongPhase } from "./errors.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { legacyEvents, type Emit } from "./legacy.js";
 import { linesOf } from "./lines.js";
@@ -57,6 +58,13 @@ export interface DaemonCore extends Daemon {
   readonly publisher: Publisher<Snapshot, Lines>;
   /** Say where things stand again, to `to` alone — for a listener that was not there the first time. */
   replayTo(to: Emit): Promise<void>;
+  /**
+   * The user's own rotation away from a pair: the one live DID of this
+   * vault at the pair's local end is rotated toward its peer, a fresh
+   * successor minted and its notification called. Refused when no DID
+   * of the vault is at that end, or more than one is.
+   */
+  rotateChannel(channel: Channel): Promise<Outcome & { successor: Channel }>;
   /**
    * The agent closed and the files let go of, for the host that is
    * shutting down; the seed stays cached where the host keeps it. A wait
@@ -259,7 +267,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
    */
   async function exclusively<T>(work: () => Promise<T>): Promise<T> {
     if (closing()) throw new Error(CLOSED);
-    if (current === "elsewhere") throw new Error("the vault is held elsewhere");
+    if (current === "elsewhere") throw new WrongPhase("the vault is held elsewhere");
     return inTurn(() => {
       if (closing()) throw new Error(CLOSED);
       return work();
@@ -295,19 +303,19 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   }
 
   function files(): DaemonStorage {
-    if (storage === null) throw new Error("storage is not available");
+    if (storage === null) throw new WrongPhase("the daemon holds no files here");
     return storage;
   }
 
   /** A vault is made only where the daemon found none: not beside one it holds, and not over what it could not read. */
   async function refuseOccupied(): Promise<DaemonStorage> {
     const store = files();
-    if (current !== "onboarding" || (await store.has(VAULT_FILE))) throw new Error("a vault already exists here");
+    if (current !== "onboarding" || (await store.has(VAULT_FILE))) throw new WrongPhase("a vault already exists here");
     return store;
   }
 
   function vault(): Open {
-    if (open === null) throw new Error("no open vault");
+    if (open === null) throw new WrongPhase("no open vault");
     return open;
   }
 
@@ -356,7 +364,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
   /** A send of the user's and every manual dispatch wait for the restore to be explained; nothing the vault does on its own does. */
   async function refuseUnexplained({ runtime }: Open): Promise<void> {
-    if (!(await explained(runtime))) throw new Error("this vault was restored from a snapshot: sending opens once what a restore cannot bring back has been explained");
+    if (!(await explained(runtime))) throw new RestoreUnexplained();
   }
 
   /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
@@ -539,20 +547,31 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
   function contactOf(fold: VaultFold, contactId: ContactId): void {
     const contact = fold.contacts.contacts.get(contactId);
-    if (contact === undefined || contact.origin === null || contact.deleted) throw new Error(`no contact ${contactId}`);
+    if (contact === undefined || contact.origin === null || contact.deleted) throw new Unmet(`no contact ${contactId}`);
   }
 
   async function preferredRoute({ runtime, keys }: Open) {
     const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
-    if (preferred === null) throw new Error("no mediator is set");
+    if (preferred === null) throw new Unmet("no mediator is set");
     return ensureRoute(runtime, keys, preferred);
+  }
+
+  /** `presented` as a peer's DID: canonical, and none of this vault's own. */
+  async function peerDidOf(running: Open, presented: string): Promise<Did> {
+    let peerDid: Did;
+    try {
+      peerDid = canonicalDidOf(presented);
+    } catch (err) {
+      throw new InvalidArgument(failure(err));
+    }
+    const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+    if ([...fold.routes.dids.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new InvalidArgument("that is an address of your own");
+    return peerDid;
   }
 
   async function reach(agent: Agent, running: Open, recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
     await refuseUnexplained(running);
-    const peerDid = canonicalDidOf(recipientDid);
-    const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
-    if ([...fold.routes.dids.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new Error("that is an address of your own");
+    const peerDid = await peerDidOf(running, recipientDid);
     const { minted } = await createDid(running.runtime, running.keys, await preferredRoute(running));
     const channel: Channel = { localDid: minted.did, peerDid };
     const contactId = uuidv7() as ContactId;
@@ -690,7 +709,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
                     try {
                       unlocked.seedKey = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
                     } catch {
-                      throw new Error("that passphrase does not open this backup");
+                      throw new Unmet("that passphrase does not open this backup");
                     }
                     return Keys.anchorOf(unlocked.seedKey);
                   },
@@ -733,12 +752,12 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
     unlock: (passphrase) =>
       exclusively(async () => {
-        if (inspected === null) throw new Error("nothing to unlock");
+        if (inspected === null) throw new WrongPhase("nothing to unlock");
         let seedKey: SeedKey;
         try {
           seedKey = await unlockSeedKeystore({ version: 3, seedJwe: inspected.wrapped.seedJwe }, passphrase);
         } catch {
-          throw new Error("wrong passphrase");
+          throw new Unmet("wrong passphrase");
         }
         await letGo();
         try {
@@ -766,9 +785,9 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     forgetIdentity: (hold) =>
       exclusively(async () => {
         const store = files();
-        if (typeof hold !== "string") throw new Error("the removal names no vault: it was asked by an app of an earlier version, and nothing is removed until the app is updated");
-        if (held === null) throw new Error("there is no vault here to remove");
-        if (hold !== held) throw new Error("that vault is gone already; what stands here now is another, and it is left as it is");
+        if (typeof hold !== "string") throw new InvalidArgument("the removal names no vault: it was asked by an app of an earlier version, and nothing is removed until the app is updated");
+        if (held === null) throw new WrongPhase("there is no vault here to remove");
+        if (hold !== held) throw new StaleHold();
         await stop();
         await letGo();
         await host.forgetSeedKey();
@@ -880,7 +899,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
     createContact: (petname, channels) =>
       act(async (_agent, running) => {
-        if (channels.length === 0) throw new Error("a contact is created with at least one channel");
+        if (channels.length === 0) throw new InvalidArgument("a contact is created with at least one channel");
         const contactId = uuidv7() as ContactId;
         await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels })]);
         return contactId;
@@ -955,6 +974,20 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         return { successor: rotated.successor, existed: rotated.existed, ...effectOutcomeOf(rotated.notification) };
       }),
 
+    rotateChannel: (channel) =>
+      act(async (agent, running) => {
+        await refuseUnexplained(running);
+        const entities = [...(await scanVault(running.runtime.vault, running.keys, SCAN)).routes.dids.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
+        const live = entities.filter((entity) => entity.live);
+        const candidates = live.length > 0 ? live : entities;
+        if (candidates.length === 0) throw new Unmet(`no DID of this vault is ${channel.localDid}`);
+        if (candidates.length > 1) throw new Unmet(`${candidates.length} DIDs of this vault are ${channel.localDid}: which of them to rotate is not decidable`);
+        const rotated = await agent.manual.rotate({ localDidId: candidates[0]!.didId, peerDid: channel.peerDid });
+        const successor = (await scanVault(running.runtime.vault, running.keys, SCAN)).routes.dids.get(rotated.successor)?.created?.did;
+        if (successor === undefined) throw new Error(`the successor ${rotated.successor} has no DID`);
+        return { successor: { localDid: successor, peerDid: rotated.channel.peerDid }, ...effectOutcomeOf(rotated.notification) };
+      }),
+
     refresh: () => publisher.refresh(),
 
     async reconnect() {
@@ -966,7 +999,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     traceLevel: async () => vault().trace.level,
 
     async setTraceLevel(level) {
-      if (!isTraceLevel(level)) throw new Error(`no such trace level: ${String(level)}`);
+      if (!isTraceLevel(level)) throw new InvalidArgument(`no such trace level: ${String(level)}`);
       await vault().trace.setLevel(level);
       return level;
     },

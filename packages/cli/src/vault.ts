@@ -1,8 +1,11 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { createVault, inspectRuntime } from "@estoc/agent-core";
-import { RESTORE_EXPLAINED, VAULT_FILE, connect, decode, encode, type Daemon, type DaemonStorage, type Phase, type Port, type Snapshot } from "@estoc/daemon";
+import { RESTORE_EXPLAINED, VAULT_FILE, type DaemonStorage } from "@estoc/daemon";
 import { ESTOC_DIR, SOCKET_FILE, nodeHost, vaultDir } from "@estoc/daemon/node";
+import { connect, isCallError, type Client } from "@estoc/daemon-api/client";
+import type { Phase, State } from "@estoc/daemon-api/contract";
+import { webSocketOf } from "@estoc/daemon-api/wire";
 import { DamagedHistory, DatabaseBusy } from "@estoc/event-store";
 import { createSeedKeystore, deriveIdentity, unlockSeedKeystore, type DerivedIdentity } from "@estoc/keystore";
 import { ANCHOR_KEY_NAME, Keys } from "@estoc/vault";
@@ -61,38 +64,19 @@ export async function openVault(root: string): Promise<Vault> {
   return vault;
 }
 
-/** The daemon that holds a folder, as far as one replay of where it stands. */
+/** The daemon that holds a folder, attached to: where it stands is what it published last. */
 interface Remote {
-  daemon: Daemon;
+  client: Client;
   /** the socket without its token */
   at: string;
-  phase: Phase;
-  detail: string | null;
-  snapshot: Snapshot | null;
+  state(): State;
   close(): void;
 }
 
 type Reached = { storage: DaemonStorage } | { remote: Remote };
 
-function socketPort(ws: WebSocket): Port {
-  return {
-    postMessage: (message) => ws.send(encode(message)),
-    addEventListener(type: "message" | "close", listener: (event: MessageEvent) => void) {
-      if (type === "close") ws.addEventListener("close", () => (listener as () => void)());
-      else
-        ws.addEventListener("message", (event) => {
-          let data: unknown;
-          try {
-            data = decode(String(event.data));
-          } catch {
-            ws.close();
-            return;
-          }
-          listener({ data } as MessageEvent);
-        });
-    },
-  } as Port;
-}
+/** What a call of the daemon's failed with, in the daemon's words and under its code. */
+const explained = (error: unknown): Error => (isCallError(error) ? new Error(`${error.message} (${error.code})`) : (error as Error));
 
 async function daemonOf(vault: Vault): Promise<Remote> {
   let url: URL;
@@ -102,33 +86,15 @@ async function daemonOf(vault: Vault): Promise<Remote> {
     throw new Error(`${vault.dir} is held by another process, and no daemon says where it listens`);
   }
   const at = url.origin;
-  const ws = new WebSocket(url);
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve());
-    ws.addEventListener("error", () => reject(new Error(`${vault.dir} is held by another process, and no daemon answers at ${at}`)));
-  });
-  const remote: Remote = { daemon: null as unknown as Daemon, at, phase: "booting", detail: null, snapshot: null, close: () => ws.close() };
-  const told = (snapshot: Snapshot) => {
-    remote.phase = "open";
-    remote.detail = null;
-    remote.snapshot = snapshot;
-  };
-  remote.daemon = connect<Daemon>(socketPort(ws), {
-    phase(phase: Phase, detail: string | null) {
-      remote.phase = phase;
-      remote.detail = detail;
-      remote.snapshot = null;
-    },
-    opened: told,
-    changed: told,
-  });
+  const client = connect(webSocketOf(new WebSocket(url)));
   try {
-    await remote.daemon.boot();
-  } catch (err) {
-    ws.close();
-    throw err;
+    await client.connected();
+  } catch (error) {
+    client.close();
+    if (isCallError(error) && error.code === "Incompatible") throw new Error(`the daemon at ${at} speaks another version of the API: ${error.message}`);
+    throw new Error(`${vault.dir} is held by another process, and no daemon answers at ${at}`);
   }
-  return remote;
+  return { client, at, state: () => client.state!, close: () => client.close() };
 }
 
 /** The folder's files in this process, or the daemon that has them. */
@@ -169,10 +135,13 @@ export async function initVault(root: string, label: string, passphrase: string)
   if ("remote" in reached) {
     const { remote } = reached;
     try {
-      if (remote.phase !== "onboarding") throw new Error(`${vault.dir} already holds a vault`);
-      await remote.daemon.createIdentity(label, passphrase);
-      if (remote.snapshot === null) throw new Error(`the daemon at ${remote.at} made the vault and did not show it`);
-      return { vault, did: remote.snapshot.anchor };
+      if (remote.state().value.phase !== "onboarding") throw new Error(`${vault.dir} already holds a vault`);
+      await remote.client.daemon.createIdentity({ name: label, passphrase }).catch((error: unknown) => {
+        throw explained(error);
+      });
+      const shown = remote.state().value;
+      if (shown.phase !== "open") throw new Error(`the daemon at ${remote.at} made the vault and did not show it`);
+      return { vault, did: shown.snapshot.anchor };
     } finally {
       remote.close();
     }
@@ -217,8 +186,10 @@ export async function vaultStatus(vault: Vault): Promise<VaultStatus> {
   if ("remote" in reached) {
     const { remote } = reached;
     remote.close();
-    const { at, phase, detail, snapshot } = remote;
-    return { anchor: snapshot?.anchor ?? null, label: snapshot?.label ?? null, daemon: { at, phase, detail }, damaged: phase === "damaged" ? detail : null };
+    const { value } = remote.state();
+    const snapshot = value.phase === "open" ? value.snapshot : null;
+    const detail = value.phase === "open" ? null : value.detail;
+    return { anchor: snapshot?.anchor ?? null, label: snapshot?.label ?? null, daemon: { at: remote.at, phase: value.phase, detail }, damaged: value.phase === "damaged" ? detail : null };
   }
   return looked(vault, reached.storage, async ({ runtime, fold }) => {
     const { stopped } = runtime;
