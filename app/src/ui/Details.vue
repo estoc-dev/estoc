@@ -133,7 +133,7 @@ function remove() {
           <button class="row" type="button" data-under-the-hood @click="go({ kind: 'hood', key: conversationKey })">
             <span class="row-main">
               <span>Channels</span>
-              <span class="row-sub">{{ conversation.channels.length }}<template v-if="current"> · writing as {{ shortDid(current.channel.localDid) }}</template></span>
+              <span class="row-sub" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ conversation.channels.length }}<template v-if="current"> · writing as {{ shortDid(current.channel.localDid) }}</template></span>
             </span>
             <Icon name="chevron" class="chevron" :size="20" />
           </button>
