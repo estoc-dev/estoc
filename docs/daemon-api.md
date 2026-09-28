@@ -313,10 +313,13 @@ projection changes committed before that request's execution. If no such
 change remains unpublished, it reuses the current published revision without
 another capture or a new state event. The calling port's baseline or an
 earlier update already supplies that state, either received or queued.
-Otherwise, the daemon captures a fresh state and queues it, or a newer state
-of the same epoch, before the reply. Coalescing may substitute a greater
-revision of the same epoch but must keep the qualifying state ahead of the
-reply. If the epoch changes before the qualifying state and reply are
+Otherwise, it queues a state whose coherent read cut covers every such
+change. A capture already in progress may supply that state if its cut
+qualifies; only when no qualifying capture exists is another needed. One
+capture may satisfy several refresh requests. An older in-progress cut
+cannot satisfy a request that needs a later change. The qualifying state,
+or a greater revision of the same epoch, stays ahead of the reply even when
+coalesced. If the epoch changes before the qualifying state and reply are
 queued, the RPC fails with `StateChanged`.
 
 The SDK's `refresh(): Promise<void>` resolves only after receiving a matching
@@ -327,8 +330,9 @@ requires a new event after the reply. For example, revision 8 satisfies a
 target of 7 even if 7 was coalesced away. If the SDK moves to another epoch
 before satisfying the barrier, it rejects with `StateChanged`; a closed
 connection rejects under the disconnection rules. Views use this operation
-without implementing their own revision wait. Success does not freeze the
-state against later changes.
+without implementing their own revision wait. Refresh only reads and
+publishes state; it makes no domain mutation or domain transport attempt.
+Success does not freeze the state against later changes.
 
 ### 5.3 Runtime lines and logs
 
@@ -461,11 +465,9 @@ an unadmitted observation MUST NOT cause a placeholder accepted message.
 Bodies and attachments appear only in their owning message record.
 
 Attachments expose API-owned descriptors with metadata and content
-references. Version 1 has no object-payload download operation and does not
-promise that a view can open an attachment's bytes. A descriptor or body
-availability does not imply payload availability; views present the metadata
-without advertising unsupported opening or download actions. Adding object
-retrieval requires its own contract, not direct access to the live vault.
+references; body availability does not imply attachment-payload availability.
+Version 1 has no payload-read operation, so views display descriptors without
+advertising unsupported opening or download actions.
 
 `ChannelId` is the canonical JSON text of `[localDid, peerDid]` under the
 [channel identity rule](replica-model/channels.md#channel-identity).
@@ -766,21 +768,22 @@ of the wire `ApiError` shape.
 | `StateChanged` | The SDK's pending refresh barrier lost its epoch |
 
 A client error has `effect: "none"` when that operation's application call
-was not handed to the transport; otherwise it conservatively uses `possible`.
-The latter includes
-a lost reply, a protocol failure while a call is pending, or an interrupted
-refresh wait. A session fault is not a correlated answer to pending calls:
-their waits end as client errors under this rule, even if the fault's own
-diagnostic reports no effect. These fields have the same meaning as in a
-daemon error; there is no third `unknown` effect value.
+was not handed to the transport. Refresh also has `effect: "none"` even
+after handoff, including a lost reply, protocol failure or `StateChanged`,
+because the operation has no domain side effects. Other handed-off calls
+conservatively use `possible` for local failures. A session fault is not a
+correlated answer to pending calls: each wait follows this operation-specific
+rule, not the fault's own effect diagnostic. These fields have the same
+meaning as in a daemon error; there is no third `unknown` effect value.
 
 ### 7.4 Lost replies
 
 The SDK ends every pending call when its port closes. A request known never
 to have been handed to the transport fails with a client `CallError` and
 `effect: "none"`. Once handed over, a missing reply on a closed port is
-`origin: "client"`, `code: "TransportDisconnected"`, `effect: "possible"`,
-and `messageId: null`, even if the daemon may have finished the operation.
+`origin: "client"`, `code: "TransportDisconnected"`, and `messageId: null`.
+Its effect is `none` for refresh and `possible` for other calls, even if the
+daemon may have finished the operation.
 A client timeout or abandoned wait does not cancel work at the daemon.
 
 The SDK and view MUST NOT automatically resubmit a side-effecting call after
@@ -1027,7 +1030,8 @@ negotiated session. Moving a type into the API package does not justify
 moving the domain decision that produced it into a view.
 
 Delta streams, per-conversation subscriptions, durable command lookup,
-exactly-once execution, scoped client tokens, streaming backup transfer and
-multi-vault routing are future designs. None is required to establish this
-boundary. Whole snapshots, explicit outcomes and one owned vault keep the
-first contract small enough to implement and independently exercise.
+exactly-once execution, scoped client tokens, streaming backup transfer,
+attachment payload retrieval and multi-vault routing are future designs.
+None is required to establish this boundary. Whole snapshots, explicit
+outcomes and one owned vault keep the first contract small enough to implement
+and independently exercise.
