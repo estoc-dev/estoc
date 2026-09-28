@@ -8,7 +8,7 @@ import { CUSTOM, useMediatorInput } from "./mediator-input.js";
 /**
  * The mediator picker: a dropdown of known mediators plus a paste field
  * that takes an OOB invitation URL, a bare mediator URL, or a DID. Used
- * once to name a mediator, and again to move to another — the caller says
+ * once to name a mediator, and again to move to another: the caller says
  * what the button does; this resolves the choice to a DID and hands it
  * over, showing whatever went wrong.
  */
@@ -64,23 +64,16 @@ async function submit() {
 </script>
 
 <template>
-  <form class="rail-form" @submit.prevent="submit">
-    <select v-model="choice" class="field">
+  <form class="form" @submit.prevent="submit">
+    <select v-model="choice" class="field" data-mediator-choice>
       <option v-for="c in MEDIATOR_CHOICES" :key="c.value" :value="c.value">
-        via {{ c.label }}{{ c.label === currentLabel ? " (current)" : "" }}
+        {{ c.label }}{{ c.label === currentLabel ? " (current)" : "" }}
       </option>
-      <option :value="CUSTOM">via a pasted invitation…</option>
+      <option :value="CUSTOM">a pasted invitation…</option>
     </select>
-    <input
-      v-if="choice === CUSTOM"
-      v-model="pasted"
-      class="field"
-      placeholder="invitation URL, mediator URL, or DID"
-    />
-    <p v-if="pickError || inputError" class="status-line error" style="margin: 0">
-      {{ pickError ?? inputError }}
-    </p>
-    <button class="btn" type="submit" :disabled="busy || resolving">
+    <input v-if="choice === CUSTOM" v-model="pasted" class="field" placeholder="invitation link, mediator URL, or DID" data-mediator-paste />
+    <p v-if="pickError || inputError" class="error-text">{{ pickError ?? inputError }}</p>
+    <button class="btn" type="submit" :disabled="busy || resolving" data-mediator-use>
       {{ busy ? busyLabel : submitLabel }}
     </button>
   </form>

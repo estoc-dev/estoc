@@ -13,6 +13,7 @@ import { explainedRestore } from "../core/store.js";
  */
 const busy = ref(false);
 const failure = ref<string | null>(null);
+const more = ref(false);
 
 async function understood() {
   busy.value = true;
@@ -27,32 +28,25 @@ async function understood() {
 </script>
 
 <template>
-  <div class="hollow invited chat-block" data-restore-notice>
-    <div class="hollow-card" style="width: 100%">
-      <div class="eyebrow">Restored from a backup</div>
-      <p>
-        This vault is the backup as it was taken, and nothing after. The DIDs
-        you minted since, the addresses your contacts moved to since, and what
-        tied old addresses to new ones are not in it, and the seed alone does
-        not bring them back.
+  <div class="card" data-restore-notice>
+    <div class="eyebrow">Restored from a backup</div>
+    <p>This vault is the backup as it was taken, and nothing after. Sending stays closed until you have read what that means.</p>
+    <template v-if="more">
+      <p class="note">
+        Addresses you minted since the backup, addresses your contacts moved to since, and what tied old ones to new ones are not in it. Mail to or from
+        such an address is discarded on arrival; the Needs you page lists what was turned away. If this vault and another copy both rotate an address
+        from here, the conversation has no current channel until one of you starts a fresh one. Importing a newer backup closes the gap; failing that, a
+        new invitation does.
       </p>
-      <p>
-        So mail sent to an address of yours this vault has never heard of, or
-        from a contact under an address it cannot trace, is discarded on
-        arrival, even where that address was confirmed before. The rail lists
-        what was turned away and why. If this vault and another copy both
-        rotate a DID from here, your contact sees two successors and the
-        conversation has no current channel until one of you starts a fresh
-        one. Importing a newer backup closes the gap; failing that, a new
-        invitation does.
+      <p class="note">
+        Messages the backup holds as unsent are not sent on their own: each waits under Needs you. The backup file is readable by anyone who has it: the
+        passphrase seals the seed, not the history.
       </p>
-      <p class="fine">
-        Messages the backup holds as unsent are not sent on their own: each
-        waits under “Left to do by hand”. The backup file itself is readable
-        by anyone who has it: the passphrase seals the seed, not the history.
-      </p>
-      <p v-if="failure" class="status-line error">{{ failure }}</p>
-      <button class="btn" :disabled="busy" data-restore-understood @click="understood">I understand, open sending</button>
+    </template>
+    <button v-else class="link" type="button" style="align-self: flex-start" @click="more = true">What a restore cannot bring back</button>
+    <p v-if="failure" class="error-text">{{ failure }}</p>
+    <div class="card-actions">
+      <button class="btn small" type="button" :disabled="busy" data-restore-understood @click="understood">I understand, open sending</button>
     </div>
   </div>
 </template>

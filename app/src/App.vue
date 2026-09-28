@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 
-import { pairKey, successorOf } from "./core/conversations.js";
 import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
-import ChatPane from "./ui/ChatPane.vue";
 import Onboarding from "./ui/Onboarding.vue";
-import Rail from "./ui/Rail.vue";
+import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
 
 function startOver() {
@@ -20,41 +18,6 @@ function removeDamaged() {
   }
 }
 
-// A conversation is selected by its key: a contact's ID, or for one not
-// named yet the pair it leads to. That pair moves when either side
-// rotates, so the conversation last open is remembered by the channels
-// it showed, and followed to whichever conversation shows them next.
-const selected = ref<string | null>(null);
-let lastShown: Set<string> | null = null;
-
-function select(key: string | null) {
-  selected.value = key;
-  const conversation = state.conversations.find((c) => c.key === key);
-  lastShown = conversation === undefined ? null : new Set(conversation.channels.map(({ channel }) => pairKey(channel)));
-}
-
-// The first conversation, opened by an invitation either way, becomes the
-// open one while nothing has been. One that was open and is gone is
-// followed; while nothing says which conversation it became, none is
-// open until the person opens one. A key selected ahead of the snapshot
-// that brings its conversation is waited for. Following is display
-// only: what is being written goes its own way, by channel.
-watch(
-  () => state.conversations,
-  (conversations) => {
-    if (conversations.some((c) => c.key === selected.value)) return select(selected.value);
-    if (lastShown === null) {
-      if (selected.value === null) select(conversations[0]?.key ?? null);
-      return;
-    }
-    selected.value = null;
-    const successor = successorOf(lastShown, conversations);
-    if (successor !== null) select(successor.key);
-  },
-  { immediate: true }
-);
-
-const mediated = computed(() => state.snapshot?.mediations.some((m) => m.selected) ?? false);
 const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new URL(state.daemonAt).host));
 </script>
 
@@ -136,17 +99,7 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
     </div>
   </div>
 
-  <div v-else class="frame">
-    <Rail />
-    <ChatPane
-      v-if="state.snapshot"
-      :conversations="state.conversations"
-      :selected="selected"
-      :mediated="mediated"
-      :sends-closed="state.snapshot.restoreUnexplained"
-      @select="select"
-    />
-  </div>
+  <Shell v-else-if="state.snapshot" />
 
   <div v-if="state.applyUpdate" class="update-chip">
     <span>A new version of Estoc is ready.</span>
