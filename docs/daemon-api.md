@@ -187,6 +187,11 @@ a portable vault ID or a capability token. `forgetIdentity({ hold })` MUST
 compare the caller's captured hold under the lifecycle exclusion that also
 removes the file. A stale confirmation MUST NOT remove a replacement vault.
 
+Removal is allowed in `open`, `locked`, `damaged`, and `unreadable` with a
+non-null hold. Other phases, or no held file, return `WrongPhase`; an allowed
+phase with a different hold returns `StaleHold`. These checks happen before
+stopping the runtime or changing the file.
+
 ### 3.3 Connection state is local to the client
 
 The client exposes `connecting`, `connected`, `disconnected` or
@@ -195,8 +200,10 @@ negotiation and initial attachment have completed, not merely that a socket
 is open. `unreachable` is therefore not a daemon phase.
 
 On disconnection a view MAY retain its last display, marked stale. The SDK
-MUST reject new remote operations until a fresh attachment completes. On
-reconnection it replaces the old state before enabling operations. Callbacks
+MUST reject new application calls with a client `NotConnected` error until
+a fresh attachment completes; connection and attachment traffic itself is
+exempt from that guard. On reconnection it replaces the old state before
+enabling operations. Callbacks
 from an older socket or worker connection MUST NOT update the new session.
 A daemon-originated non-open state still clears the snapshot; a stale display
 is not permission to retain live records after a received lock transition.
@@ -301,12 +308,16 @@ Command replies report the procedure's result, independently of when a view
 renders the corresponding state. Views MUST NOT infer rollback from an
 error or assume a reply is the next snapshot.
 
-The `refresh` RPC requests a capture no earlier than the request's execution
-and returns its `{ epoch, revision }`. The daemon queues that complete state,
-or a newer state of the same epoch, before queuing the reply. Coalescing may
-replace the state only with a greater revision of the same epoch, still
-ahead of that reply. If the epoch changes before this publication and reply
-are queued, the RPC fails with `StateChanged`.
+The `refresh` RPC returns the `{ epoch, revision }` of a state covering all
+projection changes committed before that request's execution. If no such
+change remains unpublished, it reuses the current published revision without
+another capture or a new state event. The calling port's baseline or an
+earlier update already supplies that state, either received or queued.
+Otherwise, the daemon captures a fresh state and queues it, or a newer state
+of the same epoch, before the reply. Coalescing may substitute a greater
+revision of the same epoch but must keep the qualifying state ahead of the
+reply. If the epoch changes before the qualifying state and reply are
+queued, the RPC fails with `StateChanged`.
 
 The SDK's `refresh(): Promise<void>` resolves only after receiving a matching
 RPC result and consuming a state of that epoch whose revision is **greater
@@ -368,9 +379,12 @@ the writer lock or other views. The daemon may replace an unsent state or
 lines update with a newer complete value of the same epoch. It MUST preserve
 attachment baselines, epoch transitions and RPC replies; it may drop logs.
 If these obligations no longer fit its buffer limit, it closes that port.
-A state too large to encode or a failed coherent read produces a terminal
-`StateUnavailable` fault, rather than a silently incomplete snapshot. This
-does not relabel an otherwise healthy vault as `damaged`.
+The daemon's own memory and queue guards are implementation resource limits,
+not the advertised request bounds. Exceeding an advertised request bound
+does not disqualify a state, its attachment baseline or any other publication.
+If the platform cannot construct or encode the complete state, or a coherent
+read fails, the daemon sends a terminal `StateUnavailable` fault instead of
+an incomplete snapshot. This does not relabel a healthy vault as `damaged`.
 
 ## 6. Public records and projections
 
@@ -425,7 +439,7 @@ fixes the public information to preserve and the normalization to apply:
 | --- | --- |
 | `MediationRecord` | `mediationId`, mediator DID, selection, usability, retirement and diagnostics |
 | `LocalDidRecord` | `didId`, canonical DID, liveness, retirement, disclosure and diagnostics |
-| `ContactRecord` | `contactId`, origin, petname, flags, shown channel references with `selected`, eligible `writeTo`, `defaultWriteTo`, saved DID preference and diagnostics |
+| `ContactRecord` | `contactId`, origin, flags and saved DID preference; one record per undeleted contact |
 | `ChannelRecord` | `channelId`, canonical `localDid` and `peerDid`, nullable `headChannelId`, superseded/blocked/conflicted state, send gate, sourced peer name claim, submitted-profile ID, message and observation reference lists |
 | `MessageRecord` | `messageId`, direction, nullable `channelId`, exact selecting contact IDs, display time `at: DisplayTime`, agreed headers, body availability/content/attachments, protocol kind, effect type, execution/delivery status, ACK/late/verification state, available manual steps, diagnostics and summary |
 | `ObservationRecord` | `sourceEventCid`, logical `messageId`, nullable `channelId`, `at: DisplayTime`, authentication/verification state, admission disposition and contradiction indicator; no message body |
@@ -433,12 +447,25 @@ fixes the public information to preserve and the normalization to apply:
 | `PendingWork` | Pending outbounds, missing responses/notifications, notification conflicts and waiting proofs, retaining the IDs and explicit manual entries needed to act on each |
 | `UnplacedRecord` | Unplaced observation references and output message references with their candidate channel IDs |
 
-Contact and channel DTOs contain references rather than embedded message,
+Each contact record has exactly one contact conversation, whose non-null
+`contactId` resolves to that record. Petname, shown channels, send choices
+and diagnostics live only in that conversation; the contact record retains
+the remaining metadata.
+`/views` helpers join the two without creating a second authoritative copy.
+
+Conversation and channel DTOs contain references rather than embedded message,
 observation or channel records. `messages` has one record per `messageId`,
 `observations` one per `sourceEventCid`, and `channels` one per canonical
 pair. Messages include admitted inputs and placed or unplaced outputs;
 an unadmitted observation MUST NOT cause a placeholder accepted message.
 Bodies and attachments appear only in their owning message record.
+
+Attachments expose API-owned descriptors with metadata and content
+references. Version 1 has no object-payload download operation and does not
+promise that a view can open an attachment's bytes. A descriptor or body
+availability does not imply payload availability; views present the metadata
+without advertising unsupported opening or download actions. Adding object
+retrieval requires its own contract, not direct access to the live vault.
 
 `ChannelId` is the canonical JSON text of `[localDid, peerDid]` under the
 [channel identity rule](replica-model/channels.md#channel-identity).
@@ -683,7 +710,7 @@ does not change error classification or imply `effect: "none"`. Operations
 with no such single known message return null. This rule applies regardless
 of whether the successful method result would have contained a message ID.
 
-The baseline codes are:
+The baseline daemon codes are:
 
 | Code | Meaning |
 | --- | --- |
@@ -701,13 +728,60 @@ procedure, so the code alone does not imply `effect: "none"`. Unknown codes
 are displayed as failures with their supplied effect uncertainty. There is
 no generic `retryable` bit authorizing a fresh business operation.
 
+The SDK rejects connection/attachment attempts and call promises with a
+structural `CallError`. Its `/client` entry point exports
+`isCallError(value: unknown): value is CallError` so views and bots can narrow
+caught values without depending on an exception class.
+
+```ts
+type ClientErrorCode =
+  | "TransportDisconnected" | "ProtocolError" | "Incompatible"
+  | "NotConnected" | "InvalidArgument" | "ResourceLimit" | "StateChanged";
+
+type CallError =
+  | ({ origin: "daemon" } & ApiError)
+  | {
+      origin: "client";
+      code: ClientErrorCode;
+      message: string;
+      effect: "none" | "possible";
+      messageId: null;
+    };
+```
+
+An `error` frame matching a call becomes `origin: "daemon"` with its
+validated `ApiError` fields. The SDK assigns origin from provenance, never
+from an extra field supplied by the peer. A locally generated failure has
+`origin: "client"` and null `messageId`; neither a known request ID nor an
+input message ID makes it a daemon reply. Origin is an SDK field, not part
+of the wire `ApiError` shape.
+
+| Client code | Meaning |
+| --- | --- |
+| `TransportDisconnected` | The port closed before the operation could complete |
+| `ProtocolError` | The SDK received invalid bootstrap or application protocol data |
+| `Incompatible` | Negotiation found no supported API version |
+| `NotConnected` | A new call was refused before a completed attachment |
+| `InvalidArgument`, `ResourceLimit` | Local validation refused a request before handing it to the transport |
+| `StateChanged` | The SDK's pending refresh barrier lost its epoch |
+
+A client error has `effect: "none"` when that operation's application call
+was not handed to the transport; otherwise it conservatively uses `possible`.
+The latter includes
+a lost reply, a protocol failure while a call is pending, or an interrupted
+refresh wait. A session fault is not a correlated answer to pending calls:
+their waits end as client errors under this rule, even if the fault's own
+diagnostic reports no effect. These fields have the same meaning as in a
+daemon error; there is no third `unknown` effect value.
+
 ### 7.4 Lost replies
 
 The SDK ends every pending call when its port closes. A request known never
-to have been handed to the transport can fail locally with no effect. Once
-handed over, a missing reply is `TransportDisconnected` with effect unknown,
-even if the daemon may have finished the operation. A client timeout or
-abandoned wait does not cancel work at the daemon.
+to have been handed to the transport fails with a client `CallError` and
+`effect: "none"`. Once handed over, a missing reply on a closed port is
+`origin: "client"`, `code: "TransportDisconnected"`, `effect: "possible"`,
+and `messageId: null`, even if the daemon may have finished the operation.
+A client timeout or abandoned wait does not cancel work at the daemon.
 
 The SDK and view MUST NOT automatically resubmit a side-effecting call after
 such a failure. Reconnection negotiates and attaches to a fresh baseline;
@@ -782,30 +856,33 @@ Call IDs are positive safe integers, unique for the lifetime of one port.
 Each valid dispatched call produces one result or error with that ID while
 the port remains writable; delivery is not guaranteed after a connection
 failure. A void wire result is `value: null`; the SDK's void-returning
-`refresh()` instead consumes the RPC's revision marker. Events have no replies. A fault
-is terminal and the daemon closes that port; unresolved calls remain uncertain.
+`refresh()` instead consumes the RPC's revision marker. Events have no replies.
+A fault is terminal and the daemon closes that port; unresolved calls remain
+uncertain.
 
-Malformed encoding or frame structure closes the port and becomes a local
-`ProtocolError`; it is never passed to a public handler. A valid call envelope
-with invalid method input receives `InvalidArgument`. Frames in the wrong
-direction, repeated bootstrap and duplicate in-flight IDs are protocol errors.
+Malformed encoding or frame structure closes the receiving port; an SDK
+detecting it reports a client `ProtocolError`. It is never passed to a public
+handler. A valid call envelope with invalid method input receives
+`InvalidArgument`. Frames in the wrong direction, repeated bootstrap and
+duplicate in-flight IDs are protocol errors.
 Replies for an already-settled ID are ignored, never matched to a new call.
 
 Ports preserve send order. The SDK installs its handlers before sending
 bootstrap and attachment, consumes the attachment result as the baseline,
-then applies later events. A locally synthesized connection error is not
-misrepresented as a daemon's `Outcome` or remote `ApiError` reply.
+then applies later events. A locally synthesized error carries
+`origin: "client"`; it never claims to be a daemon reply or an `Outcome`.
 
 ### 8.3 Bounds and backup delivery
 
-The welcome message advertises these bounds on application frames:
+The welcome message advertises the daemon's request acceptance bounds.
+`maxBackupBytes` additionally bounds a decoded export result:
 
 | Limit | Meaning |
 | --- | --- |
-| `maxFrameBytes` | Positive safe integer for a text port: the UTF-8 byte length of its encoded JSON frame; null for a structured-clone port |
-| `maxBackupBytes` | Positive safe integer on both transports: the backup's decoded byte count |
-| `maxValueBytes` | Positive safe integer on both transports: the logical size of a complete decoded frame, under the accounting below |
-| `maxDepth` | Positive safe integer on both transports: maximum nesting, with the frame root at depth 1 |
+| `maxFrameBytes` | Positive safe integer for a text port: maximum UTF-8 length of a client-to-daemon JSON frame; null for a structured-clone port |
+| `maxBackupBytes` | Positive safe integer on both transports: maximum decoded bytes in an inbound backup or an `exportBackup` result |
+| `maxValueBytes` | Positive safe integer on both transports: maximum logical size of a complete client-to-daemon frame, under the accounting below |
+| `maxDepth` | Positive safe integer on both transports: maximum nesting of a client-to-daemon frame, with its root at depth 1 |
 
 Logical size charges 8 bytes for each value (including each array or record),
 plus the UTF-8 length of string values, plus 8 bytes and the UTF-8 length of
@@ -813,31 +890,41 @@ each record key, plus the `byteLength` of a byte value. Children are charged
 recursively, and shared references are counted at each occurrence. A byte
 array is one value, not an array of numeric children. This is a deterministic
 resource budget, not a claim about a JavaScript engine's exact heap usage.
-It bounds metadata, collection size and binary payload on either transport
-without requiring a JSON representation of an embedded frame. Depth also
-bounds a deeply nested value whose byte charge is small.
+It bounds request metadata, collection size and binary payload on either
+transport without requiring a JSON representation of an embedded request.
+Depth also bounds a deeply nested request whose byte charge is small.
 
-Both endpoints enforce the advertised bounds on received and sent frames;
-excess input is rejected before invoking a method.
-Validation, encoding and backup construction stop at the limits rather than
-first materializing an unbounded result. On text ports, base64 expansion and
-envelope overhead also count against `maxFrameBytes`; logical accounting uses
-the decoded bytes instead of the base64 wrapper. Embedded snapshots remain
-bounded by `maxValueBytes` and `maxDepth`, and all ports retain bounded output
-queues. Representation differences do not relax the accepted value domain.
+The SDK validates a request against these bounds before handing it to the
+transport, and the daemon independently enforces them before invocation.
+Validation and encoding stop at the limits rather than first materializing
+an unbounded request. On text ports, base64 expansion and envelope overhead
+also count against `maxFrameBytes`; logical accounting uses the decoded bytes
+instead of the base64 wrapper. Restore and merge are rejected before changing
+the destination when a request exceeds a bound.
 
-Limits must accommodate `maxBackupBytes` plus the required reply metadata
-under the logical bound and, for a text port, its encoded frame bound. An
-backup operation whose actual metadata or payload exceeds a bound returns
-`ResourceLimit`; it never delivers a partial backup. Bounds apply to inbound
-restore and merge before the destination is changed. A backup is delivered
-to a view only when its entire validated reply arrives. Saving it durably
-to a user-selected destination is a separate responsibility of that view.
+State, lines, logs, attachment baselines and other daemon replies are not
+subject to the advertised request bounds. The SDK validates their schemas
+but MUST NOT reject them for exceeding those numbers, including `maxDepth`.
+A large snapshot does not become inadmissible because a request budget is
+small. This does not promise unlimited platform capacity; actual construction,
+encoding or delivery failures follow the state-fault and disconnection rules.
+
+The request bounds must accommodate `maxBackupBytes` plus the required
+restore/merge request metadata and, on a text port, its encoded overhead.
+An actual request whose additional metadata exceeds a bound still fails
+with `ResourceLimit`. Export construction separately enforces decoded
+`maxBackupBytes`; exceeding it returns `ResourceLimit` without a partial file.
+Its result is not capped by the inbound frame, logical-size or depth limits.
+The SDK verifies the export's decoded size against `maxBackupBytes` as well
+as its result schema; a violating reply is a client `ProtocolError`.
+
+A backup is delivered to a view only when its entire validated reply arrives.
+Saving it durably to a user-selected destination is that view's responsibility.
 
 The existing [bounded export requirement](replica-model/vault-sqlite.md#snapshot-and-export)
 still applies. An implementation may fail a bounded whole-file export; it
 cannot omit events or content to make an apparently complete backup fit.
-State records likewise are never silently truncated to meet a frame limit.
+State records likewise are never silently truncated to fit a resource budget.
 
 ## 9. Ports, authorization and discovery
 
