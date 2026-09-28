@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reconnecting, type ConnectionState } from "../../src/client/index.js";
 import type { CallError, State } from "../../src/contract/index.js";
 import type { Port, PortHandlers } from "../../src/wire/index.js";
-import { openState } from "../contract/fixtures.js";
+import { as, openState } from "../contract/fixtures.js";
 import { settle } from "../wire/ports.js";
 import { at, baseline, limits, linesAt, scripted, type Scripted } from "./daemons.js";
 
@@ -59,6 +59,33 @@ describe("a reconnecting client", () => {
     expect(view.lines).toEqual(linesAt(1, "epoch-2"));
     expect(states.map((state) => state.epoch)).toEqual(["epoch-1", "epoch-2"]);
     expect(connections.map((connection) => connection.state)).toEqual(["connected", "disconnected", "connecting", "connected"]);
+  });
+
+  it("has each connection's baseline in place when it announces connected, so that a call made there carries the new hold", async () => {
+    const first = scripted("clone");
+    const second = scripted("clone");
+    const { view, states } = series(first, second);
+    const lines: string[] = [];
+    view.onLines((update) => lines.push(update.epoch));
+    const seen: [string | null, string | null, string | null][] = [];
+    view.onConnection((connection) => {
+      if (connection.state !== "connected") return;
+      seen.push([view.state?.epoch ?? null, view.state?.value.hold ?? null, view.lines?.epoch ?? null]);
+      void outcome(view.daemon.forgetIdentity({ hold: view.state!.value.hold! }));
+    });
+    await first.greet();
+    expect(first.calls().at(-1)).toMatchObject({ method: "forgetIdentity", input: { hold: "hold-1" } });
+    first.close();
+    await vi.advanceTimersByTimeAsync(500);
+    await second.welcome();
+    await second.attach({ state: { ...at(1, "epoch-2"), value: { ...openState.value, hold: as("hold-2") } }, lines: linesAt(1, "epoch-2") });
+    expect(seen).toEqual([
+      ["epoch-1", "hold-1", "epoch-1"],
+      ["epoch-2", "hold-2", "epoch-2"],
+    ]);
+    expect(second.calls().at(-1)).toMatchObject({ method: "forgetIdentity", input: { hold: "hold-2" } });
+    expect(states.map((state) => state.epoch)).toEqual(["epoch-1", "epoch-2"]);
+    expect(lines).toEqual(["epoch-1", "epoch-2"]);
   });
 
   it("never resends a call the old connection lost: it is rejected as lost, and the new connection carries only hello and attach", async () => {

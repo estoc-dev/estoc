@@ -46,7 +46,11 @@ describe("connecting", () => {
     const states: State[] = [];
     const connections: ConnectionState[] = [];
     view.onState((state) => states.push(state));
-    view.onConnection((connection) => connections.push(connection));
+    view.onConnection((connection) => {
+      connections.push(connection);
+      expect(view.state).toEqual(openState);
+      expect(view.lines).toEqual(linesState);
+    });
     expect(view.connection).toEqual({ state: "connecting" });
     expect(view.state).toBeNull();
     await view.connected();
@@ -212,6 +216,29 @@ describe("a call", () => {
     expect(await outcome(petname({ a: { b: { c: { d: { e: { f: {} } } } } } }))).toEqual(client("ResourceLimit"));
     expect(await outcome(view.daemon.restoreIdentity({ backup: new Uint8Array(101), passphrase: "p" }))).toEqual(client("ResourceLimit"));
     expect(s.calls()).toHaveLength(1);
+    expect(view.connection.state).toBe("connected");
+  });
+
+  it.each(transports)("refuses locally an input the method's schema does not take, a base64 record at a byte member included, alike on a %s port", async (transport) => {
+    const backups: Uint8Array[] = [];
+    const daemon = served(transport, {
+      methods: handlers({
+        restoreIdentity: (input) => {
+          backups.push(input.backup);
+          return null;
+        },
+      }),
+    });
+    const view = connect(daemon.port);
+    await view.connected();
+    const restore = (backup: unknown) => outcome(view.daemon.restoreIdentity({ backup: backup as Uint8Array, passphrase: "p" }));
+    expect(await restore({ encoding: "base64", data: "AQID" })).toEqual(client("InvalidArgument"));
+    expect(await restore("AQID")).toEqual(client("InvalidArgument"));
+    expect(await restore([1, 2, 3])).toEqual(client("InvalidArgument"));
+    expect(await outcome(view.daemon.setMediator({ mediatorDid: 7 as unknown as string }))).toEqual(client("InvalidArgument"));
+    expect(daemon.link.toRight).toHaveLength(2);
+    expect(await restore(new Uint8Array([1, 2, 3]))).toBeNull();
+    expect(backups).toEqual([new Uint8Array([1, 2, 3])]);
     expect(view.connection.state).toBe("connected");
   });
 
@@ -442,6 +469,39 @@ describe("the refresh barrier", () => {
     await s.frame({ kind: "result", id, value: { epoch: "epoch-1", revision: 3 } });
     await s.frame({ kind: "event", name: "state", value: at(1, "epoch-2") });
     expect(await outcome(promise)).toBeUndefined();
+  });
+
+  it.each(["a new epoch", "the port closing"])("is judged as the reply is read, so that %s in the same batch of frames does not undo a met barrier", async (next) => {
+    let handlers: PortHandlers | null = null;
+    const port: Port = { transport: "clone", async send() {}, listen: (installed) => (handlers = installed), close() {} };
+    const view = connect(port);
+    handlers!.message({ kind: "welcome", wire: 1, api: 1, implementation: "", limits });
+    handlers!.message({ kind: "result", id: 1, value: baseline });
+    const promise = outcome(view.refresh());
+    handlers!.message({ kind: "result", id: 2, value: { epoch: "epoch-1", revision: 3 } });
+    if (next === "a new epoch") {
+      handlers!.message({ kind: "event", name: "state", value: at(1, "epoch-2") });
+      handlers!.message({ kind: "event", name: "lines", value: linesAt(1, "epoch-2") });
+    } else handlers!.close();
+    expect(await promise).toBeUndefined();
+    const waiting = outcome(view.refresh());
+    if (next === "a new epoch") {
+      handlers!.message({ kind: "result", id: 3, value: { epoch: "epoch-2", revision: 5 } });
+      handlers!.message({ kind: "event", name: "state", value: at(1, "epoch-3") });
+      expect(await waiting).toEqual(client("StateChanged"));
+    } else expect(await waiting).toEqual(client("NotConnected"));
+  });
+
+  it("is met before the state is shown, so that a listener closing the connection on that state does not undo it", async () => {
+    const { s, view } = await shown();
+    const { id, promise } = await inFlight(s, view.refresh());
+    await s.frame({ kind: "result", id, value: { epoch: "epoch-1", revision: 9 } });
+    view.onState((state) => {
+      if (state.revision === 9) view.close();
+    });
+    await s.frame({ kind: "event", name: "state", value: at(9) });
+    expect(await outcome(promise)).toBeUndefined();
+    expect(view.connection).toEqual(disconnected(null));
   });
 });
 

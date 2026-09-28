@@ -108,19 +108,24 @@ class Reconnecting implements Client {
     const own = (act: () => void) => () => {
       if (session === this.current) act();
     };
-    session.onConnection((connection) => own(() => this.follow(connection))());
+    session.onConnection((connection) => own(() => this.follow(session, connection))());
     session.onState((state) => own(() => this.show(state))());
     session.onLines((lines) => own(() => this.showLines(lines))());
     session.onLog((line) => own(() => this.logs.emit(line))());
     session.open();
   }
 
-  private follow(connection: ConnectionState): void {
+  /** The session's baseline is taken before its connection is announced, so that a listener acting on `connected` reads and calls with the new one. */
+  private follow(session: Session, connection: ConnectionState): void {
     switch (connection.state) {
       case "connecting":
-      case "connected":
         this.set(connection);
-        if (connection.state === "connected") for (const waiting of this.waiting.splice(0)) waiting.resolve();
+        return;
+      case "connected":
+        this.state = session.state;
+        this.lines = session.lines;
+        this.set(connection);
+        for (const waiting of this.waiting.splice(0)) waiting.resolve();
         return;
       case "incompatible":
         this.stopped = true;

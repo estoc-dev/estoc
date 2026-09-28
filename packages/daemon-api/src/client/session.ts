@@ -77,18 +77,25 @@ export class Session implements Client {
     return this.dispatch(name, input) as Promise<MethodResult<Name>>;
   }
 
-  async refresh(): Promise<void> {
-    if (this.connection.state !== "connected") throw clientError("NotConnected", NOT_CONNECTED);
-    const target = (await this.dispatch("refresh", {})) as RevisionMarker;
-    await new Promise<void>((resolve, reject) => {
-      const barrier: Barrier = { target, resolve, reject };
-      if (!this.settled(barrier)) this.barriers.push(barrier);
+  /** The barrier is judged against the state shown as the reply is read, before the next frame is: what comes after a met barrier cannot undo it. */
+  refresh(): Promise<void> {
+    if (this.connection.state !== "connected") return Promise.reject(clientError("NotConnected", NOT_CONNECTED));
+    return new Promise((resolve, reject) => {
+      const refused = this.send("refresh", {}, {
+        name: "refresh",
+        resolve: (target) => {
+          const barrier: Barrier = { target: target as RevisionMarker, resolve, reject };
+          if (!this.settled(barrier)) this.barriers.push(barrier);
+        },
+        reject,
+      });
+      if (refused !== null) reject(refused);
     });
   }
 
   connected(): Promise<void> {
     if (this.connection.state === "connected") return Promise.resolve();
-    if (this.ended) return Promise.reject(this.endedWith());
+    if (this.ended) return Promise.reject(this.connectionError());
     return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
   }
 
@@ -131,6 +138,8 @@ export class Session implements Client {
     if (!budget.ok) return clientError(budget.code, budget.message);
     const read = readPayload(input, "clone", { bytesAt: schema.bytes.input, maxBytes: limits.maxBackupBytes, budget: budget.value });
     if (!read.ok) return clientError(read.code, read.message);
+    const parsed = schema.input.safeParse(read.value);
+    if (!parsed.success) return clientError("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
     const data = writeFrame({ ...call, input: read.value }, this.port.transport, schema.bytes.input);
     if (limits.maxFrameBytes !== null && typeof data === "string" && (data.length > limits.maxFrameBytes || utf8Length(data) > limits.maxFrameBytes)) {
       return clientError("ResourceLimit", `the frame is larger than ${limits.maxFrameBytes} bytes`);
@@ -238,8 +247,8 @@ export class Session implements Client {
       if (state.revision === current.revision) return;
     }
     this.state = state;
-    this.states.emit(state);
     this.barriers = this.barriers.filter((barrier) => !this.settled(barrier));
+    this.states.emit(state);
   }
 
   private applyLines(lines: LinesState): void {
@@ -297,22 +306,20 @@ export class Session implements Client {
     this.finish({ state: "disconnected", because: error });
   }
 
-  /** Ends the session, whoever ended it: every pending call and barrier is lost, the port is closed, and nothing is heard afterwards. */
   private finish(connection: Extract<ConnectionState, { state: "disconnected" | "incompatible" }>): void {
     if (this.ended) return;
     this.ended = true;
     this.connection = connection;
-    const ending = this.endedWith();
-    for (const [, pending] of this.pending) pending.reject(lost(pending.name, ending.message));
+    const error = this.connectionError();
+    for (const [, pending] of this.pending) pending.reject(lost(pending.name, error.message));
     this.pending.clear();
     for (const barrier of this.barriers.splice(0)) this.settled(barrier);
-    for (const waiting of this.waiting.splice(0)) waiting.reject(ending);
+    for (const waiting of this.waiting.splice(0)) waiting.reject(error);
     this.port.close();
     this.connections.emit(connection);
   }
 
-  /** What the session ended on, as the error a wait for it is rejected with. */
-  private endedWith(): CallError {
+  private connectionError(): CallError {
     const { connection } = this;
     if (connection.state === "incompatible") return clientError("Incompatible", connection.message);
     if (connection.state === "disconnected" && connection.because !== null) return connection.because;
