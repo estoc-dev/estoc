@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import qrcode from "qrcode-generator";
-import { parseInvitation, type Invitation } from "@estoc/agent-core";
+import { type Invitation } from "@estoc/agent-core";
 
 import { acceptInvitation, createInvitation, dismissPendingInvitation, invitationLink, state } from "../core/store.js";
 import Icon from "./Icon.vue";
+import { invitationIn } from "./invitation-code.js";
 import { back, go, swap } from "./nav.js";
 import { startScan, type Scan } from "./scanner.js";
 import Sheet from "./Sheet.vue";
@@ -151,9 +152,9 @@ async function startScanning() {
     video: el,
     detector: new detectorOf({ formats: ["qr_code"] }),
     onCode: (rawValue) => {
-      const oob = new URL(rawValue).searchParams.get("_oob");
-      if (oob === null) return false;
-      scanned.value = parseInvitation(oob);
+      const invitation = invitationIn(rawValue);
+      if (invitation === null) return false;
+      scanned.value = invitation;
       show("accept");
       return true;
     },
