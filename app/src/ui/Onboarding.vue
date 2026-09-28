@@ -83,7 +83,7 @@ async function restore() {
       </div>
 
       <form v-if="mode === 'create'" class="form" @submit.prevent="create">
-        <input v-model="name" class="field" placeholder="Your name" autocomplete="nickname" data-name />
+        <input v-model="name" class="field" placeholder="Your name" autocomplete="nickname" data-your-name />
         <input v-model="passphrase" class="field" type="password" placeholder="Passphrase" autocomplete="new-password" data-passphrase />
         <input v-model="confirmPass" class="field" type="password" placeholder="Passphrase again" autocomplete="new-password" data-passphrase-again />
         <p v-if="createError" class="error-text">{{ createError }}</p>

@@ -102,7 +102,7 @@ function forget() {
 </script>
 
 <template>
-  <div class="screen" data-you>
+  <div class="screen" data-you-screen>
     <Topbar title="You" can-back />
 
     <div v-if="snapshot" class="screen-body page">

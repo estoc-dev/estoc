@@ -192,7 +192,7 @@ const offered = computed(() => scanned.value ?? pending.value);
         <div class="sheet-title">New conversation</div>
         <p v-if="mediation === null" class="note error">
           Choose a mediator first, so that they can reach you.
-          <button class="link" type="button" @click="go({ kind: 'you' })">Choose one</button>
+          <button class="link" type="button" data-choose-one @click="go({ kind: 'you' })">Choose one</button>
         </p>
         <p v-else-if="sendsClosed" class="note error">Sending waits for the restore to be explained, in the conversation.</p>
         <div class="section">
@@ -229,7 +229,7 @@ const offered = computed(() => scanned.value ?? pending.value);
             <button class="link" type="button" @click="shownInvitation = i.oobId; show('qr')">show</button>
           </template>
         </p>
-        <button class="btn-quiet" type="button" @click="close">Cancel</button>
+        <button class="btn-quiet" type="button" data-cancel @click="close">Cancel</button>
       </template>
 
       <template v-else-if="mode === 'qr'">
@@ -246,7 +246,7 @@ const offered = computed(() => scanned.value ?? pending.value);
         </template>
         <p v-else class="note">Minting…</p>
         <p v-if="error" class="error-text">{{ error }}</p>
-        <button class="btn-quiet" type="button" @click="show('menu')">Done</button>
+        <button class="btn-quiet" type="button" data-done @click="show('menu')">Done</button>
       </template>
 
       <template v-else-if="mode === 'scan'">
@@ -277,7 +277,7 @@ const offered = computed(() => scanned.value ?? pending.value);
           <input v-model="name" class="field" placeholder="What you call them" autocomplete="off" data-contact-name />
           <p v-if="mediation === null" class="note error">
             Choose a mediator first: accepting writes to them.
-            <button class="link" type="button" @click="go({ kind: 'you' })">Choose one</button>
+            <button class="link" type="button" data-choose-one @click="go({ kind: 'you' })">Choose one</button>
           </p>
           <p v-if="error" class="error-text">{{ error }}</p>
           <button class="btn" type="submit" :disabled="accepting || !ready" data-accept>{{ accepting ? "Adding…" : "Accept invitation" }}</button>

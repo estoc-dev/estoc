@@ -110,7 +110,7 @@ function remove() {
 
       <form class="form-row" @submit.prevent="name">
         <input v-model="petname" class="field" placeholder="What you call them" aria-label="What you call them" data-petname />
-        <button class="btn-quiet" type="submit" :disabled="busy" data-name>{{ conversation.contactId === null ? "Name this conversation" : "Rename" }}</button>
+        <button class="btn-quiet" type="submit" :disabled="busy" data-rename>{{ conversation.contactId === null ? "Name this conversation" : "Rename" }}</button>
       </form>
 
       <div class="group">

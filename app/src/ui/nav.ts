@@ -46,12 +46,15 @@ export function back(): void {
   else history.back();
 }
 
-// An entry may name a conversation that has since gone, or a screen the
-// vault no longer has: it lands on the list.
+// An entry may name a conversation by a key that has since moved, or
+// one that has gone, or a screen the vault no longer has: it lands on
+// where the conversation is now, or on the list.
 function valid(s: Screen | undefined): Screen {
   if (s === undefined || state.phase !== "open") return LIST;
   const key = keyOf(s);
-  return key !== null && !state.conversations.some((c) => c.key === key) ? LIST : s;
+  if (key === null) return s;
+  const now = follow(key);
+  return now === null ? LIST : ({ kind: s.kind, key: now } as Screen);
 }
 
 window.addEventListener("popstate", (event) => {
@@ -59,21 +62,29 @@ window.addEventListener("popstate", (event) => {
 });
 
 // A conversation is known by its key: a contact's ID, or for one not
-// named yet the pair it leads to, which moves when either side rotates.
-// The one on screen is therefore remembered by the channels it showed,
-// and followed to whichever conversation shows them next. A key chosen
-// ahead of the snapshot that brings its conversation is waited for.
-let shown: Set<string> | null = null;
+// named yet the pair it leads to, which moves when either side rotates,
+// and when it is named. Every conversation shown is therefore
+// remembered by the channels it showed, and a key that no longer
+// holds is followed to whichever conversation shows them now. A key
+// chosen ahead of the snapshot that brings its conversation is waited
+// for.
+const pairsShown = new Map<string, Set<string>>();
 
 function remember(key: string): void {
   const conversation = state.conversations.find((c) => c.key === key);
-  if (conversation !== undefined) shown = new Set(conversation.channels.map(({ channel }) => pairKey(channel)));
+  if (conversation !== undefined) pairsShown.set(key, new Set(conversation.channels.map(({ channel }) => pairKey(channel))));
+}
+
+/** The key the conversation goes by now, or null when it is gone or was never shown. */
+function follow(key: string): string | null {
+  if (state.conversations.some((c) => c.key === key)) return key;
+  const pairs = pairsShown.get(key);
+  return pairs === undefined ? null : (successorOf(pairs, state.conversations)?.key ?? null);
 }
 
 watch(
   screen,
   (s) => {
-    shown = null;
     const key = keyOf(s);
     if (key !== null) remember(key);
   },
@@ -87,10 +98,10 @@ watch(
     const key = keyOf(s);
     if (key === null) return;
     if (conversations.some((c) => c.key === key)) return remember(key);
-    if (shown === null) return;
-    const successor = successorOf(shown, conversations);
-    if (successor === null) swap(LIST);
-    else swap({ kind: s.kind, key: successor.key } as Screen);
+    if (!pairsShown.has(key)) return;
+    const now = follow(key);
+    if (now === null) swap(LIST);
+    else swap({ kind: s.kind, key: now } as Screen);
   }
 );
 
