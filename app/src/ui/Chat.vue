@@ -307,7 +307,7 @@ const details = () => go({ kind: "details", key: props.conversationKey });
           @keydown="keydown"
           @input="grow"
         ></textarea>
-        <button class="send-btn" type="submit" aria-label="Send" :disabled="sending || sendsClosed || target === null || draft.trim() === ''" data-send">
+        <button class="send-btn" type="submit" aria-label="Send" :disabled="sending || sendsClosed || target === null || draft.trim() === ''" data-send>
           <Icon name="send" :size="20" />
         </button>
       </form>

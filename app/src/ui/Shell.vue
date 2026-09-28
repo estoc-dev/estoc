@@ -6,6 +6,7 @@ import ConversationList from "./ConversationList.vue";
 import Details from "./Details.vue";
 import NewConversation from "./NewConversation.vue";
 import UnderTheHood from "./UnderTheHood.vue";
+import You from "./You.vue";
 import { back, keyOf, layout, screen } from "./nav.js";
 
 /**
@@ -33,6 +34,7 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
         <Chat v-else-if="kind === 'chat' && key !== null" :key="key" :conversation-key="key" />
         <Details v-else-if="kind === 'details' && key !== null" :key="key" :conversation-key="key" />
         <UnderTheHood v-else-if="kind === 'hood' && key !== null" :key="key" :conversation-key="key" />
+        <You v-else-if="kind === 'you'" />
         <ConversationList v-else />
       </div>
     </template>
@@ -40,7 +42,8 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
     <template v-else>
       <div class="pane pane-list"><ConversationList /></div>
       <div class="pane pane-main">
-        <Chat v-if="chatKey !== null" :key="chatKey" :conversation-key="chatKey" />
+        <You v-if="kind === 'you'" />
+        <Chat v-else-if="chatKey !== null" :key="chatKey" :conversation-key="chatKey" />
         <div v-else class="screen">
           <div class="empty" style="margin: auto">
             <p>Pick a conversation, or start one.</p>
