@@ -2,12 +2,14 @@
 import { ref } from "vue";
 
 import { forgetDevice } from "../core/seen.js";
-import { forgetIdentity, unlock } from "../core/store.js";
+import { forgetIdentity, state, unlock } from "../core/store.js";
+import { useRemoval } from "./removal.js";
 
 /** The vault is here with its seed sealed: the passphrase opens it, and nothing else does. */
 const passphrase = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
+const { failed: removalFailed, remove } = useRemoval();
 
 async function submit() {
   if (passphrase.value === "" || busy.value) return;
@@ -23,10 +25,11 @@ async function submit() {
 }
 
 function forget() {
-  if (confirm("Delete this identity from this device? Its keys and messages here are gone for good. Only a backup brings them back.")) {
+  const hold = state.hold;
+  return remove("Delete this identity from this device? Its keys and messages here are gone for good. Only a backup brings them back.", async () => {
+    await forgetIdentity(hold);
     forgetDevice();
-    void forgetIdentity();
-  }
+  });
 }
 </script>
 
@@ -46,6 +49,7 @@ function forget() {
         <button class="link" type="button" data-start-over @click="forget">start over</button>
         with a new identity.
       </p>
+      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 </template>

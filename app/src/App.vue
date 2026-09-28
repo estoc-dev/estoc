@@ -5,18 +5,17 @@ import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
 import Onboarding from "./ui/Onboarding.vue";
 import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
+import { useRemoval } from "./ui/removal.js";
 
-function startOver() {
-  if (confirm("Delete the old vault from this browser? Only a backup made by the version that wrote it brings it back.")) {
-    void discardFolderVault();
-  }
-}
+const { failed: removalFailed, remove } = useRemoval();
+const removeVault = (question: string) => {
+  const hold = state.hold;
+  return remove(question, () => forgetIdentity(hold));
+};
 
-function removeDamaged() {
-  if (confirm("Remove the damaged vault from here? It cannot be opened again afterwards. What you keep is what your backup holds.")) {
-    void forgetIdentity();
-  }
-}
+const startOver = () => remove("Delete the old vault from this device? Only a backup made by the version that wrote it brings it back.", discardFolderVault);
+const removeUnreadable = () => removeVault("Remove this vault from here and begin a new identity? Nothing of it can be exported by this version. What you keep is what a backup holds.");
+const removeDamaged = () => removeVault("Remove the damaged vault from here? It cannot be opened again afterwards. What you keep is what your backup holds.");
 
 const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new URL(state.daemonAt).host));
 </script>
@@ -34,15 +33,30 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
 
   <Onboarding v-else-if="state.phase === 'onboarding'" />
 
+  <div v-else-if="state.phase === 'foreign'" class="hollow" data-foreign>
+    <div class="hollow-card">
+      <div class="eyebrow">Estoc</div>
+      <h1>Vault not readable</h1>
+      <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
+      <p class="note">
+        Nothing has been changed. A vault of the earlier folder format is not converted: export a backup with the version that wrote it if you want to keep
+        it<template v-if="state.daemonAt === null">, then <button class="link" type="button" data-start-over @click="startOver">start over</button> with a new identity</template>.
+      </p>
+      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
+    </div>
+  </div>
+
   <div v-else-if="state.phase === 'unreadable'" class="hollow" data-unreadable>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Vault not readable</h1>
       <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
       <p class="note">
-        Nothing has been changed. If it came from a newer version, update the app. A vault of the earlier folder format is not converted: export a backup with the
-        version that wrote it<template v-if="state.daemonAt === null">, then <button class="link" type="button" data-start-over @click="startOver">start over</button></template>.
+        Nothing has been changed. If the vault came from a newer version, update the app. One written by an earlier version is not converted, and nothing of it
+        can be exported from here: <button class="link" type="button" data-remove-unreadable @click="removeUnreadable">remove it and start over</button> with a new
+        identity, or restore a backup on the screen that follows.
       </p>
+      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
@@ -60,6 +74,7 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
         To restore, <button class="link" type="button" data-remove-damaged @click="removeDamaged">remove the damaged vault</button> and choose the backup on the
         screen that follows.
       </p>
+      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 

@@ -2,6 +2,7 @@
 import { ref } from "vue";
 
 import { createIdentity, restoreIdentity, state } from "../core/store.js";
+import { useRemoval } from "./removal.js";
 import { bytesOf } from "./util.js";
 
 /**
@@ -11,6 +12,7 @@ import { bytesOf } from "./util.js";
  * on the You screen.
  */
 const mode = ref<"create" | "restore">("create");
+const { failed: removalFailed } = useRemoval();
 
 const name = ref("");
 const passphrase = ref("");
@@ -76,6 +78,7 @@ async function restore() {
       <h1>Your messages, <em>your</em> keeping</h1>
       <p>Your identity is minted here, from one seed. Your messages stay here, in a vault you can export as one file and take with you.</p>
       <p v-if="state.away" class="error-text">{{ state.away }}</p>
+      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
 
       <div class="tabs">
         <button class="tab" :class="{ active: mode === 'create' }" type="button" data-tab-create @click="mode = 'create'">New identity</button>

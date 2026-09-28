@@ -7,6 +7,7 @@ import { exportedAt, forgetDevice, markExported } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, lock, mergeBackup, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
+import { useRemoval } from "./removal.js";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
 import { bytesOf, whenOf } from "./util.js";
@@ -93,11 +94,14 @@ async function chooseTraceLevel(event: Event) {
   }
 }
 
+const { failed: removalFailed, remove } = useRemoval();
+
 function forget() {
-  if (confirm("Delete this identity from this device? Keys, contacts and messages here are gone for good. Export a backup first if you want them back.")) {
+  const hold = state.hold;
+  return remove("Delete this identity from this device? Keys, contacts and messages here are gone for good. Export a backup first if you want them back.", async () => {
+    await forgetIdentity(hold);
     forgetDevice();
-    void forgetIdentity();
-  }
+  });
 }
 </script>
 
@@ -202,6 +206,7 @@ function forget() {
           </button>
         </div>
         <p class="note">Gone from this device for good. A backup is the only way back.</p>
+        <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
       </div>
 
       <p class="footer-note">Estoc {{ version }}<template v-if="state.offlineReady"> · ready to work offline</template></p>
