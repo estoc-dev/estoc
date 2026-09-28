@@ -298,7 +298,6 @@ async function introduceTo(target: { channel: Channel } | { contactId: ContactId
   said("introduction", await running().send(target, profileOf(state.snapshot)));
 }
 
-/** Our introduction in `channel`, the one a person picks on the screen. */
 export const introduce = (channel: Channel): Promise<void> => introduceTo({ channel });
 
 /**
