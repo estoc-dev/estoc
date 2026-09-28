@@ -1,6 +1,6 @@
 import { parseInvitation, type Invitation } from "@estoc/agent-core";
 
-/** The invitation a scanned code carries, or null when it carries something else: text, another site's link, a broken invitation. */
+/** A camera reads whatever code is in front of it, so a parse failure is one more code to pass over, not the end of the scan. */
 export function invitationIn(rawValue: string): Invitation | null {
   try {
     return parseInvitation(rawValue);
