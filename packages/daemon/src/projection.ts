@@ -35,7 +35,6 @@ import type {
 import { channelIdOf } from "./channels.js";
 import { summaryOf } from "./summaries.js";
 
-/** What the read is of, besides its records. */
 export interface ReadVault {
   anchor: string;
   label: string;
@@ -44,7 +43,6 @@ export interface ReadVault {
   dids: LocalDidRecord[];
 }
 
-/** The read's IDs, as the API spells them. */
 const apiId = <Id extends string>(id: string): Id => id as Id;
 
 export function mediationRecords(mediations: VaultFold["mediations"]): MediationRecord[] {
@@ -75,8 +73,7 @@ const channelId = (channel: Channel | null): ChannelId | null => (channel === nu
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byId = <T>(id: (record: T) => string) => (a: T, b: T) => compare(id(a), id(b));
 
-/** A reference list's order: by time, then by ID. */
-const byTime = (a: { at: string; id: string }, b: { at: string; id: string }): number => compare(a.at, b.at) || compare(a.id, b.id);
+const byTimeThenId = (a: { at: string; id: string }, b: { at: string; id: string }): number => compare(a.at, b.at) || compare(a.id, b.id);
 
 function attachmentDescriptor({ id, description, filename, media_type, format, lastmod_time, byte_count, data }: StoredAttachment): AttachmentDescriptor {
   return {
@@ -150,7 +147,6 @@ class Channels {
     return record;
   }
 
-  /** A channel record read already, kept as it is. */
   keep(record: read.ChannelRecord): void {
     this.records.set(channelIdOf(record.channel), record);
   }
@@ -163,10 +159,6 @@ class Channels {
     }
   }
 
-  get(id: ChannelId): read.ChannelRecord {
-    return this.records.get(id)!;
-  }
-
   all(): read.ChannelRecord[] {
     return [...this.records.values()];
   }
@@ -175,13 +167,13 @@ class Channels {
 const messageReferences = (messages: Iterable<read.MessageRecord>): MessageId[] =>
   [...messages]
     .map(({ at, messageId }) => ({ at, id: messageId }))
-    .sort(byTime)
+    .sort(byTimeThenId)
     .map(({ id }) => apiId<MessageId>(id));
 
 const observationReferences = (observations: Iterable<read.ObservationRecord>): EventCid[] =>
   [...observations]
     .map(({ at, sourceEventCid }) => ({ at, id: sourceEventCid }))
-    .sort(byTime)
+    .sort(byTimeThenId)
     .map(({ id }) => apiId<EventCid>(id));
 
 /** Each message once, whichever channels of a conversation show it. */
@@ -210,7 +202,7 @@ function claimedName(records: readonly read.ChannelRecord[]): ConversationRecord
     const message = record.messages.find(({ messageId }) => messageId === claim.messageId);
     if (message === undefined || message.direction !== "in" || message.body.state !== "available") continue;
     const candidate = { name: claim.name, messageId: apiId<MessageId>(claim.messageId), at: message.at };
-    if (latest === null || byTime({ at: latest.at, id: latest.messageId }, { at: candidate.at, id: candidate.messageId }) < 0) latest = candidate;
+    if (latest === null || byTimeThenId({ at: latest.at, id: latest.messageId }, { at: candidate.at, id: candidate.messageId }) < 0) latest = candidate;
   }
   return latest === null ? null : { name: latest.name, messageId: latest.messageId };
 }
@@ -285,7 +277,7 @@ function unplacedRecord(unplaced: read.Unplaced): UnplacedRecord {
     observationIds: observationReferences(unplaced.inputs),
     outputs: unplaced.outputs
       .map(({ candidates, message }) => ({ at: message.at, id: message.messageId, candidateChannelIds: candidates.map(channelIdOf).sort(compare) }))
-      .sort(byTime)
+      .sort(byTimeThenId)
       .map(({ id, candidateChannelIds }) => ({ messageId: apiId<MessageId>(id), candidateChannelIds })),
   };
 }
