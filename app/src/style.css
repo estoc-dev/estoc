@@ -1254,9 +1254,11 @@ a.row:hover {
 
 .update-chip {
   position: fixed;
-  left: 50%;
+  left: 16px;
+  right: 16px;
   bottom: max(18px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  width: fit-content;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1267,13 +1269,22 @@ a.row:hover {
   box-shadow: 0 8px 24px var(--shadow);
   z-index: 40;
   font-size: 14px;
-  max-width: calc(100% - 32px);
 }
 
 .update-chip .btn {
   min-height: 36px;
   padding: 0 14px;
   font-size: 14px;
+}
+
+.update-chip.alarm {
+  background: var(--alarm);
+  color: #ffffff;
+  border-radius: 20px;
+}
+
+.update-chip span {
+  overflow-wrap: anywhere;
 }
 
 /* ---- odds and ends ---- */

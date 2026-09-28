@@ -9,7 +9,7 @@ import { useRemoval } from "./removal.js";
 const passphrase = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
-const { failed: removalFailed, remove } = useRemoval();
+const { remove } = useRemoval();
 
 async function submit() {
   if (passphrase.value === "" || busy.value) return;
@@ -49,7 +49,6 @@ function forget() {
         <button class="link" type="button" data-start-over @click="forget">start over</button>
         with a new identity.
       </p>
-      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 </template>

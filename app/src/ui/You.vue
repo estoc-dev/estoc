@@ -94,7 +94,7 @@ async function chooseTraceLevel(event: Event) {
   }
 }
 
-const { failed: removalFailed, remove } = useRemoval();
+const { remove } = useRemoval();
 
 function forget() {
   const hold = state.hold;
@@ -206,7 +206,6 @@ function forget() {
           </button>
         </div>
         <p class="note">Gone from this device for good. A backup is the only way back.</p>
-        <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
       </div>
 
       <p class="footer-note">Estoc {{ version }}<template v-if="state.offlineReady"> · ready to work offline</template></p>

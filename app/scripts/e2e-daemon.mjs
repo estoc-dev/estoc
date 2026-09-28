@@ -234,6 +234,37 @@ try {
   await alice.waitForSelector(row("Bob"), { timeout: 15000 });
   ok("lock and unlock go through the daemon");
 
+  // a removal confirmed after the vault changed hands: while Alice's tab holds the
+  // question open, another tab removes the vault and makes a new one there
+  await alice.click("[data-you]");
+  const held = new Promise((resolve) => alice.once("dialog", resolve));
+  const confirming = alice.click("[data-forget]", { noWaitAfter: true });
+  const dialog = await held;
+  const other = await aliceCtx.newPage();
+  watch(other, "alice@other");
+  other.on("dialog", (d) => void d.accept());
+  await other.goto(new URL(link.own).origin + "/");
+  await other.waitForSelector(row("Bob"), { timeout: 15000 });
+  await other.click("[data-you]");
+  await other.click("[data-forget]");
+  await other.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await other.fill("[data-your-name]", "Alice");
+  await other.fill("[data-passphrase]", PASS.Alice);
+  await other.fill("[data-passphrase-again]", PASS.Alice);
+  await other.click("[data-create]");
+  await other.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+  await dialog.accept();
+  await confirming;
+  await alice.waitForSelector("[data-removal-failed]", { timeout: 15000 });
+  if (await alice.$("[data-you-screen]")) {
+    fail("the refusal should show where Alice is now, which is no longer the You screen");
+  }
+  await other.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 5000 });
+  await alice.click("[data-removal-failed] button");
+  await alice.waitForSelector("[data-removal-failed]", { state: "detached", timeout: 5000 });
+  ok("a removal confirmed after the vault changed hands removed nothing, and said so on the screen Alice was on");
+  await other.close();
+
   // the daemon gone: the page says so
   daemon.child.kill("SIGTERM");
   await alice.waitForSelector('[data-status]:has-text("daemon away")', { timeout: 10000 });

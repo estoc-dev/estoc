@@ -7,7 +7,7 @@ import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
 import { useRemoval } from "./ui/removal.js";
 
-const { failed: removalFailed, remove } = useRemoval();
+const { failed: removalFailed, remove, dismiss: dismissRemoval } = useRemoval();
 const removeVault = (question: string) => {
   const hold = state.hold;
   return remove(question, () => forgetIdentity(hold));
@@ -42,7 +42,6 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
         Nothing has been changed. A vault of the earlier folder format is not converted: export a backup with the version that wrote it if you want to keep
         it<template v-if="state.daemonAt === null">, then <button class="link" type="button" data-start-over @click="startOver">start over</button> with a new identity</template>.
       </p>
-      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
@@ -56,7 +55,6 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
         can be exported from here: <button class="link" type="button" data-remove-unreadable @click="removeUnreadable">remove it and start over</button> with a new
         identity, or restore a backup on the screen that follows.
       </p>
-      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
@@ -74,7 +72,6 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
         To restore, <button class="link" type="button" data-remove-damaged @click="removeDamaged">remove the damaged vault</button> and choose the backup on the
         screen that follows.
       </p>
-      <p v-if="removalFailed" class="error-text" data-removal-failed>{{ removalFailed }}</p>
     </div>
   </div>
 
@@ -97,5 +94,10 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
   <div v-if="state.applyUpdate" class="update-chip" data-update>
     <span>A new version of Estoc is ready.</span>
     <button class="btn" type="button" @click="state.applyUpdate?.()">Reload</button>
+  </div>
+
+  <div v-if="removalFailed" class="update-chip alarm" data-removal-failed>
+    <span>Nothing was removed: {{ removalFailed }}</span>
+    <button class="btn" type="button" @click="dismissRemoval">OK</button>
   </div>
 </template>
