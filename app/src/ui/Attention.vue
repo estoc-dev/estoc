@@ -76,7 +76,7 @@ const explainingRegistrations = ref(false);
           </div>
         </div>
         <div v-for="notification in pending.missingNotifications" :key="notification.rotationEventCid" class="card" data-missing-notification>
-          <p>{{ whoIs(notification.channel.peerDid) }} was never told of your new address.</p>
+          <p>{{ whoIs(notification.channel.peerDid) }} has not been told of your new address yet.</p>
           <div v-if="notification.entries.includes('completeNotification')" class="card-actions">
             <button class="btn small" type="button" :disabled="busy || sendsClosed" data-tell-them @click="act(() => completeNotification(notification.rotationEventCid))">Tell them</button>
           </div>

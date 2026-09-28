@@ -71,7 +71,7 @@ async function submit() {
       </option>
       <option :value="CUSTOM">a pasted invitation…</option>
     </select>
-    <input v-if="choice === CUSTOM" v-model="pasted" class="field" placeholder="invitation link, mediator URL, or DID" data-mediator-paste />
+    <input v-if="choice === CUSTOM" v-model="pasted" class="field" placeholder="Invitation link, mediator URL, or address" data-mediator-paste />
     <p v-if="pickError || inputError" class="error-text">{{ pickError ?? inputError }}</p>
     <button class="btn" type="submit" :disabled="busy || resolving" data-mediator-use>
       {{ busy ? busyLabel : submitLabel }}
