@@ -231,7 +231,7 @@ const details = () => go({ kind: "details", key: props.conversationKey });
 </script>
 
 <template>
-  <div class="screen" data-chat>
+  <div class="screen" data-chat :data-channels="conversation?.channels.length ?? 0">
     <Topbar :can-back="layout === 'narrow'">
       <button v-if="conversation" class="chat-head-link" type="button" data-details @click="details">
         <span class="avatar small" :class="{ nameless: conversation.contactId === null }">{{ initialOf(conversation) }}</span>

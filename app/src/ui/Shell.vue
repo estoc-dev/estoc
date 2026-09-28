@@ -3,7 +3,9 @@ import { computed, ref, watch } from "vue";
 
 import Chat from "./Chat.vue";
 import ConversationList from "./ConversationList.vue";
+import Details from "./Details.vue";
 import NewConversation from "./NewConversation.vue";
+import UnderTheHood from "./UnderTheHood.vue";
 import { back, keyOf, layout, screen } from "./nav.js";
 
 /**
@@ -29,6 +31,8 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
       <div class="pane">
         <ConversationList v-if="kind === 'list' || kind === 'new'" />
         <Chat v-else-if="kind === 'chat' && key !== null" :key="key" :conversation-key="key" />
+        <Details v-else-if="kind === 'details' && key !== null" :key="key" :conversation-key="key" />
+        <UnderTheHood v-else-if="kind === 'hood' && key !== null" :key="key" :conversation-key="key" />
         <ConversationList v-else />
       </div>
     </template>
@@ -44,10 +48,16 @@ const aboutConversation = computed(() => kind.value === "details" || kind.value 
         </div>
         <template v-if="layout === 'medium' && aboutConversation">
           <div class="drawer-scrim" @click="back()"></div>
-          <div class="drawer"></div>
+          <div class="drawer">
+            <Details v-if="kind === 'details' && key !== null" :key="key" :conversation-key="key" />
+            <UnderTheHood v-else-if="key !== null" :key="key" :conversation-key="key" />
+          </div>
         </template>
       </div>
-      <div v-if="layout === 'wide' && aboutConversation" class="pane pane-side"></div>
+      <div v-if="layout === 'wide' && aboutConversation" class="pane pane-side">
+        <Details v-if="kind === 'details' && key !== null" :key="key" :conversation-key="key" />
+        <UnderTheHood v-else-if="key !== null" :key="key" :conversation-key="key" />
+      </div>
     </template>
 
     <NewConversation v-if="kind === 'new'" />
