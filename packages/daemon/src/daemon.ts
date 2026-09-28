@@ -1,5 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
-import { DamagedHistory, DatabaseBusy, ForkedAuthor, SqliteVault, exportVault, importVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
+import { DamagedHistory, DatabaseBusy, ForkedAuthor, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
+import type { Hold } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
   Keys,
@@ -34,22 +35,25 @@ import {
   recorder,
   sameDid,
   selectMediation,
+  type AgentLines,
   type Called,
   type ChannelRecord,
   type EffectOutcome,
   type InspectedRuntime,
 } from "@estoc/agent-core";
 
-import type { ContactSummary, Daemon, Hold, Lines, Outcome, Phase, SendResult, Snapshot } from "./api.js";
+import type { ContactSummary, Daemon, Lines, Outcome, Phase, SendResult, Snapshot } from "./api.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
+import { legacyEvents, type Emit } from "./legacy.js";
+import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
 
-/** How the daemon raises an event: a name and its arguments, to whoever listens. */
-export type Emit = (name: string, ...args: unknown[]) => void;
+export type { Emit } from "./legacy.js";
 
-/** The daemon as its host holds it: the UI's interface, and a replay for one listener. */
+/** The daemon as its host holds it: the UI's interface, the publisher a view attaches to, and a replay for one listener of the events. */
 export interface DaemonCore extends Daemon {
   /** whether `boot()` has run: a later `boot()` is a replay */
   readonly booted: boolean;
+  readonly publisher: Publisher<Snapshot, Lines>;
   /** Say where things stand again, to `to` alone — for a listener that was not there the first time. */
   replayTo(to: Emit): Promise<void>;
   /**
@@ -114,6 +118,26 @@ interface Open {
   keys: Keys;
   trace: AgentTrace;
   attached: Attached;
+  publishing: Publishing;
+}
+
+const NO_LINES: Lines = { connections: [], waiting: [], discarded: [] };
+
+/** A phase that shows no runtime, with the hold the phase allows: none where no file is held, the file's where one is. */
+function nonOpen(phase: Exclude<Phase, "open" | "unreachable">, hold: Hold | null, detail: string | null): NonOpenValue {
+  switch (phase) {
+    case "elsewhere":
+    case "onboarding":
+    case "foreign":
+      if (hold !== null) throw new Error(`the ${phase} phase holds no vault file`);
+      return { phase, hold: null, detail };
+    case "damaged":
+    case "locked":
+      if (hold === null) throw new Error(`the ${phase} phase names the vault file held`);
+      return { phase, hold, detail };
+    default:
+      return { phase, hold, detail };
+  }
 }
 
 /**
@@ -192,7 +216,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   let open: Open | null = null;
   let booted = false;
   let current: Phase = "booting";
-  let detail: string | null = null;
   /** the vault file's name for as long as it stands, whatever phase it stands in */
   let held: Hold | null = null;
 
@@ -200,13 +223,21 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   const closing = () => closed !== null;
   const waits = new Set<() => void>();
 
-  const phase = (p: Phase, why: string | null = null) => {
+  const publisher = new Publisher<Snapshot, Lines>(nonOpen("booting", null, null), {
+    noLines: NO_LINES,
+    failed: (err) => {
+      if (err instanceof DamagedHistory) void giveUpDamaged(err);
+    },
+  });
+  const legacy = legacyEvents(publisher, emit);
+
+  const phase = (p: Exclude<Phase, "open" | "unreachable">, why: string | null = null) => {
     if (closing()) return;
     current = p;
-    detail = why;
-    emit("phase", p, why, held);
+    publisher.set(nonOpen(p, held, why));
   };
-  const log = (line: string) => emit("log", line);
+  const log = (line: string) => publisher.log(line);
+  const changed = () => publisher.invalidate();
 
   let turn: Promise<void> = Promise.resolve();
   function inTurn<T>(work: () => Promise<T>): Promise<T> {
@@ -288,9 +319,10 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       }
     );
 
-  async function recordsOf({ runtime, keys }: Open): Promise<Snapshot> {
-    const fold = await scanVault(runtime.vault, keys, SCAN);
-    const records = recorder(fold, objectReader(runtime.vault.objects, MAX_CONTENT_BYTES));
+  /** The records as of one cut: the fold, the content and the local option read under the writer lock, with nothing committed between them. */
+  async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
+    const fold = await scanVault(vault, keys, SCAN);
+    const records = recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES));
     const channels = new Map<string, ChannelRecord>();
     const keyOf = (channel: Channel) => JSON.stringify([channel.localDid, channel.peerDid]);
     const contacts: ContactSummary[] = [];
@@ -330,13 +362,22 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
   }
 
   /**
-   * The records as every listener is given them, or the damage the read
-   * met: a read leaves a damaged event out rather than fail, so what it
-   * met shows in the runtime afterwards and the records are short of it.
+   * One coherent read of the runtime, for the publisher: a read leaves
+   * a damaged event out rather than fail, so the damage it met is
+   * looked for afterwards and thrown, and records short of it are shown
+   * to nobody.
    */
-  async function snapshot(running: Open): Promise<Snapshot | DamagedHistory> {
-    const read = await recordsOf(running);
-    return damageOf(running.runtime) ?? read;
+  function sourceOf(running: Pick<Open, "runtime" | "keys">): Source<Snapshot> {
+    return {
+      capture: (cut) =>
+        running.runtime.locked(async (vault) => {
+          cut();
+          const read = await recordsOf(vault, running);
+          const damage = damageOf(running.runtime);
+          if (damage !== null) throw damage;
+          return read;
+        }),
+    };
   }
 
   const explained = async (runtime: SqliteVault): Promise<boolean> => (await runtime.local.options.get(RESTORE_EXPLAINED)) === true;
@@ -346,31 +387,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     if (!(await explained(runtime))) throw new Error("this vault was restored from a snapshot: sending opens once what a restore cannot bring back has been explained");
   }
 
-  let telling: Promise<void> | null = null;
-  let stale = false;
-  /** The snapshot to every listener; a change that lands while one is being read is told by one more read after it. */
-  function tell(): Promise<void> {
-    if (telling !== null) {
-      stale = true;
-      return telling;
-    }
-    telling = (async () => {
-      do {
-        stale = false;
-        if (open === null) continue;
-        const read = await snapshot(open);
-        if (read instanceof DamagedHistory) return void giveUpDamaged(read);
-        emit("changed", read);
-      } while (stale);
-    })()
-      .catch((err) => log(`the snapshot could not be read: ${failure(err)}`))
-      .finally(() => {
-        telling = null;
-      });
-    return telling;
-  }
-
-  const linesOf = (agent: Agent): Lines => ({ connections: agent.connections(), waiting: agent.waitingDeliveries(), discarded: agent.discardedDeliveries() });
+  /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
+  const settle = (): Promise<void> => publisher.refresh().then(() => undefined, () => undefined);
 
   function attach(runtime: SqliteVault, keys: Keys, trace: AgentTrace): Attached {
     const attached = { ended: false, work: new Set<Promise<void>>() };
@@ -380,6 +398,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       (...args: A) => {
         if (!attached.ended) say(...args);
       };
+    const tellLines = whileAttached((lines: AgentLines) => publisher.lines(lines));
+    // The agent's lines take the place of whatever agent's were shown before, empty or not: it says them again only once they change.
     const opening = async (): Promise<Agent> => {
       const agent = await Agent.open(
         { runtime, keys },
@@ -392,12 +412,10 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
           didcomm: await host.didcomm(),
           trace,
           log: whileAttached(log),
-          onInbound: whileAttached(() => {
-            void tell();
-            emit("lines", linesOf(agent));
-          }),
+          onLines: tellLines,
         }
       );
+      tellLines(agent.lines());
       return agent;
     };
     const agent = opening();
@@ -429,19 +447,11 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     );
   }
 
-  /**
-   * The agent's lines connected, in the background: a mediator out of
-   * reach keeps no screen waiting. The pass the agent ran as it opened
-   * may have recorded what waited for evidence the vault now holds;
-   * the records were read before that pass, so they are read again.
-   */
+  /** The agent's lines connected, in the background: a mediator out of reach keeps no screen waiting. */
   function connect(running: Open): void {
     const { attached } = running;
     during(attached, async (agent) => {
-      const { admitted, consumed, acknowledged } = agent.recovered;
-      if (open === running && running.attached === attached && admitted.length + consumed.length + acknowledged.length > 0) await tell();
       await agent.connect();
-      if (open === running && running.attached === attached) emit("lines", linesOf(agent));
     }).catch((err) => {
       if (!attached.ended) log(`the agent did not come up: ${failure(err)}`);
     });
@@ -461,33 +471,28 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     });
   }
 
-  /** The agent over an open runtime, and the vault shown; one whose first read meets damage is let go of and said to be damaged instead. */
+  /** The agent over an open runtime, and the vault shown once its first read is published; one whose first read meets damage is let go of and said to be damaged instead. */
   async function start(runtime: SqliteVault, keys: Keys, seedKey: SeedKey): Promise<void> {
     let running: Open;
     try {
       if (closing()) throw new Error(CLOSED);
+      if (held === null) throw new Error("no vault file is held");
       const trace = await AgentTrace.open(runtime.local);
-      running = { runtime, seedKey, keys, trace, attached: attach(runtime, keys, trace) };
+      running = { runtime, seedKey, keys, trace, attached: attach(runtime, keys, trace), publishing: publisher.open(held, sourceOf({ runtime, keys })) };
     } catch (err) {
       await runtime.close();
       throw err;
     }
     open = running;
-    let read: Snapshot | DamagedHistory;
     try {
-      read = await snapshot(running);
+      await running.publishing.ready;
     } catch (err) {
       await stop();
-      throw err;
-    }
-    if (read instanceof DamagedHistory) {
-      await stop();
-      phase("damaged", read.message);
+      if (!(err instanceof DamagedHistory)) throw err;
+      phase("damaged", err.message);
       return;
     }
     current = "open";
-    detail = null;
-    emit("opened", read, held);
     connect(running);
   }
 
@@ -495,13 +500,14 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     const running = open;
     open = null;
     if (running === null) return;
+    running.publishing.close();
     await detach(running.attached);
     await running.runtime.close();
   }
 
   /** The vault's runtime opened under its seed, with no agent over it yet; one whose history is damaged is closed again and the damage thrown. */
   async function unlocked(seedKey: SeedKey, options: { resetIdentity?: boolean } = {}): Promise<Pick<Open, "runtime" | "keys">> {
-    const opened = await openVault(await takeVault("readwrite"), seedKey, { ...SCAN, ...options });
+    const opened = await openVault(await takeVault("readwrite"), seedKey, { ...SCAN, changed, ...options });
     const damage = damageOf(opened.runtime);
     if (damage !== null) {
       await opened.runtime.close();
@@ -550,10 +556,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         if (err instanceof DamagedHistory) void giveUpDamaged(err);
         throw err;
       } finally {
-        if (open === running) {
-          await tell();
-          if (running.attached === attached) emit("lines", linesOf(agent));
-        }
+        if (open === running) await settle();
       }
     });
   }
@@ -609,29 +612,12 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     connect(running);
   });
 
-  async function replayTo(to: Emit): Promise<void> {
-    const running = open;
-    if (running === null) {
-      to("phase", current, detail, held);
-      return;
-    }
-    const read = await snapshot(running);
-    if (read instanceof DamagedHistory) {
-      await giveUpDamaged(read);
-      return replayTo(to);
-    }
-    to("opened", read, held);
-    void running.attached.agent.then(
-      (agent) => to("lines", linesOf(agent)),
-      () => undefined
-    );
-  }
-
   return {
     get booted() {
       return booted;
     },
-    replayTo,
+    publisher,
+    replayTo: legacy.replayTo,
     close() {
       closed ??= inTurn(async () => {
         try {
@@ -649,7 +635,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
 
     async boot() {
       if (booted) {
-        await replayTo(emit);
+        await legacy.replayTo(emit);
         return;
       }
       booted = true;
@@ -672,7 +658,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
           phase("onboarding");
           return;
         }
-        held = uuidv7();
+        held = uuidv7() as Hold;
         const seedKey = await host.cachedSeedKey();
         if (seedKey === null) {
           await look();
@@ -691,10 +677,10 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         const store = await refuseOccupied();
         const { doc, seedKey } = await createSeedKeystore(passphrase);
         const driver = await takeVault("create");
-        held = uuidv7();
+        held = uuidv7() as Hold;
         let created: Awaited<ReturnType<typeof createVault>>;
         try {
-          created = await createVault(driver, { seedKey, wrapped: { version: 3, seedJwe: doc.seedJwe }, label: name, ...SCAN });
+          created = await createVault(driver, { seedKey, wrapped: { version: 3, seedJwe: doc.seedJwe }, label: name, ...SCAN, changed });
           await created.runtime.local.options.set(RESTORE_EXPLAINED, true);
         } catch (err) {
           // The file is this call's own to remove only past the open that made it, and only once its connection is closed.
@@ -723,7 +709,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
                 async (mode) => {
                   const destination = await store.open(VAULT_FILE, mode, "runtime");
                   made = true;
-                  held = uuidv7();
+                  held = uuidv7() as Hold;
                   return destination;
                 },
                 {
@@ -738,7 +724,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
                   },
                 }
               );
-              return new SqliteVault(restored.runtime);
+              return new SqliteVault(restored.runtime, { changed });
             } finally {
               source.close();
             }
@@ -766,9 +752,11 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       }),
 
     async explainedRestore() {
-      const running = vault();
-      await running.runtime.local.options.set(RESTORE_EXPLAINED, true);
-      await tell();
+      const { runtime } = vault();
+      // Written under the writer lock, as every change a snapshot is read from is, so no cut reads the option before the event it stands beside.
+      await runtime.locked(() => runtime.local.options.set(RESTORE_EXPLAINED, true));
+      changed();
+      await settle();
     },
 
     unlock: (passphrase) =>
@@ -853,7 +841,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
           // The agent read its keys and its lines before the merge: another over the merged vault takes its place.
           await detach(running.attached);
           running.attached = attach(running.runtime, running.keys, running.trace);
-          await tell();
+          await settle();
           connect(running);
           return counted(imported, false);
         }
@@ -995,19 +983,11 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
         return { successor: rotated.successor, existed: rotated.existed, ...effectOutcomeOf(rotated.notification) };
       }),
 
-    pending: async () => during(vault().attached, (agent) => agent.pending()),
-
-    async refresh() {
-      vault();
-      await tell();
-    },
+    refresh: () => publisher.refresh(),
 
     async reconnect() {
-      const running = vault();
-      const { attached } = running;
-      await during(attached, async (agent) => {
+      await during(vault().attached, async (agent) => {
         await agent.connect();
-        if (open === running && running.attached === attached) emit("lines", linesOf(agent));
       });
     },
 

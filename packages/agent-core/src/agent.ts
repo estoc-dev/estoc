@@ -73,6 +73,15 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   trace: AgentTrace;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
+  /** told the lines, whole, once they changed — a connection made or dropped, a pickup ended, a delivery come to wait or discarded — and once for every change of one turn */
+  onLines?: (lines: AgentLines) => void;
+}
+
+/** The agent's transient records, whole: what `connections()`, `waitingDeliveries()` and `discardedDeliveries()` say. */
+export interface AgentLines {
+  connections: Connection[];
+  waiting: WaitingDelivery[];
+  discarded: Discarded[];
 }
 
 /** A delivery and what followed it: `after` for every delivery recorded, the other two for a live input alone; each is null where it did not run, or threw. */
@@ -124,6 +133,8 @@ export class Agent {
   private readonly attempts = new Map<MediationId, Connection>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
+  /** whether the host is yet to be told of the lines as they now stand */
+  private linesDue = false;
 
   /** Every manual procedure, each transport call of theirs through this agent's dispatcher. */
   readonly manual: Manual;
@@ -135,7 +146,7 @@ export class Agent {
     private readonly ring: Keyring,
     private readonly dispatcher: Dispatcher,
     private readonly receiver: Receiver,
-    private readonly lines: Map<MediationId, Line>,
+    private readonly wires: Map<MediationId, Line>,
     /** what the open recorded of what the vault owed */
     readonly recovered: Owed
   ) {
@@ -150,6 +161,7 @@ export class Agent {
     const lines = new Map<MediationId, Line>();
     const dispatcher = new Dispatcher(runtime, keys, { ...options, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log } = options;
+    let linesChanged = (): void => undefined;
     const receiver = new Receiver(runtime, keys, ring, {
       didcomm,
       receipt: receiptOf(runtime, keys),
@@ -163,8 +175,11 @@ export class Agent {
       maxHeldBytes,
       trace,
       log,
+      changed: () => linesChanged(),
     });
-    return new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, recovered);
+    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, recovered);
+    linesChanged = () => agent.linesChanged();
+    return agent;
   }
 
   /** An agent that fails to connect at all is closed before the failure is thrown: nobody else could close it, and the runtime could have no other. */
@@ -271,11 +286,15 @@ export class Agent {
     return this.receiver.discarded();
   }
 
+  lines(): AgentLines {
+    return { connections: this.connections(), waiting: this.waitingDeliveries(), discarded: this.discardedDeliveries() };
+  }
+
   /** Nothing is received, called or waited for after this. The runtime stays open: it is its opener's to close. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const { link } of this.lines.values()) link.closeSocket();
+    for (const { link } of this.wires.values()) link.closeSocket();
     this.dispatcher.close();
     this.receiver.close();
   }
@@ -286,6 +305,21 @@ export class Agent {
 
   private log(line: string): void {
     this.options.log?.(line);
+  }
+
+  /** The host told of the lines once this turn is over, whatever else changes them meanwhile. */
+  private linesChanged(): void {
+    if (this.linesDue || this.closed || this.options.onLines === undefined) return;
+    this.linesDue = true;
+    queueMicrotask(() => {
+      this.linesDue = false;
+      if (this.closed) return;
+      try {
+        this.options.onLines?.(this.lines());
+      } catch (err) {
+        this.log(`the host's lines listener threw: ${messageOf(err)}`);
+      }
+    });
   }
 
   private async call(action: LiveAction): Promise<Called> {
@@ -299,7 +333,7 @@ export class Agent {
   }
 
   private shown(connection: Connection): Connection {
-    return { ...connection, unknownRegistrations: [...connection.unknownRegistrations], live: this.lines.get(connection.mediationId)?.link.live ?? false };
+    return { ...connection, unknownRegistrations: [...connection.unknownRegistrations], live: this.wires.get(connection.mediationId)?.link.live ?? false };
   }
 
   private connectionOf(mediationId: MediationId): Connection {
@@ -314,21 +348,29 @@ export class Agent {
       if (kept.length >= UNKNOWN_REGISTRATIONS_KEPT) break;
       if (!kept.includes(did)) kept.push(did);
     }
+    this.linesChanged();
     this.log(`the mediator of ${mediationId} held ${unknown.length} registration(s) no DID of this vault accounts for`);
   }
 
   private async connectTo(mediationId: MediationId): Promise<Connection> {
     const connection = this.connectionOf(mediationId);
+    this.linesChanged();
     try {
       const { link, pickup } = await this.lineOf(mediationId);
       connection.reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
       connection.drained = await pickup.drain();
-      if ((this.options.liveDelivery ?? true) && !link.live && !this.closed) link.openSocket((opened) => pickup.onFrame(opened));
+      if ((this.options.liveDelivery ?? true) && !link.live && !this.closed) {
+        link.openSocket(
+          (opened) => pickup.onFrame(opened),
+          () => this.linesChanged()
+        );
+      }
       connection.unreachable = null;
     } catch (err) {
       connection.unreachable = messageOf(err);
       this.log(`the mediator of ${mediationId} was not reached: ${connection.unreachable}`);
     }
+    this.linesChanged();
     return this.shown(connection);
   }
 
@@ -338,6 +380,7 @@ export class Agent {
       const drained = await pickup.drain();
       const connection = this.attempts.get(mediationId);
       if (connection !== undefined) connection.drained = drained;
+      this.linesChanged();
     } catch (err) {
       this.log(`the pickup once live delivery came on failed for ${mediationId}: ${messageOf(err)}`);
     }
@@ -346,7 +389,7 @@ export class Agent {
   /** The one line of an arrangement for as long as the agent lives: a link speaks as one account to one mediator. */
   private async lineOf(mediationId: MediationId): Promise<Line> {
     this.refuseClosed();
-    const existing = this.lines.get(mediationId);
+    const existing = this.wires.get(mediationId);
     if (existing !== undefined) return existing;
     const fold = await scanVault(this.runtime.vault, this.keys);
     const mediation = mediationOf(fold, mediationId);
@@ -365,9 +408,9 @@ export class Agent {
     // What reached the mediator between the pickup and live delivery coming on was queued without being pushed: it is picked up once the mediator says live delivery is on.
     const pickup: Pickup = new Pickup(link, this.handleOf(mediationId), { log, onLive: () => void this.pickUpOnceLive(mediationId, pickup) });
     const line: Line = { link, pickup };
-    const raced = this.lines.get(mediationId);
+    const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;
-    this.lines.set(mediationId, line);
+    this.wires.set(mediationId, line);
     watchUnknownRegistrations(link, (unknown) => this.keepUnknown(mediationId, unknown));
     return line;
   }

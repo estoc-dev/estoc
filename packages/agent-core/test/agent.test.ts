@@ -7,7 +7,7 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentLines, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { carrierWaitingForIssuer, didcomm, freshVault, issuerRecovered, json, mediatedParty, newMediator, peerSealer, proofOfSuccession, refuseCommits, sealed, until, webIdentity, type MediatedParty } from "./helpers.js";
 
@@ -158,6 +158,27 @@ describe("opening an agent", () => {
     expect(sent.dispatched).toMatchObject({ outcome: "submitted" });
     await until("the frame pushed under the short form is followed", () => inbounds.length === 1, 10_000);
     expect(inbounds[0]!.received).toMatchObject({ outcome: "received", live: true });
+  });
+
+  it("tells the host its lines whole as they change: once for a connection made, again when the mediator drops the socket, and nothing once closed", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const told: AgentLines[] = [];
+    const agent = await agentOf(alice, "start", { liveDelivery: true, onLines: (lines) => told.push(lines) });
+    await until("the connection is told", () => told.at(-1)?.connections[0]?.live === true, 10_000);
+    expect(told.at(-1)).toEqual(agent.lines());
+    expect(told.at(-1)).toMatchObject({ connections: [{ unreachable: null, reconciled: { desired: [alice.did] }, drained: { ended: "empty" }, live: true }], waiting: [], discarded: [] });
+
+    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
+    const said = told.length;
+    mediator.dropSocket(alice.link.me);
+    await until("the dropped socket is told", () => told.at(-1)?.connections[0]?.live === false, 10_000);
+    expect(told).toHaveLength(said + 1);
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+
+    agent.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(told).toHaveLength(said + 1);
   });
 
   it("picks up what was queued between its pickup and live delivery coming on", async () => {

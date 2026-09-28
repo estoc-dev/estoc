@@ -589,6 +589,8 @@ export interface MemoryVaultOptions {
   maxObjectBytes?: number;
   /** the size of the internal extents an object is held in; default 1 MiB */
   extentBytes?: number;
+  /** told once of every commit and ingest that accepted an event or landed an object, after it has, as `SqliteVaultOptions.changed` is */
+  changed?: () => void;
 }
 
 /**
@@ -649,12 +651,22 @@ export class MemoryVault extends Runtime {
         transaction: async (body) => {
           const prepared = objects.prepare();
           const drafts = await body(prepared);
-          return events.appendAll(drafts, () => prepared.publish());
+          let landed = false;
+          const published = await events.appendAll(drafts, (adding) => {
+            landed = prepared.publish() + adding > 0;
+          });
+          if (landed) options.changed?.();
+          return published;
         },
         ingestion: async (body) => {
           const prepared = objects.prepare();
           const incoming = await body(prepared);
-          return events.ingest(incoming, () => prepared.publish());
+          let landed = false;
+          const outcome = await events.ingest(incoming, (adding) => {
+            landed = prepared.publish() + adding > 0;
+          });
+          if (landed) options.changed?.();
+          return outcome;
         },
       },
       keystore: (runtime) => new MemoryKeystore(options.wrapped, (op) => runtime.locked(() => op())),

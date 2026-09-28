@@ -4,6 +4,14 @@
 
 The version-4 vault: events addressed by content.
 
+- **`changed`.** `SqliteVaultOptions` and `MemoryVaultOptions` take a
+  `changed` callback, told once of every commit and ingest that
+  accepted an event or landed an object, after its transaction has
+  committed and before the operation resolves; nothing is said of a
+  transaction that landed nothing or failed, nor of local state. A
+  host that projects the vault invalidates the projection from here
+  rather than from the calls it knows of.
+
 - **An event is its envelope's CID.** The envelope has five fields —
   `at`, `author`, `type`, `roots`, `data` — and the API `Event` carries
   them with `cid`, the raw DASL CID of their canonical bytes, which is

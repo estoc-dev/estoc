@@ -119,11 +119,11 @@ export async function serveOver<D extends ServedCore>(options: SocketOptions, cr
 
 /**
  * One socket's view of the daemon. Calls go to the daemon; its `boot()`,
- * once the daemon is up, is a replay to this socket alone. While that
- * replay reads the snapshot, live events for this socket wait, and follow
- * the snapshot out — so nothing the snapshot did not yet hold is shown
- * and then overwritten by it. (What the snapshot does hold may come again
- * as an event; the UI takes records by id.)
+ * once the daemon is up, is a replay to this socket alone. Live events
+ * for this socket wait while the replay is handed over, and follow it
+ * out: what the replay holds may come again as an event, and the UI
+ * takes records by id, but nothing is shown before the replay and then
+ * overwritten by it.
  */
 function clientOf(daemon: ServedCore, port: Port, emitters: Set<Emit>): { gone(): void } {
   let held: unknown[][] | null = null;

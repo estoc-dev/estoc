@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`AgentOptions.onLines`** tells the host the agent's lines whole —
+  `Agent.lines()`: the connections, the waiting deliveries and the
+  discards — once they changed: a connection made, reconciled, drained
+  or found unreachable, its socket opened or dropped by the mediator,
+  a pickup once live delivery came on, a delivery come to wait, held,
+  let go of or discarded. What changes in one turn is told once, after
+  it. `ReceiverOptions.changed` is the receiver's part of it.
+
 - **Records read an input from its admitted observations alone**
   (behaviour change): a channel's `messages` hold the inputs an
   effective admission names an observation of, their headers, body

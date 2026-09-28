@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultHeldRoots, type Channel, type DidId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type DidId, type MediationId, type MintedDid } from "@estoc/vault";
 
-import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE } from "@estoc/agent-core";
+import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
@@ -449,17 +449,20 @@ describe("a vault whose history is damaged", () => {
 
     running.damageAnEvent();
 
-    await daemon.refresh();
+    // Nothing was committed since the last read, so a refresh reads nothing and the damage waits for the next read: the one the next commit makes.
+    expect(await daemon.refresh()).toEqual(await daemon.refresh());
+    expect(heard.events).toHaveLength(shown);
+    await expect(daemon.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow(/damaged/);
     await until("the daemon says damaged", () => heard.phases().at(-1) === "damaged");
     expect(heard.events.slice(shown).filter(([name]) => name === "changed")).toEqual([]);
-    await expect(daemon.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow("no open vault");
+    await expect(daemon.createContact("Dora", pairWith("Dora"))).rejects.toThrow("no open vault");
     await daemon.close();
     const next = daemonOver(root);
     await next.daemon.boot();
     expect(next.heard.phases()).toEqual(["damaged"]);
   });
 
-  it("met first by the read for a UI that joins stops the vault all the same: the one joining is shown no records and told damaged, and so is the one already there", async () => {
+  it("is shown as it was published to a UI that joins, since joining reads nothing; the read that meets the damage stops the vault for both", async () => {
     const root = await folder();
     const running = damageable(root);
     const served = await serveDaemon({ host: running.host, port: 0, token: "t0k3n" });
@@ -478,13 +481,92 @@ describe("a vault whose history is damaged", () => {
 
     const late = told();
     await (await joined(late)).ui.boot();
+    expect(late.snapshot()).toEqual(heard.snapshot());
+    expect(late.hold()).toBe(heard.hold());
+
     const damaged = ["phase", "damaged", expect.stringMatching(/^events\/.* is damaged/), expect.any(String)];
-    expect(late.events.filter(([name]) => name === "opened" || name === "changed")).toEqual([]);
-    expect(late.events.at(-1)).toEqual(damaged);
+    await expect(ui.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow(/damaged/);
     await until("the UI already there is told", () => heard.phases().at(-1) === "damaged");
+    await until("the UI that joined is told", () => late.phases().at(-1) === "damaged");
     expect(heard.events.at(-1)).toEqual(damaged);
-    await expect(ui.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow("no open vault");
+    expect(late.events.at(-1)).toEqual(damaged);
+    expect(late.events.filter(([name]) => name === "changed")).toEqual([]);
+    await expect(ui.createContact("Dora", pairWith("Dora"))).rejects.toThrow("no open vault");
     await served.close();
+  });
+});
+
+/** The reads of the runtime the daemon opens next, each handed to `wrap` once the vault's lock is let go of, to be held back or made to fail. */
+function readsOf(daemon: DaemonCore, wrap: (read: Promise<Snapshot>) => Promise<Snapshot>): void {
+  const { publisher } = daemon;
+  const opening = publisher.open.bind(publisher);
+  publisher.open = (hold, source) => opening(hold, { capture: (cut) => wrap(source.capture(cut)) });
+}
+
+describe("a vault let go of while a read of it is under way", () => {
+  for (const ending of ["lock", "forgetIdentity", "close"] as const) {
+    it(`by ${ending}: the call whose read it is settles, the vault is let go of, and nothing of the read is shown`, async () => {
+      const root = await folder();
+      const { daemon, heard } = daemonOver(root);
+      let holding = false;
+      let held: (() => void) | null = null;
+      readsOf(daemon, async (read) => {
+        const snapshot = await read;
+        if (holding) await new Promise<void>((resolve) => (held = resolve));
+        return snapshot;
+      });
+      await daemon.boot();
+      await daemon.createIdentity("Alice", PASSPHRASE);
+      const hold = heard.hold()!;
+
+      holding = true;
+      const creating = daemon.createContact("Bob", pairWith("Bob"));
+      await until("the read is held", () => held !== null);
+      await (ending === "forgetIdentity" ? daemon.forgetIdentity(hold) : daemon[ending]());
+      await creating;
+      const shown = heard.events.length;
+      if (ending !== "close") expect(heard.phases().at(-1)).toBe(ending === "lock" ? "locked" : "onboarding");
+
+      holding = false;
+      held!();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(heard.events.slice(shown)).toEqual([]);
+      if (ending === "lock") {
+        await daemon.unlock(PASSPHRASE);
+        expect(heard.snapshot().contacts).toHaveLength(1);
+      }
+    });
+  }
+});
+
+describe("a read of the vault that fails", () => {
+  it("leaves the state as it was and says so, refuses a UI joining meanwhile, and is made again by the next call", async () => {
+    const root = await folder();
+    const { daemon, heard } = daemonOver(root);
+    let failing = 0;
+    readsOf(daemon, async (read) => {
+      const snapshot = await read;
+      if (failing-- > 0) throw new Error("the disk went away");
+      return snapshot;
+    });
+    await daemon.boot();
+    await daemon.createIdentity("Alice", PASSPHRASE);
+    const before = heard.snapshot();
+    const shown = heard.events.length;
+
+    // the read the commit makes is the one the call waits for before it answers, and it fails
+    failing = 1;
+    await daemon.createContact("Bob", pairWith("Bob"));
+    expect(heard.events.slice(shown).filter(([name]) => name !== "lines")).toEqual([["log", "the snapshot could not be read: the disk went away"]]);
+    expect(heard.snapshot()).toBe(before);
+    await expect(daemon.boot()).rejects.toThrow("the disk went away");
+
+    await daemon.refresh();
+    expect(heard.snapshot().contacts).toHaveLength(1);
+    const late = told();
+    await daemon.boot();
+    await daemon.replayTo(late.emit);
+    expect(late.snapshot()).toEqual(heard.snapshot());
   });
 });
 
@@ -584,7 +666,10 @@ describe("two copies of one runtime, both written to", () => {
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(mediator.seenTypes.slice(asked)).toEqual([]);
         expect(heard.events.filter(([name]) => name === "opened")).toHaveLength(opened);
-        await expect(there.refresh()).rejects.toThrow("no open vault");
+        // No runtime is shown between the merges: a refresh answers with what was published last and reads nothing.
+        const said = heard.events.length;
+        expect(await there.refresh()).toEqual(await there.refresh());
+        expect(heard.events).toHaveLength(said);
       } finally {
         release();
       }
@@ -595,6 +680,81 @@ describe("two copies of one runtime, both written to", () => {
     },
     LONG
   );
+});
+
+describe("a daemon whose mediator drops the socket", () => {
+  it("shows the connection as not live without a call or a commit, the same to the UI there and to one that joins, and the records unchanged", async () => {
+    const mediator = await newMediator();
+    const alice = await person(mediator, "Alice");
+    await until("the line is live", () => alice.heard.lines()?.connections[0]?.live === true);
+    const shown = alice.heard.events.length;
+    const [account] = mediator.liveAccounts();
+
+    mediator.dropSocket(account!);
+    await until("the drop is shown", () => alice.heard.lines()?.connections[0]?.live === false);
+    expect(alice.heard.events.slice(shown).map(([name]) => name)).toEqual(["lines"]);
+    expect(mediator.liveAccounts()).toEqual([]);
+
+    const late = told();
+    await alice.daemon.replayTo(late.emit);
+    expect(late.lines()).toEqual(alice.heard.lines());
+    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+  });
+});
+
+describe("a backup merged that retires the only mediator", () => {
+  /** The daemon's backup restored elsewhere, its one mediation retired there, and that replica exported: a backup with one event to merge. */
+  async function backupRetiring(backup: Uint8Array, mediationId: MediationId): Promise<Uint8Array> {
+    const root = await folder();
+    await writeFile(path.join(root, "backup.sqlite"), backup);
+    const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
+    let runtime: SqliteVault;
+    let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
+    try {
+      const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
+        heldRoots: vaultHeldRoots(null),
+        anchor: async (wrapped) => {
+          seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
+          return Keys.anchorOf(seedKey);
+        },
+      });
+      runtime = new SqliteVault(restored.runtime);
+    } finally {
+      source.close();
+    }
+    try {
+      const keys = await Keys.open(seedKey, runtime.metadata.anchor);
+      await decide(runtime, keys, () => [vaultDraft("mediation.retired", { mediationId, because: "no longer used" })]);
+      await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "retired.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+    } finally {
+      await runtime.close();
+    }
+    return new Uint8Array(await readFile(path.join(root, "retired.sqlite")));
+  }
+
+  it("leaves the agent that takes over nothing to connect, and shows its lines empty without a call: the UI there and one that joins see no connection where the old agent's stood", async () => {
+    const mediator = await newMediator();
+    const root = await folder();
+    const alice = daemonOver(root, mediator);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    const mediationId = await alice.daemon.setMediator(mediator.did);
+    await until("the line is live", () => alice.heard.lines()?.connections[0]?.live === true);
+
+    const retiring = await backupRetiring((await alice.daemon.exportBackup()).bytes, mediationId);
+    const merging = alice.heard.events.length;
+    expect(await alice.daemon.mergeBackup(retiring)).toMatchObject({ added: 1, renewed: false });
+    await until("the old agent's connection is gone from the UI", () => alice.heard.lines()?.connections.length === 0);
+    await until("the mediator has let the socket go", () => mediator.liveAccounts().length === 0);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(alice.heard.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
+    expect(alice.heard.events.slice(merging).map(([name]) => name)).toEqual(["changed", "lines"]);
+
+    const late = told();
+    await alice.daemon.replayTo(late.emit);
+    expect(late.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
+    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+  });
 });
 
 describe("two daemons over a mediator", () => {
@@ -768,6 +928,74 @@ describe("two daemons over a mediator", () => {
     LONG
   );
 
+  /** Alice and Bob, contacts of each other by an invitation of Alice's, their Pings through. */
+  async function acquainted(mediator: FakeMediator, options: Partial<NonNullable<DaemonHost["agentOptions"]>> = {}) {
+    const alice = await person(mediator, "Alice");
+    const bobsRoot = await folder();
+    const bob = { root: bobsRoot, ...daemonOver(bobsRoot, mediator, options) };
+    await bob.daemon.boot();
+    await bob.daemon.createIdentity("Bob", PASSPHRASE);
+    await bob.daemon.setMediator(mediator.did);
+    const { invitation } = await alice.daemon.createInvitation("one");
+    const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
+    await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === accepted.messageId && message.acknowledged));
+    return { alice, bob, contactId: accepted.contactId };
+  }
+
+  const outcomeOf = (snapshot: Snapshot, messageId: string) => messagesOf(snapshot).find((message) => message.messageId === messageId)?.outcome?.status;
+
+  it(
+    "publishes what the dispatcher commits on its own timer, with no call of the UI's: the Ping a registration the mediator refused held up",
+    async () => {
+      const mediator = await newMediator();
+      const { alice, bob } = await acquainted(mediator, { retry: { firstWaitMs: 200 } });
+      const { invitation } = await alice.daemon.createInvitation("one");
+      // Every registration asked about meanwhile is refused, the one the Ping's address needs among them: the dispatcher tries the Ping again on its own.
+      let refusing = true;
+      mediator.intercept = async (message) => {
+        if (message.type !== RECIPIENT_QUERY || !refusing) return undefined;
+        throw new Error("not just now");
+      };
+      try {
+        const accepted = await bob.daemon.acceptInvitation(invitation, "Alice again");
+        refusing = false;
+        expect(accepted.outcome).toBe("pending");
+        expect(["queued", "prepared"]).toContain(outcomeOf(bob.heard.snapshot(), accepted.messageId));
+        await until("the retry's submission is published", () => outcomeOf(bob.heard.snapshot(), accepted.messageId) === "submitted", 10_000);
+      } finally {
+        refusing = false;
+        mediator.intercept = null;
+      }
+    },
+    LONG
+  );
+
+  it(
+    "shows the intent a send committed before the network answers to a refresh asked meanwhile, and the submission once it has",
+    async () => {
+      const mediator = await newMediator();
+      const { bob, contactId } = await acquainted(mediator);
+      const forward = holding(mediator, (message) => message.type === FORWARD);
+      try {
+        const sending = bob.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "in transit" } });
+        await until("the message is with the mediator", forward.reached);
+        expect(await stillWaiting(sending)).toBe(true);
+        const marker = await bob.daemon.refresh();
+        expect(marker.epoch).toBe(bob.daemon.publisher.current.state.epoch);
+        const held = messagesOf(bob.heard.snapshot()).find((message) => message.direction === "out" && message.body.state === "available" && message.body.body["content"] === "in transit");
+        expect(["queued", "prepared"]).toContain(held?.outcome?.status);
+        forward.release();
+        const sent = await sending;
+        expect(sent.outcome).toBe("submitted");
+        expect(outcomeOf(bob.heard.snapshot(), sent.messageId)).toBe("submitted");
+      } finally {
+        forward.release();
+        mediator.intercept = null;
+      }
+    },
+    LONG
+  );
+
   test(
     "an invitation accepted becomes a contact on one side and a channel to name on the other; a restored vault receives at once and sends only once the restore is explained",
     async () => {
@@ -831,7 +1059,7 @@ describe("two daemons over a mediator", () => {
       expect(reply.outcome).toBe("submitted");
       await until("the restored vault reads bob", () => messagesOf(first.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "still there?"));
       await until("bob's message is acknowledged by the restored vault", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === reply.messageId && message.acknowledged));
-      expect(await first.daemon.pending()).toMatchObject({ pendingOutbounds: [] });
+      expect(first.heard.snapshot().pending).toMatchObject({ pendingOutbounds: [] });
 
       // The explanation is owed by this runtime, not by this process: another over the same file owes it still.
       await first.daemon.close();
@@ -852,7 +1080,7 @@ describe("two daemons over a mediator", () => {
       const merged = await again.daemon.mergeBackup(backup.bytes);
       expect(merged).toMatchObject({ added: 0, objects: 0 });
       expect(merged.duplicates).toBeGreaterThan(0);
-      await until("the agent over the merged vault is live", () => again.heard.events.at(-1)![0] === "lines" && again.heard.lines()!.connections[0]!.live);
+      await until("the agent over the merged vault is live", () => again.heard.events.at(-1)![0] === "lines" && again.heard.lines()?.connections[0]?.live === true);
       const bobs = await bob.daemon.exportBackup();
       await bob.daemon.eraseMessage(reply.messageId);
       expect(await bob.daemon.mergeBackup(bobs.bytes)).toMatchObject({ added: 0, objects: 0 });

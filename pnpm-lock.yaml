@@ -191,6 +191,9 @@ importers:
       '@estoc/agent-core':
         specifier: workspace:^
         version: link:../agent-core
+      '@estoc/daemon-api':
+        specifier: workspace:^
+        version: link:../daemon-api
       '@estoc/didcomm-node':
         specifier: ^0.4.1-estoc.3
         version: 0.4.1-estoc.3

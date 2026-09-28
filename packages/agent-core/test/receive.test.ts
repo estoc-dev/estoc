@@ -280,13 +280,17 @@ describe("the gate before the vault", () => {
     const { receipt, seen } = recording();
     const { acknowledge, acknowledged } = acknowledging();
     const trace = await AgentTrace.open(copy.runtime.local);
-    const receiver = await receiverOver(copy, { receipt, acknowledge, trace });
+    const waiting: number[] = [];
+    const receiver = await receiverOver(copy, { receipt, acknowledge, trace, changed: () => waiting.push(receiver.waiting().length) });
     const packed = await sealed(await peerSealer(bob), alice.longFormDid);
 
     expect(await receiver.receive({ packed, source: PICKUP })).toMatchObject({ outcome: "deferred", reason: `${kidOf(packed)}: the bound route is not configured` });
     expect(receiver.waiting()).toEqual([expect.objectContaining({ source: PICKUP, held: true })]);
+    expect(waiting.at(-1)).toBe(1);
+    const changes = waiting.length;
     expect(await receiver.receive({ packed, source: PICKUP })).toMatchObject({ outcome: "deferred" });
     expect(await receiver.localStateChanged()).toEqual([]);
+    expect(waiting).toHaveLength(changes);
     expect([seen, acknowledged, await trace.read({ type: "envelope.open" })]).toEqual([[], [], []]);
 
     await copy.runtime.ingest(await eventsOf(alice.runtime, "route.configured"));
@@ -294,6 +298,7 @@ describe("the gate before the vault", () => {
     expect(seen).toHaveLength(1);
     expect(acknowledged).toEqual([PICKUP]);
     expect(receiver.waiting()).toEqual([]);
+    expect(waiting.at(-1)).toBe(0);
     await closeAll(alice, bob, copy);
   });
 

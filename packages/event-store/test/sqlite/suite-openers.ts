@@ -51,9 +51,9 @@ export function objectStoreOpener(h: SuiteHarness): OpenObjectStore {
 }
 
 export function vaultOpener(h: SuiteHarness): OpenVault {
-  return async ({ author, now }) => {
+  return async ({ author, now, changed }) => {
     const db = await created(h, author);
-    const vault = new SqliteVault(db, { now });
+    const vault = new SqliteVault(db, changed === undefined ? { now } : { now, changed });
     h.opened?.(() => vault.close());
     return { vault, corrupt: async (cid) => corruptChunk(db.driver, cid) };
   };

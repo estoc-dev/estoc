@@ -328,6 +328,11 @@ export class FakeMediator {
     this.sockets.get(account)?.close();
   }
 
+  /** The accounts with live delivery switched on. */
+  liveAccounts(): string[] {
+    return [...this.sockets.keys()];
+  }
+
   socketClosed(socket: FakeSocket): void {
     for (const [account, s] of this.sockets) {
       if (s === socket) {
