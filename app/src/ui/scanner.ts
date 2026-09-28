@@ -40,19 +40,24 @@ export function startScan<V extends VideoSource>({ openCamera, video, detector, 
     stream = null;
   }
 
+  // A read takes its own time too: one that finishes after the scan was
+  // stopped belongs to nobody and is dropped.
   const look = async () => {
     if (stopped) return;
+    let codes: { rawValue: string }[] = [];
     try {
-      for (const { rawValue } of await detector.detect(video)) {
-        if (onCode(rawValue)) {
-          stop();
-          return;
-        }
-      }
+      codes = await detector.detect(video);
     } catch {
       // not a code, or not one that reads: keep looking
     }
-    if (!stopped) next = setTimeout(look, intervalMs);
+    if (stopped) return;
+    for (const { rawValue } of codes) {
+      if (onCode(rawValue)) {
+        stop();
+        return;
+      }
+    }
+    next = setTimeout(look, intervalMs);
   };
 
   void (async () => {

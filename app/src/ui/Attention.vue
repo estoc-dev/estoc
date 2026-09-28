@@ -129,7 +129,7 @@ const explainingRegistrations = ref(false);
 
       <p v-if="failure" class="error-text">{{ failure }}</p>
       <p v-if="sendsClosed && byHand > 0" class="note">
-        Sending waits for the restore to be explained, in a conversation.
+        Sending waits until you have read what the restore means, above your conversations.
         <button class="link" type="button" @click="go({ kind: 'list' })">Go there</button>
       </p>
 

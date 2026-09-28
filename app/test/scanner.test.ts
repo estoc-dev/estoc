@@ -64,6 +64,29 @@ describe("a scan", () => {
     expect(tracks[0]!.stopped).toBe(true);
   });
 
+  it("drops a code read that finishes after the scan was stopped", async () => {
+    const { stream, tracks } = fakeStream();
+    const read: string[] = [];
+    let finish = (_: { rawValue: string }[]) => {};
+    const scan = startScan({
+      openCamera: () => Promise.resolve(stream),
+      video: stillVideo(),
+      detector: { detect: () => new Promise((resolve) => (finish = resolve)) },
+      onCode: (code) => {
+        read.push(code);
+        return true;
+      },
+      onFailure: () => {},
+      intervalMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    scan.stop();
+    finish([{ rawValue: "late" }]);
+    await tick();
+    expect(read).toEqual([]);
+    expect(tracks[0]!.stopped).toBe(true);
+  });
+
   it("says nothing when the camera refuses after the scan was stopped", async () => {
     let failed = false;
     let refuse = () => {};
