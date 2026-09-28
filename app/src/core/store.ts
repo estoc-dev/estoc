@@ -146,6 +146,10 @@ export async function boot(): Promise<void> {
       void daemon?.refresh().catch(() => undefined);
     }
   });
+  // The daemon in a worker hears `online` only where the browser tells workers; the page's is passed on as well.
+  window.addEventListener("online", () => {
+    if (state.phase === "open") void daemon?.reconnect().catch(() => undefined);
+  });
   await daemon.boot();
 }
 
@@ -315,8 +319,38 @@ export async function acceptInvitation(input: string | Invitation, petname: stri
   return accepted.contactId;
 }
 
+/** A contact under the name we give them, by a DID they handed over on its own: our DID for them alone, a Ping, and our introduction after it. */
+export async function addContactByDid(did: string, petname: string): Promise<ContactId> {
+  const added = await running().addContactByDid(did, petname);
+  said("contact added by DID", added);
+  try {
+    await introduce(added.channel);
+  } catch (err) {
+    log(`the introduction was not sent: ${err instanceof Error ? err.message : err}`);
+  }
+  return added.contactId;
+}
+
+/** Whatever was pasted for a person: their DID, or the invitation link they made for us. */
+export async function addContactFrom(input: string, petname: string): Promise<ContactId> {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("did:")) return addContactByDid(trimmed, petname);
+  let invitation: Invitation;
+  try {
+    invitation = parseInvitation(trimmed);
+  } catch {
+    throw new Error("That is neither a DID (did:…) nor an invitation link.");
+  }
+  return acceptInvitation(invitation, petname);
+}
+
 export function dismissPendingInvitation(): void {
   state.pendingInvitation = null;
+}
+
+/** The DID this vault hands out to anyone, in the long form that carries its document; minted the first time it is asked for. */
+export async function publicDid(): Promise<Did> {
+  return (await running().publicDid()).did;
 }
 
 /** A name of ours for a conversation that has none: a contact that selects its channels. */

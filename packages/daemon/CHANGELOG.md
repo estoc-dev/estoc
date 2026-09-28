@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`addContactByDid(did, petname)`**: a contact by a DID handed over on
+  its own, reached as an invitee is — a fresh DID of ours toward them, the
+  contact selecting the pair, a Ping — the Ping naming no invitation. A DID
+  of this vault's is refused, by this call and by `acceptInvitation`.
+- **`publicDid()`**: the DID this vault hands out to anyone, in its long
+  form: the live one disclosed directly for many uses, minted on the
+  selected arrangement's route and disclosed when there is none.
+- `Snapshot.dids[]` carries `longFormDid` and `disclosures` (each
+  disclosure's `as` and `uses`) in place of `disclosed`.
 - **`forgetIdentity(hold)`** names the vault it removes. The `hold` is
   the daemon's name for the vault file, given when the file is found or
   made and kept through every phase until the file is removed; every
