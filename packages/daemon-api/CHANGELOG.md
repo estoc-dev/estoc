@@ -18,8 +18,10 @@ view installs alone.
   no daemon in reach: the snapshot indexed by ID with every
   conversation's channels, messages and observations assembled from
   what its record names, in the record's order (`indexSnapshot`); a
-  conversation followed across snapshots to the one now showing a
-  channel it showed (`successorOf`); out-of-band invitations read from
+  conversation followed across snapshots by the trail a view keeps of
+  it, the vault and the channel IDs and no record, to the one now
+  showing a channel it showed (`trailOf`, `successorOf`); out-of-band
+  invitations read from
   a link, its `_oob` parameter or its plaintext, and written as a link
   (`parseInvitation`, `invitationUrl`, `invitationOf`); the contents a
   view sends and the name an introduction claims (`basicMessage`,

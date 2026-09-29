@@ -3,13 +3,13 @@ import { ref } from "vue";
 
 import { forgetDevice } from "../core/seen.js";
 import { forgetIdentity, state, unlock } from "../core/store.js";
-import { useRemoval } from "./removal.js";
+import { useUnconfirmed } from "./unconfirmed.js";
 
 /** The vault is here with its seed sealed: the passphrase opens it, and nothing else does. */
 const passphrase = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
-const { remove } = useRemoval();
+const { remove } = useUnconfirmed();
 
 async function submit() {
   if (passphrase.value === "" || busy.value) return;

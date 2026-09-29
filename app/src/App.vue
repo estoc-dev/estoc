@@ -5,9 +5,9 @@ import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
 import Onboarding from "./ui/Onboarding.vue";
 import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
-import { useRemoval } from "./ui/removal.js";
+import { useUnconfirmed } from "./ui/unconfirmed.js";
 
-const { failed: removalFailed, remove, dismiss: dismissRemoval } = useRemoval();
+const { unconfirmed, remove, dismiss } = useUnconfirmed();
 const removeVault = (question: string) => {
   const hold = state.hold;
   return remove(question, () => forgetIdentity(hold));
@@ -101,15 +101,16 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
 
   <Unlock v-else-if="state.phase === 'locked'" />
 
-  <Shell v-else-if="state.snapshot" />
+  <!-- keyed by the vault held: another vault in its place gets screens of its own, with nothing of the old one's entered or under way -->
+  <Shell v-else-if="state.snapshot" :key="state.hold ?? ''" />
 
   <div v-if="state.applyUpdate" class="update-chip" data-update>
     <span>A new version of Estoc is ready.</span>
     <button class="btn" type="button" @click="state.applyUpdate?.()">Reload</button>
   </div>
 
-  <div v-if="removalFailed" class="update-chip alarm" data-removal-failed>
-    <span>The removal was not confirmed: {{ removalFailed }}</span>
-    <button class="btn" type="button" @click="dismissRemoval">OK</button>
+  <div v-if="unconfirmed" class="update-chip alarm" data-unconfirmed>
+    <span>{{ unconfirmed.what }} was not confirmed: {{ unconfirmed.because }}</span>
+    <button class="btn" type="button" @click="dismiss">OK</button>
   </div>
 </template>

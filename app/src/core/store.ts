@@ -96,6 +96,8 @@ let opened: Epoch | null = null;
 
 function show(epoch: Epoch, value: StateValue): void {
   if (value.phase === "onboarding") dropDrafts();
+  // the links were made for the vault that stood; another in its place has none of them
+  if (value.hold !== state.hold) state.links = {};
   if (value.phase !== "open") {
     opened = null;
     state.snapshot = null;
@@ -170,7 +172,7 @@ export function boot(): void {
     onInstallable: (prompt) => (state.install = prompt),
   });
   client = connectDaemon();
-  // What the dispatcher does on its own timer is told by no event: ask again when the person looks.
+  // A page looked at again is first brought up to what the daemon has committed since.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.phase === "open") void refresh();
   });
@@ -242,7 +244,6 @@ export async function forgetIdentity(hold: Hold | null): Promise<void> {
   }
   await call((daemon) => daemon.forgetIdentity({ hold }));
   state.log = [];
-  state.links = {};
 }
 
 /**
@@ -329,6 +330,9 @@ async function conversationOf(contactId: ContactId): Promise<ConversationId | nu
   return state.index?.contactConversation(contactId)?.id ?? null;
 }
 
+/** Whether the vault a procedure began in still stands: its next step is not taken in one that replaced it. */
+const stillHeld = (hold: Hold | null): boolean => state.hold === hold;
+
 /**
  * Accept an invitation under the name we give its issuer: a DID of ours
  * for them alone, a contact that selects the pair, a Ping under the
@@ -338,19 +342,23 @@ async function conversationOf(contactId: ContactId): Promise<ConversationId | nu
 export async function acceptInvitation(input: string | Invitation, petname: string): Promise<ConversationId | null> {
   // what crosses to the daemon must be plain: a Vue proxy does not clone
   const invitation = typeof input === "string" ? parseInvitation(input) : toRaw(input);
+  const hold = state.hold;
   const accepted = await call((daemon) => daemon.acceptInvitation({ invitation, petname }));
   said("invitation accepted", accepted);
   if (state.pendingInvitation?.id === invitation.id) {
     state.pendingInvitation = null;
   }
+  if (!stillHeld(hold)) return null;
   await introduceAfterPing(accepted.contactId);
   return conversationOf(accepted.contactId);
 }
 
 /** A contact under the name we give them, by a DID they handed over on its own: our DID for them alone, a Ping, and our introduction after it. */
 export async function addContactByDid(did: string, petname: string): Promise<ConversationId | null> {
+  const hold = state.hold;
   const added = await call((daemon) => daemon.addContactByDid({ did, petname }));
   said("contact added by DID", added);
+  if (!stillHeld(hold)) return null;
   await introduceAfterPing(added.contactId);
   return conversationOf(added.contactId);
 }

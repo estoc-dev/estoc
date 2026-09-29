@@ -51,7 +51,9 @@ your data never touches the place the app was served from.
 - **The vault's own account of every message.** Under a bubble: where a
   delivery stands (queued, sealed, handed over, received, expired,
   cancelled, conflict), whether an input has been taken in, and what
-  became of a continuity proof it brought. Opening a vault sends nothing:
+  became of a continuity proof it brought. What a message carries as
+  attachments is listed by name, kind and size with the reference to its
+  content, which nothing in this version reads back. Opening a vault sends nothing:
   a message a transport was never called for, a reply still owed, a
   rotation the peer was never told of, each waits under *Needs you*,
   the banner over the list, for the step named beside it.

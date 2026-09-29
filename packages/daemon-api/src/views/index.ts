@@ -9,7 +9,7 @@
  */
 
 export { indexSnapshot, type ConversationView, type ShownChannel, type SnapshotIndex } from "./records.js";
-export { successorOf } from "./navigation.js";
+export { successorOf, trailOf, type ConversationTrail } from "./navigation.js";
 export { invitationOf, invitationUrl, parseInvitation } from "./invitations.js";
 export { announcedName, basicMessage, profileMessage } from "./messages.js";
 export { mediatorHost, mediatorInputOf, type MediatorInput } from "./mediators.js";

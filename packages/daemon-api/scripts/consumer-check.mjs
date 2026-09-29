@@ -33,7 +33,7 @@ try {
     path.join(consumer, "view.ts"),
     `import { connect, isCallError, type Client } from "@estoc/daemon-api/client";
 import { API_VERSION, WIRE_VERSION, schemas, type Hello, type MethodName, type State } from "@estoc/daemon-api/contract";
-import { indexSnapshot, invitationUrl, parseInvitation, successorOf, type ConversationView } from "@estoc/daemon-api/views";
+import { indexSnapshot, invitationUrl, parseInvitation, successorOf, trailOf, type ConversationView } from "@estoc/daemon-api/views";
 import { readFrame, readPayload, writeFrame, type Port, type PortHandlers } from "@estoc/daemon-api/wire";
 
 // The view is compiled with no Node or DOM library, so that the package's own declarations are shown to need neither.
@@ -50,7 +50,7 @@ if (typeof text !== "string" || read === null || !read.ok || !schemas.methods.re
 const opened: State = schemas.state.parse({ epoch: "e", revision: 2, value: { phase: "open", hold: "h", snapshot: { anchor: "did:key:z6Mk", label: "v", restoreUnexplained: false, mediations: [], dids: [], contacts: [], channels: [], messages: [], observations: [], conversations: [], invitations: [], pending: { pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] }, unplaced: { observationIds: [], outputs: [] } } } });
 const shown: ConversationView[] = opened.value.phase === "open" ? indexSnapshot(opened.value.snapshot).conversations : [];
 const invitation = parseInvitation(invitationUrl("https://estoc.example/", { type: "https://didcomm.org/out-of-band/2.0/invitation", id: "oob", typ: "application/didcomm-plain+json", from: "did:peer:4zQm", body: {} }));
-if (shown.length !== 0 || invitation.from !== "did:peer:4zQm" || (opened.value.phase === "open" && successorOf(opened.value.snapshot, opened.value.snapshot, schemas.conversationId.parse("contact:none")) !== null)) throw new Error("the views did not behave");
+if (shown.length !== 0 || invitation.from !== "did:peer:4zQm" || (opened.value.phase === "open" && (trailOf(opened.value.snapshot, schemas.conversationId.parse("contact:none")) !== null || successorOf({ anchor: opened.value.snapshot.anchor, id: schemas.conversationId.parse("contact:none"), channels: [] }, opened.value.snapshot) !== null))) throw new Error("the views did not behave");
 let handlers: PortHandlers | null = null;
 const port: Port = {
   transport: "clone",

@@ -56,10 +56,11 @@ afresh, and never resends a call the old connection lost.
 `indexSnapshot(snapshot)` reads the snapshot's tables by ID and assembles
 every conversation with the channels, messages and observations its
 record names, in the record's order, throwing on a reference the
-snapshot does not hold; `successorOf(before, after, id)` follows a
-conversation whose ID moved, to the one conversation now showing a
-channel it showed, and to nothing when several do or the snapshots are
-of different vaults. `parseInvitation` reads an out-of-band invitation
+snapshot does not hold; `trailOf(snapshot, id)` is what a view keeps of
+a conversation it showed, the vault and the channel IDs and no record,
+and `successorOf(trail, after)` follows it to the one conversation now
+showing a channel it showed, and to nothing when several do or the
+snapshot is another vault's. `parseInvitation` reads an out-of-band invitation
 from a link, its `_oob` parameter or its plaintext, `invitationUrl` and
 `invitationOf` write one; `basicMessage` and `profileMessage` are the
 contents a view sends, `announcedName` the name an introduction claims;

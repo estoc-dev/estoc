@@ -7,7 +7,6 @@
 
 import { BASIC_MESSAGE, PROFILE, type JsonObject, type MessageContent } from "../contract/index.js";
 
-/** A line of chat. */
 export function basicMessage(text: string): MessageContent {
   return { type: BASIC_MESSAGE, body: { content: text } };
 }
