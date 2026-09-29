@@ -15,11 +15,8 @@
   socket closed, or whose mediator was not reached, is tried again
   after a wait, each wait twice the one before, until live delivery is
   on again; what was queued meanwhile is picked up by the connection
-  that comes back. An open socket is probed with a trust ping, and one
-  that carried nothing down between two probes is given up as lost.
-  `AgentOptions.upkeep` sets the waits, `UPKEEP` is their default, and
-  none of it runs with `liveDelivery` off. `MediatorLink.probe`,
-  `abandonSocket` and `framesHeard` are the link's part of it.
+  that comes back. `AgentOptions.upkeep` sets the waits, `UPKEEP` is
+  their default, and none of it runs with `liveDelivery` off.
 
 - **Records read an input from its admitted observations alone**
   (behaviour change): a channel's `messages` hold the inputs an

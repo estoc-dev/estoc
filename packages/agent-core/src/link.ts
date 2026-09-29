@@ -21,7 +21,6 @@ import type { JsonObject } from "@estoc/event-store";
 import { ENCRYPTED_MIME, didOf, endpointOf, packEncrypted, plainMessage, secretsResolverFor, unpackMessage, type DidcommApi, type IMessage, type UnpackMetadata } from "./protocol/didcomm.js";
 import { envelopeHeader } from "./protocol/envelope.js";
 import { LIVE_DELIVERY_CHANGE } from "./protocol/mediation.js";
-import { TRUST_PING } from "./protocol/spec.js";
 import { UnverifiedReply } from "./errors.js";
 import { sameDid } from "./same-did.js";
 import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
@@ -110,9 +109,6 @@ export function sealData(packed: string, plain: IMessage): TraceData {
 }
 
 const utf8 = new TextEncoder();
-
-/** `WebSocket.OPEN`, read from no global: the constructor may be the host's own. */
-const SOCKET_OPEN = 1;
 function utf8Length(text: string): number {
   return utf8.encode(text).length;
 }
@@ -175,8 +171,6 @@ export class MediatorLink {
   private readonly log: (line: string) => void;
   readonly mediatorDid: string;
   private socket: WebSocket | null = null;
-  private socketLost: (() => void) | null = null;
-  private heard = 0;
 
   constructor(options: LinkOptions) {
     this.didcomm = options.didcomm;
@@ -211,11 +205,6 @@ export class MediatorLink {
   /** Is a socket open, or opening? False once it closed, whoever closed it. */
   get live(): boolean {
     return this.socket !== null;
-  }
-
-  /** How many frames the socket has carried down since it was opened. */
-  get framesHeard(): number {
-    return this.heard;
   }
 
   /**
@@ -384,16 +373,13 @@ export class MediatorLink {
    * opened, noted, and handed to `onFrame`; one that will not open, or
    * that `onFrame` threw on, is logged and dropped. `onClose` is told
    * when the socket closed on its own, not when `closeSocket` closed it,
-   * nor when `abandonSocket` gave it up without it, so reconnecting, and
-   * when, is the caller's.
+   * so reconnecting, and when, is the caller's.
    */
   openSocket(onFrame: (opened: Opened) => Promise<void> | void, onClose?: () => void): void {
     const uri = this.ws();
     this.closeSocket();
     const socket = new this.WebSocketCtor(uri);
     this.socket = socket;
-    this.socketLost = onClose ?? null;
-    this.heard = 0;
 
     socket.onopen = async () => {
       try {
@@ -409,7 +395,6 @@ export class MediatorLink {
     };
 
     socket.onmessage = async (event: MessageEvent) => {
-      this.heard += 1;
       const text = typeof event.data === "string" ? event.data : await (event.data as Blob).text();
       let opened: Opened;
       try {
@@ -436,44 +421,14 @@ export class MediatorLink {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = null;
-      this.socketLost = null;
       onClose?.();
     };
-  }
-
-  /**
-   * Ask the mediator for a sign of life down the socket: a trust ping,
-   * whose answer is a frame like any other. Nothing is sent over a
-   * socket that is not open; whether one was is the answer.
-   */
-  async probe(): Promise<boolean> {
-    const socket = this.socket;
-    if (socket === null || socket.readyState !== SOCKET_OPEN) return false;
-    const plain = plainMessage(TRUST_PING, this.me, this.mediatorDid, { response_requested: true });
-    const { packed, seal } = await this.pack(plain);
-    if (this.socket !== socket) return false;
-    socket.send(packed);
-    await this.traceSeal(seal, await this.traceOut("ws", this.ws(), packed, { type: plain.type }), plain);
-    return true;
-  }
-
-  /**
-   * Give the socket up as lost and tell `onClose`, as when it closed on
-   * its own. A socket whose other end is gone may take minutes to say
-   * it closed, so its word is not waited for.
-   */
-  abandonSocket(): void {
-    const lost = this.socketLost;
-    if (this.socket === null) return;
-    this.closeSocket();
-    lost?.();
   }
 
   /** Close the socket on purpose: its close handler sees it is no longer ours and tells no one. */
   closeSocket(): void {
     const socket = this.socket;
     this.socket = null;
-    this.socketLost = null;
     socket?.close();
   }
 

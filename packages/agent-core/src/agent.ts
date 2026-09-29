@@ -70,9 +70,8 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   /**
    * How live delivery is kept up once a connection wanted it: how long
    * after it was lost, or not reached, the first connection is tried
-   * again, the longest a later one waits, each wait doubling the one
-   * before, and how often an open socket is probed. A socket that
-   * carried nothing down between two probes is given up as lost.
+   * again, and the longest a later one waits, each wait doubling the
+   * one before.
    */
   upkeep?: Partial<Upkeep>;
   /** whether the first application input to a disclosed address selects a private successor toward its peer: local policy, on by default */
@@ -129,10 +128,9 @@ export const UNKNOWN_REGISTRATIONS_KEPT = 32;
 export interface Upkeep {
   retryMs: number;
   retryAtMostMs: number;
-  probeEveryMs: number;
 }
 
-export const UPKEEP: Upkeep = { retryMs: 2_000, retryAtMostMs: 5 * 60_000, probeEveryMs: 30_000 };
+export const UPKEEP: Upkeep = { retryMs: 2_000, retryAtMostMs: 5 * 60_000 };
 
 /** The connection to try again, and how long the next one after it waits. */
 interface Retry {
@@ -154,7 +152,6 @@ export class Agent {
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
   private readonly retries = new Map<MediationId, Retry>();
-  private readonly probes = new Map<MediationId, unknown>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -320,9 +317,7 @@ export class Agent {
     this.closed = true;
     for (const { link } of this.wires.values()) link.closeSocket();
     for (const { timer } of this.retries.values()) if (timer !== null) this.timers().clear(timer);
-    for (const timer of this.probes.values()) this.timers().clear(timer);
     this.retries.clear();
-    this.probes.clear();
     this.dispatcher.close();
     this.receiver.close();
   }
@@ -397,7 +392,6 @@ export class Agent {
             this.retryLater(mediationId);
           }
         );
-        this.probeWhileLive(mediationId, link);
       }
       connection.unreachable = null;
     } catch (err) {
@@ -459,26 +453,6 @@ export class Agent {
       return;
     }
     await this.connectTo(mediationId);
-  }
-
-  /** The socket probed for as long as it is this line's: one that carried nothing down since the probe before is given up as lost. */
-  private probeWhileLive(mediationId: MediationId, link: MediatorLink): void {
-    const running = this.probes.get(mediationId);
-    if (running !== undefined) this.timers().clear(running);
-    const every = this.upkeep().probeEveryMs;
-    const probe = (heardAtLast: number | null): void => {
-      this.probes.delete(mediationId);
-      if (!link.live || this.closed) return;
-      if (heardAtLast !== null && link.framesHeard === heardAtLast) {
-        this.log(`the socket of ${mediationId} carried nothing down since it was probed: given up as lost`);
-        link.abandonSocket();
-        return;
-      }
-      const heard = link.framesHeard;
-      link.probe().catch((err: unknown) => this.log(`the socket of ${mediationId} was not probed: ${messageOf(err)}`));
-      this.probes.set(mediationId, this.timers().set(() => probe(heard), every));
-    };
-    this.probes.set(mediationId, this.timers().set(() => probe(null), every));
   }
 
   private async pickUpOnceLive(mediationId: MediationId, pickup: Pickup): Promise<void> {

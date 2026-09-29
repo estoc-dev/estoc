@@ -26,7 +26,6 @@ import { base64urlToUtf8 } from "@estoc/did-peer";
 
 import type { IMessage } from "./protocol/didcomm.js";
 import { DELIVERY, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS, STATUS_REQUEST } from "./protocol/mediation.js";
-import { TRUST_PING_RESPONSE } from "./protocol/spec.js";
 import type { MediatorLink, Opened } from "./link.js";
 
 /** What became of a delivered attachment: taken (acknowledged, the mediator drops it) or left queued for a later pickup. */
@@ -174,8 +173,6 @@ export class Pickup {
       await this.acknowledgeTaken(await this.enqueue(() => this.take(msg, opened.seq)));
       return;
     }
-    // the answer to a probe of the socket: that it came down is all it says
-    if (msg.type === TRUST_PING_RESPONSE) return;
     this.log(`unexpected frame type ${msg.type ?? "unknown"}`);
   }
 

@@ -5,7 +5,7 @@ import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, scanVault, vaultDraft
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
-import { FORWARD, PROBLEM_REPORT, TRUST_PING } from "../src/protocol/spec.js";
+import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
 import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentLines, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
@@ -202,23 +202,6 @@ describe("opening an agent", () => {
     expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
     agent.close();
     bobAgent.close();
-  });
-
-  it("gives up a socket that carries nothing down after a probe, and connects again", async () => {
-    const mediator = await newMediator();
-    const alice = await partyOf(mediator, 1, ALICE);
-    const log: string[] = [];
-    const agent = await agentOf(alice, "start", { liveDelivery: true, upkeep: { retryMs: 20, probeEveryMs: 40 }, log: (line) => log.push(line) });
-    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
-    const first = mediator.socketOf(alice.link.me)!;
-    await until("the open socket answers a probe", () => mediator.seenTypes.includes(TRUST_PING), 10_000);
-    expect(agent.connections()).toMatchObject([{ live: true }]);
-
-    first.silent = true;
-    await until("another socket carries live delivery", () => mediator.socketOf(alice.link.me) !== first && mediator.socketOf(alice.link.me) !== undefined, 10_000);
-    expect(log).toContain(`the socket of ${alice.mediationId} carried nothing down since it was probed: given up as lost`);
-    expect(log.filter((line) => line.startsWith("unexpected frame type"))).toEqual([]);
-    agent.close();
   });
 
   it("tries a mediator it could not reach again, and no more once closed", async () => {

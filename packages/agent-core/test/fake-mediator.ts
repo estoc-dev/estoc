@@ -24,7 +24,6 @@ import {
   secretsResolverFor,
 } from "../src/index.js";
 import { didOf } from "../src/protocol/didcomm.js";
-import { TRUST_PING, TRUST_PING_RESPONSE } from "../src/protocol/spec.js";
 
 /**
  * A mediator that lives inside the test: coordinate-mediation 3.0,
@@ -86,31 +85,23 @@ export class FakeSocket {
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: ((ev: unknown) => void) | null = null;
   closed = false;
-  readyState = 0;
-  /** a socket whose other end went without a word: nothing sent over it is heard, and it never says it closed */
-  silent = false;
 
   constructor(
     private readonly mediator: FakeMediator,
     readonly url: string
   ) {
-    setTimeout(() => {
-      this.readyState = 1;
-      this.onopen?.({});
-    }, 0);
+    setTimeout(() => this.onopen?.({}), 0);
   }
 
   send(text: string): void {
-    if (this.silent) return;
     void this.mediator.handleWs(this, text);
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.readyState = 3;
     this.mediator.socketClosed(this);
-    if (!this.silent) this.onclose?.({});
+    this.onclose?.({});
   }
 
   /** the mediator pushing a frame down */
@@ -256,8 +247,6 @@ export class FakeMediator {
         }
         return null;
       }
-      case TRUST_PING:
-        return this.reply(TRUST_PING_RESPONSE, from as string, {}, msg.id);
       case MEDIATE_REQUEST:
         this.granted.add(from as string);
         return this.reply(MEDIATE_GRANT, from as string, { routing_did: [this.did] }, msg.id);
