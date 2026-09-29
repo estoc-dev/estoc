@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 
 import { cancel, completeNotification, completeResponse, retry, state } from "../core/store.js";
+import type { ChannelId } from "../core/types.js";
 import { useAttention } from "./attention.js";
 import { go } from "./nav.js";
 import Topbar from "./Topbar.vue";
@@ -33,11 +34,18 @@ async function act(action: () => Promise<void>) {
   }
 }
 
-/** The person behind a peer address, by the name they go by here, or the address when no conversation shows it. */
-function whoIs(peerDid: string): string {
-  const conversation = state.conversations.find((c) => c.channels.some(({ channel }) => channel.peerDid === peerDid));
+/** The person at the other end of a channel, by the name they go by here, or their address when no conversation shows it. */
+function whoIs(channelId: ChannelId): string {
+  const peerDid = state.index?.channel(channelId)?.peerDid ?? null;
+  if (peerDid === null) return "someone";
+  const conversation = state.conversations.find((c) => c.channels.some((channel) => channel.peerDid === peerDid));
   return conversation === undefined ? shortDid(peerDid) : labelOf(conversation);
 }
+
+const peerOf = (channelId: ChannelId): string => {
+  const channel = state.index?.channel(channelId) ?? null;
+  return channel === null ? channelId : shortDid(channel.peerDid);
+};
 
 const explainingRegistrations = ref(false);
 </script>
@@ -60,7 +68,7 @@ const explainingRegistrations = ref(false);
         <div class="eyebrow">Left to do by hand</div>
         <div v-for="outbound in pending.pendingOutbounds" :key="outbound.messageId" class="card" :title="outbound.messageId" data-pending-outbound>
           <p>
-            A message {{ outbound.outcome === "queued" ? "not sealed yet" : "sealed, not sent" }}<template v-if="outbound.channel"> to {{ whoIs(outbound.channel.peerDid) }}</template>.
+            A message {{ outbound.outcome === "queued" ? "not sealed yet" : "sealed, not sent" }}<template v-if="outbound.channelId"> to {{ whoIs(outbound.channelId) }}</template>.
           </p>
           <p v-if="outbound.because" class="note">{{ outbound.because }}</p>
           <div class="card-actions">
@@ -69,14 +77,14 @@ const explainingRegistrations = ref(false);
           </div>
         </div>
         <div v-for="response in pending.missingResponses" :key="response.executionId + response.effectType" class="card" :title="response.messageId">
-          <p>A reply to {{ whoIs(response.channel.peerDid) }} is owed.</p>
+          <p>A reply to {{ whoIs(response.channelId) }} is owed.</p>
           <p class="note">{{ response.effectType }}</p>
           <div v-if="response.entries.includes('completeResponse')" class="card-actions">
             <button class="btn small" type="button" :disabled="busy || sendsClosed" @click="act(() => completeResponse(response.executionId, response.effectType))">Give it</button>
           </div>
         </div>
         <div v-for="notification in pending.missingNotifications" :key="notification.rotationEventCid" class="card" data-missing-notification>
-          <p>{{ whoIs(notification.channel.peerDid) }} has not been told of your new address yet.</p>
+          <p>{{ whoIs(notification.channelId) }} has not been told of your new address yet.</p>
           <div v-if="notification.entries.includes('completeNotification')" class="card-actions">
             <button class="btn small" type="button" :disabled="busy || sendsClosed" data-tell-them @click="act(() => completeNotification(notification.rotationEventCid))">Tell them</button>
           </div>
@@ -85,7 +93,7 @@ const explainingRegistrations = ref(false);
           <p class="error-text">{{ conflict.messageIds.length }} notices announce one rotation and disagree. None is sent.</p>
         </div>
         <div v-for="proof in pending.pendingProofs" :key="proof.sourceEventCid" class="card" :title="proof.messageId">
-          <p>A new address<template v-if="proof.channel"> of {{ whoIs(proof.channel.peerDid) }}</template> waits for the document that proves it.</p>
+          <p>A new address<template v-if="proof.channelId"> of {{ whoIs(proof.channelId) }}</template> waits for the document that proves it.</p>
         </div>
       </div>
 
@@ -121,9 +129,9 @@ const explainingRegistrations = ref(false);
         <div v-for="input in unplacedInputs" :key="input.sourceEventCid" class="card" :class="{ quiet: input.disposition.status !== 'refused' }">
           <p :class="{ 'error-text': input.disposition.status === 'refused' }">Received, {{ dispositionOf(input) }}.</p>
         </div>
-        <div v-for="output in unplacedOutputs" :key="output.message.messageId" class="card">
-          <p class="error-text">A message of yours names {{ output.candidates.length }} channels and goes out in none.</p>
-          <p class="note mono">{{ output.candidates.map((c) => shortDid(c.peerDid)).join(", ") }}</p>
+        <div v-for="output in unplacedOutputs" :key="output.messageId" class="card">
+          <p class="error-text">A message of yours names {{ output.candidateChannelIds.length }} channels and goes out in none.</p>
+          <p class="note mono">{{ output.candidateChannelIds.map(peerOf).join(", ") }}</p>
         </div>
       </div>
 

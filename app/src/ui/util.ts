@@ -1,4 +1,4 @@
-import type { Conversation, MessageRecord, ObservationRecord } from "../core/types.js";
+import type { ChannelRecord, Conversation, MessageRecord, ObservationRecord, SnapshotIndex } from "../core/types.js";
 
 /** did:peer:4 long forms run ~800 characters; show head and tail. */
 export function shortDid(did: string): string {
@@ -60,18 +60,37 @@ export function dispositionOf({ disposition }: ObservationRecord): string {
 /** Our name for them; failing that what they call themself, quoted as the claim it is. */
 export function labelOf(c: Conversation): string {
   if (c.petname !== null) return c.petname;
-  if (c.claimedName !== null) return `“${c.claimedName}”`;
+  if (c.claimedName !== null) return `“${c.claimedName.name}”`;
   return "Not named yet";
 }
 
 /** The letter a conversation is shown under; none while nobody has given it a name. */
 export function initialOf(c: Conversation): string {
-  const name = c.petname ?? c.claimedName;
+  const name = c.petname ?? c.claimedName?.name ?? null;
   return name === null || name === "" ? "?" : [...name][0]!.toUpperCase();
 }
 
 /** Something has gone wrong with a message of ours: it is not on its way, and a hand is asked for. */
 export function failedToSend(message: MessageRecord): boolean {
   if (message.direction !== "out") return false;
-  return message.manualAction === "retry" || message.outcome?.status === "terminal" || message.outcome?.status === "conflict";
+  return message.manualAction === "retry" || message.delivery?.status === "terminal" || message.delivery?.status === "conflict";
+}
+
+/** The observations a channel names, as the snapshot holds them; none while no snapshot is indexed. */
+export function observationsOf(index: SnapshotIndex | null, channel: ChannelRecord): ObservationRecord[] {
+  if (index === null) return [];
+  return channel.observationIds.flatMap((cid) => {
+    const observation = index.observation(cid);
+    return observation === null ? [] : [observation];
+  });
+}
+
+/** Whether our end of the channel is a DID of this vault's, which a rotation away from it needs. */
+export function ownsEnd(snapshot: { dids: { did: string | null }[] } | null, channel: ChannelRecord): boolean {
+  return snapshot?.dids.some((did) => did.did !== null && shortFormOf(did.did) === channel.localDid) ?? false;
+}
+
+/** A channel's two ends, for a title. */
+export function endsOf(channel: ChannelRecord): string {
+  return `${channel.localDid} → ${channel.peerDid}`;
 }

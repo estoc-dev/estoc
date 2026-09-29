@@ -1,7 +1,6 @@
 import { reactive } from "vue";
 
-import { pairKey, samePair } from "./conversations.js";
-import type { Channel, Did, DidId, Snapshot } from "./types.js";
+import type { ChannelId, ChannelRecord, DidId, Snapshot } from "./types.js";
 
 /**
  * What is being written, held by the channel it is to go out in and
@@ -14,17 +13,22 @@ import type { Channel, Did, DidId, Snapshot } from "./types.js";
  * more, so that what was written can still be read and dealt with.
  */
 export interface Draft {
-  channel: Channel;
+  channelId: ChannelId;
+  /** the DID of ours the draft is written as, which says whose vault it is of */
+  localDid: string;
   text: string;
 }
 
-// at most one draft to a pair
+/** A channel as a draft is held by it: the channel's ID, and our end of it. */
+export type DraftChannel = Pick<ChannelRecord, "channelId" | "localDid">;
+
+// at most one draft to a channel
 const drafts = reactive<Draft[]>([]);
 
-const held = (channel: Channel) => drafts.find((draft) => samePair(draft.channel, channel)) ?? null;
+const held = (channelId: ChannelId) => drafts.find((draft) => draft.channelId === channelId) ?? null;
 
-export function draftIn(channel: Channel): Draft | null {
-  const draft = held(channel);
+export function draftIn(channelId: ChannelId): Draft | null {
+  const draft = held(channelId);
   return draft === null || draft.text === "" ? null : draft;
 }
 
@@ -32,17 +36,18 @@ export function writtenDrafts(): Draft[] {
   return drafts.filter((draft) => draft.text !== "");
 }
 
-export function writeDraft(channel: Channel, text: string): void {
-  const draft = held(channel);
-  if (draft === null) drafts.push({ channel, text });
+export function writeDraft({ channelId, localDid }: DraftChannel, text: string): void {
+  const draft = held(channelId);
+  if (draft === null) drafts.push({ channelId, localDid, text });
   else draft.text = text;
 }
 
 // only ever into a channel with nothing written in it: what is left there is an emptied draft
-function rehome(draft: Draft, channel: Channel): void {
-  const emptied = held(channel);
+function rehome(draft: Draft, { channelId, localDid }: DraftChannel): void {
+  const emptied = held(channelId);
   if (emptied !== null) drafts.splice(drafts.indexOf(emptied), 1);
-  draft.channel = channel;
+  draft.channelId = channelId;
+  draft.localDid = localDid;
 }
 
 export function dropDrafts(): void {
@@ -51,13 +56,13 @@ export function dropDrafts(): void {
 }
 
 /** Hand what is written in one channel to another the person picked instead, unless something is written there. */
-export function moveDraft(from: Channel, to: Channel): void {
+export function moveDraft(from: ChannelId, to: DraftChannel): void {
   const draft = draftIn(from);
-  if (draft !== null && !samePair(from, to) && draftIn(to) === null) rehome(draft, to);
+  if (draft !== null && from !== to.channelId && draftIn(to.channelId) === null) rehome(draft, to);
 }
 
 // each DID a snapshot has named, under every entity of the vault it was named for
-const created = new Map<Did, Set<DidId>>();
+const created = new Map<string, Set<DidId>>();
 
 /**
  * Bring the drafts to a snapshot, before anything shows it.
@@ -99,10 +104,11 @@ export function carryDrafts({ dids, channels }: Pick<Snapshot, "dids" | "channel
   for (const { did, didId } of dids) {
     if (did !== null) created.set(did, (created.get(did) ?? new Set()).add(didId));
   }
-  for (const draft of [...drafts]) if (!created.has(draft.channel.localDid)) drafts.splice(drafts.indexOf(draft), 1);
-  const heads = new Map(channels.map(({ channel, head }) => [pairKey(channel), head]));
+  for (const draft of [...drafts]) if (!created.has(draft.localDid)) drafts.splice(drafts.indexOf(draft), 1);
+  const records = new Map(channels.map((record) => [record.channelId, record]));
   for (const draft of writtenDrafts()) {
-    const head = heads.get(pairKey(draft.channel)) ?? null;
-    if (head !== null && !samePair(head, draft.channel) && draftIn(head) === null) rehome(draft, head);
+    const head = records.get(draft.channelId)?.headChannelId ?? null;
+    const target = head === null ? undefined : records.get(head);
+    if (target !== undefined && head !== draft.channelId && draftIn(target.channelId) === null) rehome(draft, target);
   }
 }

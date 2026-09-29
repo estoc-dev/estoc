@@ -1,6 +1,5 @@
 import { reactive } from "vue";
 
-import { pairKey } from "./conversations.js";
 import type { Conversation } from "./types.js";
 
 /**
@@ -9,7 +8,7 @@ import type { Conversation } from "./types.js";
  * These are this copy's habits, not facts of the vault, so they live in
  * the browser and travel in no backup; another device starts with none.
  * A conversation is remembered by the channels it showed, so that the
- * record follows it when its key moves.
+ * record follows it when its ID moves.
  */
 interface Remembered {
   seen: Record<string, string>;
@@ -38,15 +37,15 @@ function save(): void {
 }
 
 export function markSeen(conversation: Conversation, at: string = new Date().toISOString()): void {
-  for (const { channel } of conversation.channels) remembered.seen[pairKey(channel)] = at;
+  for (const { channelId } of conversation.channels) remembered.seen[channelId] = at;
   save();
 }
 
 /** When the conversation was last open on this device; null when it never was. */
 export function seenAt(conversation: Conversation): string | null {
   let latest: string | null = null;
-  for (const { channel } of conversation.channels) {
-    const at = remembered.seen[pairKey(channel)];
+  for (const { channelId } of conversation.channels) {
+    const at = remembered.seen[channelId];
     if (at !== undefined && (latest === null || at > latest)) latest = at;
   }
   return latest;

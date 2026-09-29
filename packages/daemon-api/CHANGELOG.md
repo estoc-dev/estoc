@@ -14,6 +14,18 @@ view installs alone.
   Message bodies pass through with every key kept; display times are
   checked as instants, not spellings only; a channel is referred to by
   its ID and never taken apart.
+- `@estoc/daemon-api/views`: the pure helpers a view computes with,
+  no daemon in reach: the snapshot indexed by ID with every
+  conversation's channels, messages and observations assembled from
+  what its record names, in the record's order (`indexSnapshot`); a
+  conversation followed across snapshots to the one now showing a
+  channel it showed (`successorOf`); out-of-band invitations read from
+  a link, its `_oob` parameter or its plaintext, and written as a link
+  (`parseInvitation`, `invitationUrl`, `invitationOf`); the contents a
+  view sends and the name an introduction claims (`basicMessage`,
+  `profileMessage`, `announcedName`); and what a person pasted for a
+  mediator read as far as text goes (`mediatorInputOf`,
+  `mediatorHost`). The entry point imports the contract alone.
 - `@estoc/daemon-api/wire`: one reading of a value as wire data on both
   transports, with its logical size and depth charged against a budget
   as it is read; strict padded base64 for bytes on a text port, and the

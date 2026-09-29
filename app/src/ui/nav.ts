@@ -1,7 +1,8 @@
 import { ref, shallowRef, watch } from "vue";
+import { successorOf } from "@estoc/daemon-api/views";
 
-import { pairKey, successorOf } from "../core/conversations.js";
 import { state } from "../core/store.js";
+import type { ConversationId, Snapshot } from "../core/types.js";
 
 /**
  * Where the person is. A phone shows one screen at a time and steps
@@ -13,9 +14,9 @@ import { state } from "../core/store.js";
  */
 export type Screen =
   | { kind: "list" }
-  | { kind: "chat"; key: string }
-  | { kind: "details"; key: string }
-  | { kind: "hood"; key: string }
+  | { kind: "chat"; key: ConversationId }
+  | { kind: "details"; key: ConversationId }
+  | { kind: "hood"; key: ConversationId }
   | { kind: "you" }
   | { kind: "attention" }
   | { kind: "new" };
@@ -26,7 +27,7 @@ const LIST: Screen = { kind: "list" };
 
 export const screen = shallowRef<Screen>(LIST);
 
-export function keyOf(s: Screen): string | null {
+export function keyOf(s: Screen): ConversationId | null {
   return "key" in s ? s.key : null;
 }
 
@@ -46,7 +47,7 @@ export function back(): void {
   else history.back();
 }
 
-// An entry may name a conversation by a key that has since moved, or
+// An entry may name a conversation by an ID that has since moved, or
 // one that has gone, or a screen the vault no longer has: it lands on
 // where the conversation is now, or on the list.
 function valid(s: Screen | undefined): Screen {
@@ -61,25 +62,28 @@ window.addEventListener("popstate", (event) => {
   screen.value = valid((event.state as { screen?: Screen } | null)?.screen);
 });
 
-// A conversation is known by its key: a contact's ID, or for one not
-// named yet the pair it leads to, which moves when either side rotates,
+// A conversation is known by its ID: a contact's, or for one not named
+// yet the channel it leads to, which moves when either side rotates,
 // and when it is named. Every conversation shown is therefore
-// remembered by the channels it showed, and a key that no longer
-// holds is followed to whichever conversation shows them now. A key
-// chosen ahead of the snapshot that brings its conversation is waited
-// for.
-const pairsShown = new Map<string, Set<string>>();
+// remembered in the snapshot that showed it, and an ID that no longer
+// holds is followed to whichever conversation shows its channels now.
+// An ID chosen ahead of the snapshot that brings its conversation is
+// waited for.
+const shownIn = new Map<ConversationId, Snapshot>();
 
-function remember(key: string): void {
-  const conversation = state.conversations.find((c) => c.key === key);
-  if (conversation !== undefined) pairsShown.set(key, new Set(conversation.channels.map(({ channel }) => pairKey(channel))));
+const has = (snapshot: Snapshot | null, key: ConversationId): boolean => snapshot !== null && snapshot.conversations.some((c) => c.id === key);
+
+function remember(key: ConversationId): void {
+  if (has(state.snapshot, key)) shownIn.set(key, state.snapshot!);
 }
 
-/** The key the conversation goes by now, or null when it is gone or was never shown. */
-function follow(key: string): string | null {
-  if (state.conversations.some((c) => c.key === key)) return key;
-  const pairs = pairsShown.get(key);
-  return pairs === undefined ? null : (successorOf(pairs, state.conversations)?.key ?? null);
+/** The ID the conversation goes by now, or null when it is gone or was never shown. */
+function follow(key: ConversationId): ConversationId | null {
+  const now = state.snapshot;
+  if (now === null) return null;
+  if (has(now, key)) return key;
+  const before = shownIn.get(key);
+  return before === undefined ? null : (successorOf(before, now, key)?.id ?? null);
 }
 
 watch(
@@ -92,16 +96,17 @@ watch(
 );
 
 watch(
-  () => state.conversations,
-  (conversations) => {
+  () => state.snapshot,
+  (snapshot) => {
     const s = screen.value;
     const key = keyOf(s);
-    if (key === null) return;
-    if (conversations.some((c) => c.key === key)) return remember(key);
-    if (!pairsShown.has(key)) return;
-    const now = follow(key);
-    if (now === null) swap(LIST);
-    else swap({ kind: s.kind, key: now } as Screen);
+    if (key !== null && !has(snapshot, key) && shownIn.has(key)) {
+      const now = follow(key);
+      if (now === null) swap(LIST);
+      else swap({ kind: s.kind, key: now } as Screen);
+    }
+    // a conversation still shown is remembered in the newest snapshot; one gone stays remembered where it was last seen, for an entry that names it
+    for (const id of shownIn.keys()) if (has(snapshot, id)) shownIn.set(id, snapshot!);
   }
 );
 

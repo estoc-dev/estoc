@@ -33,6 +33,7 @@ try {
     path.join(consumer, "view.ts"),
     `import { connect, isCallError, type Client } from "@estoc/daemon-api/client";
 import { API_VERSION, WIRE_VERSION, schemas, type Hello, type MethodName, type State } from "@estoc/daemon-api/contract";
+import { indexSnapshot, invitationUrl, parseInvitation, successorOf, type ConversationView } from "@estoc/daemon-api/views";
 import { readFrame, readPayload, writeFrame, type Port, type PortHandlers } from "@estoc/daemon-api/wire";
 
 // The view is compiled with no Node or DOM library, so that the package's own declarations are shown to need neither.
@@ -46,6 +47,10 @@ const text = writeFrame({ kind: "call", id: 1, method: "restoreIdentity", input:
 const frame = readFrame(text, "text");
 const read = frame?.kind === "call" ? readPayload(frame.input, "text", { bytesAt: schemas.methods.restoreIdentity.bytes.input, maxBytes: 3 }) : null;
 if (typeof text !== "string" || read === null || !read.ok || !schemas.methods.restoreIdentity.input.safeParse(read.value).success) throw new Error("the wire did not behave");
+const opened: State = schemas.state.parse({ epoch: "e", revision: 2, value: { phase: "open", hold: "h", snapshot: { anchor: "did:key:z6Mk", label: "v", restoreUnexplained: false, mediations: [], dids: [], contacts: [], channels: [], messages: [], observations: [], conversations: [], invitations: [], pending: { pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] }, unplaced: { observationIds: [], outputs: [] } } } });
+const shown: ConversationView[] = opened.value.phase === "open" ? indexSnapshot(opened.value.snapshot).conversations : [];
+const invitation = parseInvitation(invitationUrl("https://estoc.example/", { type: "https://didcomm.org/out-of-band/2.0/invitation", id: "oob", typ: "application/didcomm-plain+json", from: "did:peer:4zQm", body: {} }));
+if (shown.length !== 0 || invitation.from !== "did:peer:4zQm" || (opened.value.phase === "open" && successorOf(opened.value.snapshot, opened.value.snapshot, schemas.conversationId.parse("contact:none")) !== null)) throw new Error("the views did not behave");
 let handlers: PortHandlers | null = null;
 const port: Port = {
   transport: "clone",
@@ -58,7 +63,7 @@ const port: Port = {
 const client: Client = connect(port);
 const failure: unknown = await client.connected().catch((error: unknown) => error);
 if (client.connection.state !== "incompatible" || !isCallError(failure) || failure.code !== "Incompatible" || failure.origin !== "client") throw new Error("the client did not behave");
-console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes, a client that stops at \${client.connection.message}\`);
+console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes, an invitation from \${invitation.from}, a client that stops at \${client.connection.message}\`);
 `
   );
   run("pnpm", ["install", "--ignore-workspace", "--no-frozen-lockfile", "--reporter=silent"], consumer);

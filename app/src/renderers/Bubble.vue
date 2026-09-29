@@ -45,16 +45,16 @@ const owed = computed(() => (state.snapshot?.pending.missingResponses ?? []).fil
 
 // Where a message of ours stands, in a word: on its way, arrived, or not sent and why.
 const delivery = computed(() => {
-  const { outcome, acknowledged, late, manualAction } = props.message;
-  if (outcome === null) {
+  const { delivery, acknowledged, late, manualAction } = props.message;
+  if (delivery === null) {
     return null;
   }
   const because = open.value?.because ?? null;
-  if (manualAction === "retry" || outcome.status === "terminal") {
-    const why = outcome.status === "terminal" ? outcome.code : because;
-    return { status: outcome.status, tone: "failed", word: why === null ? "not sent" : `not sent · ${why}`, because: undefined };
+  if (manualAction === "retry" || delivery.status === "terminal") {
+    const why = delivery.status === "terminal" ? delivery.code : because;
+    return { status: delivery.status, tone: "failed", word: why === null ? "not sent" : `not sent · ${why}`, because: undefined };
   }
-  switch (outcome.status) {
+  switch (delivery.status) {
     case "queued":
       return { status: "queued", tone: "waiting", word: "sending", because: undefined };
     case "prepared":
@@ -64,7 +64,7 @@ const delivery = computed(() => {
         ? { status: "acknowledged", tone: "", word: late ? "received, after it expired" : "received", because: undefined }
         : { status: "submitted", tone: "", word: "sent", because: undefined };
     case "conflict":
-      return { status: "conflict", tone: "conflict", word: "conflict", because: outcome.because };
+      return { status: "conflict", tone: "conflict", word: "conflict", because: delivery.because };
   }
 });
 

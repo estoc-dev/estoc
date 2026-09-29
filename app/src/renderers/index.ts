@@ -1,4 +1,4 @@
-import { BASIC_MESSAGE, PROFILE, REQUEST_PROFILE, TRUST_PING, TRUST_PING_RESPONSE } from "@estoc/agent-core";
+import { BASIC_MESSAGE, PROFILE, REQUEST_PROFILE, TRUST_PING, TRUST_PING_RESPONSE } from "@estoc/daemon-api/contract";
 
 import BasicMessage from "./BasicMessage.vue";
 import Generic from "./Generic.vue";

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { announcedName, BASIC_MESSAGE, PROFILE } from "@estoc/agent-core";
+import { BASIC_MESSAGE, PROFILE } from "@estoc/daemon-api/contract";
+import { announcedName } from "@estoc/daemon-api/views";
 
 import { seenAt } from "../core/seen.js";
 import { chooseMediator, state } from "../core/store.js";
@@ -34,8 +35,8 @@ function previewOf(message: MessageRecord): string {
   const you = message.direction === "out";
   if (message.body.state !== "available") return message.body.state === "erased" ? "erased" : "content not here";
   const type = typeOf(message);
-  if (type === BASIC_MESSAGE) return `${you ? "You: " : ""}${String(message.body.body["content"] ?? "")}`;
-  if (type === PROFILE) return you ? "You introduced yourself" : `Introduced themself as “${announcedName(message.body) ?? ""}”`;
+  if (type === BASIC_MESSAGE) return `${you ? "You: " : ""}${message.summary ?? ""}`;
+  if (type === PROFILE) return you ? "You introduced yourself" : `Introduced themself as “${announcedName(message.body.body) ?? ""}”`;
   return you ? "You sent a message of another kind" : "A message of another kind";
 }
 
@@ -86,12 +87,12 @@ const rows = computed<Row[]>(() =>
 
       <button
         v-for="{ conversation, last, preview, unsent, unread } in rows"
-        :key="conversation.key"
+        :key="conversation.id"
         class="convo-row"
-        :class="{ active: layout !== 'narrow' && conversation.key === current, nameless: conversation.contactId === null }"
+        :class="{ active: layout !== 'narrow' && conversation.id === current, nameless: conversation.contactId === null }"
         type="button"
-        :data-conversation="conversation.key"
-        @click="go({ kind: 'chat', key: conversation.key })"
+        :data-conversation="conversation.id"
+        @click="go({ kind: 'chat', key: conversation.id })"
       >
         <span class="avatar" :class="{ nameless: conversation.contactId === null }">{{ initialOf(conversation) }}</span>
         <span class="convo-main">

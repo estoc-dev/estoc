@@ -11,6 +11,7 @@ operation when it executes.
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
 | `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
 | `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, bytes on a text port, frame reading and writing, port adapters, and the daemon's side of a session |
+| `@estoc/daemon-api/views` | What a view computes with no daemon in reach: the snapshot read by ID with each conversation's records assembled, a conversation followed across snapshots, invitations as links and back, the message contents a view composes, a mediator named by a person read as far as text goes |
 
 The types and JSDoc of the entry point define the API. The `schemas`
 namespace holds a zod schema per declared type; each is annotated with
@@ -51,6 +52,20 @@ baseline replaces it. A daemon that stops speaking the contract ends the
 session as a `ProtocolError`. `reconnecting(openPort)` opens another
 port after a delay whenever a connection ends, negotiates and attaches
 afresh, and never resends a call the old connection lost.
+
+`indexSnapshot(snapshot)` reads the snapshot's tables by ID and assembles
+every conversation with the channels, messages and observations its
+record names, in the record's order, throwing on a reference the
+snapshot does not hold; `successorOf(before, after, id)` follows a
+conversation whose ID moved, to the one conversation now showing a
+channel it showed, and to nothing when several do or the snapshots are
+of different vaults. `parseInvitation` reads an out-of-band invitation
+from a link, its `_oob` parameter or its plaintext, `invitationUrl` and
+`invitationOf` write one; `basicMessage` and `profileMessage` are the
+contents a view sends, `announcedName` the name an introduction claims;
+`mediatorInputOf` reads a mediator's DID off what a person pasted, or
+gives the URL to ask at, and `mediatorHost` the host a mediator's DID
+names. None of these rescans events, decides continuity or grants a send.
 
 `pnpm consumer-check` packs the package, installs it into an empty
 project outside the workspace, compiles and runs a small view against
