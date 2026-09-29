@@ -54,6 +54,13 @@ const converted = toDIDCommDIDDoc(raw);
 - **`resolveDIDCommDoc`** — both peer methods straight to a `DIDDoc`, the
   signature a didcomm resolver wants
 - **base64url helpers** — `Buffer`-free, work everywhere
+- **`@estoc/did-peer/remembered`** — `remembered` keeps what a pure function of
+  a string made of the inputs it saw last; `frozen` makes a result one that
+  every caller can be handed
+
+A did:peer:4 long form decodes to the same document every time, so
+`decodeLongForm` works each spelling out once and hands every caller the same
+frozen document. Copy it to change it.
 
 ## What's out, by design
 

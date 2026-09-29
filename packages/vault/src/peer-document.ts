@@ -11,6 +11,7 @@
 
 import { canonicalText, canonicalize, isJsonObject, parseStrict, type JsonObject, type JsonValue } from "@estoc/event-store";
 import { PeerDID4Error, decodeLongForm, isLongForm, isShortForm, longToShort, validateInputDocument } from "@estoc/did-peer";
+import { frozen, remembered } from "@estoc/did-peer/remembered";
 import { base58 } from "@scure/base";
 import { varint } from "multiformats";
 
@@ -155,7 +156,8 @@ function withDefaultController(entry: JsonValue, did: Did): JsonValue {
 }
 
 /**
- * The document a validated long form resolves to, as retained; a throw
+ * The document a validated long form resolves to, as retained, worked
+ * out from its text; a throw
  * when the long form or its input document is not one. It is the long
  * form's own resolution result: identified by the long form, the short
  * form appended to `alsoKnownAs`, omitted controllers filled in and
@@ -164,7 +166,7 @@ function withDefaultController(entry: JsonValue, did: Did): JsonValue {
  * reference into the document names a method it defines, and every
  * service has an ID of its own.
  */
-function retainedDocumentOf(longFormDid: string): JsonObject {
+export function retainedDocumentAnew(longFormDid: string): JsonObject {
   const input = inputDocumentOf(longFormDid);
   const long = longFormDid as Did;
   const document: JsonObject = { ...input, id: long, alsoKnownAs: [...((input["alsoKnownAs"] as string[] | undefined) ?? []), longToShort(longFormDid)] };
@@ -177,7 +179,23 @@ function retainedDocumentOf(longFormDid: string): JsonObject {
   return document;
 }
 
-/** The retained resolution of a numalgo-4 long form: its document under the RFC 8785 bytes and raw CID the vault stores it as. */
+/**
+ * The retained document of a spelling, kept by that spelling: every
+ * scan asks for the document of each long form the events name, and
+ * decoding one costs the square of its length. One spelling gives the
+ * same document every time, frozen all the way down.
+ */
+const retainedDocumentOf = remembered(
+  (longFormDid) => frozen(retainedDocumentAnew(longFormDid)),
+  (error) => error instanceof InvalidDidDocument
+);
+
+/**
+ * The retained resolution of a numalgo-4 long form: its document under
+ * the RFC 8785 bytes and raw CID the vault stores it as. The document
+ * is the one every resolution of this spelling shares, frozen: copy it
+ * to change it. The bytes are the caller's own.
+ */
 export function peerResolution(longFormDid: string): PeerResolution {
   const document = retainedDocumentOf(longFormDid);
   let bytes: Uint8Array;

@@ -2,6 +2,7 @@ import { base58, base64urlnopad } from "@scure/base";
 import { describe, expect, it, test } from "vitest";
 
 import { InvalidPublicKey, agreementKey, canonicalPublicKey, decodePublicKey, parsePublicKey, type PublicKey } from "../src/index.js";
+import { agreementKeyAnew, decodePublicKeyAnew } from "../src/public-key.js";
 
 const hex = (s: string) => Uint8Array.from(s.match(/../g) as string[], (b) => parseInt(b, 16));
 const multibase = (prefix: string, bytes: Uint8Array) => "z" + base58.encode(Uint8Array.from([...hex(prefix), ...bytes]));
@@ -168,5 +169,47 @@ describe("agreementKey", () => {
       expect(() => agreementKey(key), u).toThrow(/is a low-order X25519 point, which agrees no keys$/);
     }
     expect(agreementKey(canonicalPublicKey({ kty: "OKP", crv: "X25519", x: b64(hex("02" + "00".repeat(31))) })).type).toBe("X25519");
+  });
+});
+
+describe("a key decoded more than once", () => {
+  const keys = [X25519_CANONICAL, ...CURVES.map((curve) => canonicalPublicKey({ kty: "EC", crv: curve.crv, x: b64(hex(curve.g.x)), y: b64(hex(curve.g.y)) }))] as PublicKey[];
+
+  it("is equal each time and equal to the one worked out from its text, and the bytes handed out are the caller's own", () => {
+    for (const key of keys) {
+      for (const [kept, anew] of [
+        [decodePublicKey, decodePublicKeyAnew],
+        [agreementKey, agreementKeyAnew],
+      ] as const) {
+        if (kept === agreementKey && decodePublicKey(key).type === "secp256k1") continue;
+        const first = kept(key);
+        const expected = anew(key);
+        expect(first, key).toEqual(expected);
+        expect(kept(key)).not.toBe(first);
+        first.bytes.fill(0xff);
+        expect(kept(key), key).toEqual(expected);
+      }
+    }
+  });
+
+  it("is refused with the same words each time, as the one worked out from its text is", () => {
+    const signing = multibase("ed01", X25519_RAW) as PublicKey;
+    const lowOrder = multibase("ec01", new Uint8Array(32)) as PublicKey;
+    for (const key of [signing, lowOrder]) {
+      const refusal = (decode: (key: PublicKey) => unknown): unknown => {
+        try {
+          decode(key);
+        } catch (error) {
+          return error;
+        }
+        throw new Error(`${key} was not refused`);
+      };
+      const first = refusal(agreementKey) as InvalidPublicKey;
+      expect(first).toBeInstanceOf(InvalidPublicKey);
+      expect(refusal(agreementKey)).toBe(first);
+      expect((refusal(agreementKeyAnew) as InvalidPublicKey).message).toBe(first.message);
+    }
+    expect(() => decodePublicKey("z1" as PublicKey)).toThrow(InvalidPublicKey);
+    expect(() => decodePublicKeyAnew("z1")).toThrow(InvalidPublicKey);
   });
 });

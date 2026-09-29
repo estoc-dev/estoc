@@ -18,6 +18,7 @@ import {
   type Did,
   type DidUrl,
 } from "../src/index.js";
+import { retainedDocumentAnew } from "../src/peer-document.js";
 
 const ED_PUBLIC = ed25519.getPublicKey(new Uint8Array(32).fill(1));
 const ED_PUBLIC2 = ed25519.getPublicKey(new Uint8Array(32).fill(2));
@@ -68,6 +69,37 @@ describe("peerResolution", () => {
       authentication: ["#key-1", { id: "#embedded", type: "Multikey", publicKeyMultibase: ED_KEY2, controller: LONG }],
     });
     expect(Object.keys(resolved.document).sort()).toEqual([...Object.keys(INPUT), "id"].sort());
+  });
+
+  it("hands every resolution of one spelling the same document, frozen all the way down and equal to the one worked out from its text, with bytes of its own", () => {
+    const first = peerResolution(LONG);
+    const second = peerResolution(LONG);
+    expect(second.document).toBe(first.document);
+    expect(first.document).toEqual(retainedDocumentAnew(LONG));
+    const frozenThrough = (value: unknown): boolean => value === null || typeof value !== "object" || (Object.isFrozen(value) && Object.values(value).every(frozenThrough));
+    expect(frozenThrough(first.document)).toBe(true);
+    expect(() => {
+      first.document["id"] = "did:example:mine";
+    }).toThrow(TypeError);
+
+    first.bytes.fill(0);
+    expect(second.bytes).toEqual(canonicalize(second.document));
+    expect(peerResolution(LONG).bytes).toEqual(second.bytes);
+  });
+
+  it("refuses a spelling with the same refusal however often it is asked", () => {
+    const tampered = LONG.slice(0, -1) + (LONG.endsWith("1") ? "2" : "1");
+    const refusal = (): unknown => {
+      try {
+        peerResolution(tampered);
+      } catch (error) {
+        return error;
+      }
+      throw new Error("the spelling was not refused");
+    };
+    expect(refusal()).toBeInstanceOf(InvalidDidDocument);
+    expect(refusal()).toBe(refusal());
+    expect(() => retainedDocumentAnew(tampered)).toThrow(InvalidDidDocument);
   });
 
   it("serializes the document as RFC 8785 JSON under its raw CID, the same bytes on every resolution", () => {
