@@ -28,7 +28,7 @@
     "src"
   ],
   "engines": {
-    "node": ">=22.13"
+    "node": ">=26"
   },
   "scripts": {
     "build": "tsc",

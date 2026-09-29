@@ -24,5 +24,4 @@ and ending, and a `from-prior` module for DIDComm v2 proofs.
   form. Endings bind only through a signed audience on an anonymous
   receipt; the basic form verifies and stays unbound.
 
-The package README is the reading entry; the vault does not consume the
-package yet.
+The package README is the reading entry.

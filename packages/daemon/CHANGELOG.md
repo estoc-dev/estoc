@@ -147,10 +147,11 @@ its own.
   whose admission waited for evidence a merged backup brought in is
   shown admitted, with the message it carries and the response it
   earns listed as owed, without a call of the UI's.
-- `Snapshot.channels[].observations` and `Snapshot.unplaced.inputs`
-  are the agent's observation records: every observation with its
-  disposition, apart from the messages, which are the admitted inputs
-  alone.
+- `Snapshot.observations` holds the agent's observation records, every
+  observation with its disposition, named by
+  `Snapshot.channels[].observationIds` and
+  `Snapshot.unplaced.observationIds`; the messages are the admitted
+  inputs alone.
 - `send` takes no `preRotation`: a channel a replacement of either end
   has moved on from takes no send, whoever asks.
 - `Merged` has no `conflicts`: the version-4 vault has no same-ID
@@ -171,6 +172,8 @@ its own.
 - `Lines.connections[].unknownRegistrations`, from the agent.
 - `createContact` refuses an empty channel list: a contact is created
   with at least one channel.
+- Node 26 is the oldest that runs it, which is what `@estoc/daemon-api`
+  needs.
 
 ## 0.3.0 — 2026-09-20
 

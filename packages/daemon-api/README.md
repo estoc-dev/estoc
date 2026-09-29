@@ -20,6 +20,15 @@ drift apart. Unknown members of a record are ignored, message bodies
 pass through with every key kept, and an error code the schema does not
 know still reads as a failure with the effect it states.
 
+Within one API version a record gains only fields a receiver may lack,
+and a view that calls a new method handles `NoSuchMethod` with no
+unsafe fallback. A field made required, a method removed, a meaning
+changed, or a member added to a closed discriminated union such as
+`Phase` is a new API version, since the schema of the older side
+refuses what it does not know. Error codes stay open: an unknown code
+is a failure with the effect it states. The bootstrap's wire version
+moves on its own, apart from the application API version.
+
 The wire reads every value the same way on both transports: a plain,
 finite, acyclic tree, negative zero as zero, an undefined member left
 out, bytes only where a method's schema places them and copied to the

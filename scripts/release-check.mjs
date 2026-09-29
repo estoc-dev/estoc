@@ -2,14 +2,16 @@
 // published, installs the tarballs into an empty project outside the
 // workspace, and runs a daemon over the API there: a vault made through
 // agent-core and one restored by the daemon itself both publish a commit,
-// the packed ranges accept the packed siblings, and one copy of the event
-// store serves both paths. Run from the root, after `pnpm build`:
+// the packed ranges accept the packed siblings, every declared Node floor is
+// one the packed siblings run on, and one copy of the event store serves
+// both paths. Run from the root, after `pnpm build`:
 //   pnpm release-check
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import semver from "semver";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagesDir = path.join(root, "packages");
@@ -31,16 +33,6 @@ function released() {
   return dirs;
 }
 
-/** Whether `^range` admits `version`: the same major, or the same minor while the major is 0, at or past the range's start. */
-function caretAdmits(range, version) {
-  const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range);
-  if (caret === null) return false;
-  const [floor, given] = [caret.slice(1).map(Number), version.split(".").map(Number)];
-  const sameLine = floor[0] === 0 ? given[0] === 0 && given[1] === floor[1] : given[0] === floor[0];
-  const atOrPast = given[0] !== floor[0] ? given[0] > floor[0] : given[1] !== floor[1] ? given[1] > floor[1] : given[2] >= floor[2];
-  return sameLine && atOrPast;
-}
-
 const work = mkdtempSync(path.join(tmpdir(), "estoc-release-"));
 try {
   const packed = new Map();
@@ -50,16 +42,20 @@ try {
     const tarball = readdirSync(work).find((entry) => entry.endsWith(".tgz") && !before.has(entry));
     if (tarball === undefined) throw new Error(`pnpm pack of ${name} produced no tarball`);
     const manifest = JSON.parse(run("tar", ["-xOf", path.join(work, tarball), "package/package.json"], work));
-    packed.set(name, { tarball, version: manifest.version, dependencies: manifest.dependencies ?? {} });
+    packed.set(name, { tarball, version: manifest.version, dependencies: manifest.dependencies ?? {}, node: manifest.engines?.node });
   }
 
-  // As published, each package's range must admit the sibling published beside it: a consumer with the set installs one version of each.
-  for (const [name, { dependencies }] of packed) {
+  // As published, each package's range must admit the sibling published beside it, and the oldest Node a package
+  // says it runs on must be one its siblings run on too: a consumer with the set installs one version of each.
+  for (const [name, { dependencies, node }] of packed) {
     for (const [dependency, range] of Object.entries(dependencies)) {
       const sibling = packed.get(dependency);
       if (sibling === undefined) continue;
       if (range.startsWith("workspace:")) throw new Error(`${name} was packed with ${dependency} still at ${range}`);
-      if (!caretAdmits(range, sibling.version)) throw new Error(`${name} asks for ${dependency} ${range}, which does not admit the ${sibling.version} packed beside it`);
+      if (!semver.satisfies(sibling.version, range)) throw new Error(`${name} asks for ${dependency} ${range}, which does not admit the ${sibling.version} packed beside it`);
+      if (node !== undefined && sibling.node !== undefined && !semver.satisfies(semver.minVersion(node), sibling.node)) {
+        throw new Error(`${name} says it runs on Node ${node}, but ${dependency} needs Node ${sibling.node}`);
+      }
     }
   }
 
