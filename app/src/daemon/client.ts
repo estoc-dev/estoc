@@ -44,12 +44,6 @@ export function takeDaemonUrl(): string | null {
   }
 }
 
-export interface Started {
-  client: Client;
-  /** where the daemon is: in this page, or at a socket */
-  where: "worker" | string;
-}
-
 /**
  * The socket of the daemon that served this page, if one did: this
  * origin's, with the token read (and stripped) from `?token=` and
@@ -91,11 +85,15 @@ function portTo(worker: Worker): Port {
   return messagePortOf(port1);
 }
 
-export function startDaemon(): Started {
-  const remote = servedByDaemon() ?? takeDaemonUrl();
-  if (remote === null) {
+/** The socket of the daemon this page is to use; null for a worker of its own. */
+export function daemonSocket(): string | null {
+  return servedByDaemon() ?? takeDaemonUrl();
+}
+
+export function startDaemon(socket: string | null): Client {
+  if (socket === null) {
     const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-    return { client: reconnecting(() => portTo(worker)), where: "worker" };
+    return reconnecting(() => portTo(worker));
   }
-  return { client: reconnecting(() => webSocketOf(new WebSocket(remote)), { delayMs: 2000 }), where: remote };
+  return reconnecting(() => webSocketOf(new WebSocket(socket)), { delayMs: 2000 });
 }

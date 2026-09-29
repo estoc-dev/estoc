@@ -41,15 +41,16 @@ const fake = vi.hoisted(() => {
     },
   };
 });
-vi.mock("../src/daemon/client.js", () => ({ startDaemon: () => ({ where: "worker", client: { ...fake.client, daemon: fake.daemon } }) }));
+vi.mock("../src/daemon/client.js", () => ({ daemonSocket: () => null, startDaemon: () => ({ ...fake.client, daemon: fake.daemon }) }));
 // Vue's DOM runtime looks at the document once as it loads, and the store listens on it: loaded first, listened on after
 await import("vue");
 vi.stubGlobal("window", { addEventListener: () => undefined });
 vi.stubGlobal("document", { addEventListener: () => undefined });
 vi.stubGlobal("location", { search: "", pathname: "/", hash: "", href: "http://app.test/" });
+vi.stubGlobal("navigator", { storage: { getDirectory: () => Promise.resolve({}) } });
 
 const { addContactByDid, boot, heldNow, setTraceLevel, state } = await import("../src/core/store.js");
-boot();
+await boot();
 
 const NONE: StateValue = { phase: "onboarding", hold: null, detail: null };
 const locked = (hold: string): StateValue => ({ phase: "locked", hold: hold as Hold, detail: null });
