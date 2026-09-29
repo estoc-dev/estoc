@@ -44,7 +44,7 @@ async function understood() {
         passphrase seals the seed, not the history.
       </p>
     </template>
-    <button v-else class="link" type="button" style="align-self: flex-start" @click="more = true">What a restore cannot bring back</button>
+    <button v-else class="link alone" type="button" style="align-self: flex-start" @click="more = true">What a restore cannot bring back</button>
     <p v-if="failure" class="error-text">{{ failure }}</p>
     <div class="card-actions">
       <button class="btn small" type="button" :disabled="busy" data-restore-understood @click="understood">I understand, open sending</button>

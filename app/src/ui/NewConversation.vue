@@ -221,7 +221,7 @@ const offered = computed(() => scanned.value ?? pending.value);
         {{ openInvitations.length }} link{{ openInvitations.length === 1 ? "" : "s" }} of yours still open
         <template v-for="i in openInvitations" :key="i.oobId">
           ·
-          <button class="link" type="button" @click="shownInvitation = i.oobId; show('qr')">show</button>
+          <button class="link alone" type="button" @click="shownInvitation = i.oobId; show('qr')">show</button>
         </template>
       </p>
       <button class="btn-quiet" type="button" data-cancel @click="close">Cancel</button>

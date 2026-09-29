@@ -108,7 +108,7 @@ function lineOf(o: ObservationRecord): string {
             <span class="row-main" :style="o.disposition.status === 'refused' ? 'color: var(--alarm)' : ''">{{ lineOf(o) }}</span>
           </div>
         </div>
-        <button v-if="observations.length > shown.length" class="link" type="button" style="align-self: flex-start; min-height: 40px" @click="showAll = true">Show all {{ observations.length }}</button>
+        <button v-if="observations.length > shown.length" class="link alone" type="button" style="align-self: flex-start" @click="showAll = true">Show all {{ observations.length }}</button>
       </div>
 
       <div class="section">
