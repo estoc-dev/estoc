@@ -595,6 +595,10 @@ a.row:hover {
   padding: var(--gutter) var(--gutter) max(24px, env(safe-area-inset-bottom));
 }
 
+.screen-body > * {
+  flex-shrink: 0;
+}
+
 .screen-body.flush {
   gap: 0;
   padding: 0;
