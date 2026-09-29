@@ -150,8 +150,8 @@ its own.
 - `Snapshot.observations` holds the agent's observation records, every
   observation with its disposition, named by
   `Snapshot.channels[].observationIds` and
-  `Snapshot.unplaced.observationIds`; the messages are the admitted
-  inputs alone.
+  `Snapshot.unplaced.observationIds`; only admitted inputs appear among
+  the incoming messages.
 - `send` takes no `preRotation`: a channel a replacement of either end
   has moved on from takes no send, whoever asks.
 - `Merged` has no `conflicts`: the version-4 vault has no same-ID
