@@ -157,4 +157,4 @@ export {
   type ViewOptions,
 } from "./records.js";
 export { manualProcedures, readRecords, type Manual, type ManualOptions } from "./views.js";
-export { Agent, UNKNOWN_REGISTRATIONS_KEPT, type AgentLines, type AgentOptions, type Connection, type Inbound, type Submitted } from "./agent.js";
+export { Agent, UNKNOWN_REGISTRATIONS_KEPT, UPKEEP, type Upkeep, type AgentLines, type AgentOptions, type Connection, type Inbound, type Submitted } from "./agent.js";

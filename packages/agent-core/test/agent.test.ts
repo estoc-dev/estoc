@@ -4,10 +4,10 @@ import type { VaultRuntime } from "@estoc/event-store";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, scanVault, vaultDraft, type Did, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
+import { MESSAGES_RECEIVED, STATUS_REQUEST } from "../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentLines, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { carrierWaitingForIssuer, didcomm, freshVault, issuerRecovered, json, mediatedParty, newMediator, peerSealer, proofOfSuccession, refuseCommits, sealed, until, webIdentity, type MediatedParty } from "./helpers.js";
 
@@ -32,6 +32,33 @@ async function partyOf(mediator: FakeMediator, fill: number, didId: DidId): Prom
 async function agentOf(party: MediatedParty, how: "open" | "start", over: Partial<AgentOptions> = {}): Promise<Agent> {
   const agent = await Agent[how](party, optionsOf(party, over));
   opened.find((each) => each.party === party)!.agent = agent;
+  return agent;
+}
+
+/** Waits that end when the test says so. */
+function heldTimers(): Timers & { waiting: () => number; fire: () => void } {
+  const waits = new Set<() => void>();
+  return {
+    set: (fire) => {
+      waits.add(fire);
+      return fire;
+    },
+    clear: (fire) => void waits.delete(fire as () => void),
+    waiting: () => waits.size,
+    fire: () => {
+      for (const fire of [...waits]) {
+        waits.delete(fire);
+        fire();
+      }
+    },
+  };
+}
+
+async function liveAgentOf(party: MediatedParty, over: Partial<AgentOptions> = {}): Promise<Agent> {
+  const agent = await agentOf(party, "start", { liveDelivery: true, ...over });
+  const pickups = (): number => party.mediator.seenTypes.filter((type) => type === STATUS_REQUEST).length;
+  const before = pickups();
+  await until("live delivery is on and what it missed picked up", () => party.mediator.liveAccounts().length === 1 && pickups() > before, 10_000);
   return agent;
 }
 
@@ -179,6 +206,176 @@ describe("opening an agent", () => {
     agent.close();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(told).toHaveLength(said + 1);
+  });
+
+  it("connects again once the mediator dropped the socket, and picks up what was queued meanwhile", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const bob = await partyOf(mediator, 2, BOB);
+    await reconcile(alice.link, alice.runtime, alice.keys, alice.mediationId);
+    const inbounds: Inbound[] = [];
+    const timers = heldTimers();
+    const agent = await liveAgentOf(alice, { timers, onInbound: (inbound) => inbounds.push(inbound) });
+    const first = mediator.socketOf(alice.link.me);
+
+    mediator.dropSocket(alice.link.me);
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+    expect(timers.waiting()).toBe(1);
+    const bobAgent = await agentOf(bob, "start");
+    await bobAgent.send({ channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: alice.longFormDid }, { type: BASIC_MESSAGE, body: { content: "while away" } });
+    expect(mediator.queues.get(alice.created.data.me.did)).toHaveLength(1);
+    expect(inbounds).toHaveLength(0);
+
+    timers.fire();
+    await until("the message queued meanwhile is delivered", () => inbounds.length === 1, 10_000);
+    await until("live delivery is on again", () => mediator.liveAccounts().length === 1, 10_000);
+    expect(mediator.socketOf(alice.link.me)).not.toBe(first);
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    agent.close();
+    bobAgent.close();
+  });
+
+  it("keeps the wait of a socket lost again while the status of the one before it was still being handled, and drops it once closed", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const timers = heldTimers();
+    const agent = await liveAgentOf(alice, { timers });
+
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let stage: "armed" | "held" | "handled" = "armed";
+    const append = alice.trace.append.bind(alice.trace);
+    alice.trace.append = (async (...args: Parameters<typeof append>) => {
+      const [stream, what, data] = args;
+      if (stage !== "armed" || stream !== "wire" || what !== "in" || data?.["via"] !== "ws") return append(...args);
+      stage = "held";
+      await held;
+      const noted = await append(...args);
+      stage = "handled";
+      return noted;
+    }) as typeof append;
+
+    mediator.dropSocket(alice.link.me);
+    timers.fire();
+    await until("the status of the new socket has come", () => stage === "held", 10_000);
+    mediator.dropSocket(alice.link.me);
+    expect(timers.waiting()).toBe(1);
+
+    release();
+    await until("the late status is noted", () => stage === "handled", 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(timers.waiting()).toBe(1);
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+
+    agent.close();
+    expect(timers.waiting()).toBe(0);
+  });
+
+  it("leaves a connection made by hand as it is when the one tried before it fails late", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const timers = heldTimers();
+    const agent = await liveAgentOf(alice, { timers });
+
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let pickups = 0;
+    let failed = false;
+    mediator.intercept = async (msg) => {
+      if (msg.type !== STATUS_REQUEST) return undefined;
+      pickups += 1;
+      if (pickups > 1) return undefined;
+      await held;
+      failed = true;
+      throw new Error("the pickup of the earlier connection failed");
+    };
+
+    mediator.dropSocket(alice.link.me);
+    timers.fire();
+    await until("the connection tried again is picking up", () => pickups === 1, 10_000);
+    await agent.connect();
+    await until("live delivery is on again and what it missed picked up", () => mediator.liveAccounts().length === 1 && pickups >= 3, 10_000);
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+
+    release();
+    await until("the earlier pickup has failed", () => failed, 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    expect(timers.waiting()).toBe(0);
+  });
+
+  it.each([
+    ["has read the vault", false],
+    ["has failed to read the vault", true],
+  ])("leaves a connection made by hand as it is when the one tried before it %s only then", async (_, fails) => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const timers = heldTimers();
+    const agent = await liveAgentOf(alice, { timers });
+
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let stage: "armed" | "held" | "read" = "armed";
+    const events = alice.runtime.vault.events;
+    const scan = events.scan;
+    events.scan = async function* (this: typeof events, ...args: Parameters<typeof scan>) {
+      if (stage !== "armed") return yield* scan.apply(this, args);
+      stage = "held";
+      await held;
+      stage = "read";
+      if (fails) throw new Error("the vault was not read");
+      yield* scan.apply(this, args);
+    } as typeof scan;
+    let calls = 0;
+    let pickups = 0;
+    mediator.intercept = (msg) => {
+      calls += 1;
+      if (msg.type === STATUS_REQUEST) pickups += 1;
+      return undefined;
+    };
+
+    mediator.dropSocket(alice.link.me);
+    timers.fire();
+    await until("the connection tried again is reading the vault", () => stage === "held", 10_000);
+    await agent.connect();
+    await until("live delivery is on again and what it missed picked up", () => mediator.liveAccounts().length === 1 && pickups >= 2, 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    expect(timers.waiting()).toBe(0);
+    const before = calls;
+
+    release();
+    await until("the earlier reading has ended", () => stage === "read", 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls).toBe(before);
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    expect(timers.waiting()).toBe(0);
+    events.scan = scan;
+  });
+
+  it("tries a mediator it could not reach again, and no more once closed", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    let down = true;
+    let calls = 0;
+    const fetchFn = ((input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      return down ? Promise.reject(new Error("no route")) : (alice.linkOptions.fetch as typeof fetch)(input, init);
+    }) as typeof fetch;
+    const agent = await agentOf(alice, "start", { liveDelivery: true, upkeep: { retryMs: 20 }, fetch: fetchFn });
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+    expect(agent.connections()[0]!.unreachable).not.toBeNull();
+
+    down = false;
+    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
+    await until("the connection ran through", () => agent.connections()[0]?.unreachable === null, 10_000);
+
+    down = true;
+    mediator.dropSocket(alice.link.me);
+    agent.close();
+    const said = calls;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(calls).toBe(said);
   });
 
   it("picks up what was queued between its pickup and live delivery coming on", async () => {

@@ -762,7 +762,8 @@ describe("a daemon whose mediator drops the socket", () => {
 
     mediator.dropSocket(account!);
     await until("the drop is shown", () => alice.heard.lines()?.connections[0]?.live === false);
-    expect(alice.heard.events.slice(shown).map(([name]) => name)).toEqual(["lines"]);
+    const told = alice.heard.events.slice(shown).map(([name]) => name);
+    expect(told.filter((name) => name !== "log")).toEqual(["lines"]);
     expect(mediator.liveAccounts()).toEqual([]);
 
     expect(handed(alice.daemon)).toEqual({ snapshot: alice.heard.snapshot(), lines: alice.heard.lines() });

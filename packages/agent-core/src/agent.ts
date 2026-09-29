@@ -44,7 +44,7 @@ import { requiredReceivingSet, scanVault, type Did, type DidId, type Keys, type 
 import { LiveInput, type LiveAction } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
-import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
+import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
@@ -53,6 +53,7 @@ import { MediatorLink } from "./link.js";
 import { establish, mediationOf, reconcile, watchUnknownRegistrations, type Established, type Reconciled } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
 import { callPrivateAddress, decidePrivateAddress, type PrivateAddress } from "./privacy.js";
+import { STATUS } from "./protocol/mediation.js";
 import { afterReceipt, recordOwed, type AfterReceipt, type Owed } from "./receive/after.js";
 import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
@@ -67,6 +68,13 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   WebSocket?: typeof WebSocket;
   /** whether a connection opens the socket for live delivery, after its pickup; on by default */
   liveDelivery?: boolean;
+  /**
+   * How live delivery is kept up once a connection wanted it: how long
+   * after it was lost, or not reached, the first connection is tried
+   * again, and the longest a later one waits, each wait doubling the
+   * one before.
+   */
+  upkeep?: Partial<Upkeep>;
   /** whether the first application input to a disclosed address selects a private successor toward its peer: local policy, on by default */
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
@@ -118,6 +126,19 @@ export interface Connection {
 
 export const UNKNOWN_REGISTRATIONS_KEPT = 32;
 
+export interface Upkeep {
+  retryMs: number;
+  retryAtMostMs: number;
+}
+
+export const UPKEEP: Upkeep = { retryMs: 2_000, retryAtMostMs: 5 * 60_000 };
+
+/** The connection to try again, and how long the next one after it waits. */
+interface Retry {
+  timer: unknown;
+  nextMs: number;
+}
+
 export interface Submitted extends Sent {
   dispatched: Called;
 }
@@ -131,6 +152,11 @@ export class Agent {
   private closed = false;
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
+  private readonly retries = new Map<MediationId, Retry>();
+  /** The latest connection begun for each arrangement: one begun before it changes nothing once it ends. */
+  private readonly begun = new Map<MediationId, symbol>();
+  /** The socket each arrangement's live delivery is on. */
+  private readonly sockets = new Map<MediationId, symbol>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -290,11 +316,18 @@ export class Agent {
     return { connections: this.connections(), waiting: this.waitingDeliveries(), discarded: this.discardedDeliveries() };
   }
 
-  /** Nothing is received, called or waited for after this. The runtime stays open: it is its opener's to close. */
+  /**
+   * Sockets are closed and waits dropped, and nothing is received or
+   * called after this. A connection under way stops at its next step:
+   * the request it already made is answered first. The runtime stays
+   * open: it is its opener's to close.
+   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const { link } of this.wires.values()) link.closeSocket();
+    for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
+    this.sockets.clear();
     this.dispatcher.close();
     this.receiver.close();
   }
@@ -355,27 +388,120 @@ export class Agent {
   private async connectTo(mediationId: MediationId): Promise<Connection> {
     const connection = this.connectionOf(mediationId);
     this.linesChanged();
+    this.cancelRetry(mediationId);
+    const attempt = Symbol();
+    this.begun.set(mediationId, attempt);
+    const stands = (): boolean => !this.closed && this.begun.get(mediationId) === attempt;
     try {
       const { link, pickup } = await this.lineOf(mediationId);
-      connection.reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
-      connection.drained = await pickup.drain();
-      if ((this.options.liveDelivery ?? true) && !link.live && !this.closed) {
-        link.openSocket(
-          (opened) => pickup.onFrame(opened),
-          () => this.linesChanged()
-        );
-      }
+      const reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
+      if (!stands()) return this.shown(connection);
+      connection.reconciled = reconciled;
+      const drained = await pickup.drain();
+      if (!stands()) return this.shown(connection);
+      connection.drained = drained;
+      if (this.keepsLive() && !link.live) this.openSocket(mediationId, { link, pickup });
       connection.unreachable = null;
     } catch (err) {
+      if (!stands()) return this.shown(connection);
       connection.unreachable = messageOf(err);
       this.log(`the mediator of ${mediationId} was not reached: ${connection.unreachable}`);
+      this.retryLater(mediationId);
     }
     this.linesChanged();
     return this.shown(connection);
   }
 
+  /**
+   * What reached the mediator between the pickup and live delivery
+   * coming on was queued without being pushed: it is picked up once the
+   * mediator says live delivery is on. A frame is handled after it was
+   * opened, which a socket does not wait for before it closes: the
+   * status of a socket that is gone says nothing of the one that
+   * followed it.
+   */
+  private openSocket(mediationId: MediationId, { link, pickup }: Line): void {
+    const socket = Symbol();
+    this.sockets.set(mediationId, socket);
+    link.openSocket(
+      (opened) => {
+        if (this.sockets.get(mediationId) === socket && opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) void this.pickUpOnceLive(mediationId, pickup);
+        return pickup.onFrame(opened);
+      },
+      () => {
+        if (this.sockets.get(mediationId) === socket) this.sockets.delete(mediationId);
+        this.linesChanged();
+        this.log(`live delivery was lost for ${mediationId}`);
+        this.retryLater(mediationId);
+      }
+    );
+  }
+
+  private keepsLive(): boolean {
+    return (this.options.liveDelivery ?? true) && !this.closed;
+  }
+
+  private timers(): Timers {
+    return this.options.timers ?? GLOBAL_TIMERS;
+  }
+
+  private upkeep(): Upkeep {
+    return { ...UPKEEP, ...this.options.upkeep };
+  }
+
+  private cancelRetry(mediationId: MediationId): void {
+    const retry = this.retries.get(mediationId);
+    if (retry === undefined || retry.timer === null) return;
+    this.timers().clear(retry.timer);
+    retry.timer = null;
+  }
+
+  private forgetRetry(mediationId: MediationId): void {
+    this.cancelRetry(mediationId);
+    this.retries.delete(mediationId);
+  }
+
+  /**
+   * The connection tried again after a wait, each wait twice the one
+   * before until live delivery comes on. The wait is shortened by up to
+   * half, at random, so that the accounts a mediator dropped together
+   * do not come back together.
+   */
+  private retryLater(mediationId: MediationId): void {
+    if (!this.keepsLive()) return;
+    const { retryMs, retryAtMostMs } = this.upkeep();
+    const retry = this.retries.get(mediationId) ?? { timer: null, nextMs: retryMs };
+    this.retries.set(mediationId, retry);
+    if (retry.timer !== null) return;
+    const wait = retry.nextMs * (0.5 + Math.random() / 2);
+    retry.nextMs = Math.min(retry.nextMs * 2, retryAtMostMs);
+    retry.timer = this.timers().set(() => {
+      retry.timer = null;
+      void this.retry(mediationId, retry);
+    }, wait);
+  }
+
+  /** A connection begun, or live delivery come on, while the vault was being read leaves this try nothing to do. */
+  private async retry(mediationId: MediationId, retry: Retry): Promise<void> {
+    if (!this.keepsLive()) return;
+    const latest = this.begun.get(mediationId);
+    const stands = (): boolean => !this.closed && this.begun.get(mediationId) === latest && this.retries.get(mediationId) === retry;
+    try {
+      const fold = await scanVault(this.runtime.vault, this.keys);
+      if (!stands()) return;
+      if (!requiredReceivingSet(fold.mediations, fold.routes).has(mediationId)) return;
+    } catch (err) {
+      if (!stands()) return;
+      this.log(`the connection of ${mediationId} was not tried again: ${messageOf(err)}`);
+      this.retryLater(mediationId);
+      return;
+    }
+    await this.connectTo(mediationId);
+  }
+
   private async pickUpOnceLive(mediationId: MediationId, pickup: Pickup): Promise<void> {
     if (this.closed) return;
+    this.forgetRetry(mediationId);
     try {
       const drained = await pickup.drain();
       const connection = this.attempts.get(mediationId);
@@ -405,8 +531,7 @@ export class Agent {
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const link = new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets: () => this.ring.secrets(), me: mediation.me.did, mediatorDid: mediation.mediatorDid, mediatorDoc, timeoutMs, log });
-    // What reached the mediator between the pickup and live delivery coming on was queued without being pushed: it is picked up once the mediator says live delivery is on.
-    const pickup: Pickup = new Pickup(link, this.handleOf(mediationId), { log, onLive: () => void this.pickUpOnceLive(mediationId, pickup) });
+    const pickup = new Pickup(link, this.handleOf(mediationId), { log });
     const line: Line = { link, pickup };
     const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;

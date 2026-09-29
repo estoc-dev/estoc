@@ -11,6 +11,12 @@
   a pickup once live delivery came on, a delivery come to wait, held,
   let go of or discarded. What changes in one turn is told once, after
   it. `ReceiverOptions.changed` is the receiver's part of it.
+- **Live delivery is kept up** (behaviour change): a connection whose
+  socket closed, or whose mediator was not reached, is tried again
+  after a wait, each wait twice the one before, until live delivery is
+  on again; what was queued meanwhile is picked up by the connection
+  that comes back. `AgentOptions.upkeep` sets the waits, `UPKEEP` is
+  their default, and none of it runs with `liveDelivery` off.
 
 - **Records read an input from its admitted observations alone**
   (behaviour change): a channel's `messages` hold the inputs an
