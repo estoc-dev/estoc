@@ -58,7 +58,6 @@ const sendError = ref("");
 const picked = ref<ChannelId | null>(null);
 const choosing = ref(false);
 
-/** The channel's record: among those the conversation shows, or anywhere in the snapshot. */
 const channelOf = (channelId: ChannelId): ChannelRecord | null => conversation.value?.channels.find((channel) => channel.channelId === channelId) ?? state.index?.channel(channelId) ?? null;
 
 // The channel this conversation writes in now. A send names it, never
@@ -78,7 +77,6 @@ const draft = computed({
   },
 });
 
-// Picking another channel of the same conversation takes what is being written along.
 function pick(channelId: ChannelId) {
   const before = target.value;
   picked.value = channelId;
@@ -279,12 +277,12 @@ const details = () => go({ kind: "details", key: props.conversationKey });
           <template v-if="writable">Something you wrote waits in another channel of theirs.</template>
           <template v-else>Something you wrote is in a channel that takes no send now.</template>
         </span>
-        <button v-if="writable" type="button" class="link" @click="picked = channelId">write there</button>
+        <button v-if="writable" type="button" class="link alone" @click="picked = channelId">write there</button>
         <template v-else>
-          <button v-if="target !== null && draft === ''" type="button" class="link" data-draft-here @click="moveDraft(kept.channelId, target)">write it here</button>
-          <button type="button" class="link" data-draft-copy @click="copy(kept.text)">copy</button>
+          <button v-if="target !== null && draft === ''" type="button" class="link alone" data-draft-here @click="moveDraft(kept.channelId, target)">write it here</button>
+          <button type="button" class="link alone" data-draft-copy @click="copy(kept.text)">copy</button>
         </template>
-        <button type="button" class="link danger" data-draft-discard @click="kept.text = ''">discard</button>
+        <button type="button" class="link alone danger" data-draft-discard @click="kept.text = ''">discard</button>
         <blockquote v-if="!writable" class="draft-text" style="flex-basis: 100%" data-draft-text>{{ kept.text }}</blockquote>
       </div>
       <p v-if="sendError" class="composer-line error" data-send-error>{{ sendError }}</p>
@@ -325,7 +323,7 @@ const details = () => go({ kind: "details", key: props.conversationKey });
           <button v-if="channelOf(channelId)" class="row" type="button" :title="endsOf(channelOf(channelId)!)" data-channel-option @click="pick(channelId)">
             <span class="row-main">
               <span class="mono">you {{ shortDid(channelOf(channelId)!.localDid) }}</span>
-              <span class="mono" style="color: var(--steel)">them {{ shortDid(channelOf(channelId)!.peerDid) }}</span>
+              <span class="mono" style="color: var(--ink-soft)">them {{ shortDid(channelOf(channelId)!.peerDid) }}</span>
             </span>
             <Icon v-if="target && channelId === target.channelId" name="check" class="chevron" :size="20" />
           </button>

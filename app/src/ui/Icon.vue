@@ -3,8 +3,8 @@ const PATHS: Record<string, string> = {
   back: "M15 18l-6-6 6-6",
   chevron: "M9 18l6-6-6-6",
   close: "M18 6L6 18M6 6l12 12",
-  plus: "M12 5v14M5 12h14",
-  send: "M22 2L11 13M22 2L15 22l-4-9-9-4z",
+  compose: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z",
+  send: "M12 19V5M5 12l7-7 7 7",
   info: "M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z",
   alert: "M12 8v4M12 16h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z",
   gear:

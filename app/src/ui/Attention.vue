@@ -119,7 +119,7 @@ const explainingRegistrations = ref(false);
             happens.
           </p>
           <div class="card-actions">
-            <button class="link" type="button" @click="explainingRegistrations = !explainingRegistrations">{{ explainingRegistrations ? "Less" : "How that happens" }}</button>
+            <button class="link alone" type="button" @click="explainingRegistrations = !explainingRegistrations">{{ explainingRegistrations ? "Less" : "How that happens" }}</button>
           </div>
         </div>
       </div>

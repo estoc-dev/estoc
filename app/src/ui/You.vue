@@ -10,20 +10,12 @@ import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
 import type { TraceLevel } from "../core/types.js";
 import { useUnconfirmed } from "./unconfirmed.js";
-import { bytesOf, shortDid, whenOf } from "./util.js";
+import { bytesOf, initialOfName, shortDid, whenOf } from "./util.js";
 
-/**
- * The person's own place: how they are reached, where their vault is
- * and how it leaves with them, what this device keeps for itself, and
- * the way out.
- */
 const version = __APP_VERSION__;
 const snapshot = computed(() => state.snapshot);
 const { mediation, lamp, lost, sentence } = useStatus();
-const initial = computed(() => {
-  const label = snapshot.value?.label ?? "";
-  return label === "" ? "?" : [...label][0]!.toUpperCase();
-});
+const initial = computed(() => initialOfName(snapshot.value?.label ?? null));
 
 const reasonOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -171,7 +163,7 @@ function forget() {
 
     <div v-if="snapshot" class="screen-body page">
       <div style="display: flex; flex-direction: column; align-items: center; gap: 10px">
-        <span class="avatar large you">{{ initial }}</span>
+        <span class="avatar large">{{ initial }}</span>
         <span style="font-size: 18px; font-weight: 600">{{ snapshot.label }}</span>
         <span class="note" :class="{ 'error-text': lamp === 'error' }" data-status-sentence>
           <span class="lamp" :class="lamp"></span>
