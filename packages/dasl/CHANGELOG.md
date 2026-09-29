@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-09-29
 
 First release: the DASL primitives in a package of their own. The
 version-3 vault (`docs/replica-model/dasl-objects.md`) names every object

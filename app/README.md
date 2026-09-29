@@ -87,7 +87,8 @@ your data never touches the place the app was served from.
 ## Run it
 
 This directory is one package of the [estoc-net/estoc] workspace, alongside
-the libraries it is built from (`packages/{did-peer,keystore,agent-core}`),
+the libraries it is built from (`packages/daemon-api` for the view, and
+`packages/{daemon,agent-core,event-store,keystore}` for the worker it hosts),
 which it takes straight from the tree — no publish step between a library
 change and the app seeing it. From the workspace root:
 

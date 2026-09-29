@@ -49,7 +49,7 @@ async function refusalOf(answer: unknown): Promise<ApiError> {
 
 /** The daemon's methods as a view calls them, with no session to speak of. */
 function methodsOver(host: DaemonHost, maxBackupBytes?: number): { daemon: DaemonCore; call: <Name extends Exclude<MethodName, "attach">>(name: Name, input: MethodInput<Name>) => Promise<unknown>; refused: (name: Exclude<MethodName, "attach">, input: unknown) => Promise<ApiError> } {
-  const daemon = createDaemon(host, () => undefined);
+  const daemon = createDaemon(host);
   daemons.push(daemon);
   const methods = methodsOf(daemon, limitsOf("clone", maxBackupBytes));
   const call = (name: string, input: unknown) => (methods as Record<string, (input: unknown, session: Session) => Promise<unknown>>)[name]!(input, session);
@@ -261,7 +261,7 @@ describe("a call that threw inside the daemon", () => {
 
 describe("the methods table", () => {
   it("has every method of the API but attachment, and nothing of the daemon's own", () => {
-    const daemon = createDaemon(nodeHost("/nonexistent"), () => undefined);
+    const daemon = createDaemon(nodeHost("/nonexistent"));
     const methods: MethodHandlers = methodsOf(daemon, limitsOf("text"));
     const names = Object.keys(methods).sort();
     expect(names).not.toContain("attach");

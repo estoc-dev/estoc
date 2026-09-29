@@ -1,129 +1,15 @@
-import type { Channel, ContactId, Did, DidId, DisclosureAs, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
-import type {
-  Called,
-  Cancelled,
-  ChannelRecord,
-  Connection,
-  ContactRecord,
-  Content,
-  Discarded,
-  Invitation,
-  InvitationRecord,
-  PendingWork,
-  TraceLevel,
-  Unplaced,
-  WaitingDelivery,
-} from "@estoc/agent-core";
+import type { Channel, ContactId, Did, DidId, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
+import type { Called, Cancelled, Content, Invitation, TraceLevel } from "@estoc/agent-core";
+import type { Hold } from "@estoc/daemon-api/contract";
 
 /**
- * The daemon: the agent and its vault, behind one interface the UI
- * talks to and never reaches around. Everything that crosses is a
- * plain record or bytes: no runtime, no key, no agent. The seed is
- * unlocked inside the daemon and stays there; the UI hands a
- * passphrase over and gets screens back.
+ * The daemon in the domain's own terms: the agent and its vault behind
+ * one interface, which `methodsOf` answers the API's method table
+ * from. Everything that crosses is a plain record or bytes: no
+ * runtime, no key, no agent. The seed is unlocked inside the daemon
+ * and stays there; a passphrase comes in, and what a view is shown
+ * comes out through the publisher.
  */
-
-/**
- * Which screen the vault dictates: booting → (elsewhere: another
- * daemon has the files) → onboarding (no vault) | foreign | unreadable
- * | damaged | locked (a vault, no cached seed) → open. `unreachable` is
- * the one phase no daemon says: a client over a socket says it when
- * nothing answers.
- *
- * `foreign` is what the host found standing where the vault would be
- * and is no vault of this version: the daemon takes nothing, and what
- * becomes of it is the host's to decide. `unreadable` is a vault the
- * daemon could not open: a file written under another version of the
- * schema, or files that could not be taken at all. Nothing of it is
- * exported from here; `forgetIdentity` removes a vault file the daemon
- * holds, to make room.
- *
- * `damaged` is a vault of this version whose history no longer reads
- * whole, found as it opens or while it runs: it is not run, since it
- * would accept no write, and nothing of it is changed. What the person
- * is owed there: the history comes back only by restoring a validated
- * snapshot into a new vault, as far as that snapshot goes and no
- * further; with no usable snapshot none of it does; the seed is still
- * what the passphrase unlocks from any readable copy of the vault or
- * snapshot. `forgetIdentity` removes the damaged vault to make room.
- */
-export type Phase = "booting" | "elsewhere" | "onboarding" | "foreign" | "unreadable" | "damaged" | "locked" | "open" | "unreachable";
-
-/**
- * The daemon's name for the vault file it has: given when the file is
- * found or made, the same through every phase the file goes through,
- * gone when the file is removed. A UI names the vault a removal is
- * about by it, so a confirmation left open in one UI while another
- * removed that vault and made a new one removes nothing: the name it
- * carries is no longer the one held.
- */
-export type Hold = string;
-
-/** An arrangement with a mediator, as the fold has it. */
-export interface MediationSummary {
-  mediationId: MediationId;
-  mediatorDid: Did | null;
-  selected: boolean;
-  usable: boolean;
-  retired: string | null;
-  faults: string[];
-}
-
-/** A communication DID of this vault. */
-export interface LocalDidSummary {
-  didId: DidId;
-  did: Did | null;
-  /** the spelling that carries its document, the one handed to a stranger */
-  longFormDid: Did | null;
-  live: boolean;
-  retired: string | null;
-  disclosures: { as: DisclosureAs; uses: DisclosureUses }[];
-  faults: string[];
-}
-
-/** A contact with its channels by pair: the channel records are the snapshot's, each once. */
-export interface ContactSummary extends Omit<ContactRecord, "channels"> {
-  channels: { channel: Channel; selected: boolean }[];
-}
-
-/** The vault as records, read off one fold. The UI projects from here, and takes the next snapshot whole. */
-export interface Snapshot {
-  /** the did:key the vault's seed derives: the identity every replica of this vault shares */
-  anchor: Did;
-  label: string;
-  /**
-   * The vault was restored from a snapshot and the person has not yet
-   * been told what a restore cannot bring back. Until `explainedRestore`,
-   * no send of the user's and no manual dispatch is made; receiving,
-   * reconciling and what the vault owes on its own go on.
-   */
-  restoreUnexplained: boolean;
-  mediations: MediationSummary[];
-  dids: LocalDidSummary[];
-  contacts: ContactSummary[];
-  /** every pair a message or an observation is shown in, and every pair a contact shows */
-  channels: ChannelRecord[];
-  unplaced: Unplaced;
-  invitations: InvitationRecord[];
-  pending: PendingWork;
-}
-
-/** What only the running agent knows: nothing of it is in the vault. */
-export interface Lines {
-  connections: Connection[];
-  waiting: WaitingDelivery[];
-  discarded: Discarded[];
-}
-
-export interface DaemonEvents {
-  /** which screen the vault dictates, and the hold on the vault it is about; `open` comes as `opened`, with the records */
-  phase(phase: Phase, detail: string | null, hold: Hold | null): void;
-  opened(snapshot: Snapshot, hold: Hold): void;
-  /** the vault after something was committed to it */
-  changed(snapshot: Snapshot): void;
-  lines(lines: Lines): void;
-  log(line: string): void;
-}
 
 /** What a merge brought, counted. */
 export interface Merged {
@@ -171,8 +57,6 @@ export interface SendResult extends Outcome<DispatchWord> {
 }
 
 export interface Daemon {
-  /** Take the files and land on the screen they dictate (by events). */
-  boot(): Promise<void>;
   /**
    * This and the six calls after it, `explainedRestore` apart, work on
    * the daemon's files: they run one at a time in the order asked, and

@@ -36,6 +36,19 @@ waits for the socket to drain below a bound before it takes the next
 frame, since a socket's `send` only queues; the message port adapter
 closes with the port's other end.
 
+A host puts a daemon behind `serveApi(port, { methods, limits,
+implementation, attach, failed })`, one session per port it accepts:
+`methods` is the method table, one handler per name of the contract
+taking the validated input and answering the result or throwing a
+`Refusal` with its code and effect; `limits` the bounds the welcome
+advertises, from which the request budget follows; `attach` hands a
+session its baseline and subscribes it to what is published from then
+on; `failed` is where a throw of the daemon's own goes. `@estoc/daemon`
+is the daemon side of this: `methodsOf` and `attachTo` are that table
+and that hook over it, and the host — a browser worker over a message
+port, `estoc-daemon` over a WebSocket — boots the daemon itself, since
+`boot` is no method of the API.
+
 `connect(port)` gives a client that says hello, attaches after the
 welcome and is `connected` once the attachment's baseline is in; before
 that, and after the connection ends, a call is refused as `NotConnected`.

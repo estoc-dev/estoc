@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-09-29
 
 The continuity domain: a pure model of oriented DID pairs under rotation
 and ending, and a `from-prior` module for DIDComm v2 proofs.

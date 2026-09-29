@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-29
 
 The version-4 vault: events addressed by content.
 

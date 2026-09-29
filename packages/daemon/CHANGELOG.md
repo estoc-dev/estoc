@@ -1,7 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-29
 
+The daemon behind the API of `@estoc/daemon-api`, in place of the RPC of
+its own.
+
+- **The RPC of `rpc.ts` and its codec are gone**, with the `phase`,
+  `opened`, `changed`, `lines` and `log` events, the records they
+  carried (`Snapshot`, `Lines`, `ContactSummary`, `MediationSummary`,
+  `LocalDidSummary`), `DaemonEvents`, the `unreachable` phase, and
+  `replayTo`: what a view is shown is the publisher's, as the API
+  spells it, and a view attaches over `serveApi`. `createDaemon(host)`
+  takes no `emit`, and `boot()` is the host's, once — a later call
+  does nothing. A daemon of this version and a view of an earlier one
+  do not speak: the first frame the daemon reads is no hello, and it
+  closes the port; the SDK, at a daemon of an earlier version, reports
+  `Incompatible`. `@estoc/daemon` exports the host's contract
+  (`createDaemon`, `DaemonHost`, `DaemonStorage`, `VAULT_FILE`,
+  `methodsOf`, `attachTo`, `limitsOf`, the publisher and the refusals)
+  and the domain's `Daemon` interface, nothing a view would import.
 - **The Node endpoint serves the API** (`@estoc/daemon-api`): every
   socket is a port of `serveApi`, from the bootstrap on — hello, welcome
   with the daemon's bounds, `attach` handed the state and lines
@@ -16,10 +33,8 @@
   that has not attached is one of at most sixteen. A frame a socket
   will not take — over the frame bound, text that is not UTF-8 —
   closes that socket and nothing else. The host boots the
-  daemon: there is no `boot()` over the socket, and `boot`, `pending`,
-  `replayTo` and `close` are no methods of the API. The old RPC over
-  the socket is gone with it; `serve`/`connect` of `rpc.ts` still
-  carry the worker's port, until the app attaches to the API.
+  daemon: there is no `boot()` over the socket, and `boot` and `close`
+  are no methods of the API.
 - **A refusal has a code.** The daemon refuses with `WrongPhase`
   (no open vault, nothing to unlock, a vault standing already, the
   files another daemon's, no files), `StaleHold`, `RestoreUnexplained`
@@ -71,8 +86,7 @@
   reference list by time then ID. A message carries `summary`, one line
   from its content for the types the daemon has a line for, and
   describes its attachments without their payloads. The lines a view is
-  shown are the API's `Lines`. The old events of `rpc.ts` are still
-  served, their records made from the published ones.
+  shown are the API's `Lines`.
 - **One publisher orders the state.** `DaemonCore.publisher` holds the
   state as one value under an epoch and a revision, the runtime lines
   under their own revision of the same epoch, and log lines with their
@@ -101,14 +115,10 @@
   follow that read out, and an agent that takes another's place over
   the runtime, as after a merge, says its own first, empty or not.
 - **A read that fails leaves the state stale**, not replaced: every view
-  is told (`log`, for this RPC), a UI joining meanwhile is refused its
-  `boot()` with the failure, and the next call or `refresh()` reads
-  again.
+  is told, one joining meanwhile is refused, and the next call or
+  `refresh()` reads again.
 - **`pending()` is gone**: `Snapshot.pending` is the same, as of the
   snapshot.
-- The `phase`, `opened`, `changed`, `lines` and `log` events are the
-  publisher's publications translated, for as long as this RPC is
-  served.
 - **`addContactByDid(did, petname)`**: a contact by a DID handed over on
   its own, reached as an invitee is — a fresh DID of ours toward them, the
   contact selecting the pair, a Ping — the Ping naming no invitation. A DID
@@ -122,8 +132,8 @@
 - **`forgetIdentity(hold)`** names the vault it removes. The `hold` is
   the daemon's name for the vault file, given when the file is found or
   made and kept through every phase until the file is removed; every
-  `phase` event carries it, `null` while no vault stands, and `opened`
-  carries it with the snapshot. A removal naming a vault since removed
+  published state carries it, `null` while no vault stands. A removal
+  naming a vault since removed
   and remade is refused and leaves the new one as it is, and so is one
   naming none, as an app of an earlier version asks it.
 - **Phase `foreign`**, in place of `unreadable` for what the host finds

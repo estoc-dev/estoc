@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-09-29
 
 - **A folder a daemon holds is asked over the API** (`@estoc/daemon-api`):
   `estoc status` and `estoc init` connect with the SDK's client over the

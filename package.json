@@ -11,6 +11,7 @@
     "typecheck": "pnpm -r run typecheck",
     "dev": "pnpm -r --parallel run dev",
     "e2e": "pnpm --filter @estoc/app run e2e",
+    "release-check": "node scripts/release-check.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

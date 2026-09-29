@@ -1,29 +1,33 @@
 # @estoc/daemon
 
-The Estoc daemon: an agent and its vault behind one interface, `Daemon`
-(`src/api.ts`), that a UI talks to and never reaches around. Calls go one
-way, events (`DaemonEvents`) come back; everything that crosses is a plain
-record or bytes — no vault, no key, no agent. `createDaemon(host, emit)`
-is the daemon itself; a `DaemonHost` says where it runs.
+The Estoc daemon: an agent and its vault behind the API of
+[`@estoc/daemon-api`](../daemon-api). `createDaemon(host)` is the daemon
+itself, in the domain's terms (`Daemon`, `src/api.ts`); a `DaemonHost`
+says where it runs; `methodsOf(daemon, limits)` is the API's method table
+answered from it, and `attachTo(daemon.publisher, session)` hands a
+session what the daemon has published. A host puts those behind
+`serveApi` of `@estoc/daemon-api/wire`, one session per port, and boots
+the daemon; a view installs `@estoc/daemon-api` alone and reaches
+nothing here. Everything that crosses is a plain record or bytes — no
+vault, no key, no agent.
 
 Two hosts ship:
 
 - **A browser worker** (the app's `src/daemon/worker.ts`): the vault is one
   SQLite database in a pool of access handles over OPFS
   (`openSqlitePool` from `@estoc/event-store/browser`), the seed in
-  IndexedDB, the DIDComm WASM as Vite loads it. The RPC rides a message
-  port (`serve` / `connect` in `src/rpc.ts`; structured clone).
+  IndexedDB, the DIDComm WASM as Vite loads it. Each message port the page
+  hands the worker is one view's session, over structured clone.
 - **A Node process** (`@estoc/daemon/node`; the `estoc-daemon` command):
   `nodeHost(root)`, whose vault is `<root>/.estoc/vault.sqlite`
   (`openNodeSqlite` from `@estoc/event-store/node`), the seed in memory
-  only (every start is locked until a UI types the passphrase),
+  only (every start is locked until a view types the passphrase),
   `@estoc/didcomm-node`, and one HTTP server that serves the app and takes
-  the app's WebSocket on the same origin. The app is `@estoc/app` (the
-  built files), an optional peer: `estoc serve` from `@estoc/cli` brings
-  both together; `estoc-daemon` alone serves the app if `@estoc/app` is
-  installed beside it (or `--app-dir`), else prints a link to
-  app.estoc.dev. The RPC rides JSON with bytes and Maps tagged
-  (`src/codec.ts`).
+  the app's WebSocket on the same origin, each socket a session over text
+  frames. The app is `@estoc/app` (the built files), an optional peer:
+  `estoc serve` from `@estoc/cli` brings both together; `estoc-daemon`
+  alone serves the app if `@estoc/app` is installed beside it (or
+  `--app-dir`), else prints a link to app.estoc.dev.
 
 ```
 cd ~/my-vault && estoc init && estoc serve   # open the link it prints: http://127.0.0.1:37862/?token=…
@@ -42,8 +46,10 @@ wider) that has no link has no socket. On top of that `Host` must be a
 name of this server's (a loopback name, the bound address, or an address
 of this machine when bound to all); anything else, such as an attacker's
 name pointed at 127.0.0.1 (DNS rebinding), gets 421 and no socket. A
-second UI connecting calls `boot()` like the first and is told where
-things stand.
+socket that has said hello and not yet attached is one of at most
+sixteen; the token is minted once, whole, however many daemons start on a
+fresh folder at once, and a token file that holds no token keeps the
+endpoint from opening.
 
 ## The folder
 
@@ -61,28 +67,60 @@ a file, and waits. Within a daemon those calls — `createIdentity`,
 `restoreIdentity`, `unlock`, `lock`, `forgetIdentity`, `exportBackup`,
 `mergeBackup` — run one at a time in the order asked, and `close()`
 ends a wait for files held elsewhere. The vault file has a name for
-as long as it stands, the `hold` every `phase` and `opened` event
-carries; `forgetIdentity(hold)` removes the vault so named and refuses
-once another stands there, so a confirmation one UI left open while a
-second UI removed and remade the vault removes nothing.
+as long as it stands, the `hold` every published state carries;
+`forgetIdentity(hold)` removes the vault so named and refuses once
+another stands there, so a confirmation one view left open while a
+second view removed and remade the vault removes nothing.
 
-## What the UI is told
+## What a view is shown
 
-The UI is told the vault whole: `opened(snapshot)` once, then
-`changed(snapshot)` after every commit, whoever made it — a call of the
-UI's, a delivery, a retry the dispatcher made on its own — read in one
-cut under the vault's writer lock and shared by every UI. `refresh()`
-answers where a state covering every commit so far stands, and reads
-nothing when none is unpublished. Nothing is sent on open: what an
-earlier run left unfinished is in `snapshot.pending`, each entry naming
-the call that takes it up.
+`DaemonCore.publisher` holds what every view is shown: the state as one
+value under an epoch and a revision — the phase the vault dictates, its
+hold, and for an open vault the snapshot — the runtime lines under a
+revision of the same epoch, and log lines. A fresh epoch comes with every
+runtime opened and every other change of phase or hold. The open state is
+the API's `Snapshot`, normalized: every message, observation, channel and
+contact once, in a table of its own, the rest referring to them by ID; a
+channel named everywhere by its `ChannelId`, the canonical text of its
+pair; `conversations` one per contact and one per nameless group of
+channels under a head; a `summary` on each message the daemon has a line
+for. It is read in one cut under the vault's writer lock after every
+commit, whoever made it — a call of a view's, a delivery, a retry the
+dispatcher made on its own — once per burst of commits, from the event
+store's `changed` callback, and shared by every view. A view that attaches
+is handed the state published, not a read of its own; `refresh()` answers
+where a state covering every commit so far stands, and reads nothing when
+none is unpublished. A read that fails leaves the state standing, stale:
+every attached session ends with `StateUnavailable`, one joining
+meanwhile is refused, and the next commit or `refresh()` reads again.
+Damage the history is found to have stops the vault, said as the
+`damaged` phase. The lines come from the agent as they change, with no
+read of the vault.
 
-A vault restored from a snapshot opens with `restoreUnexplained`. It
-receives, reconciles and answers from the first moment, and refuses the
-user's sends and every manual dispatch until the UI has shown what a
-restore cannot bring back — local DIDs made after the snapshot, peers
-known only by a short form, continuity the snapshot predates, forks a
-competing rotation leaves — and called `explainedRestore()`.
+Nothing is sent on open: what an earlier run left unfinished is in
+`snapshot.pending`, each entry naming the call that takes it up. A vault
+restored from a snapshot opens with `restoreUnexplained`: it receives,
+reconciles and answers from the first moment, and refuses the user's
+sends and every manual dispatch until the view has shown what a restore
+cannot bring back — local DIDs made after the snapshot, peers known only
+by a short form, continuity the snapshot predates, forks a competing
+rotation leaves — and called `explainedRestore()`.
+
+## Refusals
+
+A refusal has a code, which the API carries: `WrongPhase` (no open
+vault, nothing to unlock, a vault standing already, the files another
+daemon's), `StaleHold`, `RestoreUnexplained`, `InvalidArgument`, each
+with no effect; a condition found unmet before anything changed — a
+wrong passphrase, no mediator set, no such contact — is
+`OperationFailed` with no effect (`Unmet`). A send the domain finds no
+target for is `NoTarget`, one to a channel that takes none is
+`SendClosed`. Whatever else the domain throws is `OperationFailed` with
+a possible effect, its text kept for the host's log (`failed`); so is a
+call of an intent that threw after the intent was committed. An export
+over `maxBackupBytes` (512 MiB unless the host sets it, from which the
+other bounds a view is told follow) is refused whole before the file is
+built, or before one built within it is read.
 
 ## The trace
 

@@ -1,6 +1,6 @@
 {
   "name": "@estoc/event-store",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The vault as an event store (docs/replica-model): canonical JSON, the event envelope, canonical order and filter; the EventStore, ObjectStore and Vault interfaces and their in-memory reference; the SQLite vault on Node and in a browser Worker; the portable snapshot's export, validation, restore and import. Knows no event type: what an event means is @estoc/vault's.",
   "license": "Apache-2.0",
   "author": "merely",

@@ -1,5 +1,7 @@
 # Build, typecheck and test the whole workspace on every pull request and on main.
 # Mirrors what a developer runs locally: `pnpm install --frozen-lockfile && pnpm build && pnpm typecheck && pnpm test`.
+# Two more jobs check the packages as they would be installed from npm: a view that
+# takes `@estoc/daemon-api` alone, and the daemon with its libraries as one released set.
 # The browser e2e (`pnpm e2e`) needs a browser and a mediator and is run by hand.
 name: ci
 
@@ -27,3 +29,31 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
+
+  consumer-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter @estoc/daemon-api run consumer-check
+
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm release-check

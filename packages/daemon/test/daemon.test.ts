@@ -8,19 +8,20 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type DidId, type MediationId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
 
 import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
-import type { Phase, Snapshot as Published, State } from "@estoc/daemon-api/contract";
+import type { Hold, Lines, Phase, Snapshot, State } from "@estoc/daemon-api/contract";
+import { indexSnapshot } from "@estoc/daemon-api/views";
 import { webSocketOf } from "@estoc/daemon-api/wire";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { channelOf, forwarded, run, stopAll } from "../../agent-core/test/e2e/running.js";
-import { createDaemon, type DaemonCore, type DaemonHost, type Hold, type Lines, type Snapshot } from "../src/index.js";
+import { createDaemon, type DaemonCore, type DaemonHost } from "../src/index.js";
 import { nodeHost, serveDaemon } from "../src/node/index.js";
-import { channelIdOf } from "../src/channels.js";
+import { channelIdOf, channelOf as pairOf } from "../src/channels.js";
 import { published } from "./snapshots.js";
 
 const BASIC_MESSAGE = "https://didcomm.org/basicmessage/2.0/message";
@@ -44,27 +45,52 @@ async function folder(): Promise<string> {
   return root;
 }
 
-/** What one listener was told, in order, and the latest of each. */
+/** What one subscriber of the publisher was told, in order, and the latest of each. */
 interface Told {
+  /** `phase` for a state that shows no runtime, `opened` for a runtime's first read and `changed` for the reads after it, `lines` while a runtime is shown, `log`, and `unavailable` for a read that failed */
   events: [string, ...unknown[]][];
   phases(): string[];
-  /** the hold the last phase or opened event carried */
+  /** the hold the last state carried */
   hold(): Hold | null;
+  /** the last open state's snapshot */
   snapshot(): Snapshot;
   lines(): Lines | null;
 }
 
-function told(): Told & { emit: (name: string, ...args: unknown[]) => void } {
+/** A subscriber attached to the daemon's publisher now, told of everything published from here on; refused while the state is stale. */
+function listening(daemon: DaemonCore): Told {
   const events: [string, ...unknown[]][] = [];
+  let hold: Hold | null = null;
+  let shown = false;
+  daemon.publisher.attach({
+    state: ({ revision, value }) => {
+      hold = value.hold;
+      shown = value.phase === "open";
+      if (value.phase === "open") events.push([revision === 1 ? "opened" : "changed", value.snapshot, value.hold]);
+      else events.push(["phase", value.phase, value.detail, value.hold]);
+    },
+    lines: ({ value }) => {
+      if (shown) events.push(["lines", value]);
+    },
+    log: ({ line }) => events.push(["log", line]),
+    unavailable: (error) => events.push(["unavailable", error]),
+  });
   const last = (...names: string[]) => events.filter(([name]) => names.includes(name)).at(-1);
   return {
     events,
-    emit: (name, ...args) => events.push([name, ...args]),
     phases: () => events.filter(([name]) => name === "phase").map(([, phase]) => phase as string),
-    hold: () => (last("phase", "opened")!.at(-1) as Hold | null | undefined) ?? null,
+    hold: () => hold,
     snapshot: () => last("opened", "changed")![1] as Snapshot,
     lines: () => (last("lines")?.[1] as Lines | undefined) ?? null,
   };
+}
+
+/** What a view attaching now is handed, and no more: the state and the lines published. */
+function handed(daemon: DaemonCore): { snapshot: Snapshot | null; lines: Lines } {
+  const nobody = { state: () => undefined, lines: () => undefined, log: () => undefined, unavailable: () => undefined };
+  const { state, lines } = daemon.publisher.attach(nobody);
+  daemon.publisher.detach(nobody);
+  return { snapshot: state.value.phase === "open" ? state.value.snapshot : null, lines: lines.value };
 }
 
 async function until(what: string, condition: () => boolean, ms = 60_000): Promise<void> {
@@ -77,11 +103,10 @@ async function until(what: string, condition: () => boolean, ms = 60_000): Promi
 
 /** A daemon over a folder, its agent's transports the mediator's when there is one. */
 function daemonOver(root: string, mediator?: FakeMediator, agentOptions: Partial<NonNullable<DaemonHost["agentOptions"]>> = {}): { daemon: DaemonCore; heard: Told } {
-  const heard = told();
   const host = nodeHost(root, mediator === undefined ? {} : { fetch: mediator.fetch, WebSocket: mediator.WebSocket });
-  const daemon = createDaemon({ ...host, agentOptions: { ...host.agentOptions!, ...agentOptions } }, heard.emit);
+  const daemon = createDaemon({ ...host, agentOptions: { ...host.agentOptions!, ...agentOptions } });
   daemons.push(daemon);
-  return { daemon, heard };
+  return { daemon, heard: listening(daemon) };
 }
 
 const vaultFile = (root: string) => path.join(root, ".estoc", "vault.sqlite");
@@ -95,7 +120,11 @@ async function person(mediator: FakeMediator, name: string): Promise<{ root: str
   return { root, daemon, heard };
 }
 
-const messagesOf = (snapshot: Snapshot) => snapshot.channels.flatMap((channel) => channel.messages);
+/** The conversations of a snapshot's contacts, which carry a contact's petname and channels. */
+const contactsOf = (snapshot: Snapshot) => snapshot.conversations.filter((conversation) => conversation.contactId !== null);
+
+/** The pair a channel's continuity leads on to. */
+const headOf = (channel: Snapshot["channels"][number]): Channel => pairOf(channel.headChannelId!);
 
 /** A view over the socket: the SDK's client, and every state it was shown, the baseline first. */
 interface View {
@@ -105,7 +134,7 @@ interface View {
   phases(): Phase[];
   hold(): Hold | null;
   /** the last open state shown */
-  snapshot(): Published;
+  snapshot(): Snapshot;
   /** how many epochs an open state was shown in */
   opened(): number;
 }
@@ -178,9 +207,9 @@ describe("the daemon over a folder", () => {
     expect(backup.name).toMatch(/^Alice-.*\.estoc\.sqlite$/);
     expect(new TextDecoder().decode(backup.bytes.subarray(0, 15))).toBe("SQLite format 3");
 
-    const other = told();
-    const elsewhere = createDaemon(nodeHost(root), other.emit);
+    const elsewhere = createDaemon(nodeHost(root));
     daemons.push(elsewhere);
+    const other = listening(elsewhere);
     const waiting = elsewhere.boot();
     await until("the second daemon says the vault is held elsewhere", () => other.phases().includes("elsewhere"));
 
@@ -213,7 +242,7 @@ describe("the daemon over a folder", () => {
       raw.say(call(1, "attach"));
       expect(await raw.next()).toMatchObject({ kind: "result", id: 1, value: { state: { value: { phase: "onboarding" } } } });
       let id = 1;
-      for (const method of ["boot", "pending", "replayTo", "close", "constructor", "__proto__", "publisher"]) {
+      for (const method of ["boot", "close", "constructor", "__proto__", "publisher"]) {
         raw.say(call(++id, method));
         expect(await raw.next()).toEqual({ kind: "error", id, error: { code: "NoSuchMethod", message: expect.any(String), effect: "none", messageId: null } });
       }
@@ -233,9 +262,9 @@ describe("the daemon over a folder", () => {
     const root = await folder();
     await mkdir(path.join(root, ".estoc"));
     await writeFile(path.join(root, ".estoc", "config.json"), '{"format":"estoc","version":2}');
-    const heard = told();
-    const daemon = createDaemon(nodeHost(root), heard.emit);
+    const daemon = createDaemon(nodeHost(root));
     daemons.push(daemon);
+    const heard = listening(daemon);
     await daemon.boot();
     expect(heard.events).toEqual([["phase", "foreign", expect.stringMatching(/folder format/), null]]);
     await expect(daemon.createIdentity("Alice", PASSPHRASE)).rejects.toThrow();
@@ -339,7 +368,7 @@ describe("a daemon's files, one operation at a time", () => {
     const waiting = other.daemon.boot();
     await until("the second daemon says the folder is held elsewhere", () => other.heard.phases().includes("elsewhere"));
     const elsewhere = /held elsewhere/;
-    await expect(other.daemon.forgetIdentity("019b0000-0000-7000-8000-0000000000aa")).rejects.toThrow(elsewhere);
+    await expect(other.daemon.forgetIdentity("019b0000-0000-7000-8000-0000000000aa" as Hold)).rejects.toThrow(elsewhere);
     await expect(other.daemon.createIdentity("Mallory", PASSPHRASE)).rejects.toThrow(elsewhere);
     await expect(other.daemon.lock()).rejects.toThrow(elsewhere);
     await stat(vaultFile(root));
@@ -448,16 +477,16 @@ describe("a vault whose history is damaged", () => {
   it("with its seed at hand is no more run than locked: the daemon that would have opened it says damaged, and nothing of it is shown", async () => {
     const root = await folder();
     const host = nodeHost(root);
-    const first = createDaemon(host, () => undefined);
+    const first = createDaemon(host);
     daemons.push(first);
     await first.boot();
     await first.createIdentity("Alice", PASSPHRASE);
     await first.close();
     damageAnEvent(root);
 
-    const heard = told();
-    const daemon = createDaemon(host, heard.emit);
+    const daemon = createDaemon(host);
     daemons.push(daemon);
+    const heard = listening(daemon);
     expect(await host.cachedSeedKey()).not.toBeNull();
     await daemon.boot();
     expect(heard.events).toEqual([["phase", "damaged", expect.stringMatching(/^events\/.* is damaged/), expect.any(String)]]);
@@ -488,10 +517,10 @@ describe("a vault whose history is damaged", () => {
 
   it("met by a read while the vault runs, stops it there: no records short of the damaged event are shown, the daemon goes from open to damaged and lets the vault go", async () => {
     const root = await folder();
-    const heard = told();
     const running = damageable(root);
-    const daemon = createDaemon(running.host, heard.emit);
+    const daemon = createDaemon(running.host);
     daemons.push(daemon);
+    const heard = listening(daemon);
     await daemon.boot();
     await daemon.createIdentity("Alice", PASSPHRASE);
     await daemon.createContact("Bob", pairWith("Bob"));
@@ -544,7 +573,7 @@ describe("a vault whose history is damaged", () => {
 });
 
 /** The reads of the runtime the daemon opens next, each handed to `wrap` once the vault's lock is let go of, to be held back or made to fail. */
-function readsOf(daemon: DaemonCore, wrap: (read: Promise<Published>) => Promise<Published>): void {
+function readsOf(daemon: DaemonCore, wrap: (read: Promise<Snapshot>) => Promise<Snapshot>): void {
   const { publisher } = daemon;
   const opening = publisher.open.bind(publisher);
   publisher.open = (hold, source) => opening(hold, { capture: (cut) => wrap(source.capture(cut)) });
@@ -604,16 +633,13 @@ describe("a read of the vault that fails", () => {
     // the read the commit makes is the one the call waits for before it answers, and it fails
     failing = 1;
     await daemon.createContact("Bob", pairWith("Bob"));
-    expect(heard.events.slice(shown).filter(([name]) => name !== "lines")).toEqual([["log", "the snapshot could not be read: the disk went away"]]);
+    expect(heard.events.slice(shown).filter(([name]) => name !== "lines").map(([name, error]) => [name, (error as Error).message])).toEqual([["unavailable", "the disk went away"]]);
     expect(heard.snapshot()).toBe(before);
-    await expect(daemon.boot()).rejects.toThrow("the disk went away");
+    expect(() => listening(daemon)).toThrow("the disk went away");
 
     await daemon.refresh();
     expect(heard.snapshot().contacts).toHaveLength(1);
-    const late = told();
-    await daemon.boot();
-    await daemon.replayTo(late.emit);
-    expect(late.snapshot()).toEqual(heard.snapshot());
+    expect(handed(daemon).snapshot).toEqual(heard.snapshot());
   });
 });
 
@@ -642,13 +668,13 @@ describe("two copies of one runtime, both written to", () => {
     expect(merged).toMatchObject({ renewed: true });
     expect(merged.added).toBeGreaterThan(0);
     expect(there.heard.phases()).not.toContain("unreadable");
-    expect(there.heard.snapshot().contacts.map((contact) => contact.petname).sort()).toEqual(["Bob", "Carmen"]);
+    expect(contactsOf(there.heard.snapshot()).map((contact) => contact.petname).sort()).toEqual(["Bob", "Carmen"]);
     expect(await there.daemon.mergeBackup(fromHere.bytes)).toMatchObject({ renewed: false, added: 0 });
     await there.daemon.createContact("Dave", pairWith("Dave"));
 
     const back = await here.daemon.mergeBackup((await there.daemon.exportBackup()).bytes);
     expect(back.renewed).toBe(true);
-    expect(here.heard.snapshot().contacts.map((contact) => contact.petname).sort()).toEqual(["Bob", "Carmen", "Dave"]);
+    expect(contactsOf(here.heard.snapshot()).map((contact) => contact.petname).sort()).toEqual(["Bob", "Carmen", "Dave"]);
     await here.daemon.createContact("Erin", pairWith("Erin"));
     expect(await there.daemon.mergeBackup((await here.daemon.exportBackup()).bytes)).toMatchObject({ renewed: false, added: 3 });
   });
@@ -666,28 +692,25 @@ describe("two copies of one runtime, both written to", () => {
       let secondMergeReached = false;
       let release = (): void => undefined;
       const released = new Promise<void>((resolve) => (release = resolve));
-      const heard = told();
       const host = nodeHost(copy, { fetch: mediator.fetch, WebSocket: mediator.WebSocket });
-      const there = createDaemon(
-        {
-          ...host,
-          async storage() {
-            const storage = await host.storage();
-            return {
-              ...storage,
-              async importFile(name, bytes) {
-                if (name === "merge-source.sqlite" && ++merges === 2) {
-                  secondMergeReached = true;
-                  await released;
-                }
-                return storage.importFile(name, bytes);
-              },
-            };
-          },
+      const there = createDaemon({
+        ...host,
+        async storage() {
+          const storage = await host.storage();
+          return {
+            ...storage,
+            async importFile(name, bytes) {
+              if (name === "merge-source.sqlite" && ++merges === 2) {
+                secondMergeReached = true;
+                await released;
+              }
+              return storage.importFile(name, bytes);
+            },
+          };
         },
-        heard.emit
-      );
+      });
       daemons.push(there);
+      const heard = listening(there);
       await there.boot();
       await there.unlock(PASSPHRASE);
       await there.reconnect();
@@ -697,7 +720,7 @@ describe("two copies of one runtime, both written to", () => {
       await here.daemon.boot();
       await here.daemon.unlock(PASSPHRASE);
       const { didId, invitation } = await here.daemon.createInvitation("many");
-      const invited = here.heard.snapshot().dids.find((did) => did.didId === didId)!.did!;
+      const invited = here.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
       const backup = await here.daemon.exportBackup();
       await here.daemon.close();
       const bob = await person(mediator, "Bob");
@@ -721,7 +744,7 @@ describe("two copies of one runtime, both written to", () => {
         release();
       }
       expect(await merging).toMatchObject({ renewed: true });
-      await until("what waited for the backup's address is received", () => messagesOf(heard.snapshot()).some((message) => message.direction === "in" && message.msg?.type === PING_TYPE));
+      await until("what waited for the backup's address is received", () => heard.snapshot().messages.some((message) => message.direction === "in" && message.headers?.type === PING_TYPE));
       expect(mediator.recipients.has(invited)).toBe(true);
       expect(heard.lines()?.discarded ?? []).toEqual([]);
     },
@@ -742,10 +765,7 @@ describe("a daemon whose mediator drops the socket", () => {
     expect(alice.heard.events.slice(shown).map(([name]) => name)).toEqual(["lines"]);
     expect(mediator.liveAccounts()).toEqual([]);
 
-    const late = told();
-    await alice.daemon.replayTo(late.emit);
-    expect(late.lines()).toEqual(alice.heard.lines());
-    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+    expect(handed(alice.daemon)).toEqual({ snapshot: alice.heard.snapshot(), lines: alice.heard.lines() });
   });
 });
 
@@ -797,10 +817,7 @@ describe("a backup merged that retires the only mediator", () => {
     expect(alice.heard.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
     expect(alice.heard.events.slice(merging).map(([name]) => name)).toEqual(["changed", "lines"]);
 
-    const late = told();
-    await alice.daemon.replayTo(late.emit);
-    expect(late.lines()).toEqual({ connections: [], waiting: [], discarded: [] });
-    expect(late.snapshot()).toEqual(alice.heard.snapshot());
+    expect(handed(alice.daemon)).toEqual({ snapshot: alice.heard.snapshot(), lines: { connections: [], waiting: [], discarded: [] } });
   });
 });
 
@@ -985,11 +1002,11 @@ describe("two daemons over a mediator", () => {
     await bob.daemon.setMediator(mediator.did);
     const { invitation } = await alice.daemon.createInvitation("one");
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
-    await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === accepted.messageId && message.acknowledged));
+    await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
     return { alice, bob, contactId: accepted.contactId };
   }
 
-  const outcomeOf = (snapshot: Snapshot, messageId: string) => messagesOf(snapshot).find((message) => message.messageId === messageId)?.outcome?.status;
+  const outcomeOf = (snapshot: Snapshot, messageId: string) => snapshot.messages.find((message) => message.messageId === messageId)?.delivery?.status;
 
   it(
     "publishes what the dispatcher commits on its own timer, with no call of the UI's: the Ping a registration the mediator refused held up",
@@ -1029,8 +1046,8 @@ describe("two daemons over a mediator", () => {
         expect(await stillWaiting(sending)).toBe(true);
         const marker = await bob.daemon.refresh();
         expect(marker.epoch).toBe(bob.daemon.publisher.current.state.epoch);
-        const held = messagesOf(bob.heard.snapshot()).find((message) => message.direction === "out" && message.body.state === "available" && message.body.body["content"] === "in transit");
-        expect(["queued", "prepared"]).toContain(held?.outcome?.status);
+        const held = bob.heard.snapshot().messages.find((message) => message.direction === "out" && message.body.state === "available" && message.body.body["content"] === "in transit");
+        expect(["queued", "prepared"]).toContain(held?.delivery?.status);
         forward.release();
         const sent = await sending;
         expect(sent.outcome).toBe("submitted");
@@ -1057,20 +1074,20 @@ describe("two daemons over a mediator", () => {
 
       const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
       expect(accepted).toMatchObject({ outcome: "submitted", because: null });
-      expect(bob.heard.snapshot().contacts).toMatchObject([{ petname: "Alice", channels: [{ channel: accepted.channel, selected: true }] }]);
+      expect(contactsOf(bob.heard.snapshot())).toMatchObject([{ petname: "Alice", channels: [{ channelId: channelIdOf(accepted.channel), selected: true }] }]);
 
-      await until("alice holds bob's Ping", () => messagesOf(alice.heard.snapshot()).some((message) => message.direction === "in" && message.msg?.type === PING_TYPE));
+      await until("alice holds bob's Ping", () => alice.heard.snapshot().messages.some((message) => message.direction === "in" && message.headers?.type === PING_TYPE));
       await until("the invitation is consumed", () => alice.heard.snapshot().invitations[0]?.state.status === "consumed");
-      await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === accepted.messageId && message.acknowledged));
+      await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
 
       // Bob's first word at a disclosed address has Alice select a private successor toward him: the pair she names is the one she now writes from.
-      const moved = (snapshot: Snapshot) => snapshot.channels.find((channel) => channel.head !== null && channel.head.localDid !== channel.channel.localDid);
+      const moved = (snapshot: Snapshot) => snapshot.channels.find((channel) => channel.headChannelId !== null && pairOf(channel.headChannelId).localDid !== channel.localDid);
       await until("alice's successor is the head of the pair bob wrote in", () => moved(alice.heard.snapshot()) !== undefined);
-      const head = moved(alice.heard.snapshot())!.head as Channel;
+      const head = headOf(moved(alice.heard.snapshot())!);
       await expect(alice.daemon.createContact("Nobody", [])).rejects.toThrow("at least one channel");
       expect(alice.heard.snapshot().contacts).toEqual([]);
       const contactId = await alice.daemon.createContact("Bob", [head]);
-      expect(alice.heard.snapshot().contacts).toMatchObject([{ petname: "Bob", defaultWriteTo: head }]);
+      expect(contactsOf(alice.heard.snapshot())).toMatchObject([{ petname: "Bob", defaultWriteTo: channelIdOf(head) }]);
       // As a view is handed it: the contact's conversation shows the head selected and the pair Bob wrote in reached from it, and no nameless conversation stands for that pair.
       const shown = published(alice.daemon);
       expect(shown.conversations.map(({ id, contactId: of, petname, channels, writeTo, defaultWriteTo }) => ({ id, contactId: of, petname, channels, writeTo, defaultWriteTo }))).toEqual([
@@ -1080,7 +1097,7 @@ describe("two daemons over a mediator", () => {
           petname: "Bob",
           channels: [
             { channelId: channelIdOf(head), selected: true },
-            { channelId: channelIdOf(moved(alice.heard.snapshot())!.channel), selected: false },
+            { channelId: moved(alice.heard.snapshot())!.channelId, selected: false },
           ],
           writeTo: [channelIdOf(head)],
           defaultWriteTo: channelIdOf(head),
@@ -1088,16 +1105,16 @@ describe("two daemons over a mediator", () => {
       ]);
       expect(shown.channels.map(({ channelId, headChannelId }) => [channelId, headChannelId])).toEqual(
         [
-          [channelIdOf(moved(alice.heard.snapshot())!.channel), channelIdOf(head)],
+          [moved(alice.heard.snapshot())!.channelId, channelIdOf(head)],
           [channelIdOf(head), channelIdOf(head)],
         ].sort(([a], [b]) => (a! < b! ? -1 : 1))
       );
       await alice.daemon.renameContact(contactId, "Bobby");
-      expect(alice.heard.snapshot().contacts[0]!.petname).toBe("Bobby");
+      expect(contactsOf(alice.heard.snapshot())[0]!.petname).toBe("Bobby");
 
       const hello = await alice.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "hello" } });
       expect(hello).toMatchObject({ outcome: "submitted", channel: head });
-      await until("bob reads the hello", () => messagesOf(bob.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
+      await until("bob reads the hello", () => bob.heard.snapshot().messages.some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
 
       const backup = await alice.daemon.exportBackup();
       await alice.daemon.close();
@@ -1108,25 +1125,26 @@ describe("two daemons over a mediator", () => {
       await expect(first.daemon.restoreIdentity(backup.bytes, "not the passphrase")).rejects.toThrow(/does not open this backup/);
       await expect(stat(path.join(root, ".estoc", "vault.sqlite"))).rejects.toThrow();
       await first.daemon.restoreIdentity(backup.bytes, PASSPHRASE);
-      expect(first.heard.snapshot()).toMatchObject({ label: "Alice", restoreUnexplained: true, contacts: [{ petname: "Bobby" }] });
+      expect(first.heard.snapshot()).toMatchObject({ label: "Alice", restoreUnexplained: true });
+      expect(contactsOf(first.heard.snapshot())).toMatchObject([{ petname: "Bobby" }]);
 
       const closed = /sending opens once what a restore cannot bring back has been explained/;
       const bobsDid = head.peerDid;
-      const successor = first.heard.snapshot().dids.find((did) => did.did === head.localDid)!.didId as DidId;
+      const successor = first.heard.snapshot().dids.find((did) => did.did === head.localDid)!.didId as string as DidId;
       await expect(first.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "too soon" } })).rejects.toThrow(closed);
       await expect(first.daemon.retry(hello.messageId)).rejects.toThrow(closed);
       await expect(first.daemon.rotate(successor, bobsDid)).rejects.toThrow(closed);
       await expect(first.daemon.completeResponse("00000000-0000-5000-8000-000000000000" as never, "pure-ack")).rejects.toThrow(closed);
       await expect(first.daemon.completeNotification("018f0000-0000-7000-8000-000000000000" as never)).rejects.toThrow(closed);
       await expect(first.daemon.acceptInvitation(invitation, "nobody")).rejects.toThrow(closed);
-      expect(messagesOf(first.heard.snapshot()).filter((message) => message.direction === "out" && message.msg?.type === BASIC_MESSAGE)).toHaveLength(1);
+      expect(first.heard.snapshot().messages.filter((message) => message.direction === "out" && message.headers?.type === BASIC_MESSAGE)).toHaveLength(1);
 
       // Receiving, reconciling and what the vault owes on its own wait for no explanation.
       await until("the restored vault's line is live", () => first.heard.lines()?.connections[0]?.live === true);
       const reply = await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content: "still there?" }, pleaseAck: [""] });
       expect(reply.outcome).toBe("submitted");
-      await until("the restored vault reads bob", () => messagesOf(first.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "still there?"));
-      await until("bob's message is acknowledged by the restored vault", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === reply.messageId && message.acknowledged));
+      await until("the restored vault reads bob", () => first.heard.snapshot().messages.some((message) => message.body.state === "available" && message.body.body["content"] === "still there?"));
+      await until("bob's message is acknowledged by the restored vault", () => bob.heard.snapshot().messages.some((message) => message.messageId === (reply.messageId as string) && message.acknowledged));
       expect(first.heard.snapshot().pending).toMatchObject({ pendingOutbounds: [] });
 
       // The explanation is owed by this runtime, not by this process: another over the same file owes it still.
@@ -1142,7 +1160,7 @@ describe("two daemons over a mediator", () => {
       expect(again.heard.snapshot().restoreUnexplained).toBe(false);
       const after = await again.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "back again" } });
       expect(after.outcome).toBe("submitted");
-      await until("bob reads the restored vault", () => messagesOf(bob.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "back again"));
+      await until("bob reads the restored vault", () => bob.heard.snapshot().messages.some((message) => message.body.state === "available" && message.body.body["content"] === "back again"));
 
       // A restored vault never held the envelopes its submitted messages released, and an erasure collects the ones a vault did hold: neither is asked for them again.
       const merged = await again.daemon.mergeBackup(backup.bytes);
@@ -1181,24 +1199,24 @@ describe("two daemons over a mediator", () => {
 
       const added = await bob.daemon.addContactByDid(handedOut.did, "Alice");
       expect(added).toMatchObject({ outcome: "submitted", because: null });
-      expect(bob.heard.snapshot().contacts).toMatchObject([{ petname: "Alice", channels: [{ channel: added.channel, selected: true }] }]);
+      expect(contactsOf(bob.heard.snapshot())).toMatchObject([{ petname: "Alice", channels: [{ channelId: channelIdOf(added.channel), selected: true }] }]);
       expect(added.channel.peerDid).toBe(canonicalDidOf(handedOut.did));
 
-      await until("alice holds bob's Ping", () => messagesOf(alice.heard.snapshot()).some((message) => message.direction === "in" && message.msg?.type === PING_TYPE && message.msg.pthid === null));
-      await until("bob's Ping is acknowledged", () => messagesOf(bob.heard.snapshot()).some((message) => message.messageId === added.messageId && message.acknowledged));
+      await until("alice holds bob's Ping", () => alice.heard.snapshot().messages.some((message) => message.direction === "in" && message.headers?.type === PING_TYPE && message.headers.pthid === null));
+      await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (added.messageId as string) && message.acknowledged));
 
       // The address stays for the next stranger: Alice answers Bob from a private successor and keeps handing out the same DID.
-      const moved = (snapshot: Snapshot) => snapshot.channels.find((channel) => channel.head !== null && channel.head.localDid !== channel.channel.localDid);
+      const moved = (snapshot: Snapshot) => snapshot.channels.find((channel) => channel.headChannelId !== null && pairOf(channel.headChannelId).localDid !== channel.localDid);
       await until("alice's successor is the head of the pair bob wrote in", () => moved(alice.heard.snapshot()) !== undefined);
       expect(await alice.daemon.publicDid()).toEqual(handedOut);
-      const head = moved(alice.heard.snapshot())!.head as Channel;
+      const head = headOf(moved(alice.heard.snapshot())!);
       const contactId = await alice.daemon.createContact("Bob", [head]);
       const hello = await alice.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "hello" } });
       expect(hello).toMatchObject({ outcome: "submitted", channel: head });
-      await until("bob reads the hello", () => messagesOf(bob.heard.snapshot()).some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
+      await until("bob reads the hello", () => bob.heard.snapshot().messages.some((message) => message.body.state === "available" && message.body.body["content"] === "hello"));
 
       // Bob's introduction after the Ping goes by the contact, not the Ping's channel: Alice has answered from a replacement, and the address the Ping went to takes nothing more from him.
-      await until("bob holds alice's replacement", () => bob.heard.snapshot().channels.some((channel) => channel.head !== null && channel.head.peerDid !== channel.channel.peerDid));
+      await until("bob holds alice's replacement", () => bob.heard.snapshot().channels.some((channel) => channel.headChannelId !== null && pairOf(channel.headChannelId).peerDid !== channel.peerDid));
       const profile = { type: PROFILE, body: { profile: { displayName: "Bob" } } };
       await expect(bob.daemon.send({ channel: added.channel }, profile)).rejects.toThrow("the peer has replaced its DID");
       const introduced = await bob.daemon.send({ contactId: added.contactId }, profile);
@@ -1215,10 +1233,15 @@ describe("two daemons over a mediator", () => {
 
 describe("a daemon whose vault records an observation it does not admit", () => {
   const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
-  const channelIn = (snapshot: Snapshot, channel: Channel) => snapshot.channels.find((record) => record.channel.localDid === channel.localDid && record.channel.peerDid === channel.peerDid)!;
+  /** A pair's record with the messages and observations it names, as a view assembles them. */
+  const channelIn = (snapshot: Snapshot, channel: Channel) => {
+    const index = indexSnapshot(snapshot);
+    const record = index.channel(channelIdOf(channel))!;
+    return { ...record, messages: record.messageIds.map((messageId) => index.message(messageId)!), observations: record.observationIds.map((sourceEventCid) => index.observation(sourceEventCid)!) };
+  };
   const liveAfter = (heard: Told, index: number): boolean => heard.events.slice(index).some(([name, lines]) => name === "lines" && (lines as Lines).connections[0]?.live === true);
   /** The records of a snapshot as the UI is handed them. */
-  const recordsOf = (snapshot: Snapshot): unknown => JSON.parse(JSON.stringify({ channels: snapshot.channels, unplaced: snapshot.unplaced, pending: snapshot.pending }));
+  const recordsOf = (snapshot: Snapshot): unknown => JSON.parse(JSON.stringify({ channels: snapshot.channels, messages: snapshot.messages, observations: snapshot.observations, unplaced: snapshot.unplaced, pending: snapshot.pending }));
   const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   test(
@@ -1232,14 +1255,14 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       await alice.daemon.setMediator(mediator.did);
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
       const { invitation, didId } = await alice.daemon.createInvitation("many");
-      const a0 = alice.heard.snapshot().dids.find((did) => did.didId === didId)!.did!;
+      const a0 = alice.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
 
       // Bob's first word has Alice move to a private address toward him; he writes there before he moves himself.
       const bob = await run(mediator, 2, BOB, { privateAddresses: false });
       const b0 = bob.party.did;
       await bob.agent.send({ channel: channelOf(b0, a0), recipientDid: invitation.from }, { type: BASIC_MESSAGE, body: { content: "hello" } });
       await until("bob holds alice's move", () => bob.inbounds.length === 1);
-      const old = alice.heard.snapshot().channels.find((channel) => channel.channel.localDid === a0)!.head!;
+      const old = headOf(alice.heard.snapshot().channels.find((channel) => channel.localDid === a0)!);
       const a1 = old.localDid;
       await bob.agent.send({ channel: channelOf(b0, a1) }, { type: BASIC_MESSAGE, body: { content: "before I move" } });
       await until("alice reads bob at her new address", () => channelIn(alice.heard.snapshot(), old).messages.some((message) => message.body.state === "available" && message.body.body["content"] === "before I move"));
@@ -1259,15 +1282,15 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       await pause(500);
 
       const shown = channelIn(alice.heard.snapshot(), old);
-      expect(shown.messages.filter(({ direction, msg }) => direction === "in" && msg?.type !== EMPTY_MESSAGE_TYPE).map(({ body }) => (body.state === "available" ? body.body : body.state))).toEqual([{ content: "before I move" }]);
+      expect(shown.messages.filter(({ direction, headers }) => direction === "in" && headers?.type !== EMPTY_MESSAGE_TYPE).map(({ body }) => (body.state === "available" ? body.body : body.state))).toEqual([{ content: "before I move" }]);
       expect(shown.peerName).toBeNull();
       expect(shown.observations.map(({ standing, disposition, contradicting }) => [standing, disposition, contradicting])).toEqual([
         [{ status: "complete" }, { status: "admitted" }, false],
         [{ status: "complete" }, { status: "admitted" }, false],
         [{ status: "complete" }, { status: "ignored-superseded" }, false],
       ]);
-      for (const observation of shown.observations) expect(Object.keys(observation).sort()).toEqual(["at", "channel", "contradicting", "disposition", "messageId", "sourceEventCid", "standing", "verification"]);
-      expect(alice.heard.snapshot()).toMatchObject({ unplaced: { inputs: [] }, pending: { pendingOutbounds: [], missingResponses: [] } });
+      for (const observation of shown.observations) expect(Object.keys(observation).sort()).toEqual(["at", "channelId", "contradicting", "disposition", "messageId", "sourceEventCid", "standing", "verification"]);
+      expect(alice.heard.snapshot()).toMatchObject({ unplaced: { observationIds: [] }, pending: { pendingOutbounds: [], missingResponses: [] } });
       expect([forwardsSeen(mediator), bob.inbounds.length]).toEqual([forwards, inbounds]);
       const settled = recordsOf(alice.heard.snapshot());
       const after = await alice.daemon.exportBackup();
@@ -1318,7 +1341,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
     return new Uint8Array(await readFile(path.join(root, "evidence.sqlite")));
   }
 
-  const inputsOf = (channel: Snapshot["channels"][number]) => channel.messages.filter(({ direction, msg }) => direction === "in" && msg?.type !== EMPTY_MESSAGE_TYPE).map(({ body, verification }) => [body.state === "available" ? body.body : body.state, verification.status]);
+  const inputsOf = (channel: ReturnType<typeof channelIn>) => channel.messages.filter(({ direction, headers }) => direction === "in" && headers?.type !== EMPTY_MESSAGE_TYPE).map(({ body, verification }) => [body.state === "available" ? body.body : body.state, verification.status]);
 
   test(
     "admits the observation once the evidence its proof waited for is merged in: the UI is handed the message with its content, and the acknowledgement it asks for as work owed, sent only by hand; the daemon opened again over the vault reads the same records and sends nothing",
@@ -1331,14 +1354,14 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       await alice.daemon.setMediator(mediator.did);
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
       const { invitation, didId } = await alice.daemon.createInvitation("many");
-      const a0 = alice.heard.snapshot().dids.find((did) => did.didId === didId)!.did!;
+      const a0 = alice.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
 
       const bob = await run(mediator, 2, BOB, { privateAddresses: false });
       const b0 = bob.party.did;
       await bob.agent.send({ channel: channelOf(b0, a0), recipientDid: invitation.from }, { type: BASIC_MESSAGE, body: { content: "hello" } });
       await until("bob holds alice's move", () => bob.inbounds.length === 1);
-      const pair = alice.heard.snapshot().channels.find((channel) => channel.channel.localDid === a0)!.head!;
-      const a1 = alice.heard.snapshot().dids.find((did) => did.did === pair.localDid)!.didId;
+      const pair = headOf(alice.heard.snapshot().channels.find((channel) => channel.localDid === a0)!);
+      const a1 = alice.heard.snapshot().dids.find((did) => did.did === pair.localDid)!.didId as string as DidId;
 
       // Bob's word at Alice's new address proves his address succeeds one whose document Alice has never held: the observation is recorded, its admission waiting for that document.
       const { prior, proof } = await proofOfSuccession(bob.party, BOB_PRIOR);
@@ -1350,7 +1373,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       const waiting = channelIn(alice.heard.snapshot(), pair);
       expect(inputsOf(waiting)).toEqual([]);
       expect(waiting.observations.at(-1)).toMatchObject({ standing: { status: "complete" }, verification: { status: "pending-proof" }, disposition: { status: "pending-admission", because: "the source's proof is not yet verified" } });
-      expect(alice.heard.snapshot().pending).toMatchObject({ missingResponses: [], pendingProofs: [{ sourceEventCid: waiting.observations.at(-1)!.sourceEventCid, channel: pair }] });
+      expect(alice.heard.snapshot().pending).toMatchObject({ missingResponses: [], pendingProofs: [{ sourceEventCid: waiting.observations.at(-1)!.sourceEventCid, channelId: channelIdOf(pair) }] });
 
       const evidence = await backupHoldingIssuer((await alice.daemon.exportBackup()).bytes, a1, prior);
       const merging = alice.heard.events.length;
@@ -1361,7 +1384,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       const admitted = channelIn(alice.heard.snapshot(), pair);
       expect(inputsOf(admitted)).toEqual([[{ content: "as I was saying" }, "verified"]]);
       expect(admitted.observations.at(-1)).toMatchObject({ standing: { status: "complete" }, verification: { status: "verified" }, disposition: { status: "admitted" }, contradicting: false });
-      expect(alice.heard.snapshot().pending).toMatchObject({ missingResponses: [{ effectType: PURE_ACK_EFFECT, channel: pair }], pendingProofs: [] });
+      expect(alice.heard.snapshot().pending).toMatchObject({ missingResponses: [{ effectType: PURE_ACK_EFFECT, channelId: channelIdOf(pair) }], pendingProofs: [] });
       expect([forwardsSeen(mediator), bob.inbounds.length]).toEqual([forwards, inbounds]);
       const settled = recordsOf(alice.heard.snapshot());
       await alice.daemon.close();
@@ -1375,7 +1398,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       expect([forwardsSeen(mediator), bob.inbounds.length]).toEqual([forwards, inbounds]);
 
       const { executionId } = again.heard.snapshot().pending.missingResponses[0]!;
-      expect(await again.daemon.completeResponse(executionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null, messageId: expect.any(String) as string });
+      expect(await again.daemon.completeResponse(executionId as string as ExecutionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null, messageId: expect.any(String) as string });
       await until("bob holds the acknowledgement", () => bob.inbounds.length === inbounds + 1);
       expect(forwardsSeen(mediator)).toBe(forwards + 1);
       await until("the acknowledgement is no longer owed", () => again.heard.snapshot().pending.missingResponses.length === 0);
