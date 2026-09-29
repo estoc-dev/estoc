@@ -32,3 +32,20 @@ export async function isStoragePersisted(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Why the browser refuses this page the private file system its worker
+ * keeps the vault in; null where it grants it. Firefox refuses it in a
+ * private window.
+ */
+export async function fileSystemRefused(): Promise<string | null> {
+  if (!("storage" in navigator) || typeof navigator.storage.getDirectory !== "function") {
+    return "this browser has no private file system for pages";
+  }
+  try {
+    await navigator.storage.getDirectory();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}

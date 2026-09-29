@@ -3,7 +3,7 @@ import type { Client, ConnectionState, DaemonMethods } from "@estoc/daemon-api/c
 import type { Epoch, Outcome, StateValue } from "@estoc/daemon-api/contract";
 import { basicMessage, indexSnapshot, invitationOf, invitationUrl, parseInvitation, profileMessage } from "@estoc/daemon-api/views";
 
-import { startDaemon } from "../daemon/client.js";
+import { daemonSocket, startDaemon } from "../daemon/client.js";
 import { forgetSeedKey } from "../daemon/keycache.js";
 import { FOLDER_VAULT } from "../daemon/places.js";
 import { saveFile } from "./backup.js";
@@ -11,7 +11,7 @@ import { carryDrafts, dropDrafts } from "./drafts.js";
 import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
-import { isStoragePersisted, persistStorage } from "./storage.js";
+import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
 import type { ChannelId, ContactId, Conversation, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, Phase, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
 
 /**
@@ -52,6 +52,8 @@ export const state = shallowReactive({
   persisted: false,
   /** the socket of an `estoc-daemon` this page is using instead of its own worker; null in the worker */
   daemonAt: null as string | null,
+  /** why the browser refuses the worker the files it would keep the vault in; no worker is started then */
+  fileSystemRefused: null as string | null,
   installed: isInstalled(),
   /** set when the browser offers to install; call to prompt */
   install: null as (() => Promise<void>) | null,
@@ -134,18 +136,26 @@ function show(epoch: Epoch, value: StateValue): void {
   }
 }
 
-function connectDaemon(): Client {
-  const started = startDaemon();
-  state.daemonAt = started.where === "worker" ? null : started.where;
-  started.client.onConnection((connection) => {
+async function connectDaemon(): Promise<void> {
+  const socket = daemonSocket();
+  state.daemonAt = socket;
+  if (socket === null) {
+    const refused = await fileSystemRefused();
+    if (refused !== null) {
+      state.fileSystemRefused = refused;
+      return;
+    }
+  }
+  const started = startDaemon(socket);
+  started.onConnection((connection) => {
     state.connection = connection;
     if (connection.state === "connected") state.away = null;
     else if (connection.state === "disconnected" && connection.because !== null && state.daemonAt !== null) state.away = `daemon at ${new URL(state.daemonAt).host} is not answering`;
   });
-  started.client.onState(({ epoch, value }) => show(epoch, value));
-  started.client.onLines(({ value }) => (state.lines = value));
-  started.client.onLog(({ line }) => log(line));
-  return started.client;
+  started.onState(({ epoch, value }) => show(epoch, value));
+  started.onLines(({ value }) => (state.lines = value));
+  started.onLog(({ line }) => log(line));
+  client = started;
 }
 
 function connected(): Client {
@@ -175,15 +185,16 @@ export async function refresh(): Promise<void> {
  * Bring the app up: connect to the daemon, which takes the vault's files
  * (or waits for the tab that has them) and says which screen they
  * dictate: nothing there, a vault without its cached seed, or straight in.
+ * A browser that refuses the worker its files gets no daemon, and the
+ * screen says why.
  */
-export function boot(): void {
+export async function boot(): Promise<void> {
   takePendingInvitation();
   setupPwa({
     onUpdateReady: (apply) => (state.applyUpdate = apply),
     onOfflineReady: () => (state.offlineReady = true),
     onInstallable: (prompt) => (state.install = prompt),
   });
-  client = connectDaemon();
   // A page looked at again is first brought up to what the daemon has committed since.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.phase === "open") void refresh();
@@ -192,6 +203,7 @@ export function boot(): void {
   window.addEventListener("online", () => {
     if (state.phase === "open") void reconnect().catch(() => undefined);
   });
+  await connectDaemon();
 }
 
 /**

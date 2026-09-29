@@ -45,6 +45,18 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
+  <div v-else-if="state.fileSystemRefused !== null" class="hollow" data-file-system-refused>
+    <div class="hollow-card">
+      <div class="eyebrow">Estoc</div>
+      <h1>No room for a vault in this window</h1>
+      <p>Estoc keeps your vault in files the browser sets aside for this page, and this window refuses them: {{ state.fileSystemRefused }}</p>
+      <p class="note">
+        Firefox does this in a private window. Open Estoc in a regular window, or run <code>estoc serve</code> and open the link it prints: its daemon keeps the
+        vault on this computer, and the window only shows it.
+      </p>
+    </div>
+  </div>
+
   <div v-else-if="state.phase === 'booting'" class="hollow"></div>
 
   <div v-else-if="state.phase === 'elsewhere'" class="hollow" data-elsewhere>
