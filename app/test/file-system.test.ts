@@ -13,8 +13,6 @@ vi.mock("../src/daemon/client.js", () => ({
     return { onConnection: unheard, onState: unheard, onLines: unheard, onLog: unheard };
   },
 }));
-// Vue's DOM runtime looks at the document once as it loads, and the store listens on it: loaded first, listened on after
-await import("vue");
 vi.stubGlobal("window", { addEventListener: () => undefined });
 vi.stubGlobal("document", { addEventListener: () => undefined });
 vi.stubGlobal("location", { search: "", pathname: "/", hash: "", href: "http://app.test/" });
