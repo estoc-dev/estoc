@@ -1,25 +1,28 @@
-/* Ink and verdigris. What you send is verdigris, what arrives is grey
-   paper; the accent is one colour, used for what can be acted on. */
+/* Copper and verdigris on one cool ground. What you send is copper, what
+   arrives is verdigris; side and tail shape say the same, so colour is
+   never the only cue. Every surface shares the ground's hue and differs
+   in lightness alone. Pale verdigris is the one accent, for what can be
+   acted on; warm colour is kept for what is yours and what has gone wrong. */
 
 :root {
-  --paper: #f4f5f4;
-  --panel: #fbfbfb;
-  --field: #ffffff;
-  --line: #dadedd;
-  --line-strong: #c5cbca;
-  --ink: #1d2528;
-  --steel: #5a6b72;
-  --accent: #2c6355;
-  --on-accent: #ffffff;
-  --lamp: #3d8a76;
-  --received: #e6e9e8;
-  --received-line: #d6dbd9;
-  --alarm: #a4442e;
-  --attention: #8f6f2e;
-  --attention-wash: #f5f0e3;
-  --scrim: #1d252866;
-  --shadow: #1d252844;
+  --ground: #172024;
+  --surface: #202b30;
+  --raised: #263238;
+  --line: #36464d;
+  --line-strong: #4a5d65;
+  --ink: #e9eeee;
+  --ink-soft: #aebcc2;
+  --accent: #9acbbb;
+  --on-accent: #202b30;
+  --verdigris-wash: #253e36;
+  --copper-wash: #44352d;
+  --alarm: #f0ac95;
+  --attention: #d9b872;
+  --attention-wash: #3a3226;
+  --scrim: #00000099;
+  --shadow: #00000088;
 
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
@@ -27,30 +30,7 @@
   --tap: 44px;
   --gutter: 20px;
 
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #161a1a;
-    --panel: #1e2323;
-    --field: #232929;
-    --line: #2d3434;
-    --line-strong: #3a4343;
-    --ink: #e6e9e8;
-    --steel: #98a4a4;
-    --accent: #4fa58e;
-    --on-accent: #161a1a;
-    --lamp: #7fc4ad;
-    --received: #262c2c;
-    --received-line: #333b3b;
-    --alarm: #d9705a;
-    --attention: #c9a45a;
-    --attention-wash: #2a2620;
-    --scrim: #00000099;
-    --shadow: #00000088;
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 * {
@@ -65,11 +45,11 @@ body,
 }
 
 body {
-  background: var(--paper);
+  background: var(--ground);
   color: var(--ink);
-  font-family: var(--serif);
-  font-size: 16px;
-  line-height: 1.4;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -106,12 +86,12 @@ p {
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .note {
   font-size: 13px;
-  color: var(--steel);
+  color: var(--ink-soft);
   overflow-wrap: anywhere;
 }
 
@@ -139,7 +119,7 @@ p {
   gap: 8px;
   min-height: var(--tap);
   padding: 0 18px;
-  border-radius: 22px;
+  border-radius: 12px;
   font-size: 15px;
   text-decoration: none;
   transition: background 120ms ease, border-color 120ms ease;
@@ -157,14 +137,14 @@ p {
 
 .btn-quiet,
 .btn-danger {
-  background: var(--panel);
+  background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--line-strong);
 }
 
 .btn-quiet:hover,
 .btn-danger:hover {
-  border-color: var(--steel);
+  border-color: var(--ink-soft);
 }
 
 .btn-danger {
@@ -216,9 +196,9 @@ p {
   height: var(--tap);
   flex: none;
   border: none;
-  border-radius: 22px;
+  border-radius: 12px;
   background: none;
-  color: var(--steel);
+  color: var(--ink-soft);
   text-decoration: none;
 }
 
@@ -226,9 +206,8 @@ p {
   color: var(--accent);
 }
 
-.icon-btn.filled {
-  background: var(--accent);
-  color: var(--on-accent);
+.icon-btn.ink {
+  color: var(--ink);
 }
 
 .icon-btn:disabled {
@@ -242,13 +221,13 @@ p {
   padding: 10px 14px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: var(--field);
+  background: var(--raised);
   color: var(--ink);
   font-size: 16px;
 }
 
 .field::placeholder {
-  color: var(--steel);
+  color: var(--ink-soft);
   opacity: 0.8;
 }
 
@@ -269,7 +248,7 @@ textarea.field {
 select.field {
   appearance: none;
   padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%235a6b72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23aebcc2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
@@ -307,11 +286,11 @@ select.field {
   height: 8px;
   border-radius: 50%;
   flex: none;
-  background: var(--steel);
+  background: var(--ink-soft);
 }
 
 .lamp.live {
-  background: var(--lamp);
+  background: var(--accent);
   animation: lamp-breathe 2.4s ease-in-out infinite;
 }
 
@@ -346,35 +325,38 @@ select.field {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 46px;
-  height: 46px;
+  width: 42px;
+  height: 42px;
+  border: none;
   border-radius: 50%;
-  background: var(--received);
+  background: var(--verdigris-wash);
   color: var(--accent);
-  font-size: 20px;
+  font-size: 17px;
+  font-weight: 500;
 }
 
 .avatar.small {
   width: 36px;
   height: 36px;
-  font-size: 17px;
+  font-size: 15px;
 }
 
 .avatar.large {
-  width: 72px;
-  height: 72px;
-  font-size: 30px;
+  width: 64px;
+  height: 64px;
+  font-size: 24px;
 }
 
 .avatar.nameless {
-  background: var(--paper);
+  background: var(--ground);
   border: 1px dashed var(--line-strong);
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
-.avatar.you {
-  background: var(--accent);
-  color: var(--on-accent);
+button.avatar {
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
 }
 
 .badge {
@@ -393,7 +375,7 @@ select.field {
 
 .badge.attention {
   background: var(--attention);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 
 .chip {
@@ -401,17 +383,17 @@ select.field {
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
-  background: var(--paper);
-  color: var(--steel);
+  background: var(--ground);
+  color: var(--ink-soft);
 }
 
 .chip.accent {
-  background: var(--received);
+  background: var(--verdigris-wash);
   color: var(--accent);
 }
 
 .chip.alarm {
-  background: var(--paper);
+  background: var(--ground);
   color: var(--alarm);
 }
 
@@ -428,7 +410,7 @@ select.field {
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--field);
+  background: var(--raised);
   overflow: hidden;
 }
 
@@ -453,7 +435,7 @@ select.field {
 
 button.row:hover,
 a.row:hover {
-  background: var(--paper);
+  background: var(--ground);
 }
 
 .row.danger {
@@ -476,7 +458,7 @@ a.row:hover {
 .row-sub,
 .row-end {
   font-size: 13px;
-  color: var(--steel);
+  color: var(--ink-soft);
   overflow-wrap: anywhere;
 }
 
@@ -487,7 +469,7 @@ a.row:hover {
 
 .row .chevron {
   flex: none;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .card {
@@ -497,11 +479,11 @@ a.row:hover {
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--field);
+  background: var(--raised);
 }
 
 .card.quiet {
-  background: var(--panel);
+  background: var(--surface);
 }
 
 .card-actions {
@@ -533,7 +515,7 @@ a.row:hover {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--paper);
+  background: var(--surface);
 }
 
 .topbar {
@@ -541,39 +523,47 @@ a.row:hover {
   align-items: center;
   gap: 4px;
   flex: none;
-  min-height: 60px;
+  min-height: 64px;
   padding: 8px 8px 8px 4px;
   padding-top: max(8px, env(safe-area-inset-top));
-  background: var(--panel);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
 .topbar.plain {
-  padding-left: var(--gutter);
+  padding-left: 16px;
 }
 
 .topbar .title {
   flex: 1;
   min-width: 0;
   font-size: 18px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.topbar .wordmark {
+.topbar .heading {
   flex: 1;
-  font-size: 24px;
-  letter-spacing: 0.02em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-left: 8px;
+  line-height: 1.25;
+}
+
+.topbar .heading .title {
+  flex: none;
+  font-size: 22px;
 }
 
 .topbar .status {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--accent);
-  padding: 0 4px;
   white-space: nowrap;
 }
 
@@ -582,7 +572,7 @@ a.row:hover {
 }
 
 .topbar .status.quiet {
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .screen-body {
@@ -610,7 +600,15 @@ a.row:hover {
 
 .footer-note {
   font-size: 12px;
-  color: var(--steel);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.brand {
+  padding: 16px;
+  font-family: var(--serif);
+  font-size: 13px;
+  color: var(--ink-soft);
   text-align: center;
 }
 
@@ -636,12 +634,12 @@ a.row:hover {
 }
 
 .banner .chevron {
-  color: var(--steel);
+  color: var(--ink-soft);
   flex: none;
 }
 
 .banner.error {
-  background: var(--paper);
+  background: var(--ground);
   color: var(--alarm);
 }
 
@@ -652,23 +650,6 @@ a.row:hover {
 
 .banner.error .icon {
   color: var(--alarm);
-}
-
-.fab {
-  position: absolute;
-  right: 20px;
-  bottom: max(28px, env(safe-area-inset-bottom));
-  width: 58px;
-  height: 58px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--on-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 6px 18px var(--shadow);
-  z-index: 5;
 }
 
 /* ---- the shell: one screen at a time, or columns ---- */
@@ -705,12 +686,12 @@ a.row:hover {
 }
 
 .pane-list {
-  background: var(--panel);
+  background: var(--surface);
   border-right: 1px solid var(--line);
 }
 
 .pane-side {
-  background: var(--panel);
+  background: var(--surface);
   border-left: 1px solid var(--line);
 }
 
@@ -718,10 +699,6 @@ a.row:hover {
   max-width: 560px;
   width: 100%;
   margin: 0 auto;
-}
-
-.shell.wide .topbar .wordmark {
-  font-size: 22px;
 }
 
 /* an overlay drawer on the middle width: details slide over the chat */
@@ -738,7 +715,7 @@ a.row:hover {
   right: 0;
   bottom: 0;
   width: min(360px, 100%);
-  background: var(--panel);
+  background: var(--surface);
   border-left: 1px solid var(--line);
   box-shadow: -8px 0 30px var(--shadow);
   z-index: 9;
@@ -760,7 +737,7 @@ a.row:hover {
   padding: 12px var(--gutter) max(36px, env(safe-area-inset-bottom));
   border: none;
   color: var(--ink);
-  background: var(--panel);
+  background: var(--surface);
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -8px 30px var(--shadow);
 }
@@ -779,6 +756,7 @@ a.row:hover {
 
 .sheet .sheet-title {
   font-size: 20px;
+  font-weight: 600;
 }
 
 @media (min-width: 720px) {
@@ -803,9 +781,10 @@ a.row:hover {
 .convo-row {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
-  padding: 12px 16px 12px var(--gutter);
+  min-height: 80px;
+  padding: 18px 16px;
   border: none;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -814,16 +793,16 @@ a.row:hover {
 }
 
 .convo-row:hover {
-  background: var(--paper);
+  background: var(--ground);
 }
 
 .convo-row.active {
-  background: var(--received);
+  background: var(--verdigris-wash);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .convo-row.active .avatar {
-  background: var(--field);
+  background: var(--raised);
 }
 
 .convo-main {
@@ -843,7 +822,8 @@ a.row:hover {
 .convo-name {
   flex: 1;
   min-width: 0;
-  font-size: 17px;
+  font-size: 16px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -851,13 +831,13 @@ a.row:hover {
 
 .convo-name.nameless {
   font-style: italic;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .convo-time {
   flex: none;
-  font-size: 13px;
-  color: var(--steel);
+  font-size: 12px;
+  color: var(--ink-soft);
 }
 
 .convo-time.fresh {
@@ -868,7 +848,7 @@ a.row:hover {
   flex: 1;
   min-width: 0;
   font-size: 14px;
-  color: var(--steel);
+  color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -885,7 +865,7 @@ a.row:hover {
 .list-note {
   padding: 20px var(--gutter);
   font-size: 14px;
-  color: var(--steel);
+  color: var(--ink-soft);
   text-align: center;
 }
 
@@ -894,7 +874,7 @@ a.row:hover {
   flex-direction: column;
   gap: 14px;
   padding: 28px var(--gutter);
-  color: var(--steel);
+  color: var(--ink-soft);
   text-align: center;
   align-items: center;
 }
@@ -926,7 +906,8 @@ a.row:hover {
 }
 
 .chat-head-link .name {
-  font-size: 18px;
+  font-size: 17px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -949,8 +930,9 @@ a.row:hover {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 16px 12px;
+  gap: 14px;
+  padding: 22px 16px 16px;
+  background: var(--ground);
 }
 
 .thread > :first-child {
@@ -962,7 +944,7 @@ a.row:hover {
   max-width: 320px;
   text-align: center;
   font-size: 13px;
-  color: var(--steel);
+  color: var(--ink-soft);
   padding: 4px 12px;
 }
 
@@ -975,7 +957,7 @@ a.row:hover {
   max-width: 320px;
   text-align: center;
   font-size: 12px;
-  color: var(--steel);
+  color: var(--ink-soft);
   padding: 4px 12px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -989,8 +971,8 @@ a.row:hover {
 .bubble {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-width: min(78%, 480px);
+  gap: 4px;
+  max-width: min(85%, 520px);
 }
 
 .bubble.received {
@@ -1010,22 +992,19 @@ a.row:hover {
 }
 
 .bubble-body {
-  padding: 9px 13px;
+  padding: 11px 14px;
   border-radius: 16px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .bubble.received .bubble-body {
-  background: var(--received);
-  border: 1px solid var(--received-line);
+  background: var(--verdigris-wash);
   border-bottom-left-radius: 4px;
 }
 
 .bubble.sent .bubble-body {
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: var(--on-accent);
+  background: var(--copper-wash);
   border-bottom-right-radius: 4px;
 }
 
@@ -1035,7 +1014,7 @@ a.row:hover {
   padding: 2px 12px;
   font-size: 13px;
   font-style: italic;
-  color: var(--steel);
+  color: var(--ink-soft);
   text-align: center;
   white-space: normal;
 }
@@ -1077,7 +1056,7 @@ a.row:hover {
   gap: 4px 10px;
   padding: 0 6px;
   font-size: 12px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .bubble.sent .bubble-meta {
@@ -1115,7 +1094,7 @@ a.row:hover {
 
 .bubble .diagnostic {
   font-size: 12px;
-  color: var(--steel);
+  color: var(--ink-soft);
   padding: 0 6px;
 }
 
@@ -1142,7 +1121,7 @@ a.row:hover {
   font-family: var(--mono);
   font-style: normal;
   font-size: 12px;
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
@@ -1151,7 +1130,7 @@ a.row:hover {
   flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--surface);
   border-top: 1px solid var(--line);
 }
 
@@ -1162,7 +1141,7 @@ a.row:hover {
   flex-wrap: wrap;
   padding: 8px 16px 0;
   font-size: 13px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .composer-line.error {
@@ -1185,8 +1164,10 @@ a.row:hover {
   min-width: 0;
   min-height: var(--tap);
   max-height: 140px;
-  padding: 11px 14px;
+  padding: 10px 14px;
+  border-color: var(--line);
   border-radius: 22px;
+  background: var(--ground);
   overflow-y: auto;
 }
 
@@ -1216,7 +1197,7 @@ a.row:hover {
   overflow-y: auto;
   overflow-wrap: anywhere;
   font-size: 13px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 /* ---- the hollow screens: onboarding, locked, faults ---- */
@@ -1240,7 +1221,8 @@ a.row:hover {
 
 .hollow-card h1 {
   font-size: 24px;
-  font-weight: normal;
+  font-weight: 600;
+  line-height: 1.25;
   margin: 0;
 }
 
@@ -1250,7 +1232,7 @@ a.row:hover {
 }
 
 .hollow-card p {
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .hollow-card code {
@@ -1271,7 +1253,7 @@ a.row:hover {
   margin-bottom: -1px;
   min-height: var(--tap);
   padding: 6px 12px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .tab.active {
@@ -1293,7 +1275,7 @@ a.row:hover {
   gap: 12px;
   padding: 8px 8px 8px 16px;
   background: var(--ink);
-  color: var(--paper);
+  color: var(--ground);
   border-radius: 28px;
   box-shadow: 0 8px 24px var(--shadow);
   z-index: 40;
@@ -1308,7 +1290,7 @@ a.row:hover {
 
 .update-chip.alarm {
   background: var(--alarm);
-  color: #ffffff;
+  color: var(--surface);
   border-radius: 20px;
 }
 
@@ -1336,12 +1318,12 @@ a.row:hover {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.6;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .log summary {
   cursor: pointer;
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-size: 14px;
   min-height: var(--tap);
   display: flex;
@@ -1360,7 +1342,7 @@ a.row:hover {
 .received-list .when {
   flex: none;
   width: 76px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .pair {
@@ -1380,7 +1362,7 @@ a.row:hover {
 .pair .who {
   flex: none;
   width: 42px;
-  color: var(--steel);
+  color: var(--ink-soft);
 }
 
 .chips {

@@ -325,7 +325,7 @@ const details = () => go({ kind: "details", key: props.conversationKey });
           <button v-if="channelOf(channelId)" class="row" type="button" :title="endsOf(channelOf(channelId)!)" data-channel-option @click="pick(channelId)">
             <span class="row-main">
               <span class="mono">you {{ shortDid(channelOf(channelId)!.localDid) }}</span>
-              <span class="mono" style="color: var(--steel)">them {{ shortDid(channelOf(channelId)!.peerDid) }}</span>
+              <span class="mono" style="color: var(--ink-soft)">them {{ shortDid(channelOf(channelId)!.peerDid) }}</span>
             </span>
             <Icon v-if="target && channelId === target.channelId" name="check" class="chevron" :size="20" />
           </button>

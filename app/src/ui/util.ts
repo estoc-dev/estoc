@@ -66,7 +66,10 @@ export function labelOf(c: Conversation): string {
 
 /** The letter a conversation is shown under; none while nobody has given it a name. */
 export function initialOf(c: Conversation): string {
-  const name = c.petname ?? c.claimedName?.name ?? null;
+  return initialOfName(c.petname ?? c.claimedName?.name ?? null);
+}
+
+export function initialOfName(name: string | null): string {
   return name === null || name === "" ? "?" : [...name][0]!.toUpperCase();
 }
 

@@ -14,7 +14,7 @@ import { go, keyOf, layout, screen } from "./nav.js";
 import RestoreNotice from "./RestoreNotice.vue";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
-import { failedToSend, initialOf, labelOf, whenOf } from "./util.js";
+import { failedToSend, initialOf, initialOfName, labelOf, whenOf } from "./util.js";
 
 const { mediation, lamp, word } = useStatus();
 const { count: attention } = useAttention();
@@ -56,12 +56,12 @@ const rows = computed<Row[]>(() =>
 <template>
   <div class="screen">
     <Topbar>
-      <span class="wordmark">Estoc</span>
-      <span class="status" :class="{ error: lamp === 'error', quiet: lamp === '' }" data-status><span class="lamp" :class="lamp"></span>{{ word }}</span>
-      <button class="icon-btn" type="button" aria-label="You and settings" data-you @click="go({ kind: 'you' })"><Icon name="gear" /></button>
-      <button v-if="layout !== 'narrow'" class="icon-btn filled" type="button" aria-label="New conversation" data-new-conversation @click="go({ kind: 'new' })">
-        <Icon name="plus" :size="20" />
-      </button>
+      <button class="avatar" type="button" aria-label="You and settings" data-you @click="go({ kind: 'you' })">{{ initialOfName(state.snapshot?.label ?? null) }}</button>
+      <span class="heading">
+        <span class="title">Messages</span>
+        <span class="status" :class="{ error: lamp === 'error', quiet: lamp === '' }" data-status><span class="lamp" :class="lamp"></span>{{ word }}</span>
+      </span>
+      <button class="icon-btn ink" type="button" aria-label="New conversation" data-new-conversation @click="go({ kind: 'new' })"><Icon name="compose" /></button>
     </Topbar>
 
     <button v-if="attention > 0" class="banner" type="button" data-attention @click="go({ kind: 'attention' })">
@@ -82,7 +82,7 @@ const rows = computed<Row[]>(() =>
         <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :pick="chooseMediator" />
       </div>
       <div v-else-if="rows.length === 0" class="empty">
-        <p>No conversations yet. Tap + to invite someone, or to accept an invitation.</p>
+        <p>No conversations yet. Start one from the top of this list: invite someone, or accept an invitation.</p>
       </div>
 
       <button
@@ -112,10 +112,9 @@ const rows = computed<Row[]>(() =>
       <p v-if="openLinks > 0" class="list-note" data-open-links>
         <button class="link" type="button" @click="go({ kind: 'new' })">{{ openLinks }} invitation link{{ openLinks === 1 ? "" : "s" }} of yours {{ openLinks === 1 ? "is" : "are" }} still open</button>
       </p>
-    </div>
 
-    <button v-if="layout === 'narrow' && (rows.length > 0 || mediation !== null)" class="fab" type="button" aria-label="New conversation" data-new-conversation @click="go({ kind: 'new' })">
-      <Icon name="plus" :size="26" />
-    </button>
+      <div class="spacer"></div>
+      <p class="brand">Estoc</p>
+    </div>
   </div>
 </template>
