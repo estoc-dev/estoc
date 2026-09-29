@@ -49,14 +49,14 @@ The relations between colours matter more than any single value. Change a colour
 - The interface is set in the system sans-serif. Serif is kept for the Estoc wordmark. DIDs and addresses are monospace.
 - The main weights are 400 and 600. 600 is for names and titles. The letter in an avatar is 500.
 - The main sizes are 12 for times and status, 15 for body, 16 for names and input, and 22 for the title of the list. These are the ones to reach for first.
-- Other sizes in use: 13 for notes and eyebrows, 14 for list previews and small buttons, 17 for the name at the top of a chat, 18 for the title of any other screen, 20 for a sheet title, 24 for the title of a first-run screen and the letter in a large avatar.
+- Other sizes in use: 13 for notes, 14 for list previews and small buttons, 17 for the name at the top of a chat, 18 for the title of any other screen, 20 for a sheet title, 24 for the title of a first-run screen and the letter in a large avatar.
 - Input text is at least 16, so that a phone browser does not zoom in on focus.
 
 ## Shape
 
 - The main radii are 4 for the tail corner of a bubble, 12 for buttons and cards, and 16 for bubbles. Avatars, the send button and the unread count are round.
 - Other radii in use: 8 for a block of monospace text, 10 for form fields and chips, 20 for sheets, 22 for the composer, 28 for the update notice.
-- Where the pointer is a finger, an action is at least 44 by 44. With a mouse, small buttons and the actions under a message may be smaller. A link inside a sentence takes the size of its text.
+- Where the pointer is a finger, an action is at least 44 by 44. With a mouse, small buttons and text-style actions may be smaller. A text-style action that stands on its own takes the full size and the room that goes with it, so that two targets do not cover one another. A link that is part of a sentence takes the size of its text.
 - A list row is at least 80 tall, with one line between rows.
 
 ## Screens

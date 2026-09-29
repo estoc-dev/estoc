@@ -110,7 +110,7 @@ const rows = computed<Row[]>(() =>
       </button>
 
       <p v-if="openLinks > 0" class="list-note" data-open-links>
-        <button class="link" type="button" @click="go({ kind: 'new' })">{{ openLinks }} invitation link{{ openLinks === 1 ? "" : "s" }} of yours {{ openLinks === 1 ? "is" : "are" }} still open</button>
+        <button class="link alone" type="button" @click="go({ kind: 'new' })">{{ openLinks }} invitation link{{ openLinks === 1 ? "" : "s" }} of yours {{ openLinks === 1 ? "is" : "are" }} still open</button>
       </p>
 
       <div class="spacer"></div>

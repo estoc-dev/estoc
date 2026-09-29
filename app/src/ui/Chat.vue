@@ -277,12 +277,12 @@ const details = () => go({ kind: "details", key: props.conversationKey });
           <template v-if="writable">Something you wrote waits in another channel of theirs.</template>
           <template v-else>Something you wrote is in a channel that takes no send now.</template>
         </span>
-        <button v-if="writable" type="button" class="link" @click="picked = channelId">write there</button>
+        <button v-if="writable" type="button" class="link alone" @click="picked = channelId">write there</button>
         <template v-else>
-          <button v-if="target !== null && draft === ''" type="button" class="link" data-draft-here @click="moveDraft(kept.channelId, target)">write it here</button>
-          <button type="button" class="link" data-draft-copy @click="copy(kept.text)">copy</button>
+          <button v-if="target !== null && draft === ''" type="button" class="link alone" data-draft-here @click="moveDraft(kept.channelId, target)">write it here</button>
+          <button type="button" class="link alone" data-draft-copy @click="copy(kept.text)">copy</button>
         </template>
-        <button type="button" class="link danger" data-draft-discard @click="kept.text = ''">discard</button>
+        <button type="button" class="link alone danger" data-draft-discard @click="kept.text = ''">discard</button>
         <blockquote v-if="!writable" class="draft-text" style="flex-basis: 100%" data-draft-text>{{ kept.text }}</blockquote>
       </div>
       <p v-if="sendError" class="composer-line error" data-send-error>{{ sendError }}</p>

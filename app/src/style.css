@@ -1101,16 +1101,14 @@ a.row:hover {
   }
 }
 
-/* The negative margin lets the target reach a finger's size while the
-   line under a bubble keeps the height of its text. */
 @media (pointer: coarse) {
-  .bubble-meta .link {
+  .bubble-meta .link,
+  .link.alone {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: var(--tap);
     min-height: var(--tap);
-    margin-block: calc((1.5em - var(--tap)) / 2);
   }
 }
 
