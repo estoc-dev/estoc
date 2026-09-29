@@ -19,7 +19,7 @@ import { bytesOf, shortDid, whenOf } from "./util.js";
  */
 const version = __APP_VERSION__;
 const snapshot = computed(() => state.snapshot);
-const { mediation, lamp, sentence } = useStatus();
+const { mediation, lamp, lost, sentence } = useStatus();
 const initial = computed(() => {
   const label = snapshot.value?.label ?? "";
   return label === "" ? "?" : [...label][0]!.toUpperCase();
@@ -176,7 +176,7 @@ function forget() {
         <span class="note" :class="{ 'error-text': lamp === 'error' }" data-status-sentence>
           <span class="lamp" :class="lamp"></span>
           {{ sentence }}
-          <button v-if="lamp === 'error' && state.away === null" class="link" type="button" data-reconnect @click="tryAgain">try again</button>
+          <button v-if="(lamp === 'error' || lost) && state.away === null" class="link" type="button" data-reconnect @click="tryAgain">try again</button>
         </span>
         <span v-if="reconnectNote" class="note error-text" data-reconnect-note>{{ reconnectNote }}</span>
       </div>

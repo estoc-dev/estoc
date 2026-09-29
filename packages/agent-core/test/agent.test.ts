@@ -5,7 +5,7 @@ import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, scanVault, vaultDraft
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
-import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
+import { FORWARD, PROBLEM_REPORT, TRUST_PING } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
 import { Agent, AgentTrace, UNKNOWN_REGISTRATIONS_KEPT, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, reconcile, selectMediation, send, type AgentLines, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
@@ -179,6 +179,71 @@ describe("opening an agent", () => {
     agent.close();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(told).toHaveLength(said + 1);
+  });
+
+  it("connects again once the mediator dropped the socket, and picks up what was queued meanwhile", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const bob = await partyOf(mediator, 2, BOB);
+    await reconcile(alice.link, alice.runtime, alice.keys, alice.mediationId);
+    const inbounds: Inbound[] = [];
+    const agent = await agentOf(alice, "start", { liveDelivery: true, upkeep: { retryMs: 20 }, onInbound: (inbound) => inbounds.push(inbound) });
+    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
+    const first = mediator.socketOf(alice.link.me);
+
+    mediator.dropSocket(alice.link.me);
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+    const bobAgent = await agentOf(bob, "start");
+    await bobAgent.send({ channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: alice.longFormDid }, { type: BASIC_MESSAGE, body: { content: "while away" } });
+
+    await until("the message queued meanwhile is delivered", () => inbounds.length === 1, 10_000);
+    await until("live delivery is on again", () => mediator.liveAccounts().length === 1, 10_000);
+    expect(mediator.socketOf(alice.link.me)).not.toBe(first);
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    agent.close();
+    bobAgent.close();
+  });
+
+  it("gives up a socket that carries nothing down after a probe, and connects again", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const log: string[] = [];
+    const agent = await agentOf(alice, "start", { liveDelivery: true, upkeep: { retryMs: 20, probeEveryMs: 40 }, log: (line) => log.push(line) });
+    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
+    const first = mediator.socketOf(alice.link.me)!;
+    await until("the open socket answers a probe", () => mediator.seenTypes.includes(TRUST_PING), 10_000);
+    expect(agent.connections()).toMatchObject([{ live: true }]);
+
+    first.silent = true;
+    await until("another socket carries live delivery", () => mediator.socketOf(alice.link.me) !== first && mediator.socketOf(alice.link.me) !== undefined, 10_000);
+    expect(log).toContain(`the socket of ${alice.mediationId} carried nothing down since it was probed: given up as lost`);
+    expect(log.filter((line) => line.startsWith("unexpected frame type"))).toEqual([]);
+    agent.close();
+  });
+
+  it("tries a mediator it could not reach again, and no more once closed", async () => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    let down = true;
+    let calls = 0;
+    const fetchFn = ((input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      return down ? Promise.reject(new Error("no route")) : (alice.linkOptions.fetch as typeof fetch)(input, init);
+    }) as typeof fetch;
+    const agent = await agentOf(alice, "start", { liveDelivery: true, upkeep: { retryMs: 20 }, fetch: fetchFn });
+    expect(agent.connections()).toMatchObject([{ live: false }]);
+    expect(agent.connections()[0]!.unreachable).not.toBeNull();
+
+    down = false;
+    await until("live delivery is on at the mediator", () => mediator.liveAccounts().length === 1, 10_000);
+    await until("the connection ran through", () => agent.connections()[0]?.unreachable === null, 10_000);
+
+    down = true;
+    mediator.dropSocket(alice.link.me);
+    agent.close();
+    const said = calls;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(calls).toBe(said);
   });
 
   it("picks up what was queued between its pickup and live delivery coming on", async () => {

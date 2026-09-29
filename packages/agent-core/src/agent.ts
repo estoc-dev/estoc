@@ -44,7 +44,7 @@ import { requiredReceivingSet, scanVault, type Did, type DidId, type Keys, type 
 import { LiveInput, type LiveAction } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
-import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
+import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
@@ -67,6 +67,14 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   WebSocket?: typeof WebSocket;
   /** whether a connection opens the socket for live delivery, after its pickup; on by default */
   liveDelivery?: boolean;
+  /**
+   * How live delivery is kept up once a connection wanted it: how long
+   * after it was lost, or not reached, the first connection is tried
+   * again, the longest a later one waits, each wait doubling the one
+   * before, and how often an open socket is probed. A socket that
+   * carried nothing down between two probes is given up as lost.
+   */
+  upkeep?: Partial<Upkeep>;
   /** whether the first application input to a disclosed address selects a private successor toward its peer: local policy, on by default */
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
@@ -118,6 +126,20 @@ export interface Connection {
 
 export const UNKNOWN_REGISTRATIONS_KEPT = 32;
 
+export interface Upkeep {
+  retryMs: number;
+  retryAtMostMs: number;
+  probeEveryMs: number;
+}
+
+export const UPKEEP: Upkeep = { retryMs: 2_000, retryAtMostMs: 5 * 60_000, probeEveryMs: 30_000 };
+
+/** The connection to try again, and how long the next one after it waits. */
+interface Retry {
+  timer: unknown;
+  nextMs: number;
+}
+
 export interface Submitted extends Sent {
   dispatched: Called;
 }
@@ -131,6 +153,8 @@ export class Agent {
   private closed = false;
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
+  private readonly retries = new Map<MediationId, Retry>();
+  private readonly probes = new Map<MediationId, unknown>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -295,6 +319,10 @@ export class Agent {
     if (this.closed) return;
     this.closed = true;
     for (const { link } of this.wires.values()) link.closeSocket();
+    for (const { timer } of this.retries.values()) if (timer !== null) this.timers().clear(timer);
+    for (const timer of this.probes.values()) this.timers().clear(timer);
+    this.retries.clear();
+    this.probes.clear();
     this.dispatcher.close();
     this.receiver.close();
   }
@@ -355,27 +383,107 @@ export class Agent {
   private async connectTo(mediationId: MediationId): Promise<Connection> {
     const connection = this.connectionOf(mediationId);
     this.linesChanged();
+    this.cancelRetry(mediationId);
     try {
       const { link, pickup } = await this.lineOf(mediationId);
       connection.reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
       connection.drained = await pickup.drain();
-      if ((this.options.liveDelivery ?? true) && !link.live && !this.closed) {
+      if (this.keepsLive() && !link.live) {
         link.openSocket(
           (opened) => pickup.onFrame(opened),
-          () => this.linesChanged()
+          () => {
+            this.linesChanged();
+            this.log(`live delivery was lost for ${mediationId}`);
+            this.retryLater(mediationId);
+          }
         );
+        this.probeWhileLive(mediationId, link);
       }
       connection.unreachable = null;
     } catch (err) {
       connection.unreachable = messageOf(err);
       this.log(`the mediator of ${mediationId} was not reached: ${connection.unreachable}`);
+      this.retryLater(mediationId);
     }
     this.linesChanged();
     return this.shown(connection);
   }
 
+  private keepsLive(): boolean {
+    return (this.options.liveDelivery ?? true) && !this.closed;
+  }
+
+  private timers(): Timers {
+    return this.options.timers ?? GLOBAL_TIMERS;
+  }
+
+  private upkeep(): Upkeep {
+    return { ...UPKEEP, ...this.options.upkeep };
+  }
+
+  private cancelRetry(mediationId: MediationId): void {
+    const retry = this.retries.get(mediationId);
+    if (retry === undefined || retry.timer === null) return;
+    this.timers().clear(retry.timer);
+    retry.timer = null;
+  }
+
+  /**
+   * The connection tried again after a wait, each wait twice the one
+   * before until live delivery comes on. The wait is shortened by up to
+   * half, at random, so that the accounts a mediator dropped together
+   * do not come back together.
+   */
+  private retryLater(mediationId: MediationId): void {
+    if (!this.keepsLive()) return;
+    const { retryMs, retryAtMostMs } = this.upkeep();
+    const retry = this.retries.get(mediationId) ?? { timer: null, nextMs: retryMs };
+    this.retries.set(mediationId, retry);
+    if (retry.timer !== null) return;
+    const wait = retry.nextMs * (0.5 + Math.random() / 2);
+    retry.nextMs = Math.min(retry.nextMs * 2, retryAtMostMs);
+    retry.timer = this.timers().set(() => {
+      retry.timer = null;
+      void this.retry(mediationId);
+    }, wait);
+  }
+
+  private async retry(mediationId: MediationId): Promise<void> {
+    if (!this.keepsLive()) return;
+    try {
+      const fold = await scanVault(this.runtime.vault, this.keys);
+      if (!requiredReceivingSet(fold.mediations, fold.routes).has(mediationId)) return;
+    } catch (err) {
+      this.log(`the connection of ${mediationId} was not tried again: ${messageOf(err)}`);
+      this.retryLater(mediationId);
+      return;
+    }
+    await this.connectTo(mediationId);
+  }
+
+  /** The socket probed for as long as it is this line's: one that carried nothing down since the probe before is given up as lost. */
+  private probeWhileLive(mediationId: MediationId, link: MediatorLink): void {
+    const running = this.probes.get(mediationId);
+    if (running !== undefined) this.timers().clear(running);
+    const every = this.upkeep().probeEveryMs;
+    const probe = (heardAtLast: number | null): void => {
+      this.probes.delete(mediationId);
+      if (!link.live || this.closed) return;
+      if (heardAtLast !== null && link.framesHeard === heardAtLast) {
+        this.log(`the socket of ${mediationId} carried nothing down since it was probed: given up as lost`);
+        link.abandonSocket();
+        return;
+      }
+      const heard = link.framesHeard;
+      link.probe().catch((err: unknown) => this.log(`the socket of ${mediationId} was not probed: ${messageOf(err)}`));
+      this.probes.set(mediationId, this.timers().set(() => probe(heard), every));
+    };
+    this.probes.set(mediationId, this.timers().set(() => probe(null), every));
+  }
+
   private async pickUpOnceLive(mediationId: MediationId, pickup: Pickup): Promise<void> {
     if (this.closed) return;
+    this.retries.delete(mediationId);
     try {
       const drained = await pickup.drain();
       const connection = this.attempts.get(mediationId);
