@@ -47,6 +47,15 @@ function watch(page, name) {
   page.on("pageerror", (err) => console.error(`[${name} pageerror] ${err}`));
 }
 
+/** Wait until `condition` holds, for at most `timeout` ms; `what` names it when the wait is given up. */
+async function until(page, condition, what, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`);
+    await page.waitForTimeout(50);
+  }
+}
+
 const waitLive = (page) => page.waitForSelector('[data-status]:has-text("live"), [data-status-sentence]:has-text("live delivery on")', { timeout: 30000 });
 
 async function createIdentity(page, name, startUrl) {
@@ -439,7 +448,7 @@ try {
   await cut.selectOption("[data-mediator-choice]", "custom");
   await cut.fill("[data-mediator-paste]", "http://mediator.invalid/");
   await cut.click("[data-mediator-use]");
-  while (releaseLookup === null) await cut.waitForTimeout(50);
+  await until(cut, () => releaseLookup !== null, "the mediator lookup to be under way");
   await cut.evaluate(() => {
     const read = File.prototype.arrayBuffer;
     File.prototype.arrayBuffer = function () {
@@ -469,7 +478,7 @@ try {
     fail("the page cut off should come back on the new vault's list, not on the old vault's You screen");
   }
   // the page asks the trace level once the new vault is open: the socket is up and answering by then
-  while (called.filter((method) => method === "traceLevel").length < 2) await cut.waitForTimeout(50);
+  await until(cut, () => called.filter((method) => method === "traceLevel").length >= 2, () => `a second traceLevel call, after ${called.join(", ")}`);
   const calledBefore = called.length;
   await Promise.all([cut.waitForResponse("http://mediator.invalid/**", { timeout: 5000 }), releaseLookup()]);
   await cut.evaluate(() => globalThis.releaseFile());
@@ -521,7 +530,7 @@ try {
   await mediate(late, "Alicia");
   holding.add("setTraceLevel");
   await late.selectOption("[data-trace-level]", "verbose");
-  while (heldAnswers.length < 1) await late.waitForTimeout(50);
+  await until(late, () => heldAnswers.length >= 1, () => `the setTraceLevel answer to be held (${heldAnswers.length} held)`);
   await leaveYou(late);
   holding.add("acceptInvitation");
   const lateLink = await invite(bob);
@@ -530,7 +539,7 @@ try {
   await late.fill("[data-contact-name]", "Bob again");
   await late.fill("[data-invitation-link]", lateLink);
   await late.click("[data-accept]");
-  while (heldAnswers.length < 2) await late.waitForTimeout(50);
+  await until(late, () => heldAnswers.length >= 2, () => `the acceptInvitation answer to be held (${heldAnswers.length} held)`, 60000);
   alice.once("dialog", (d) => void d.accept());
   await alice.click("[data-you]");
   await alice.click("[data-forget]");

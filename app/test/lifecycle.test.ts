@@ -21,12 +21,9 @@ const fake = vi.hoisted(() => {
   );
   return {
     daemon,
-    /** what the test's daemon says about the vault: a value the store shows as it would the real one's */
-    show: (epoch: string, value: StateValue) => publish({ epoch, value }),
-    /** the calls of `method` still unanswered */
-    asked: (method: string) => waiting.get(method)?.length ?? 0,
-    /** answer the oldest unanswered call of `method` */
-    answer: (method: string, value: unknown) => {
+    publishState: (epoch: string, value: StateValue) => publish({ epoch, value }),
+    pendingCount: (method: string) => waiting.get(method)?.length ?? 0,
+    answerOldest: (method: string, value: unknown) => {
       const [first, ...rest] = waiting.get(method) ?? [];
       if (first === undefined) throw new Error(`no ${method} was asked`);
       waiting.set(method, rest);
@@ -65,56 +62,56 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("work begun in what stood", () => {
   it("does not go on once a vault stood and went where none had", () => {
-    fake.show("e1", NONE);
+    fake.publishState("e1", NONE);
     const held = heldNow();
-    fake.show("e1", NONE);
+    fake.publishState("e1", NONE);
     expect(held()).toBe(true);
-    fake.show("e2", locked("first"));
+    fake.publishState("e2", locked("first"));
     expect(held()).toBe(false);
-    fake.show("e3", NONE);
+    fake.publishState("e3", NONE);
     expect(held()).toBe(false);
   });
 
   it("goes on while its vault stands, across a reconnection", () => {
-    fake.show("e4", locked("second"));
+    fake.publishState("e4", locked("second"));
     const held = heldNow();
-    fake.show("e5", locked("second"));
+    fake.publishState("e5", locked("second"));
     expect(held()).toBe(true);
   });
 
   it("does not show the level it set for the vault that replaced its own", async () => {
-    fake.show("e6", open("third"));
-    fake.answer("traceLevel", { level: "normal" });
+    fake.publishState("e6", open("third"));
+    fake.answerOldest("traceLevel", { level: "normal" });
     await settled();
     const setting = setTraceLevel("verbose");
-    fake.show("e7", NONE);
-    fake.show("e8", open("fourth"));
-    fake.answer("traceLevel", { level: "normal" });
-    fake.answer("setTraceLevel", { level: "verbose" });
+    fake.publishState("e7", NONE);
+    fake.publishState("e8", open("fourth"));
+    fake.answerOldest("traceLevel", { level: "normal" });
+    fake.answerOldest("setTraceLevel", { level: "verbose" });
     await setting;
     expect(state.traceLevel).toBe("normal");
   });
 
   it("does not show the level read of a vault that was replaced before it answered", async () => {
-    fake.show("e9", open("fifth"));
-    fake.show("e10", NONE);
-    fake.show("e11", open("sixth"));
-    fake.answer("traceLevel", { level: "verbose" });
+    fake.publishState("e9", open("fifth"));
+    fake.publishState("e10", NONE);
+    fake.publishState("e11", open("sixth"));
+    fake.answerOldest("traceLevel", { level: "verbose" });
     await settled();
     expect(state.traceLevel).toBe("normal");
-    fake.answer("traceLevel", { level: "normal" });
+    fake.answerOldest("traceLevel", { level: "normal" });
     await settled();
   });
 
   it("neither introduces the contact it made nor names its conversation in the vault that replaced its own", async () => {
-    fake.show("e12", open("seventh"));
-    fake.answer("traceLevel", { level: "normal" });
+    fake.publishState("e12", open("seventh"));
+    fake.answerOldest("traceLevel", { level: "normal" });
     const adding = addContactByDid("did:peer:someone", "Someone");
-    fake.show("e13", NONE);
-    fake.show("e14", open("eighth"));
-    fake.answer("traceLevel", { level: "normal" });
-    fake.answer("addContactByDid", { contactId: "contact-1", messageId: "message-1", channelId: "channel-1", outcome: "submitted", because: null });
+    fake.publishState("e13", NONE);
+    fake.publishState("e14", open("eighth"));
+    fake.answerOldest("traceLevel", { level: "normal" });
+    fake.answerOldest("addContactByDid", { contactId: "contact-1", messageId: "message-1", channelId: "channel-1", outcome: "submitted", because: null });
     expect(await adding).toBeNull();
-    expect(fake.asked("send")).toBe(0);
+    expect(fake.pendingCount("send")).toBe(0);
   });
 });
