@@ -304,6 +304,55 @@ describe("opening an agent", () => {
     expect(timers.waiting()).toBe(0);
   });
 
+  it.each([
+    ["has read the vault", false],
+    ["has failed to read the vault", true],
+  ])("leaves a connection made by hand as it is when the one tried before it %s only then", async (_, fails) => {
+    const mediator = await newMediator();
+    const alice = await partyOf(mediator, 1, ALICE);
+    const timers = heldTimers();
+    const agent = await liveAgentOf(alice, { timers });
+
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let stage: "armed" | "held" | "read" = "armed";
+    const events = alice.runtime.vault.events;
+    const scan = events.scan;
+    events.scan = async function* (this: typeof events, ...args: Parameters<typeof scan>) {
+      if (stage !== "armed") return yield* scan.apply(this, args);
+      stage = "held";
+      await held;
+      stage = "read";
+      if (fails) throw new Error("the vault was not read");
+      yield* scan.apply(this, args);
+    } as typeof scan;
+    let calls = 0;
+    let pickups = 0;
+    mediator.intercept = (msg) => {
+      calls += 1;
+      if (msg.type === STATUS_REQUEST) pickups += 1;
+      return undefined;
+    };
+
+    mediator.dropSocket(alice.link.me);
+    timers.fire();
+    await until("the connection tried again is reading the vault", () => stage === "held", 10_000);
+    await agent.connect();
+    await until("live delivery is on again and what it missed picked up", () => mediator.liveAccounts().length === 1 && pickups >= 2, 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    expect(timers.waiting()).toBe(0);
+    const before = calls;
+
+    release();
+    await until("the earlier reading has ended", () => stage === "read", 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls).toBe(before);
+    expect(agent.connections()).toMatchObject([{ unreachable: null, live: true }]);
+    expect(timers.waiting()).toBe(0);
+    events.scan = scan;
+  });
+
   it("tries a mediator it could not reach again, and no more once closed", async () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);

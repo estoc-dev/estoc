@@ -477,16 +477,21 @@ export class Agent {
     retry.nextMs = Math.min(retry.nextMs * 2, retryAtMostMs);
     retry.timer = this.timers().set(() => {
       retry.timer = null;
-      void this.retry(mediationId);
+      void this.retry(mediationId, retry);
     }, wait);
   }
 
-  private async retry(mediationId: MediationId): Promise<void> {
+  /** A connection begun, or live delivery come on, while the vault was being read leaves this try nothing to do. */
+  private async retry(mediationId: MediationId, retry: Retry): Promise<void> {
     if (!this.keepsLive()) return;
+    const latest = this.begun.get(mediationId);
+    const stands = (): boolean => !this.closed && this.begun.get(mediationId) === latest && this.retries.get(mediationId) === retry;
     try {
       const fold = await scanVault(this.runtime.vault, this.keys);
+      if (!stands()) return;
       if (!requiredReceivingSet(fold.mediations, fold.routes).has(mediationId)) return;
     } catch (err) {
+      if (!stands()) return;
       this.log(`the connection of ${mediationId} was not tried again: ${messageOf(err)}`);
       this.retryLater(mediationId);
       return;
