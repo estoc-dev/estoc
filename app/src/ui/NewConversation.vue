@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import qrcode from "qrcode-generator";
 
-import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, invitationLink, state } from "../core/store.js";
+import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, state } from "../core/store.js";
 import type { Invitation } from "../core/types.js";
 import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
@@ -46,8 +46,10 @@ const readable = ref(false);
 async function invite(then: "qr" | "copy") {
   error.value = null;
   inviting.value = true;
+  const held = heldNow();
   try {
     shownInvitation.value = await createInvitation();
+    if (!held()) return;
     show("qr");
     if (then === "copy" && shownUrl.value !== null) await copy(shownUrl.value);
   } catch (err) {
@@ -107,8 +109,10 @@ async function accept(input: string | Invitation) {
   }
   accepting.value = true;
   error.value = null;
+  const held = heldNow();
   try {
     const key = typeof input === "string" ? await addContactFrom(input, label) : await acceptInvitation(input, label);
+    if (!held()) return;
     name.value = "";
     link.value = "";
     swap(key === null ? { kind: "list" } : { kind: "chat", key });

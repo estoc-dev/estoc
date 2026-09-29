@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { blockChannels, deleteContact, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
+import { blockChannels, deleteContact, heldNow, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
 import type { ConversationId, ShownChannel } from "../core/types.js";
 import { editableFrom } from "./editable.js";
 import Icon from "./Icon.vue";
@@ -64,7 +64,9 @@ const name = () =>
     }
     if (c.contactId === null) {
       const heads = c.channels.filter(isHead);
+      const held = heldNow();
       const key = await nameConversation((heads.length > 0 ? heads : c.channels).map(({ channelId }) => channelId), chosen);
+      if (!held()) return;
       swap(key === null ? { kind: "list" } : { kind: "details", key });
     } else {
       await renameContact(c.contactId, chosen);
@@ -88,9 +90,10 @@ function remove() {
   const contactId = conversation.value?.contactId ?? null;
   if (contactId === null) return;
   deleting.value = false;
+  const held = heldNow();
   void act(async () => {
     await deleteContact(contactId, { block: alsoBlock.value, erase: alsoErase.value });
-    swap({ kind: "list" });
+    if (held()) swap({ kind: "list" });
   });
 }
 </script>

@@ -54,7 +54,6 @@ export function seenAt(conversation: Conversation): string | null {
   return latest;
 }
 
-/** When a backup of the identity under `anchor` was last exported from this device; null when none was. */
 export function exportedAt(anchor: string): string | null {
   return remembered.exported[anchor] ?? null;
 }
@@ -64,7 +63,6 @@ export function markExported(anchor: string, at: string = new Date().toISOString
   save();
 }
 
-/** What was remembered of one vault's identity and conversations, forgotten with it. */
 export function forgetRemembered(snapshot: Snapshot): void {
   delete remembered.exported[snapshot.anchor];
   for (const { channelId } of snapshot.channels) delete remembered.seen[channelId];

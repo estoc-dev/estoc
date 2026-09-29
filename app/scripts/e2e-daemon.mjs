@@ -19,7 +19,7 @@
  * public addresses only, so a mediator on this machine is not one it can use.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -490,6 +490,154 @@ try {
   }
   await cut.close();
   ok("a page cut off while the vault was replaced shows the new vault alone when it comes back, sends nothing it had begun, and shows no backup of the old one");
+
+  // the vault replaced while a page has calls of it under way: their answers come back over the
+  // same socket after the new vault is on screen, and the person has begun something there. The
+  // answers are the old vault's: they settle nothing on the new one's screen, drop nothing typed
+  // there, and do not stand in for what the new vault said of itself
+  const late = await aliceCtx.newPage();
+  watch(late, "alice@late");
+  const holding = new Set();
+  const heldIds = new Set();
+  const heldAnswers = [];
+  const lateCalled = [];
+  await late.routeWebSocket(/./, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const wire = wireOf(message);
+      if (wire?.kind === "call") {
+        lateCalled.push(wire.method);
+        if (holding.has(wire.method)) heldIds.add(wire.id);
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const wire = wireOf(message);
+      if ((wire?.kind === "result" || wire?.kind === "error") && heldIds.has(wire.id)) heldAnswers.push(() => ws.send(message));
+      else ws.send(message);
+    });
+  });
+  await late.goto(new URL(link.own).origin + "/");
+  await mediate(late, "Alicia");
+  holding.add("setTraceLevel");
+  await late.selectOption("[data-trace-level]", "verbose");
+  while (heldAnswers.length < 1) await late.waitForTimeout(50);
+  await leaveYou(late);
+  holding.add("acceptInvitation");
+  const lateLink = await invite(bob);
+  await late.click("[data-new-conversation]");
+  await late.click("[data-new-sheet] [data-paste-link]");
+  await late.fill("[data-contact-name]", "Bob again");
+  await late.fill("[data-invitation-link]", lateLink);
+  await late.click("[data-accept]");
+  while (heldAnswers.length < 2) await late.waitForTimeout(50);
+  alice.once("dialog", (d) => void d.accept());
+  await alice.click("[data-you]");
+  await alice.click("[data-forget]");
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await late.waitForSelector("[data-onboarding]", { timeout: 15000 });
+  await alice.fill("[data-your-name]", "Alix");
+  await alice.fill("[data-passphrase]", PASS.Alice);
+  await alice.fill("[data-passphrase-again]", PASS.Alice);
+  await alice.click("[data-create]");
+  await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+  await late.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 15000 });
+  await late.click("[data-you]");
+  await late.waitForSelector('[data-you-screen]:has-text("Alix")', { timeout: 15000 });
+  await late.selectOption("[data-you-screen] [data-mediator-choice]", "custom");
+  await late.fill("[data-mediator-paste]", "http://typed-on-the-new-vault.invalid/");
+  if ((await late.inputValue("[data-trace-level]")) !== "normal") {
+    fail(`the new vault's trace level should be its own, normal: ${await late.inputValue("[data-trace-level]")}`);
+  }
+  const lateCalledBefore = lateCalled.length;
+  for (const answer of heldAnswers.splice(0)) answer();
+  await late.waitForTimeout(1000);
+  if (!(await late.$("[data-you-screen]"))) {
+    fail("an old contact's answer must not take the page off the screen the person is on");
+    await late.click("[data-you]");
+    await late.waitForSelector("[data-you-screen]", { timeout: 15000 });
+  } else if ((await late.inputValue("[data-mediator-paste]")) !== "http://typed-on-the-new-vault.invalid/") {
+    fail(`what was typed on the new vault's screen must stay: ${await late.inputValue("[data-mediator-paste]")}`);
+  }
+  if ((await late.inputValue("[data-trace-level]")) !== "normal") {
+    fail(`the old vault's trace level must not be shown for the new one: ${await late.inputValue("[data-trace-level]")}`);
+  }
+  const lateSentOn = lateCalled.slice(lateCalledBefore).filter((method) => method === "send");
+  if (lateSentOn.length > 0) {
+    fail("the introduction of a contact made in the old vault must not be sent from the new one");
+  }
+  await late.close();
+  ok("answers of the old vault arriving on the new one's screen settle nothing there: the screen, what was typed on it and its own trace level stay");
+
+  // a restore begun where no vault stood, held on the file being read while another page made a
+  // vault and removed it again: the page is back where it began, and the restore does not go on,
+  // as the vault of the moment it began in is not the one that would take the backup now. A
+  // restore begun afresh goes through
+  const pend = await aliceCtx.newPage();
+  watch(pend, "alice@pend");
+  const pendCalled = [];
+  pend.on("websocket", (socket) =>
+    socket.on("framesent", ({ payload }) => {
+      const frame = wireOf(String(payload));
+      if (frame?.kind === "call") pendCalled.push(frame.method);
+    })
+  );
+  await pend.goto(new URL(link.own).origin + "/");
+  await pend.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 15000 });
+  await pend.click("[data-you]");
+  const [backupDownload] = await Promise.all([pend.waitForEvent("download", { timeout: 15000 }), pend.click("[data-export]")]);
+  const backupPath = join(root, "alix.sqlite");
+  await backupDownload.saveAs(backupPath);
+  const backup = await readFile(backupPath);
+  pend.once("dialog", (d) => void d.accept());
+  await pend.click("[data-forget]");
+  await pend.waitForSelector("[data-onboarding] [data-tab-restore]", { timeout: 15000 });
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await pend.evaluate(() => {
+    const read = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+      if (this.name !== "held-backup.sqlite") return read.call(this);
+      return new Promise((resolve, reject) => (globalThis.releaseBackup = () => read.call(this).then(resolve, reject)));
+    };
+  });
+  await pend.click("[data-tab-restore]");
+  await pend.setInputFiles("[data-backup-file]", { name: "held-backup.sqlite", mimeType: "application/vnd.sqlite3", buffer: backup });
+  await pend.fill("[data-backup-passphrase]", PASS.Alice);
+  await pend.click("[data-restore]");
+  await pend.waitForFunction(() => typeof globalThis.releaseBackup === "function", null, { timeout: 5000 });
+  await alice.fill("[data-your-name]", "Interim");
+  await alice.fill("[data-passphrase]", PASS.Alice);
+  await alice.fill("[data-passphrase-again]", PASS.Alice);
+  await alice.click("[data-create]");
+  await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
+  await pend.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 15000 });
+  alice.once("dialog", (d) => void d.accept());
+  await alice.click("[data-you]");
+  await alice.click("[data-forget]");
+  await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await pend.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
+  await pend.evaluate(() => globalThis.releaseBackup());
+  await pend.waitForTimeout(1000);
+  if (pendCalled.includes("restoreIdentity")) {
+    fail("a restore begun before a vault stood and went must not go on once none stands again");
+  }
+  if (!(await pend.$("[data-onboarding] [data-your-name]"))) {
+    fail("the page should still be where it begins, with no vault standing");
+  } else {
+    await pend.click("[data-tab-restore]");
+    await pend.setInputFiles("[data-backup-file]", { name: "alix.sqlite", mimeType: "application/vnd.sqlite3", buffer: backup });
+    await pend.fill("[data-backup-passphrase]", PASS.Alice);
+    await pend.click("[data-restore]");
+    await pend.waitForSelector("[data-you]", { timeout: 30000 });
+    await pend.click("[data-you]");
+    await pend.waitForSelector('[data-you-screen]:has-text("Alix")', { timeout: 15000 });
+    if (pendCalled.filter((method) => method === "restoreIdentity").length !== 1) {
+      fail(`one restore was asked for, and one should have been sent: ${pendCalled.filter((method) => method === "restoreIdentity").length}`);
+    }
+  }
+  await pend.close();
+  await alice.waitForSelector('[data-status]:has-text("no mediator"), [data-status]:has-text("live")', { timeout: 15000 });
+  ok("a restore held on its file while a vault stood and went does not go on; one begun afresh restores the backup");
 
   // the daemon gone: the page says so
   daemon.child.kill("SIGTERM");

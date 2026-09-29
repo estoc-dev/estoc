@@ -94,11 +94,16 @@ function take(snapshot: Snapshot): void {
 
 /** the epoch whose open state is on screen: a vault opened is asked once for what only it knows */
 let opened: Epoch | null = null;
+/** how many times what stands here has changed since the page opened: a vault, or none, in place of another */
+let turn = 0;
 
 function show(epoch: Epoch, value: StateValue): void {
   if (value.phase === "onboarding") dropDrafts();
-  // the links were made for the vault that stood; another in its place has none of them
-  if (value.hold !== state.hold) state.links = {};
+  if (value.hold !== state.hold) {
+    turn += 1;
+    // the links were made for the vault that stood; another in its place has none of them
+    state.links = {};
+  }
   if (value.phase !== "open") {
     opened = null;
     state.snapshot = null;
@@ -117,7 +122,13 @@ function show(epoch: Epoch, value: StateValue): void {
   if (opened === epoch) return;
   opened = epoch;
   // the level is the open vault's own local state
-  void call((daemon) => daemon.traceLevel({})).then(({ level }) => (state.traceLevel = level), () => undefined);
+  const held = heldNow();
+  void call((daemon) => daemon.traceLevel({})).then(
+    ({ level }) => {
+      if (held()) state.traceLevel = level;
+    },
+    () => undefined
+  );
   if (state.daemonAt === null) {
     void isStoragePersisted().then((persisted) => (state.persisted = persisted));
   }
@@ -333,33 +344,31 @@ async function introduceAfterPing(contactId: ContactId): Promise<void> {
   }
 }
 
-/** The conversation of a contact just made, once the state that shows it is on screen; null when the vault shows none of it by then. */
-async function conversationOf(contactId: ContactId): Promise<ConversationId | null> {
+/** The conversation of a contact just made, once the state that shows it is on screen; null when the vault shows none of it by then, or is not the one the contact was made in. */
+async function conversationOf(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
   await refresh();
+  if (!held()) return null;
   return state.index?.contactConversation(contactId)?.id ?? null;
 }
 
 /**
- * Whether the vault standing when a piece of work began still stands.
- * The screens are the vault's, and go with it; the work they began
- * does not. Wherever it waits, on the daemon's answer, on a lookup over
- * the network, on a file being read, it asks before its next step, and
- * takes none in a vault that replaced the one it began in: nothing
- * further is sent, saved, copied or shown for it. What had reached the
- * daemon by then is answered as the daemon answers it, and never sent
- * again.
+ * Whether the vault that stood when a piece of work began has stood
+ * since: false once another, or none, took its place, and false for
+ * good. Work that waits asks before each step that sends, saves,
+ * copies, navigates or writes shared state, and takes none once the
+ * answer is no; what the daemon answers about what had reached it is
+ * taken as it comes, and nothing is sent again.
  */
 export function heldNow(): () => boolean {
-  const hold = state.hold;
-  return () => state.hold === hold;
+  const began = turn;
+  return () => turn === began;
 }
 
 /** Our introduction after the Ping that opened a contact, and the conversation it opened: each step in the vault the contact was made in. */
 async function conversationOpened(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
   if (!held()) return null;
   await introduceAfterPing(contactId);
-  if (!held()) return null;
-  return conversationOf(contactId);
+  return conversationOf(held, contactId);
 }
 
 /**
@@ -418,8 +427,9 @@ export async function publicDid(): Promise<string> {
 
 /** A name of ours for a conversation that has none: a contact that selects its channels; the conversation it becomes. */
 export async function nameConversation(channelIds: ChannelId[], petname: string): Promise<ConversationId | null> {
+  const held = heldNow();
   const { contactId } = await call((daemon) => daemon.createContact({ petname, channelIds }));
-  return conversationOf(contactId);
+  return conversationOf(held, contactId);
 }
 
 export async function renameContact(contactId: ContactId, petname: string): Promise<void> {
@@ -471,5 +481,7 @@ export async function reconnect(): Promise<void> {
 
 /** Set what this device keeps of what it observes; a stricter level prunes at once. */
 export async function setTraceLevel(level: TraceLevel): Promise<void> {
-  state.traceLevel = (await call((daemon) => daemon.setTraceLevel({ level }))).level;
+  const held = heldNow();
+  const set = await call((daemon) => daemon.setTraceLevel({ level }));
+  if (held()) state.traceLevel = set.level;
 }
