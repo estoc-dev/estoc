@@ -20,8 +20,8 @@ export interface DaemonStorage {
   has(name: string): Promise<boolean>;
   /** `runtime` and `portable` differ in the journal a created file is left in; an existing file keeps its own. */
   open(name: string, mode: OpenMode, kind: "runtime" | "portable"): Promise<SqliteDriver>;
-  /** The complete bytes of the file `name`, which no connection may hold open. */
-  exportFile(name: string): Promise<Uint8Array>;
+  /** The complete bytes of the file `name`, which no connection may hold open; a file larger than `maxBytes` is `TooLarge` before any of it is read. */
+  exportFile(name: string, maxBytes?: number): Promise<Uint8Array>;
   /** Puts a complete database file among the host's as `name`, which must not exist yet. Nothing of it is trusted until it is opened and validated. */
   importFile(name: string, bytes: Uint8Array): Promise<void>;
   /** Deletes `name`, which no connection may hold open, with whatever SQLite kept beside it; nothing when there is none. */

@@ -1,22 +1,14 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { createRequire } from "node:module";
 import { networkInterfaces } from "node:os";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { decode, encode } from "../codec.js";
-import { serve, type Port } from "../rpc.js";
+import { serveApi, type Port, type Session } from "@estoc/daemon-api/wire";
+
+import { attachTo, limitsOf, methodsOf } from "../adapter.js";
+import type { DaemonCore } from "../daemon.js";
 import { staticHandler } from "./static.js";
-
-type Emit = (name: string, ...args: unknown[]) => void;
-
-/** What the server needs of a daemon beyond the methods a UI calls: whether it is up, and a replay for one listener. */
-export interface ServedCore {
-  readonly booted: boolean;
-  replayTo(to: Emit): Promise<void>;
-  boot(): Promise<void>;
-  /** Lets go of whatever the daemon holds, once no socket is left to ask for it. */
-  close?(): Promise<void>;
-}
 
 export interface SocketOptions {
   /** the loopback address to listen on; never 0.0.0.0 by default */
@@ -26,26 +18,37 @@ export interface SocketOptions {
   token: string;
   /** a directory of the built app to serve at `/`; without it plain HTTP gets a 426 */
   appDir?: string;
+  /** the largest backup taken in or handed out, from which the other bounds a view is told follow; 512 MiB unless set */
+  maxBackupBytes?: number;
+  /** a failure of the daemon's own while answering a view, for the host's log */
+  failed?(error: unknown): void;
 }
 
-export interface ServedOver<D> {
-  daemon: D;
-  /** the URL a UI connects to, token included */
+export interface ServedOver {
+  daemon: DaemonCore;
+  /** the URL a view connects to, token included */
   url: string;
   /** where the app is served, when `appDir` was given */
   appUrl: string | null;
   close(): Promise<void>;
 }
 
+/** Sockets let in and not yet attached, at most; one more is closed at once. */
+const MAX_PENDING = 16;
+
+/** The WebSocket close code for an endpoint that is over what it takes on for now (RFC 6455 §7.4.1). */
+const TRY_AGAIN_LATER = 1013;
+
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
+
 /**
- * The daemon behind a WebSocket: one daemon, any number of UIs. Each
- * socket is a port the RPC serves; events go to every socket open; a UI
- * that connects late calls `boot()` like any other and is told where
- * things stand. Access control is one rule: a socket is answered only
- * with the token (`?token=`), whoever asks — a page this daemon served,
- * a page elsewhere, another process on this machine; anything without it
- * is closed before a word is read. With `appDir` the daemon serves the
- * app itself, and hands the page the token in the link it prints.
+ * The daemon behind a WebSocket: one daemon, any number of views, each
+ * socket a port the API is served over from the bootstrap on. Access
+ * control is one rule: a socket is answered only with the token
+ * (`?token=`), whoever asks — a page this daemon served, a page
+ * elsewhere, another process on this machine; anything without it is
+ * closed before a word is read. With `appDir` the daemon serves the app
+ * itself, and hands the page the token in the link it prints.
  *
  * On top of that a request is answered only when `Host` is a name this
  * server actually answers to: a loopback name, the bound address, or
@@ -53,14 +56,11 @@ export interface ServedOver<D> {
  * bound port. A page anywhere can point a name of its own at 127.0.0.1
  * (DNS rebinding) and reach us; it gets nothing, socket or file.
  */
-export async function serveOver<D extends ServedCore>(options: SocketOptions, create: (emit: Emit) => D): Promise<ServedOver<D>> {
-  const emitters = new Set<Emit>();
-  const emit: Emit = (name, ...args) => {
-    for (const e of emitters) {
-      e(name, ...args);
-    }
-  };
-  const daemon = create(emit);
+export async function serveOver(options: SocketOptions, daemon: DaemonCore): Promise<ServedOver> {
+  const limits = limitsOf("text", options.maxBackupBytes);
+  const failed = options.failed ?? (() => undefined);
+  const methods = methodsOf(daemon, limits, { failed });
+  const pending = new Set<Session>();
 
   const files = options.appDir === undefined ? null : staticHandler(options.appDir);
   const bind = options.bind ?? "127.0.0.1";
@@ -82,7 +82,7 @@ export async function serveOver<D extends ServedCore>(options: SocketOptions, cr
       res.end();
     });
   });
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: limits.maxFrameBytes ?? undefined });
   http.on("upgrade", (req, socket, head) => {
     if (!hostAllowed(req) || !tokenMatches(req, options.token)) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -90,9 +90,24 @@ export async function serveOver<D extends ServedCore>(options: SocketOptions, cr
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const port = socketPort(ws);
-      const client = clientOf(daemon, port, emitters);
-      ws.on("close", client.gone);
+      // A frame the socket will not take — over `maxPayload`, text that is not UTF-8 — is an error on it, which closes it; unheard, the error would end the process.
+      ws.on("error", () => undefined);
+      if (pending.size >= MAX_PENDING) {
+        ws.close(TRY_AGAIN_LATER, "too many sockets waiting to attach");
+        return;
+      }
+      const session = serveApi(socketPort(ws), {
+        methods,
+        limits,
+        implementation: `estoc-daemon ${version}`,
+        attach: (attaching) => {
+          pending.delete(attaching);
+          return attachTo(daemon.publisher, attaching);
+        },
+        failed,
+      });
+      pending.add(session);
+      session.onClose(() => pending.delete(session));
     });
   });
 
@@ -113,50 +128,8 @@ export async function serveOver<D extends ServedCore>(options: SocketOptions, cr
           client.terminate();
         }
         wss.close(() => http.close(() => resolve()));
-      }).then(() => daemon.close?.()),
+      }).then(() => daemon.close()),
   };
-}
-
-/**
- * One socket's view of the daemon. Calls go to the daemon; its `boot()`,
- * once the daemon is up, is a replay to this socket alone. Live events
- * for this socket wait while the replay is handed over, and follow it
- * out: what the replay holds may come again as an event, and the UI
- * takes records by id, but nothing is shown before the replay and then
- * overwritten by it.
- */
-function clientOf(daemon: ServedCore, port: Port, emitters: Set<Emit>): { gone(): void } {
-  let held: unknown[][] | null = null;
-  // the UI's interface only: what is the host's stays here
-  const { booted: _booted, replayTo: _replayTo, close: _close, ...methods } = daemon;
-  const raw = serve(port, {
-    ...methods,
-    async boot() {
-      if (!daemon.booted) {
-        await daemon.boot();
-        return;
-      }
-      held = [];
-      try {
-        await daemon.replayTo(raw);
-      } finally {
-        const queue = held;
-        held = null;
-        for (const [name, ...args] of queue) {
-          raw(name as string, ...args);
-        }
-      }
-    },
-  });
-  const gated: Emit = (name, ...args) => {
-    if (held !== null) {
-      held.push([name, ...args]);
-    } else {
-      raw(name, ...args);
-    }
-  };
-  emitters.add(gated);
-  return { gone: () => emitters.delete(gated) };
 }
 
 /** `Host` names this server: a loopback name, the bound address, or any address of this machine when bound to all — at the bound port. */
@@ -191,32 +164,26 @@ function tokenMatches(req: IncomingMessage, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** The WebSocket close code for a frame whose payload is not what the endpoint reads (RFC 6455 §7.4.1). */
-const UNREADABLE_FRAME = 1007;
-
-/** A ws socket as the message port the RPC speaks over, text-encoded; a frame that does not decode closes the socket it came on. */
+/**
+ * A socket of the server's as a text port. A send resolves once the
+ * frame is written out, so a reader that takes its time is felt by the
+ * session's queue and nowhere else; a binary frame is handed over as
+ * the bytes it is, which no session reads as a frame.
+ */
 function socketPort(ws: WebSocket): Port {
   return {
-    postMessage(message) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(encode(message));
-      }
+    transport: "text",
+    send: (data) =>
+      new Promise<void>((resolve, reject) => {
+        if (ws.readyState !== ws.OPEN) return resolve();
+        ws.send(data as string, (error) => (error ? reject(error) : resolve()));
+      }),
+    listen(handlers) {
+      ws.on("message", (data, isBinary) => handlers.message(isBinary ? data : data.toString()));
+      ws.on("close", () => handlers.close());
     },
-    addEventListener(type: "message" | "close", listener: (event: MessageEvent) => void) {
-      if (type === "close") {
-        ws.on("close", () => (listener as () => void)());
-        return;
-      }
-      ws.on("message", (data) => {
-        let message: unknown;
-        try {
-          message = decode(data.toString());
-        } catch {
-          ws.close(UNREADABLE_FRAME, "not a message of this encoding");
-          return;
-        }
-        listener({ data: message } as MessageEvent);
-      });
+    close() {
+      ws.close();
     },
-  } as Port;
+  };
 }

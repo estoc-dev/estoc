@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- **The Node endpoint serves the API** (`@estoc/daemon-api`): every
+  socket is a port of `serveApi`, from the bootstrap on — hello, welcome
+  with the daemon's bounds, `attach` handed the state and lines
+  published, then the method table. `methodsOf(core, limits)` is that
+  table: each method's named input read into the domain's terms, a
+  channel ID taken apart into its pair, and the answer spelled as the
+  API does; `attachTo(publisher, session)` subscribes a session and
+  hands it its baseline. The bounds follow from `maxBackupBytes`
+  (`limitsOf`; 512 MiB unless the host sets it), an export over it is
+  refused whole (`ResourceLimit`) before the file is built, or before
+  one built within it is read whole, and leaves no file, and a socket
+  that has not attached is one of at most sixteen. A frame a socket
+  will not take — over the frame bound, text that is not UTF-8 —
+  closes that socket and nothing else. The host boots the
+  daemon: there is no `boot()` over the socket, and `boot`, `pending`,
+  `replayTo` and `close` are no methods of the API. The old RPC over
+  the socket is gone with it; `serve`/`connect` of `rpc.ts` still
+  carry the worker's port, until the app attaches to the API.
+- **A refusal has a code.** The daemon refuses with `WrongPhase`
+  (no open vault, nothing to unlock, a vault standing already, the
+  files another daemon's, no files), `StaleHold`, `RestoreUnexplained`
+  and `InvalidArgument` (a DID that is none or the vault's own, a
+  channel ID that is no pair's canonical text, a contact with no
+  channel), each with `effect: "none"`; a condition found unmet before
+  anything changed — a wrong passphrase, no mediator set, no such
+  contact — is `OperationFailed` with `effect: "none"` (`Unmet`). A
+  send the domain finds no target for is `NoTarget`, one to a channel
+  that takes none is `SendClosed`; on `send` they have no effect, on
+  `acceptInvitation` and `addContactByDid` a possible one, the contact
+  being recorded first. Whatever else the domain throws is
+  `OperationFailed` with a possible effect, its text kept for the
+  host's log; so is a call of an intent that threw, which the
+  procedure once answered as the `threw` outcome. An error of `send`,
+  `retry`, `cancel` or a completion names its message when the state
+  published shows it recorded.
+- **`rotateChannel(channel)`**: the user's rotation away from a pair,
+  the one DID of the vault at its local end resolved there; refused
+  when none or more than one is. It answers the successor pair, which
+  the API's `rotate` names by its channel ID.
+- **A read that fails ends every attached session** with a
+  `StateUnavailable` fault, and one that joins meanwhile the same way,
+  after asking for the read that would make the state fit to attach
+  to again. Damage to the history is not that: it is said as the
+  `damaged` phase that follows, to every session still attached.
+- **The token file is published whole**: a fresh token is written to a
+  file of its own and linked under `daemon.token`, so that two daemons
+  starting on a fresh folder at once end up with one token, and a
+  file that holds no token — empty, or not base64url — keeps the
+  endpoint from opening under it, and is left as it is.
+- `serveDaemon()` hands back the `DaemonCore`, and takes `maxBackupBytes`
+  and a `failed` callback for the host's log.
 - **The snapshot is normalized, as the API spells it.** The published
   state is the API's `Snapshot`: every message, observation, channel
   and contact once, in a table of its own, the rest referring to them

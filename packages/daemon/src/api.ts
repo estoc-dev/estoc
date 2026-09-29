@@ -1,5 +1,7 @@
 import type { Channel, ContactId, Did, DidId, DisclosureAs, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
 import type {
+  Called,
+  Cancelled,
   ChannelRecord,
   Connection,
   ContactRecord,
@@ -147,13 +149,23 @@ export interface CreatedInvitation {
  * dispatch's `submitted`, `pending`, `failed`, `uncertain`, a
  * completion's `none` — with its reason where it gave one. The vault's
  * own account of the message is in the next snapshot.
+ * `threw` is none of the procedure's words: the call of the intent
+ * threw, after the intent was committed.
  */
-export interface Outcome {
-  outcome: string;
+export interface Outcome<Word extends string = string> {
+  outcome: Word;
   because: string | null;
+  /** the message the procedure was of, committed before whatever the call came to; null where it had none */
+  messageId: MessageId | null;
 }
 
-export interface SendResult extends Outcome {
+/** What a dispatch came to, or that its call threw. */
+export type DispatchWord = Called["outcome"];
+
+/** What a completion came to: a dispatch's word, the intent standing already, or the operation refusing the input. */
+export type CompletionWord = DispatchWord | "existing" | "refused";
+
+export interface SendResult extends Outcome<DispatchWord> {
   messageId: MessageId;
   channel: Channel;
 }
@@ -178,7 +190,8 @@ export interface Daemon {
   lock(): Promise<void>;
   /** The vault this daemon holds, removed for good: the one named, and refused when another has taken its place. */
   forgetIdentity(hold: Hold): Promise<void>;
-  exportBackup(): Promise<{ name: string; bytes: Uint8Array }>;
+  /** A portable snapshot of the vault, refused whole when its events and objects, or the file they make, come to more than `maxBytes`. */
+  exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
 
   /** An arrangement with `mediatorDid` created, selected and granted, and a route over it configured. */
@@ -199,12 +212,12 @@ export interface Daemon {
   eraseMessage(messageId: MessageId): Promise<void>;
 
   send(target: { channel: Channel } | { contactId: ContactId }, content: Content): Promise<SendResult>;
-  retry(messageId: MessageId): Promise<Outcome>;
-  cancel(messageId: MessageId): Promise<Outcome>;
-  completeResponse(executionId: ExecutionId, effectType: string): Promise<Outcome>;
-  completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<Outcome>;
+  retry(messageId: MessageId): Promise<Outcome<DispatchWord>>;
+  cancel(messageId: MessageId): Promise<Outcome<Cancelled["outcome"]>>;
+  completeResponse(executionId: ExecutionId, effectType: string): Promise<Outcome<CompletionWord>>;
+  completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<Outcome<CompletionWord>>;
   /** The user's own rotation of `localDidId` toward `peerDid`: a fresh successor, and its notification called. */
-  rotate(localDidId: DidId, peerDid: Did): Promise<Outcome & { successor: DidId; existed: boolean }>;
+  rotate(localDidId: DidId, peerDid: Did): Promise<Outcome<CompletionWord> & { successor: DidId; existed: boolean }>;
 
   /** Where a snapshot covering every change committed so far stands: published already, or once the read under way or the next one is. Reads and publishes only. */
   refresh(): Promise<{ epoch: string; revision: number }>;

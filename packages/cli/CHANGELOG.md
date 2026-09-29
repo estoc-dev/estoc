@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A folder a daemon holds is asked over the API** (`@estoc/daemon-api`):
+  `estoc status` and `estoc init` connect with the SDK's client over the
+  platform's `WebSocket`, attach, and read the daemon's state as it was
+  published; a daemon of another API version is said to be one. A call
+  the daemon refuses is reported in its words, with its code.
 - `estoc status` says when the vault's history is damaged, read here or
   held by a daemon, with what that leaves to do, and exits 1
   (`VaultStatus.damaged`). Keys are still derived from a damaged vault.

@@ -11,12 +11,14 @@ import { unlockSeedKeystore } from "@estoc/keystore";
 import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type DidId, type MediationId, type MintedDid } from "@estoc/vault";
 
 import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
-import type { Snapshot as Published } from "@estoc/daemon-api/contract";
+import { connect, type Client } from "@estoc/daemon-api/client";
+import type { Phase, Snapshot as Published, State } from "@estoc/daemon-api/contract";
+import { webSocketOf } from "@estoc/daemon-api/wire";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { channelOf, forwarded, run, stopAll } from "../../agent-core/test/e2e/running.js";
-import { connect, createDaemon, decode, encode, type Daemon, type DaemonCore, type DaemonEvents, type DaemonHost, type Hold, type Lines, type Port, type Snapshot } from "../src/index.js";
+import { createDaemon, type DaemonCore, type DaemonHost, type Hold, type Lines, type Snapshot } from "../src/index.js";
 import { nodeHost, serveDaemon } from "../src/node/index.js";
 import { channelIdOf } from "../src/channels.js";
 import { published } from "./snapshots.js";
@@ -95,43 +97,83 @@ async function person(mediator: FakeMediator, name: string): Promise<{ root: str
 
 const messagesOf = (snapshot: Snapshot) => snapshot.channels.flatMap((channel) => channel.messages);
 
-/** A ws client as the port the RPC speaks over: what a UI's client does. */
-async function clientPort(url: string): Promise<Port> {
+/** A view over the socket: the SDK's client, and every state it was shown, the baseline first. */
+interface View {
+  client: Client;
+  daemon: Client["daemon"];
+  states: State[];
+  phases(): Phase[];
+  hold(): Hold | null;
+  /** the last open state shown */
+  snapshot(): Published;
+  /** how many epochs an open state was shown in */
+  opened(): number;
+}
+
+async function view(url: string): Promise<View> {
+  const client = connect(webSocketOf(new globalThis.WebSocket(url)));
+  const states: State[] = [];
+  client.onState((state) => states.push(state));
+  await client.connected();
+  const open = () => states.filter((state) => state.value.phase === "open");
+  return {
+    client,
+    daemon: client.daemon,
+    states,
+    phases: () => states.map((state) => state.value.phase),
+    hold: () => states.at(-1)!.value.hold,
+    snapshot: () => {
+      const last = open().at(-1)!.value;
+      return last.phase === "open" ? last.snapshot : (undefined as never);
+    },
+    opened: () => new Set(open().map((state) => state.epoch)).size,
+  };
+}
+
+async function frameClient(url: string): Promise<{ say(text: string): void; next(): Promise<unknown>; closed: Promise<number> }> {
   const ws = new WebSocket(url);
+  const received: unknown[] = [];
+  const waiting: ((frame: unknown) => void)[] = [];
+  ws.on("message", (data) => {
+    const frame: unknown = JSON.parse(data.toString());
+    const waiter = waiting.shift();
+    if (waiter === undefined) received.push(frame);
+    else waiter(frame);
+  });
+  const closed = new Promise<number>((resolve) => ws.once("close", resolve));
   await new Promise<void>((resolve, reject) => {
     ws.once("open", resolve);
     ws.once("error", reject);
   });
   return {
-    postMessage: (message) => ws.send(encode(message)),
-    addEventListener(type: "message" | "close", listener: (event: MessageEvent) => void) {
-      if (type === "close") ws.on("close", () => (listener as () => void)());
-      else ws.on("message", (data) => listener({ data: decode(data.toString()) } as MessageEvent));
-    },
-  } as Port;
+    say: (text) => ws.send(text),
+    next: () => (received.length > 0 ? Promise.resolve(received.shift()) : new Promise((resolve) => waiting.push(resolve))),
+    closed,
+  };
 }
+
+const HELLO = JSON.stringify({ kind: "hello", wire: 1, apis: [1] });
+const call = (id: number, method: string, input: unknown = {}) => JSON.stringify({ kind: "call", id, method, input });
 
 describe("the daemon over a folder", () => {
   it("lands on the screen the folder dictates, keeps the vault to itself while it holds it, and hands every record over a socket as it is", async () => {
     const root = await folder();
     const served = await serveDaemon({ host: nodeHost(root), port: 0, token: "t0k3n" });
-    daemons.push(served.daemon as DaemonCore);
-    const heard = told();
-    const ui = connect<Daemon>(await clientPort(served.url), new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => heard.emit(name, ...args) }) as never);
-    await ui.boot();
-    expect(heard.phases()).toEqual(["onboarding"]);
+    daemons.push(served.daemon);
+    await served.daemon.boot();
+    const ui = await view(served.url);
+    expect(ui.phases()).toEqual(["onboarding"]);
 
-    await ui.createIdentity("Alice", PASSPHRASE);
-    expect(heard.snapshot()).toMatchObject({ label: "Alice", restoreUnexplained: false, mediations: [], dids: [], contacts: [], channels: [], invitations: [] });
+    await ui.daemon.createIdentity({ name: "Alice", passphrase: PASSPHRASE });
+    expect(ui.snapshot()).toMatchObject({ label: "Alice", restoreUnexplained: false, mediations: [], dids: [], contacts: [], channels: [], invitations: [] });
     await stat(path.join(root, ".estoc", "vault.sqlite"));
 
-    const late = told();
-    const second = connect<Daemon>(await clientPort(served.url), new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => late.emit(name, ...args) }) as never);
-    await second.boot();
+    const late = await view(served.url);
     expect(late.snapshot().label).toBe("Alice");
-    expect(heard.events.filter(([name]) => name === "opened")).toHaveLength(1);
+    expect(late.states).toEqual([ui.states.at(-1)]);
+    expect(ui.opened()).toBe(1);
 
-    const backup = await ui.exportBackup();
+    const backup = await ui.daemon.exportBackup({});
     expect(backup.bytes).toBeInstanceOf(Uint8Array);
     expect(backup.name).toMatch(/^Alice-.*\.estoc\.sqlite$/);
     expect(new TextDecoder().decode(backup.bytes.subarray(0, 15))).toBe("SQLite format 3");
@@ -142,38 +184,46 @@ describe("the daemon over a folder", () => {
     const waiting = elsewhere.boot();
     await until("the second daemon says the vault is held elsewhere", () => other.phases().includes("elsewhere"));
 
-    await ui.lock();
-    expect(heard.phases().at(-1)).toBe("locked");
-    await expect(ui.unlock("wrong")).rejects.toThrow(/wrong passphrase/);
-    await expect(ui.send({ contactId: "018f0000-0000-7000-8000-000000000000" as never }, { type: BASIC_MESSAGE, body: { content: "hi" } })).rejects.toThrow(/no open vault/);
-    await ui.unlock(PASSPHRASE);
-    expect(heard.events.filter(([name]) => name === "opened")).toHaveLength(2);
+    await ui.daemon.lock({});
+    expect(ui.phases().at(-1)).toBe("locked");
+    await expect(ui.daemon.unlock({ passphrase: "wrong" })).rejects.toEqual({ origin: "daemon", code: "OperationFailed", message: "wrong passphrase", effect: "none", messageId: null });
+    await expect(ui.daemon.send({ target: { contactId: "018f0000-0000-7000-8000-000000000000" as never }, content: { type: BASIC_MESSAGE, body: { content: "hi" } } })).rejects.toEqual({ origin: "daemon", code: "WrongPhase", message: "no open vault", effect: "none", messageId: null });
+    await ui.daemon.unlock({ passphrase: PASSPHRASE });
+    expect(ui.opened()).toBe(2);
+    expect(ui.snapshot().label).toBe("Alice");
 
     await served.close();
     await waiting;
     expect(other.phases().at(-1)).toBe("locked");
   });
 
-  it("closes the socket a frame that does not decode came on, answers nothing that is no call, and goes on serving", async () => {
+  it("closes a socket whose first frame is no hello, answers a call of what is no method of the API as none, and goes on serving", async () => {
     const served = await serveDaemon({ host: nodeHost(await folder()), port: 0, token: "t0k3n" });
     try {
-      const garbled = new WebSocket(served.url);
-      await new Promise<void>((resolve, reject) => {
-        garbled.once("open", resolve);
-        garbled.once("error", reject);
-      });
-      const closedWith = new Promise<number>((resolve) => garbled.once("close", resolve));
-      garbled.send('{"kind":"call","id":1,"method":"send","args":[{"$bytes":"not base64!"}]}');
-      expect(await closedWith).toBe(1007);
+      await served.daemon.boot();
+      for (const first of ['{"kind":"call","id":1,"method":"send","args":[{"$bytes":"not base64!"}]}', "junk", '{"kind":"hello","wire":2,"apis":[1]}', '{"kind":"welcome","wire":1,"api":1}']) {
+        const raw = await frameClient(served.url);
+        raw.say(first);
+        await raw.closed;
+      }
 
-      const port = await clientPort(served.url);
-      const noCalls = [null, [], "boot", { kind: "call", id: 1, method: "boot" }, { kind: "call", id: 1, method: { toString: null }, args: [] }, { kind: "call", id: 1, method: ["boot"], args: [] }, { kind: "call", id: "1", method: "boot", args: [] }];
-      for (const noCall of noCalls) port.postMessage(noCall);
-      const heard = told();
-      const ui = connect<Daemon & { constructor(): Promise<unknown> }>(port, new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => heard.emit(name, ...args) }) as never);
-      await ui.boot();
-      expect(heard.phases()).toEqual(["onboarding"]);
-      await expect(ui.constructor()).rejects.toThrow(/no such method: constructor/);
+      const raw = await frameClient(served.url);
+      raw.say(HELLO);
+      expect(await raw.next()).toMatchObject({ kind: "welcome", wire: 1, api: 1, implementation: expect.stringMatching(/^estoc-daemon \d/) });
+      raw.say(call(1, "attach"));
+      expect(await raw.next()).toMatchObject({ kind: "result", id: 1, value: { state: { value: { phase: "onboarding" } } } });
+      let id = 1;
+      for (const method of ["boot", "pending", "replayTo", "close", "constructor", "__proto__", "publisher"]) {
+        raw.say(call(++id, method));
+        expect(await raw.next()).toEqual({ kind: "error", id, error: { code: "NoSuchMethod", message: expect.any(String), effect: "none", messageId: null } });
+      }
+      raw.say(call(++id, "send", { target: { contactId: "c" }, content: { type: BASIC_MESSAGE } }));
+      expect(await raw.next()).toMatchObject({ kind: "error", id, error: { code: "InvalidArgument", effect: "none", messageId: null } });
+      raw.say(JSON.stringify({ kind: "result", id: 99, value: null }));
+      await raw.closed;
+
+      const ui = await view(served.url);
+      expect(ui.phases()).toEqual(["onboarding"]);
     } finally {
       await served.close();
     }
@@ -223,34 +273,31 @@ describe("the daemon over a folder", () => {
   it("removes the vault a removal names and no other: one confirmed about a vault since removed and remade leaves the new one standing", async () => {
     const root = await folder();
     const served = await serveDaemon({ host: nodeHost(root), port: 0, token: "t0k3n" });
-    daemons.push(served.daemon as DaemonCore);
-    const heard = told();
-    const ui = connect<Daemon>(await clientPort(served.url), new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => heard.emit(name, ...args) }) as never);
-    await ui.boot();
-    await expect(ui.forgetIdentity("019b0000-0000-7000-8000-0000000000aa")).rejects.toThrow("there is no vault here to remove");
-    await ui.createIdentity("Alice", PASSPHRASE);
-    const alice = heard.hold()!;
-    await ui.lock();
-    expect(heard.events.at(-1)).toEqual(["phase", "locked", null, alice]);
-    await expect((ui.forgetIdentity as () => Promise<void>)()).rejects.toThrow("the removal names no vault");
+    daemons.push(served.daemon);
+    await served.daemon.boot();
+    const ui = await view(served.url);
+    await expect(ui.daemon.forgetIdentity({ hold: "019b0000-0000-7000-8000-0000000000aa" as never })).rejects.toMatchObject({ code: "WrongPhase", message: "there is no vault here to remove", effect: "none" });
+    await ui.daemon.createIdentity({ name: "Alice", passphrase: PASSPHRASE });
+    const alice = ui.hold()!;
+    await ui.daemon.lock({});
+    expect(ui.states.at(-1)!.value).toEqual({ phase: "locked", hold: alice, detail: null });
+    await expect(ui.daemon.forgetIdentity({} as never)).rejects.toMatchObject({ origin: "client", code: "InvalidArgument", effect: "none" });
     await stat(vaultFile(root));
 
-    const other = told();
-    const second = connect<Daemon>(await clientPort(served.url), new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => other.emit(name, ...args) }) as never);
-    await second.boot();
-    expect(other.hold()).toBe(alice);
-    await second.forgetIdentity(alice);
-    await second.createIdentity("Replacement", PASSPHRASE);
-    const replacement = other.hold()!;
+    const second = await view(served.url);
+    expect(second.hold()).toBe(alice);
+    await second.daemon.forgetIdentity({ hold: alice as never });
+    await second.daemon.createIdentity({ name: "Replacement", passphrase: PASSPHRASE });
+    const replacement = second.hold()!;
     expect(replacement).not.toBe(alice);
-    await until("the first UI is shown the replacement", () => heard.hold() === replacement);
+    await until("the first UI is shown the replacement", () => ui.hold() === replacement);
 
-    await expect(ui.forgetIdentity(alice)).rejects.toThrow("that vault is gone already");
+    await expect(ui.daemon.forgetIdentity({ hold: alice as never })).rejects.toMatchObject({ code: "StaleHold", message: expect.stringMatching(/^that vault is gone already/), effect: "none" });
     await stat(vaultFile(root));
-    await ui.refresh();
-    expect(heard.snapshot()).toMatchObject({ label: "Replacement" });
-    await ui.forgetIdentity(replacement);
-    expect(heard.events.at(-1)).toEqual(["phase", "onboarding", null, null]);
+    await ui.client.refresh();
+    expect(ui.snapshot()).toMatchObject({ label: "Replacement" });
+    await ui.daemon.forgetIdentity({ hold: replacement as never });
+    expect(ui.states.at(-1)!.value).toEqual({ phase: "onboarding", hold: null, detail: null });
     await expect(stat(vaultFile(root))).rejects.toThrow();
     await served.close();
   });
@@ -468,33 +515,30 @@ describe("a vault whose history is damaged", () => {
   it("is shown as it was published to a UI that joins, since joining reads nothing; the read that meets the damage stops the vault for both", async () => {
     const root = await folder();
     const running = damageable(root);
-    const served = await serveDaemon({ host: running.host, port: 0, token: "t0k3n" });
-    daemons.push(served.daemon as DaemonCore);
-    // The client answers any name as a call, `then` too: it is handed over inside an object, never awaited itself.
-    const joined = async (heard: ReturnType<typeof told>) => ({
-      ui: connect<Daemon>(await clientPort(served.url), new Proxy({} as DaemonEvents, { get: (_, name: string) => (...args: unknown[]) => heard.emit(name, ...args) }) as never),
-    });
-    const heard = told();
-    const { ui } = await joined(heard);
-    await ui.boot();
-    await ui.createIdentity("Alice", PASSPHRASE);
-    await ui.createContact("Bob", pairWith("Bob"));
+    const failures: unknown[] = [];
+    const served = await serveDaemon({ host: running.host, port: 0, token: "t0k3n", failed: (error) => failures.push(error) });
+    daemons.push(served.daemon);
+    await served.daemon.boot();
+    const ui = await view(served.url);
+    await ui.daemon.createIdentity({ name: "Alice", passphrase: PASSPHRASE });
+    await ui.daemon.createContact({ petname: "Bob", channelIds: pairWith("Bob").map(channelIdOf) });
 
     running.damageAnEvent();
 
-    const late = told();
-    await (await joined(late)).ui.boot();
-    expect(late.snapshot()).toEqual(heard.snapshot());
-    expect(late.hold()).toBe(heard.hold());
+    const late = await view(served.url);
+    expect(late.states).toEqual([ui.states.at(-1)]);
 
-    const damaged = ["phase", "damaged", expect.stringMatching(/^events\/.* is damaged/), expect.any(String)];
-    await expect(ui.createContact("Carmen", pairWith("Carmen"))).rejects.toThrow(/damaged/);
-    await until("the UI already there is told", () => heard.phases().at(-1) === "damaged");
+    const damaged = { phase: "damaged", detail: expect.stringMatching(/^events\/.* is damaged/), hold: ui.hold() };
+    // What the daemon threw stays with the host: the view is told of a failure, and the damage as the phase that follows.
+    await expect(ui.daemon.createContact({ petname: "Carmen", channelIds: pairWith("Carmen").map(channelIdOf) })).rejects.toEqual({ origin: "daemon", code: "OperationFailed", message: expect.not.stringMatching(/damaged/), effect: "possible", messageId: null });
+    expect(failures.map((error) => (error as Error).message)).toEqual([expect.stringMatching(/damaged/)]);
+    await until("the UI already there is told", () => ui.phases().at(-1) === "damaged");
     await until("the UI that joined is told", () => late.phases().at(-1) === "damaged");
-    expect(heard.events.at(-1)).toEqual(damaged);
-    expect(late.events.at(-1)).toEqual(damaged);
-    expect(late.events.filter(([name]) => name === "changed")).toEqual([]);
-    await expect(ui.createContact("Dora", pairWith("Dora"))).rejects.toThrow("no open vault");
+    expect(ui.states.at(-1)!.value).toEqual(damaged);
+    expect(late.states.at(-1)!.value).toEqual(damaged);
+    expect(late.states.filter((state) => state.value.phase === "open")).toHaveLength(1);
+    expect([ui.client.connection.state, late.client.connection.state]).toEqual(["connected", "connected"]);
+    await expect(ui.daemon.createContact({ petname: "Dora", channelIds: pairWith("Dora").map(channelIdOf) })).rejects.toMatchObject({ code: "WrongPhase", message: "no open vault" });
     await served.close();
   });
 });
@@ -1331,7 +1375,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       expect([forwardsSeen(mediator), bob.inbounds.length]).toEqual([forwards, inbounds]);
 
       const { executionId } = again.heard.snapshot().pending.missingResponses[0]!;
-      expect(await again.daemon.completeResponse(executionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null });
+      expect(await again.daemon.completeResponse(executionId, PURE_ACK_EFFECT)).toEqual({ outcome: "submitted", because: null, messageId: expect.any(String) as string });
       await until("bob holds the acknowledgement", () => bob.inbounds.length === inbounds + 1);
       expect(forwardsSeen(mediator)).toBe(forwards + 1);
       await until("the acknowledgement is no longer owed", () => again.heard.snapshot().pending.missingResponses.length === 0);
