@@ -17,7 +17,7 @@ The relations between colours matter more than any single value. Change a colour
 1. **Surfaces share one hue and differ in lightness.** Ground, surface, raised and line sit at hue 198 to 200, with lightness 12, 16, 18 and 26. One layer up is one step lighter.
 2. **Bubbles lift off the ground without shouting.** Both washes have a contrast of about 1.4 against the ground.
 3. **The two bubbles weigh the same.** Their lightness is close (19 and 22), the text inside is the same ink, and its contrast is about 10 on both. Neither side of a conversation is louder.
-4. **Warm colour is rationed.** The interface is cool. Warmth is kept for what you sent and for what has gone wrong.
+4. **Warm colour is rationed.** The interface is cool. Warmth is kept for what you sent, for what is still waiting and for what has gone wrong.
 
 ## Colour
 
@@ -30,7 +30,7 @@ The relations between colours matter more than any single value. Change a colour
 | Strong line | `--line-strong` | `#4a5d65` | field outlines |
 | Ink | `--ink` | `#e9eeee` | primary text |
 | Soft ink | `--ink-soft` | `#aebcc2` | secondary text, times, notes |
-| Accent | `--accent` | `#9acbbb` | anything that can be acted on, the live lamp |
+| Accent | `--accent` | `#9acbbb` | actions, avatar letters, unread counts, the live state |
 | On accent | `--on-accent` | `#202b30` | text and icons on an accent fill |
 | Verdigris wash | `--verdigris-wash` | `#253e36` | received messages, avatars |
 | Copper wash | `--copper-wash` | `#44352d` | sent messages |
@@ -39,22 +39,24 @@ The relations between colours matter more than any single value. Change a colour
 
 ## Rules
 
-- **One accent.** Pale verdigris marks what can be pressed, and only that.
+- **One accent.** Pale verdigris is the single accent. It marks actions, identity, unread counts and the live state, so it does not by itself say that something can be pressed.
 - **Bubbles are washes.** A low-saturation fill with ink text and no outline.
 - **Depth without shadow.** Layers within a screen are told apart by a lightness step and a hairline. Shadow is for what sits over the screen: sheets, drawers, the update notice.
-- **Colour is one cue among several.** Sent and received are also told by side, by the tail of the bubble and by a label. Every status has words.
+- **Colour is one cue among several.** Sent and received are also told by side and by the tail of the bubble. Every status has words.
 
 ## Type
 
 - The interface is set in the system sans-serif. Serif is kept for the Estoc wordmark. DIDs and addresses are monospace.
-- Two weights: 400 and 600. 600 is for names and titles.
-- Four sizes: 12 for times and status, 15 for body, 16 for names and input, 22 for a screen title.
+- The main weights are 400 and 600. 600 is for names and titles. The letter in an avatar is 500.
+- The main sizes are 12 for times and status, 15 for body, 16 for names and input, and 22 for the title of the list. These are the ones to reach for first.
+- Other sizes in use: 13 for notes and eyebrows, 14 for list previews and small buttons, 17 for the name at the top of a chat, 18 for the title of any other screen, 20 for a sheet title, 24 for the title of a first-run screen and the letter in a large avatar.
 - Input text is at least 16, so that a phone browser does not zoom in on focus.
 
 ## Shape
 
-- Three radii: 4 for the tail corner of a bubble, 12 for buttons and cards, 16 for bubbles. Avatars and the send button are round.
-- A touch target is at least 44 by 44.
+- The main radii are 4 for the tail corner of a bubble, 12 for buttons and cards, and 16 for bubbles. Avatars, the send button and the unread count are round.
+- Other radii in use: 8 for a block of monospace text, 10 for form fields and chips, 20 for sheets, 22 for the composer, 28 for the update notice.
+- Where the pointer is a finger, an action is at least 44 by 44. With a mouse, small buttons and the actions under a message may be smaller. A link inside a sentence takes the size of its text.
 - A list row is at least 80 tall, with one line between rows.
 
 ## Screens

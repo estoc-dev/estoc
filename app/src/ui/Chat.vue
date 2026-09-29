@@ -58,7 +58,6 @@ const sendError = ref("");
 const picked = ref<ChannelId | null>(null);
 const choosing = ref(false);
 
-/** The channel's record: among those the conversation shows, or anywhere in the snapshot. */
 const channelOf = (channelId: ChannelId): ChannelRecord | null => conversation.value?.channels.find((channel) => channel.channelId === channelId) ?? state.index?.channel(channelId) ?? null;
 
 // The channel this conversation writes in now. A send names it, never
@@ -78,7 +77,6 @@ const draft = computed({
   },
 });
 
-// Picking another channel of the same conversation takes what is being written along.
 function pick(channelId: ChannelId) {
   const before = target.value;
   picked.value = channelId;

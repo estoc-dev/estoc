@@ -64,7 +64,6 @@ export function labelOf(c: Conversation): string {
   return "Not named yet";
 }
 
-/** The letter a conversation is shown under; none while nobody has given it a name. */
 export function initialOf(c: Conversation): string {
   return initialOfName(c.petname ?? c.claimedName?.name ?? null);
 }

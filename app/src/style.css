@@ -1,8 +1,9 @@
 /* Copper and verdigris on one cool ground. What you send is copper, what
    arrives is verdigris; side and tail shape say the same, so colour is
-   never the only cue. Every surface shares the ground's hue and differs
-   in lightness alone. Pale verdigris is the one accent, for what can be
-   acted on; warm colour is kept for what is yours and what has gone wrong. */
+   one cue among several. Every surface shares the ground's hue and
+   differs in lightness alone. Pale verdigris is the one accent, for
+   actions, identity and the live state; warm colour is kept for what is
+   yours, what is waiting and what has gone wrong. */
 
 :root {
   --ground: #172024;
@@ -165,6 +166,14 @@ p {
   min-height: 40px;
   padding: 0 14px;
   font-size: 14px;
+}
+
+@media (pointer: coarse) {
+  .btn.small,
+  .btn-quiet.small,
+  .btn-danger.small {
+    min-height: var(--tap);
+  }
 }
 
 .link {
@@ -1092,6 +1101,19 @@ a.row:hover {
   }
 }
 
+/* The negative margin lets the target reach a finger's size while the
+   line under a bubble keeps the height of its text. */
+@media (pointer: coarse) {
+  .bubble-meta .link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    margin-block: calc((1.5em - var(--tap)) / 2);
+  }
+}
+
 .bubble .diagnostic {
   font-size: 12px;
   color: var(--ink-soft);
@@ -1286,6 +1308,12 @@ a.row:hover {
   min-height: 36px;
   padding: 0 14px;
   font-size: 14px;
+}
+
+@media (pointer: coarse) {
+  .update-chip .btn {
+    min-height: var(--tap);
+  }
 }
 
 .update-chip.alarm {

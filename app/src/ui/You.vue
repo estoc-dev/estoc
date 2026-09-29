@@ -12,11 +12,6 @@ import type { TraceLevel } from "../core/types.js";
 import { useUnconfirmed } from "./unconfirmed.js";
 import { bytesOf, initialOfName, shortDid, whenOf } from "./util.js";
 
-/**
- * The person's own place: how they are reached, where their vault is
- * and how it leaves with them, what this device keeps for itself, and
- * the way out.
- */
 const version = __APP_VERSION__;
 const snapshot = computed(() => state.snapshot);
 const { mediation, lamp, lost, sentence } = useStatus();
