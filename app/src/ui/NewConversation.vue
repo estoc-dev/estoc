@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import qrcode from "qrcode-generator";
-import { type Invitation } from "@estoc/agent-core";
 
-import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, invitationLink, state } from "../core/store.js";
+import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, state } from "../core/store.js";
+import type { Invitation } from "../core/types.js";
 import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
 import { back, go, swap } from "./nav.js";
@@ -46,8 +46,10 @@ const readable = ref(false);
 async function invite(then: "qr" | "copy") {
   error.value = null;
   inviting.value = true;
+  const held = heldNow();
   try {
     shownInvitation.value = await createInvitation();
+    if (!held()) return;
     show("qr");
     if (then === "copy" && shownUrl.value !== null) await copy(shownUrl.value);
   } catch (err) {
@@ -63,7 +65,7 @@ const shownUrl = computed(() => (shownRecord.value === null || shownRecord.value
 const takenBy = computed(() => {
   const record = shownRecord.value;
   if (record === null || record.state.status !== "consumed") return null;
-  return state.conversations.find((c) => c.channels.some(({ channel }) => channel.peerDid === record.consumer)) ?? null;
+  return state.conversations.find((c) => c.channels.some((channel) => channel.peerDid === record.consumer)) ?? null;
 });
 
 // A link can outgrow what a QR code holds: its length follows the DID,
@@ -107,11 +109,13 @@ async function accept(input: string | Invitation) {
   }
   accepting.value = true;
   error.value = null;
+  const held = heldNow();
   try {
-    const contactId = typeof input === "string" ? await addContactFrom(input, label) : await acceptInvitation(input, label);
+    const key = typeof input === "string" ? await addContactFrom(input, label) : await acceptInvitation(input, label);
+    if (!held()) return;
     name.value = "";
     link.value = "";
-    swap({ kind: "chat", key: contactId });
+    swap(key === null ? { kind: "list" } : { kind: "chat", key });
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -227,7 +231,7 @@ const offered = computed(() => scanned.value ?? pending.value);
       <div class="sheet-title">Your invitation</div>
       <template v-if="takenBy !== null || (shownRecord && shownRecord.state.status === 'consumed')">
         <p class="note" data-invitation-taken>That link was taken: a new conversation is open.</p>
-        <button v-if="takenBy" class="btn" type="button" @click="swap({ kind: 'chat', key: takenBy.key })">Open it</button>
+        <button v-if="takenBy" class="btn" type="button" @click="swap({ kind: 'chat', key: takenBy.id })">Open it</button>
       </template>
       <template v-else-if="shownUrl">
         <div v-if="qrSvg" class="qr" v-html="qrSvg"></div>

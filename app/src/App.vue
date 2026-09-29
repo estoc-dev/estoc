@@ -5,9 +5,9 @@ import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
 import Onboarding from "./ui/Onboarding.vue";
 import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
-import { useRemoval } from "./ui/removal.js";
+import { useUnconfirmed } from "./ui/unconfirmed.js";
 
-const { failed: removalFailed, remove, dismiss: dismissRemoval } = useRemoval();
+const { unconfirmed, remove, dismiss } = useUnconfirmed();
 const removeVault = (question: string) => {
   const hold = state.hold;
   return remove(question, () => forgetIdentity(hold));
@@ -18,10 +18,34 @@ const removeUnreadable = () => removeVault("Remove this vault from here and begi
 const removeDamaged = () => removeVault("Remove the damaged vault from here? It cannot be opened again afterwards. What you keep is what your backup holds.");
 
 const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new URL(state.daemonAt).host));
+/** A daemon over a socket that has never answered this page: nothing to show but that. */
+const unreachable = computed(() => state.phase === "booting" && state.away !== null);
+const incompatible = computed(() => (state.connection.state === "incompatible" ? state.connection.message : null));
 </script>
 
 <template>
-  <div v-if="state.phase === 'booting'" class="hollow"></div>
+  <div v-if="incompatible !== null" class="hollow" data-incompatible>
+    <div class="hollow-card">
+      <div class="eyebrow">Estoc</div>
+      <h1>Another version of the daemon</h1>
+      <p>This page and the daemon at {{ daemonHost }} speak different versions of the API: {{ incompatible }}</p>
+      <p class="note">Update <code>estoc-daemon</code> and open its link again. <code>?_daemon=off</code> returns this page to a vault of its own in the browser.</p>
+    </div>
+  </div>
+
+  <div v-else-if="unreachable" class="hollow" data-unreachable>
+    <div class="hollow-card">
+      <div class="eyebrow">Estoc</div>
+      <h1>No daemon is answering</h1>
+      <p>This page expects a daemon at {{ daemonHost }} and nothing there answers. It keeps trying.</p>
+      <p class="note">
+        If <code>estoc serve</code> is running, open the link it printed: it carries the key this page needs, and the page remembers it. <code>?_daemon=off</code>
+        returns this page to a vault of its own in the browser.
+      </p>
+    </div>
+  </div>
+
+  <div v-else-if="state.phase === 'booting'" class="hollow"></div>
 
   <div v-else-if="state.phase === 'elsewhere'" class="hollow" data-elsewhere>
     <div class="hollow-card">
@@ -77,27 +101,16 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
 
   <Unlock v-else-if="state.phase === 'locked'" />
 
-  <div v-else-if="state.phase === 'unreachable'" class="hollow" data-unreachable>
-    <div class="hollow-card">
-      <div class="eyebrow">Estoc</div>
-      <h1>No daemon is answering</h1>
-      <p>This page expects a daemon at {{ daemonHost }} and nothing there answers. It keeps trying.</p>
-      <p class="note">
-        If <code>estoc serve</code> is running, open the link it printed: it carries the key this page needs, and the page remembers it. <code>?_daemon=off</code>
-        returns this page to a vault of its own in the browser.
-      </p>
-    </div>
-  </div>
-
-  <Shell v-else-if="state.snapshot" />
+  <!-- keyed by the vault held: another vault in its place gets screens of its own, with nothing entered on the old one's -->
+  <Shell v-else-if="state.snapshot" :key="state.hold ?? ''" />
 
   <div v-if="state.applyUpdate" class="update-chip" data-update>
     <span>A new version of Estoc is ready.</span>
     <button class="btn" type="button" @click="state.applyUpdate?.()">Reload</button>
   </div>
 
-  <div v-if="removalFailed" class="update-chip alarm" data-removal-failed>
-    <span>The removal was not confirmed: {{ removalFailed }}</span>
-    <button class="btn" type="button" @click="dismissRemoval">OK</button>
+  <div v-if="unconfirmed" class="update-chip alarm" data-unconfirmed>
+    <span>{{ unconfirmed.what }} was not confirmed: {{ unconfirmed.because }}</span>
+    <button class="btn" type="button" @click="dismiss">OK</button>
   </div>
 </template>

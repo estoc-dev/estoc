@@ -1,4 +1,5 @@
-import { connect, decode, encode, type Daemon, type DaemonEvents, type Port } from "@estoc/daemon";
+import { reconnecting, type Client } from "@estoc/daemon-api/client";
+import { messagePortOf, webSocketOf, type Port } from "@estoc/daemon-api/wire";
 
 /**
  * The daemon as this page reaches it. By default a dedicated worker,
@@ -10,7 +11,9 @@ import { connect, decode, encode, type Daemon, type DaemonEvents, type Port } fr
  * the page was opened with `?_daemon=ws://…?token=…` from what the daemon
  * printed, a choice remembered here until `?_daemon=off`. The token is
  * the only key either way; a page without one is answered by nobody and
- * says so. Either way the UI holds this proxy and nothing else.
+ * says so. Either way the UI holds one client of the API and nothing
+ * else: a connection that ends is followed by another, negotiated and
+ * attached afresh, and a call the old one lost stays lost.
  */
 
 const DAEMON_KEY = "estoc:daemon";
@@ -42,7 +45,7 @@ export function takeDaemonUrl(): string | null {
 }
 
 export interface Started {
-  daemon: Daemon;
+  client: Client;
   /** where the daemon is: in this page, or at a socket */
   where: "worker" | string;
 }
@@ -81,107 +84,18 @@ function servedByDaemon(): string | null {
   return socket.href;
 }
 
-/** What only a page over a socket has to say: the daemon it spoke with stopped answering, or answers again. */
-export interface LinkEvents {
-  away(detail: string | null): void;
+/** A port of the worker's own, one session's: the worker serves each port it is handed. */
+function portTo(worker: Worker): Port {
+  const { port1, port2 } = new MessageChannel();
+  worker.postMessage(port2, [port2]);
+  return messagePortOf(port1);
 }
 
-export function startDaemon(events: DaemonEvents & LinkEvents): Started {
-  const handlers = events as unknown as Record<string, (...args: never[]) => unknown>;
+export function startDaemon(): Started {
   const remote = servedByDaemon() ?? takeDaemonUrl();
   if (remote === null) {
     const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-    return { daemon: connect<Daemon>(worker, handlers), where: "worker" };
+    return { client: reconnecting(() => portTo(worker)), where: "worker" };
   }
-  const port = socketPort(remote, events);
-  const daemon = connect<Daemon>(port, handlers);
-  port.onReopen = () => void daemon.boot().catch(() => undefined);
-  return { daemon, where: remote };
-}
-
-interface SocketPort extends Port {
-  onReopen: (() => void) | null;
-}
-
-/**
- * A WebSocket as the message port the RPC speaks over, text-encoded, that
- * comes back by itself: when the socket drops, calls in flight fail, the
- * UI is told the daemon is unreachable, and the next open replays where
- * things stand (the daemon's `boot()` does that for a returning client).
- */
-function socketPort(url: string, events: DaemonEvents & LinkEvents): SocketPort {
-  const listeners: { message: ((event: MessageEvent) => void)[]; close: (() => void)[] } = { message: [], close: [] };
-  let ws: WebSocket | null = null;
-  /** an open that follows a close — the first open included, when a connect failed before it — replays */
-  let replayOnOpen = false;
-  /** whether the daemon ever spoke: until it does, a closed socket means nobody is there for this page */
-  let heard = false;
-  /** whether the last thing this page knew of the daemon is that it was gone */
-  let away = false;
-  /** what was said while the socket was still connecting */
-  let queued: string[] = [];
-  const port: SocketPort = {
-    onReopen: null,
-    postMessage(message) {
-      const text = encode(message);
-      if (ws !== null && ws.readyState === WebSocket.OPEN) {
-        ws.send(text);
-      } else if (ws !== null && ws.readyState === WebSocket.CONNECTING) {
-        queued.push(text);
-      } else {
-        // fail the call now rather than hang it: the caller sees the daemon is away
-        for (const l of listeners.close) {
-          l();
-        }
-      }
-    },
-    addEventListener(type: "message" | "close", listener: (event: MessageEvent) => void) {
-      if (type === "close") {
-        listeners.close.push(listener as unknown as () => void);
-      } else {
-        listeners.message.push(listener);
-      }
-    },
-  } as SocketPort;
-  const open = () => {
-    const socket = new WebSocket(url);
-    ws = socket;
-    socket.addEventListener("open", () => {
-      for (const text of queued) {
-        socket.send(text);
-      }
-      queued = [];
-      if (replayOnOpen) {
-        port.onReopen?.();
-      }
-      replayOnOpen = true;
-    });
-    socket.addEventListener("message", (event: MessageEvent<string>) => {
-      if (away) {
-        away = false;
-        events.away(null);
-      }
-      heard = true;
-      const data = decode(event.data);
-      for (const l of listeners.message) {
-        l({ data } as MessageEvent);
-      }
-    });
-    socket.addEventListener("close", () => {
-      ws = null;
-      queued = [];
-      replayOnOpen = true;
-      for (const l of listeners.close) {
-        l();
-      }
-      away = true;
-      events.away(`daemon at ${new URL(url).host} is not answering`);
-      if (!heard) {
-        events.phase("unreachable", null, null);
-      }
-      setTimeout(open, 2000);
-    });
-  };
-  open();
-  return port;
+  return { client: reconnecting(() => webSocketOf(new WebSocket(remote)), { delayMs: 2000 }), where: remote };
 }

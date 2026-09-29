@@ -1,6 +1,4 @@
-import { didHost, resolveMediatorInput } from "@estoc/agent-core";
-
-export { resolveMediatorInput };
+import { mediatorHost, mediatorInputOf } from "@estoc/daemon-api/views";
 
 /**
  * Known mediators. The default is Estoc's own mediator on Cloudflare
@@ -55,7 +53,7 @@ export const MEDIATOR_CHOICES: MediatorChoice[] =
   CUSTOM_MEDIATOR !== undefined && CUSTOM_MEDIATOR !== ""
     ? [
         {
-          label: didHost(CUSTOM_MEDIATOR) ?? "custom mediator",
+          label: mediatorHost(CUSTOM_MEDIATOR) ?? "custom mediator",
           value: CUSTOM_MEDIATOR,
         },
         LOCAL_CHOICE,
@@ -67,6 +65,38 @@ export const MEDIATOR_CHOICES: MediatorChoice[] =
       ];
 
 /**
+ * A mediator can be handed over three ways, and they converge on its DID:
+ * a DID pasted directly; an out-of-band invitation URL, whose `_oob`
+ * parameter decodes to the invitation offline (the standard bootstrap, and
+ * the DID inside is pinned by whoever handed over the URL); or a bare
+ * mediator URL, probed with one GET for its JSON description — the only
+ * form that has to trust what the server answers today.
+ *
+ * `prefer` picks one of the mediator's alias DIDs by prefix (say
+ * `did:peer:2`) from the probe's `dids` list instead of its primary.
+ */
+export async function resolveMediatorInput(input: string, prefer?: string): Promise<string> {
+  const read = mediatorInputOf(input);
+  if (read.did !== null) return read.did;
+  const url = new URL(read.url);
+  let body: { did?: unknown; dids?: unknown } | null;
+  try {
+    const res = await fetch(url, { headers: { accept: "application/json" } });
+    body = (await res.json()) as { did?: unknown; dids?: unknown };
+  } catch {
+    throw new Error(`could not get a mediator description from ${url.host}`);
+  }
+  if (prefer !== undefined) {
+    const dids = Array.isArray(body?.dids) ? body.dids : [];
+    const match = dids.find((did): did is string => typeof did === "string" && did.startsWith(prefer));
+    if (match === undefined) throw new Error(`${url.host} does not answer as a ${prefer} DID`);
+    return match;
+  }
+  if (typeof body?.did !== "string" || !body.did.startsWith("did:")) throw new Error(`${url.host} did not answer with a mediator DID`);
+  return body.did;
+}
+
+/**
  * A human name for a mediator DID: the known label, or its HTTP endpoint
  * host — with the method when it is a did:peer:2, since one host may be
  * reached under more than one name (and the picker offers both).
@@ -76,8 +106,8 @@ export function mediatorLabel(did: string): string {
   if (known !== undefined) {
     return known.label;
   }
-  const host = didHost(did);
-  if (host === undefined) {
+  const host = mediatorHost(did);
+  if (host === null) {
     return "custom mediator";
   }
   return did.startsWith("did:peer:2") ? `${host} (did:peer:2)` : host;

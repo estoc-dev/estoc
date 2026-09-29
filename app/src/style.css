@@ -1041,6 +1041,31 @@ a.row:hover {
   opacity: 0.8;
 }
 
+.bubble .attachments {
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid currentColor;
+  list-style: none;
+  white-space: normal;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.bubble .attachments li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.bubble .attachments .attachment-name {
+  font-weight: 600;
+}
+
+.bubble .attachments .mono {
+  overflow-wrap: anywhere;
+  opacity: 0.8;
+}
+
 .bubble-meta {
   display: flex;
   flex-wrap: wrap;

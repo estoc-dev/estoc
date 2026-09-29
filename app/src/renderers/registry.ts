@@ -52,12 +52,12 @@ export function rendererFor(type: string): MessageRenderer {
 
 /** The type a record is drawn by: none while its observations, or its intents, do not agree on one. */
 export function typeOf(message: MessageRecord): string {
-  return message.msg?.type ?? "";
+  return message.headers?.type ?? "";
 }
 
 /** Whether something about the message is the person's to look at or act on, whatever its type. */
 export function needsAttention(message: MessageRecord): boolean {
-  return message.manualAction !== "none" || message.diagnostics.length > 0 || message.outcome?.status === "conflict" || message.input?.status === "conflict";
+  return message.manualAction !== "none" || message.diagnostics.length > 0 || message.delivery?.status === "conflict" || message.input?.status === "conflict";
 }
 
 /** What the vault sends and receives on its own account: receipts, heartbeat replies, rotation notices. */

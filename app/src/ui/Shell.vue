@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
+import type { ConversationId } from "../core/types.js";
 import Attention from "./Attention.vue";
 import Chat from "./Chat.vue";
 import ConversationList from "./ConversationList.vue";
@@ -14,7 +15,7 @@ const kind = computed(() => screen.value.kind);
 const key = computed(() => keyOf(screen.value));
 
 // The invitation sheet opens over whatever was on screen; a window with room for a conversation beside the list keeps it there under the sheet.
-const lastKey = ref<string | null>(null);
+const lastKey = ref<ConversationId | null>(null);
 watch(key, (k) => (k === null ? undefined : (lastKey.value = k)), { immediate: true });
 const chatKey = computed(() => (kind.value === "new" ? lastKey.value : key.value));
 

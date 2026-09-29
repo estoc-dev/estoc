@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { TraceLevel } from "@estoc/agent-core";
 
 import { mediatorLabel } from "../core/mediators.js";
-import { exportedAt, forgetDevice, markExported } from "../core/seen.js";
-import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import { exportedAt, forgetRemembered } from "../core/seen.js";
+import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
-import { useRemoval } from "./removal.js";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
+import type { TraceLevel } from "../core/types.js";
+import { useUnconfirmed } from "./unconfirmed.js";
 import { bytesOf, shortDid, whenOf } from "./util.js";
 
 /**
@@ -25,6 +25,19 @@ const initial = computed(() => {
   return label === "" ? "?" : [...label][0]!.toUpperCase();
 });
 
+const reasonOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+const reconnectNote = ref<string | null>(null);
+
+async function tryAgain() {
+  reconnectNote.value = null;
+  try {
+    await reconnect();
+  } catch (err) {
+    reconnectNote.value = reasonOf(err);
+  }
+}
+
 const changingMediator = ref(false);
 
 async function moveMediator(did: string) {
@@ -32,8 +45,7 @@ async function moveMediator(did: string) {
   changingMediator.value = false;
 }
 
-const handedOut = computed(() => handedOutDid(snapshot.value));
-const address = computed(() => handedOut.value.did);
+const address = computed(() => handedOutDid(snapshot.value));
 const copiedAddress = ref(false);
 const readableAddress = ref<string | null>(null);
 const addressNote = ref<string | null>(null);
@@ -42,8 +54,10 @@ const minting = ref(false);
 async function copyAddress() {
   minting.value = true;
   addressNote.value = null;
+  const held = heldNow();
   try {
     const did = address.value ?? (await publicDid());
+    if (!held()) return;
     try {
       await navigator.clipboard.writeText(did);
       copiedAddress.value = true;
@@ -53,7 +67,7 @@ async function copyAddress() {
       addressNote.value = "It could not be copied from here: select the address below and copy it yourself.";
     }
   } catch (err) {
-    addressNote.value = err instanceof Error ? err.message : String(err);
+    addressNote.value = reasonOf(err);
   } finally {
     minting.value = false;
   }
@@ -68,18 +82,22 @@ const storage = computed(() => {
 });
 
 const exporting = ref(false);
+const exportNote = ref<string | null>(null);
+
 async function exportBackup() {
   exporting.value = true;
+  exportNote.value = null;
   try {
     await downloadBackup();
-    markExported();
+  } catch (err) {
+    exportNote.value = reasonOf(err);
   } finally {
     exporting.value = false;
   }
 }
 
 const lastExport = computed(() => {
-  const at = exportedAt();
+  const at = snapshot.value === null ? null : exportedAt(snapshot.value.anchor);
   return at === null ? "not yet" : `last: ${whenOf(at)}`;
 });
 
@@ -92,15 +110,18 @@ async function importBackup(event: Event) {
   if (file === undefined) return;
   importing.value = true;
   importNote.value = null;
+  const held = heldNow();
   try {
-    const merged = await mergeBackup(await bytesOf(file));
+    const backup = await bytesOf(file);
+    if (!held()) return;
+    const merged = await mergeBackup(backup);
     importNote.value =
       merged.added === 0 && merged.objects === 0
         ? "Nothing new in that backup."
         : `Merged ${merged.added} new event${merged.added === 1 ? "" : "s"} and ${merged.objects} object${merged.objects === 1 ? "" : "s"}.`;
     if (merged.renewed) importNote.value += " That backup and this vault were copies of one another that both went on being written; this one now writes under a fresh ID of its own, its history unchanged.";
   } catch (err) {
-    importNote.value = err instanceof Error ? err.message : String(err);
+    importNote.value = reasonOf(err);
   } finally {
     importing.value = false;
     if (importInput.value !== null) importInput.value.value = "";
@@ -113,23 +134,33 @@ const TRACE_NOTES: Record<TraceLevel, string> = {
   verbose: "the same and the bytes on the wire, for four months",
 };
 const traceBusy = ref(false);
+const traceNote = ref<string | null>(null);
 
 async function chooseTraceLevel(event: Event) {
+  const select = event.target as HTMLSelectElement;
   traceBusy.value = true;
+  traceNote.value = null;
   try {
-    await setTraceLevel((event.target as HTMLSelectElement).value as TraceLevel);
+    await setTraceLevel(select.value as TraceLevel);
+  } catch (err) {
+    traceNote.value = reasonOf(err);
+    select.value = state.traceLevel;
   } finally {
     traceBusy.value = false;
   }
 }
 
-const { remove } = useRemoval();
+const { busy, attempt, remove } = useUnconfirmed();
+
+// Locking leaves this screen: what it fails with is shown wherever the person is by then.
+const lockVault = () => attempt("Locking", lock);
 
 function forget() {
   const hold = state.hold;
+  const shown = snapshot.value;
   return remove("Delete this identity from this device? Keys, contacts and messages here are gone for good. Export a backup first if you want them back.", async () => {
     await forgetIdentity(hold);
-    forgetDevice();
+    if (shown !== null) forgetRemembered(shown);
   });
 }
 </script>
@@ -145,8 +176,9 @@ function forget() {
         <span class="note" :class="{ 'error-text': lamp === 'error' }" data-status-sentence>
           <span class="lamp" :class="lamp"></span>
           {{ sentence }}
-          <button v-if="lamp === 'error' && state.away === null" class="link" type="button" data-reconnect @click="reconnect">try again</button>
+          <button v-if="lamp === 'error' && state.away === null" class="link" type="button" data-reconnect @click="tryAgain">try again</button>
         </span>
+        <span v-if="reconnectNote" class="note error-text" data-reconnect-note>{{ reconnectNote }}</span>
       </div>
 
       <div v-if="mediation === null" class="section" data-choose-mediator>
@@ -165,17 +197,17 @@ function forget() {
             </span>
             <span class="row-end">{{ changingMediator ? "keep it" : "change" }}</span>
           </button>
-          <p v-for="fault in mediation.faults" :key="fault" class="error-text" style="padding: 0 16px 12px">{{ fault }}</p>
+          <p v-for="fault in mediation.diagnostics" :key="fault" class="error-text" style="padding: 0 16px 12px">{{ fault }}</p>
           <div v-if="changingMediator" style="padding: 4px 16px 16px">
             <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :current="mediation.mediatorDid" :pick="moveMediator" />
             <p class="note" style="margin-top: 10px">Addresses minted from here on go through the new mediator. The ones you have stay put until you use a fresh address in that conversation.</p>
           </div>
-          <button class="row" type="button" :disabled="minting || !handedOut.known" :title="address ?? ''" data-public-did @click="copyAddress">
+          <button class="row" type="button" :disabled="minting" :title="address ?? ''" data-public-did @click="copyAddress">
             <span class="row-main">
               <span>Your DID</span>
-              <span class="row-sub">{{ !handedOut.known ? "the estoc-daemon here predates it: update it" : address === null ? "for anyone: minted when you first copy it" : shortDid(address) }}</span>
+              <span class="row-sub">{{ address === null ? "for anyone: minted when you first copy it" : shortDid(address) }}</span>
             </span>
-            <span class="row-end">{{ copiedAddress ? "copied" : minting ? "minting…" : !handedOut.known ? "" : address === null ? "mint and copy" : "copy" }}</span>
+            <span class="row-end">{{ copiedAddress ? "copied" : minting ? "minting…" : address === null ? "mint and copy" : "copy" }}</span>
           </button>
           <input v-if="readableAddress" class="field mono" readonly :value="readableAddress" aria-label="Your DID" data-public-did-text style="margin: 0 16px 12px; width: calc(100% - 32px)" @focus="selectAll" />
           <p v-if="addressNote" class="note" style="padding: 0 16px 12px" data-public-did-note>{{ addressNote }}</p>
@@ -199,6 +231,7 @@ function forget() {
             </span>
             <span class="row-end">{{ lastExport }}</span>
           </button>
+          <p v-if="exportNote" class="note error-text" style="padding: 0 16px 12px" data-export-note>{{ exportNote }}</p>
           <label class="row file-btn">
             <span class="row-main">
               <span>{{ importing ? "Merging…" : "Import a backup" }}</span>
@@ -227,7 +260,8 @@ function forget() {
               <option v-for="(_note, level) in TRACE_NOTES" :key="level" :value="level">{{ level }}</option>
             </select>
           </label>
-          <button class="row" type="button" data-lock @click="lock">
+          <p v-if="traceNote" class="note error-text" style="padding: 0 16px 12px" data-trace-note>{{ traceNote }}</p>
+          <button class="row" type="button" :disabled="busy" data-lock @click="lockVault">
             <span class="row-main">
               <span>Lock</span>
               <span class="row-sub">asks for the passphrase again</span>

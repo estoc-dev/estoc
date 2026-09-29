@@ -1,26 +1,26 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { blockChannels, deleteContact, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
-import type { ConversationChannel, DidId } from "../core/types.js";
+import { blockChannels, deleteContact, heldNow, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
+import type { ConversationId, ShownChannel } from "../core/types.js";
 import { editableFrom } from "./editable.js";
 import Icon from "./Icon.vue";
 import { go, layout, swap } from "./nav.js";
 import Sheet from "./Sheet.vue";
 import Topbar from "./Topbar.vue";
-import { initialOf, labelOf, shortDid, shortFormOf } from "./util.js";
+import { initialOf, labelOf, observationsOf, ownsEnd, shortDid } from "./util.js";
 
 /**
  * A conversation as the person deals with it: the name they give it,
  * a way to say who they are, a fresh address toward the peer, and what
  * ends it. Everything the protocol keeps underneath is one step further.
  */
-const props = defineProps<{ conversationKey: string }>();
+const props = defineProps<{ conversationKey: ConversationId }>();
 
-const conversation = computed(() => state.conversations.find((c) => c.key === props.conversationKey) ?? null);
+const conversation = computed(() => state.conversations.find((c) => c.id === props.conversationKey) ?? null);
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
 
-const petname = editableFrom(computed(() => conversation.value?.petname ?? conversation.value?.claimedName ?? ""));
+const petname = editableFrom(computed(() => conversation.value?.petname ?? conversation.value?.claimedName?.name ?? ""));
 
 const busy = ref(false);
 const failure = ref<string | null>(null);
@@ -38,24 +38,21 @@ async function act(action: () => Promise<void>) {
   }
 }
 
-const isHead = (channel: ConversationChannel) => channel.head !== null && channel.head.localDid === channel.channel.localDid && channel.head.peerDid === channel.channel.peerDid;
-
-function localDidIdOf(localDid: string): DidId | null {
-  return state.snapshot?.dids.find((did) => did.did !== null && shortFormOf(did.did) === localDid)?.didId ?? null;
-}
+const isHead = (channel: ShownChannel) => channel.headChannelId === channel.channelId;
 
 // The channel a send goes out in now: the one to introduce yourself in, and the one a fresh address replaces.
 const current = computed(() => {
   const c = conversation.value;
   if (c === null) return null;
-  const channel = c.defaultWriteTo ?? (c.writeTo.length === 1 ? c.writeTo[0]! : null);
-  return channel === null ? null : (c.channels.find(({ channel: shown }) => shown.localDid === channel.localDid && shown.peerDid === channel.peerDid) ?? null);
+  const channelId = c.defaultWriteTo ?? (c.writeTo.length === 1 ? c.writeTo[0]! : null);
+  return channelId === null ? null : (c.channels.find((shown) => shown.channelId === channelId) ?? null);
 });
 
 const introduced = computed(() => current.value?.profileSubmitted !== null);
-const rotatable = computed(() => (current.value === null ? null : localDidIdOf(current.value.channel.localDid)));
-const admitted = computed(() => conversation.value?.channels.reduce((n, { observations }) => n + observations.filter(({ disposition }) => disposition.status === "admitted").length, 0) ?? 0);
-const received = computed(() => conversation.value?.channels.reduce((n, { observations }) => n + observations.length, 0) ?? 0);
+const rotatable = computed(() => current.value !== null && ownsEnd(state.snapshot, current.value));
+const observations = computed(() => conversation.value?.channels.flatMap((channel) => observationsOf(state.index, channel)) ?? []);
+const admitted = computed(() => observations.value.filter(({ disposition }) => disposition.status === "admitted").length);
+const received = computed(() => observations.value.length);
 
 const name = () =>
   act(async () => {
@@ -67,8 +64,10 @@ const name = () =>
     }
     if (c.contactId === null) {
       const heads = c.channels.filter(isHead);
-      const key = await nameConversation((heads.length > 0 ? heads : c.channels).map(({ channel }) => channel), chosen);
-      swap({ kind: "details", key });
+      const held = heldNow();
+      const key = await nameConversation((heads.length > 0 ? heads : c.channels).map(({ channelId }) => channelId), chosen);
+      if (!held()) return;
+      swap(key === null ? { kind: "list" } : { kind: "details", key });
     } else {
       await renameContact(c.contactId, chosen);
     }
@@ -77,9 +76,9 @@ const name = () =>
 function block() {
   const c = conversation.value;
   if (c === null) return;
-  const channels = c.channels.filter(({ selected, blocked }) => (c.contactId === null || selected) && !blocked).map(({ channel }) => channel);
-  if (channels.length > 0 && confirm(`Block ${labelOf(c)}? Nothing more is taken in from their addresses, or from any they move to.`)) {
-    void act(() => blockChannels(channels));
+  const channelIds = c.channels.filter(({ selected, blocked }) => (c.contactId === null || selected) && !blocked).map(({ channelId }) => channelId);
+  if (channelIds.length > 0 && confirm(`Block ${labelOf(c)}? Nothing more is taken in from their addresses, or from any they move to.`)) {
+    void act(() => blockChannels(channelIds));
   }
 }
 
@@ -91,9 +90,10 @@ function remove() {
   const contactId = conversation.value?.contactId ?? null;
   if (contactId === null) return;
   deleting.value = false;
+  const held = heldNow();
   void act(async () => {
     await deleteContact(contactId, { block: alsoBlock.value, erase: alsoErase.value });
-    swap({ kind: "list" });
+    if (held()) swap({ kind: "list" });
   });
 }
 </script>
@@ -105,7 +105,7 @@ function remove() {
     <div v-if="conversation" class="screen-body">
       <div style="display: flex; flex-direction: column; align-items: center; gap: 10px">
         <span class="avatar large" :class="{ nameless: conversation.contactId === null }">{{ initialOf(conversation) }}</span>
-        <span v-if="conversation.claimedName && conversation.claimedName !== conversation.petname" class="note">calls themself “{{ conversation.claimedName }}”</span>
+        <span v-if="conversation.claimedName && conversation.claimedName.name !== conversation.petname" class="note">calls themself “{{ conversation.claimedName.name }}”</span>
         <span v-else-if="conversation.contactId === null" class="note">not a contact yet</span>
       </div>
 
@@ -115,11 +115,11 @@ function remove() {
       </form>
 
       <div class="group">
-        <button class="row" type="button" :disabled="busy || sendsClosed || current === null || introduced" data-introduce @click="act(() => introduce(current!.channel))">
+        <button class="row" type="button" :disabled="busy || sendsClosed || current === null || introduced" data-introduce @click="act(() => introduce(current!.channelId))">
           <span class="row-main">Introduce yourself</span>
           <span class="row-end">{{ introduced ? "sent" : "sends your name" }}</span>
         </button>
-        <button v-if="rotatable" class="row" type="button" :disabled="busy || sendsClosed" data-rotate @click="act(() => rotate(rotatable!, current!.channel.peerDid))">
+        <button v-if="rotatable" class="row" type="button" :disabled="busy || sendsClosed" data-rotate @click="act(() => rotate(current!.channelId))">
           <span class="row-main">Use a fresh address with {{ labelOf(conversation) }}</span>
           <span class="row-end">rotate</span>
         </button>
@@ -134,7 +134,7 @@ function remove() {
           <button class="row" type="button" data-under-the-hood @click="go({ kind: 'hood', key: conversationKey })">
             <span class="row-main">
               <span>Channels</span>
-              <span class="row-sub" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ conversation.channels.length }}<template v-if="current"> · writing as {{ shortDid(current.channel.localDid) }}</template></span>
+              <span class="row-sub" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ conversation.channels.length }}<template v-if="current"> · writing as {{ shortDid(current.localDid) }}</template></span>
             </span>
             <Icon name="chevron" class="chevron" :size="20" />
           </button>

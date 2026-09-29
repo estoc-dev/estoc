@@ -1,6 +1,7 @@
 import { openSqlitePool } from "@estoc/event-store/browser";
 import type { DidcommApi } from "@estoc/agent-core";
-import { createDaemon, serve, type DaemonHost, type DaemonStorage, type Emit } from "@estoc/daemon";
+import { attachTo, createDaemon, limitsOf, methodsOf, type DaemonHost, type DaemonStorage } from "@estoc/daemon";
+import { messagePortOf, serveApi } from "@estoc/daemon-api/wire";
 
 import { Message, initDidcomm } from "../didcomm/wasm.js";
 import { cacheSeedKey, cachedSeedKey, forgetSeedKey } from "./keycache.js";
@@ -14,6 +15,10 @@ import { FOLDER_VAULT, POOL_DIRECTORY } from "./places.js";
  * time, by a Web Lock it takes with the directory, so a second tab waits
  * for the first to close. The unlocked seed waits in IndexedDB between
  * sessions as a non-extractable key. The worker's life is the tab's.
+ *
+ * The daemon boots as soon as the worker does, whether or not a view is
+ * looking. The page reaches it over the API: each message port the page
+ * hands over is one view's session, served from the bootstrap on.
  */
 async function storage(): Promise<DaemonStorage> {
   const pool = await openSqlitePool({ directory: POOL_DIRECTORY });
@@ -50,6 +55,14 @@ const host: DaemonHost = {
   onOnline: (callback) => self.addEventListener("online", callback),
 };
 
-let emit: Emit = () => undefined;
-const daemon = createDaemon(host, (name, ...args) => emit(name, ...args));
-emit = serve(self, daemon);
+const daemon = createDaemon(host, () => undefined);
+const limits = limitsOf("clone");
+const failed = (error: unknown) => console.error("estoc daemon:", error);
+const methods = methodsOf(daemon, limits, { failed });
+
+self.addEventListener("message", ({ data }: MessageEvent) => {
+  if (!(data instanceof MessagePort)) return;
+  serveApi(messagePortOf(data), { methods, limits, implementation: `estoc-app ${__APP_VERSION__}`, attach: (session) => attachTo(daemon.publisher, session), failed });
+});
+
+void daemon.boot();

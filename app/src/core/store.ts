@@ -1,29 +1,30 @@
 import { shallowReactive, toRaw } from "vue";
-import { BASIC_MESSAGE, GOAL_CONNECT, PROFILE, invitationUrl, parseInvitation, type Invitation, type InvitationRecord, type TraceLevel } from "@estoc/agent-core";
-import type { EventReference, ExecutionId } from "@estoc/vault";
-import type { Daemon, Outcome } from "@estoc/daemon";
+import type { Client, ConnectionState, DaemonMethods } from "@estoc/daemon-api/client";
+import type { Epoch, Outcome, StateValue } from "@estoc/daemon-api/contract";
+import { basicMessage, indexSnapshot, invitationOf, invitationUrl, parseInvitation, profileMessage } from "@estoc/daemon-api/views";
 
 import { startDaemon } from "../daemon/client.js";
 import { forgetSeedKey } from "../daemon/keycache.js";
 import { FOLDER_VAULT } from "../daemon/places.js";
 import { saveFile } from "./backup.js";
-import { conversationsOf } from "./conversations.js";
-import { holdOf } from "./hold.js";
 import { carryDrafts, dropDrafts } from "./drafts.js";
+import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
+import { markExported } from "./seen.js";
 import { isStoragePersisted, persistStorage } from "./storage.js";
-import type { Channel, ContactId, Conversation, Did, DidId, Hold, Lines, Merged, MessageId, Phase, Snapshot } from "./types.js";
+import type { ChannelId, ContactId, Conversation, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, Phase, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
 
 /**
- * The one store: the vault as the daemon last told it, plus the runtime
- * around it (the lines to the mediators, the activity log, storage and
- * install state). The vault and the agent live in the daemon
- * (src/daemon); every snapshot it sends replaces the one before, whole,
- * so the UI renders what the vault holds and never the other way round,
- * and every action here is a call across to it. The state is reactive
- * one level deep for that reason: a field changes by being replaced, and
- * what it holds stays the plain value that crossed from the daemon, which
- * a call can hand back as it is.
+ * The one store: the vault as the daemon last published it, plus the
+ * runtime around it (the lines to the mediators, the activity log,
+ * storage and install state, the connection to the daemon). The vault
+ * and the agent live in the daemon (src/daemon); every state it
+ * publishes replaces the one before, whole, so the UI renders what the
+ * vault holds and never the other way round, and every action here is
+ * a call across to it. The state is reactive one level deep for that
+ * reason: a field changes by being replaced, and what it holds stays
+ * the plain value that crossed from the daemon, which a call can hand
+ * back as it is.
  *
  * The passphrase is typed when the identity is created or restored, and
  * again only after "Lock"; the daemon keeps the unlocked seed between
@@ -38,8 +39,12 @@ export const state = shallowReactive({
   /** the daemon's name for the vault file standing there, to name it by when its removal is asked; null while none stands */
   hold: null as Hold | null,
   snapshot: null as Snapshot | null,
+  /** the snapshot read by ID; null with it */
+  index: null as SnapshotIndex | null,
   conversations: [] as Conversation[],
   lines: null as Lines | null,
+  /** where the connection to the daemon stands, apart from what the daemon last said */
+  connection: { state: "connecting" } as ConnectionState,
   /** why a daemon over a socket is not answering; null in the worker, and while it answers */
   away: null as string | null,
   log: [] as string[],
@@ -68,89 +73,125 @@ export const state = shallowReactive({
   traceLevel: "normal" as TraceLevel,
 });
 
-let daemon: Daemon | null = null;
+let client: Client | null = null;
 
 function log(line: string): void {
   state.log = [...state.log, `${new Date().toLocaleTimeString()}  ${line}`].slice(-200);
 }
 
+/** What a procedure came to, in its own word: a resolved call is not a message sent. */
 function said(what: string, { outcome, because }: Outcome): void {
   log(because === null ? `${what}: ${outcome}` : `${what}: ${outcome} (${because})`);
 }
 
 function take(snapshot: Snapshot): void {
   carryDrafts(snapshot);
+  const index = indexSnapshot(snapshot);
   state.snapshot = snapshot;
-  state.conversations = conversationsOf(snapshot);
+  state.index = index;
+  state.conversations = index.conversations;
 }
 
-function connectDaemon(): Daemon {
-  const started = startDaemon({
-    phase(phase, detail, hold) {
-      if (phase === "onboarding") dropDrafts();
-      if (phase !== "open") {
-        state.snapshot = null;
-        state.conversations = [];
-        state.lines = null;
-      }
-      state.phase = phase;
-      state.phaseDetail = detail;
-      state.hold = holdOf(hold);
-    },
-    opened(snapshot, hold) {
-      take(snapshot);
-      state.phase = "open";
-      state.hold = holdOf(hold);
-      // the level is the open vault's own local state
-      void running().traceLevel().then((level) => (state.traceLevel = level));
-      if (state.daemonAt === null) {
-        void isStoragePersisted().then((persisted) => (state.persisted = persisted));
-      }
-    },
-    changed: take,
-    lines(lines) {
-      state.lines = lines;
-    },
-    away(detail) {
-      state.away = detail;
-    },
-    log,
-  });
-  state.daemonAt = started.where === "worker" ? null : started.where;
-  return started.daemon;
-}
+/** the epoch whose open state is on screen: a vault opened is asked once for what only it knows */
+let opened: Epoch | null = null;
+/** how many times what stands here has changed since the page opened: a vault, or none, in place of another */
+let turn = 0;
 
-function running(): Daemon {
-  if (daemon === null) {
-    throw new Error("the daemon is not running");
+function show(epoch: Epoch, value: StateValue): void {
+  if (value.phase === "onboarding") dropDrafts();
+  if (value.hold !== state.hold) {
+    turn += 1;
+    // the links were made for the vault that stood; another in its place has none of them
+    state.links = {};
   }
-  return daemon;
+  if (value.phase !== "open") {
+    opened = null;
+    state.snapshot = null;
+    state.index = null;
+    state.conversations = [];
+    state.lines = null;
+    state.phase = value.phase;
+    state.phaseDetail = value.detail;
+    state.hold = value.hold;
+    return;
+  }
+  take(value.snapshot);
+  state.phase = "open";
+  state.phaseDetail = null;
+  state.hold = value.hold;
+  if (opened === epoch) return;
+  opened = epoch;
+  // the level is the open vault's own local state
+  const held = heldNow();
+  void call((daemon) => daemon.traceLevel({})).then(
+    ({ level }) => {
+      if (held()) state.traceLevel = level;
+    },
+    () => undefined
+  );
+  if (state.daemonAt === null) {
+    void isStoragePersisted().then((persisted) => (state.persisted = persisted));
+  }
+}
+
+function connectDaemon(): Client {
+  const started = startDaemon();
+  state.daemonAt = started.where === "worker" ? null : started.where;
+  started.client.onConnection((connection) => {
+    state.connection = connection;
+    if (connection.state === "connected") state.away = null;
+    else if (connection.state === "disconnected" && connection.because !== null && state.daemonAt !== null) state.away = `daemon at ${new URL(state.daemonAt).host} is not answering`;
+  });
+  started.client.onState(({ epoch, value }) => show(epoch, value));
+  started.client.onLines(({ value }) => (state.lines = value));
+  started.client.onLog(({ line }) => log(line));
+  return started.client;
+}
+
+function connected(): Client {
+  if (client === null) {
+    throw new Error("the daemon is not connected");
+  }
+  return client;
+}
+
+/** A call of the daemon's, its failure in words for the person. */
+async function call<T>(work: (daemon: DaemonMethods) => Promise<T>): Promise<T> {
+  try {
+    return await work(connected().daemon);
+  } catch (error) {
+    throw explained(error);
+  }
+}
+
+/** Where a state covering every change committed so far is on screen; a wait the connection or the epoch ends is over too. */
+export async function refresh(): Promise<void> {
+  await connected()
+    .refresh()
+    .catch(() => undefined);
 }
 
 /**
- * Bring the app up: the daemon takes the vault's files (or waits for the
- * tab that has them), then lands on the screen they dictate: nothing
- * there, a vault without its cached seed, or straight in.
+ * Bring the app up: connect to the daemon, which takes the vault's files
+ * (or waits for the tab that has them) and says which screen they
+ * dictate: nothing there, a vault without its cached seed, or straight in.
  */
-export async function boot(): Promise<void> {
+export function boot(): void {
   takePendingInvitation();
   setupPwa({
     onUpdateReady: (apply) => (state.applyUpdate = apply),
     onOfflineReady: () => (state.offlineReady = true),
     onInstallable: (prompt) => (state.install = prompt),
   });
-  daemon = connectDaemon();
-  // What the dispatcher does on its own timer is told by no event: ask again when the person looks.
+  client = connectDaemon();
+  // A page looked at again is first brought up to what the daemon has committed since.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.phase === "open") {
-      void daemon?.refresh().catch(() => undefined);
-    }
+    if (document.visibilityState === "visible" && state.phase === "open") void refresh();
   });
   // The daemon in a worker hears `online` only where the browser tells workers; the page's is passed on as well.
   window.addEventListener("online", () => {
-    if (state.phase === "open") void daemon?.reconnect().catch(() => undefined);
+    if (state.phase === "open") void reconnect().catch(() => undefined);
   });
-  await daemon.boot();
 }
 
 /**
@@ -184,43 +225,37 @@ function takePendingInvitation(): void {
  * (`chooseMediator`).
  */
 export async function createIdentity(name: string, passphrase: string): Promise<void> {
-  await running().createIdentity(name, passphrase);
+  await call((daemon) => daemon.createIdentity({ name, passphrase }));
   state.persisted = state.daemonAt === null ? await persistStorage() : false;
 }
 
-export async function restoreIdentity(file: Uint8Array, passphrase: string): Promise<void> {
-  await running().restoreIdentity(file, passphrase);
+export async function restoreIdentity(backup: Uint8Array, passphrase: string): Promise<void> {
+  await call((daemon) => daemon.restoreIdentity({ backup, passphrase }));
   state.persisted = state.daemonAt === null ? await persistStorage() : false;
 }
 
 /** The person has read what a restore cannot bring back: sending opens. */
 export async function explainedRestore(): Promise<void> {
-  await running().explainedRestore();
-  await running().refresh();
+  await call((daemon) => daemon.explainedRestore({}));
+  await refresh();
 }
 
 export async function unlock(passphrase: string): Promise<void> {
-  await running().unlock(passphrase);
+  await call((daemon) => daemon.unlock({ passphrase }));
 }
 
 /** Forget the cached seed; the vault stays, the passphrase is asked next time. */
 export async function lock(): Promise<void> {
-  await running().lock();
+  await call((daemon) => daemon.lock({}));
 }
 
 /** The vault removed: the one under `hold`, read off the screen as the person was asked, and not one that took its place since. */
 export async function forgetIdentity(hold: Hold | null): Promise<void> {
-  const named = holdOf(hold);
-  if (named === null) {
-    throw new Error(
-      state.daemonAt === null
-        ? "no vault is held here to remove"
-        : `the daemon at ${new URL(state.daemonAt).host} names no vault to remove, so nothing is removed from here: an estoc-daemon of an earlier version names none, and is updated first; one that could not take its storage says so above`
-    );
+  if (hold === null) {
+    throw new Error("no vault is held here to remove");
   }
-  await running().forgetIdentity(named);
+  await call((daemon) => daemon.forgetIdentity({ hold }));
   state.log = [];
-  state.links = {};
 }
 
 /**
@@ -236,20 +271,27 @@ export async function discardFolderVault(): Promise<void> {
 }
 
 export async function downloadBackup(): Promise<void> {
-  const { name, bytes } = await running().exportBackup();
+  const held = heldNow();
+  const anchor = state.snapshot?.anchor ?? null;
+  const { name, bytes } = await call((daemon) => daemon.exportBackup({}));
+  if (!held()) {
+    log(`${name} was not saved: the vault it backs up is no longer the one here`);
+    return;
+  }
   saveFile(name, bytes);
+  if (anchor !== null) markExported(anchor);
   log(`exported ${name} (${(bytes.length / 1024).toFixed(0)} KB)`);
 }
 
 /** Merge a backup file into the open vault; the daemon goes on over the merged vault. */
-export async function mergeBackup(file: Uint8Array): Promise<Merged> {
-  const merged = await running().mergeBackup(file);
+export async function mergeBackup(backup: Uint8Array): Promise<MergeResult> {
+  const merged = await call((daemon) => daemon.mergeBackup({ backup }));
   log(`merged a backup: ${merged.added} new event${merged.added === 1 ? "" : "s"}, ${merged.objects} object${merged.objects === 1 ? "" : "s"}`);
   return merged;
 }
 
 export async function chooseMediator(mediatorDid: string): Promise<void> {
-  await running().setMediator(mediatorDid);
+  await call((daemon) => daemon.setMediator({ mediatorDid }));
 }
 
 /**
@@ -270,35 +312,23 @@ export function invitationLink(record: InvitationRecord): string | null {
   if (record.localDid === null) {
     return null;
   }
-  return linkOf(
-    parseInvitation(
-      JSON.stringify({
-        type: "https://didcomm.org/out-of-band/2.0/invitation",
-        id: record.oobId,
-        from: record.localDid,
-        body: { goal_code: GOAL_CONNECT, accept: ["didcomm/v2"] },
-      })
-    )
-  );
+  return linkOf(invitationOf(record.localDid, record.oobId, null));
 }
 
 /** A link for one person: whoever opens it and writes first is the one it is for. */
 export async function createInvitation(): Promise<string> {
-  const { invitation } = await running().createInvitation("one");
-  state.links = { ...state.links, [invitation.id]: linkOf(invitation) };
+  const held = heldNow();
+  const { invitation } = await call((daemon) => daemon.createInvitation({ uses: "one" }));
+  if (held()) state.links = { ...state.links, [invitation.id]: linkOf(invitation) };
   return invitation.id;
 }
 
-function profileOf(snapshot: Snapshot | null): { type: string; body: { profile: { displayName: string } } } {
-  return { type: PROFILE, body: { profile: { displayName: snapshot?.label ?? "" } } };
-}
-
 /** Say who we are: the name this vault goes by, which the peer holds as a claim of ours. */
-async function introduceTo(target: { channel: Channel } | { contactId: ContactId }): Promise<void> {
-  said("introduction", await running().send(target, profileOf(state.snapshot)));
+async function introduceTo(target: SendTarget): Promise<void> {
+  said("introduction", await call((daemon) => daemon.send({ target, content: profileMessage(state.snapshot?.label ?? "") })));
 }
 
-export const introduce = (channel: Channel): Promise<void> => introduceTo({ channel });
+export const introduce = (channelId: ChannelId): Promise<void> => introduceTo({ channelId });
 
 /**
  * Our introduction after the Ping that opened a contact: by the contact,
@@ -314,33 +344,61 @@ async function introduceAfterPing(contactId: ContactId): Promise<void> {
   }
 }
 
+/** The conversation of a contact just made, once the state that shows it is on screen; null when the vault shows none of it by then, or is not the one the contact was made in. */
+async function conversationOf(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
+  await refresh();
+  if (!held()) return null;
+  return state.index?.contactConversation(contactId)?.id ?? null;
+}
+
+/**
+ * Whether the vault that stood when a piece of work began has stood
+ * since: false once another, or none, took its place, and false for
+ * good. Work that waits asks before each step that sends, saves,
+ * copies, navigates or writes shared state, and takes none once the
+ * answer is no; what the daemon answers about what had reached it is
+ * taken as it comes, and nothing is sent again.
+ */
+export function heldNow(): () => boolean {
+  const began = turn;
+  return () => turn === began;
+}
+
+/** Our introduction after the Ping that opened a contact, and the conversation it opened: each step in the vault the contact was made in. */
+async function conversationOpened(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
+  if (!held()) return null;
+  await introduceAfterPing(contactId);
+  return conversationOf(held, contactId);
+}
+
 /**
  * Accept an invitation under the name we give its issuer: a DID of ours
  * for them alone, a contact that selects the pair, a Ping under the
- * invitation's ID, and our introduction after it.
+ * invitation's ID, and our introduction after it. Returns the
+ * conversation it opened.
  */
-export async function acceptInvitation(input: string | Invitation, petname: string): Promise<ContactId> {
+export async function acceptInvitation(input: string | Invitation, petname: string): Promise<ConversationId | null> {
   // what crosses to the daemon must be plain: a Vue proxy does not clone
   const invitation = typeof input === "string" ? parseInvitation(input) : toRaw(input);
-  const accepted = await running().acceptInvitation(invitation, petname);
+  const held = heldNow();
+  const accepted = await call((daemon) => daemon.acceptInvitation({ invitation, petname }));
   said("invitation accepted", accepted);
   if (state.pendingInvitation?.id === invitation.id) {
     state.pendingInvitation = null;
   }
-  await introduceAfterPing(accepted.contactId);
-  return accepted.contactId;
+  return conversationOpened(held, accepted.contactId);
 }
 
 /** A contact under the name we give them, by a DID they handed over on its own: our DID for them alone, a Ping, and our introduction after it. */
-export async function addContactByDid(did: string, petname: string): Promise<ContactId> {
-  const added = await running().addContactByDid(did, petname);
+export async function addContactByDid(did: string, petname: string): Promise<ConversationId | null> {
+  const held = heldNow();
+  const added = await call((daemon) => daemon.addContactByDid({ did, petname }));
   said("contact added by DID", added);
-  await introduceAfterPing(added.contactId);
-  return added.contactId;
+  return conversationOpened(held, added.contactId);
 }
 
 /** Whatever was pasted for a person: their DID, or the invitation link they made for us. */
-export async function addContactFrom(input: string, petname: string): Promise<ContactId> {
+export async function addContactFrom(input: string, petname: string): Promise<ConversationId | null> {
   const trimmed = input.trim();
   if (trimmed.startsWith("did:")) return addContactByDid(trimmed, petname);
   let invitation: Invitation;
@@ -356,81 +414,74 @@ export function dismissPendingInvitation(): void {
   state.pendingInvitation = null;
 }
 
-/**
- * The DID this vault hands out to anyone, as the snapshot shows it: the
- * live one disclosed directly for many uses, or null before one is
- * minted. `known` is false when the daemon is from before DIDs were
- * handed out this way and reports nothing about disclosures: this app
- * keeps working against it, with that one feature withheld.
- */
-export function handedOutDid(snapshot: Snapshot | null): { did: Did | null; known: boolean } {
-  const dids = snapshot?.dids ?? [];
-  if (!dids.every((did) => Array.isArray(did.disclosures))) return { did: null, known: false };
-  const handedOut = dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"));
-  return { did: handedOut?.longFormDid ?? null, known: true };
+/** The DID this vault hands out to anyone, as the snapshot shows it: the live one disclosed directly for many uses, or null before one is minted. */
+export function handedOutDid(snapshot: Snapshot | null): string | null {
+  const handedOut = snapshot?.dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"));
+  return handedOut?.longFormDid ?? null;
 }
 
 /** The DID this vault hands out to anyone, in the long form that carries its document; minted the first time it is asked for. */
-export async function publicDid(): Promise<Did> {
-  return (await running().publicDid()).did;
+export async function publicDid(): Promise<string> {
+  return (await call((daemon) => daemon.publicDid({}))).did;
 }
 
-/** A name of ours for a conversation that has none: a contact that selects its channels. */
-export async function nameConversation(channels: Channel[], petname: string): Promise<ContactId> {
-  return running().createContact(petname, channels);
+/** A name of ours for a conversation that has none: a contact that selects its channels; the conversation it becomes. */
+export async function nameConversation(channelIds: ChannelId[], petname: string): Promise<ConversationId | null> {
+  const held = heldNow();
+  const { contactId } = await call((daemon) => daemon.createContact({ petname, channelIds }));
+  return conversationOf(held, contactId);
 }
 
 export async function renameContact(contactId: ContactId, petname: string): Promise<void> {
-  await running().renameContact(contactId, petname);
+  await call((daemon) => daemon.renameContact({ contactId, petname }));
 }
 
 export async function deleteContact(contactId: ContactId, options: { block: boolean; erase: boolean }): Promise<void> {
-  await running().deleteContact(contactId, {
-    ...(options.block ? { block: { includeSuccessors: true } } : {}),
-    ...(options.erase ? { erase: "the contact was deleted" } : {}),
-  });
+  await call((daemon) => daemon.deleteContact({ contactId, block: options.block ? { includeSuccessors: true } : null, erase: options.erase ? "the contact was deleted" : null }));
 }
 
 /** Refuse the channels and whatever their peers move to. */
-export async function blockChannels(channels: Channel[]): Promise<void> {
-  await running().blockChannels(channels, true);
+export async function blockChannels(channelIds: ChannelId[]): Promise<void> {
+  await call((daemon) => daemon.blockChannels({ channelIds, includeSuccessors: true }));
 }
 
 export async function eraseMessage(messageId: MessageId): Promise<void> {
-  await running().eraseMessage(messageId);
+  await call((daemon) => daemon.eraseMessage({ messageId }));
 }
 
 /** A line of chat, to a contact where its channels say which one, or in the channel picked. */
-export async function sendMessage(target: { contactId: ContactId } | { channel: Channel; preRotation?: boolean }, text: string): Promise<void> {
-  said("sent", await running().send(target, { type: BASIC_MESSAGE, body: { content: text } }));
+export async function sendMessage(target: SendTarget, text: string): Promise<void> {
+  said("sent", await call((daemon) => daemon.send({ target, content: basicMessage(text) })));
 }
 
 export async function retry(messageId: MessageId): Promise<void> {
-  said("retry", await running().retry(messageId));
+  said("retry", await call((daemon) => daemon.retry({ messageId })));
 }
 
 export async function cancel(messageId: MessageId): Promise<void> {
-  said("cancel", await running().cancel(messageId));
+  said("cancel", await call((daemon) => daemon.cancel({ messageId })));
 }
 
 export async function completeResponse(executionId: ExecutionId, effectType: string): Promise<void> {
-  said(`reply ${effectType}`, await running().completeResponse(executionId, effectType));
+  said(`reply ${effectType}`, await call((daemon) => daemon.completeResponse({ executionId, effectType })));
 }
 
-export async function completeNotification(rotationEventCid: string): Promise<void> {
-  said("rotation notification", await running().completeNotification(rotationEventCid as EventReference<"did.rotationSelected">));
+export async function completeNotification(rotationEventCid: EventCid): Promise<void> {
+  said("rotation notification", await call((daemon) => daemon.completeNotification({ rotationEventCid })));
 }
 
-/** A fresh DID of ours toward `peerDid`, in place of `localDidId`, and the peer told. */
-export async function rotate(localDidId: DidId, peerDid: Did): Promise<void> {
-  said("rotation", await running().rotate(localDidId, peerDid));
+/** A fresh DID of ours in place of the one at our end of the channel, and the peer told. */
+export async function rotate(channelId: ChannelId): Promise<void> {
+  said("rotation", await call((daemon) => daemon.rotate({ channelId })));
 }
 
 export async function reconnect(): Promise<void> {
-  await running().reconnect();
+  await call((daemon) => daemon.reconnect({}));
 }
 
 /** Set what this device keeps of what it observes; a stricter level prunes at once. */
 export async function setTraceLevel(level: TraceLevel): Promise<void> {
-  state.traceLevel = await running().setTraceLevel(level);
+  const held = heldNow();
+  const set = await call((daemon) => daemon.setTraceLevel({ level }));
+  if (held()) state.traceLevel = set.level;
 }

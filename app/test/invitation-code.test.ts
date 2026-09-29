@@ -1,11 +1,11 @@
-import { invitationOf, invitationUrl, type Invitation } from "@estoc/agent-core";
-import { type Did } from "@estoc/vault";
+import { invitationOf, invitationUrl } from "@estoc/daemon-api/views";
 import { describe, expect, it } from "vitest";
 
+import type { Invitation } from "../src/core/types.js";
 import { invitationIn } from "../src/ui/invitation-code.js";
 import { startScan } from "../src/ui/scanner.js";
 
-const invitation = invitationOf("did:peer:4zQmExample" as Did, "oob-1", "Say hi");
+const invitation = invitationOf("did:peer:4zQmExample", "oob-1", "Say hi");
 
 describe("a scanned code", () => {
   it("carries the invitation its link holds", () => {

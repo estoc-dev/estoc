@@ -51,7 +51,9 @@ your data never touches the place the app was served from.
 - **The vault's own account of every message.** Under a bubble: where a
   delivery stands (queued, sealed, handed over, received, expired,
   cancelled, conflict), whether an input has been taken in, and what
-  became of a continuity proof it brought. Opening a vault sends nothing:
+  became of a continuity proof it brought. What a message carries as
+  attachments is listed by name, kind and size with the reference to its
+  content, which nothing in this version reads back. Opening a vault sends nothing:
   a message a transport was never called for, a reply still owed, a
   rotation the peer was never told of, each waits under *Needs you*,
   the banner over the list, for the step named beside it.
@@ -162,18 +164,21 @@ at the top of the script; an optional first argument sets the app URL.
   rotation by `from_prior`, user-profile/1.0 introductions, over the
   SQLite vault (`@estoc/event-store`, `@estoc/vault`).
 - **The daemon is a worker, or a process**: the agent and its vault run
-  behind the `Daemon` interface of `@estoc/daemon` (`packages/daemon`),
-  and the UI reaches it only through that interface over an RPC: records
-  and bytes cross, no vault, key or agent does. By default
-  `src/daemon/worker.ts` hosts it in a dedicated worker of the page: the
-  SQLite pool over an OPFS directory for the files, the unlocked seed in
-  IndexedDB (`keycache.ts`). Served by a daemon itself (its index.html
-  marked, its link carrying the token as `?token=`, remembered here), or
-  opened with the `?_daemon=ws://…` link a daemon prints, the page instead
-  talks to that process over a WebSocket (`src/daemon/client.ts`); the
-  link is remembered until `?_daemon=off`. `src/core/store.ts` is the UI
-  side: every snapshot the daemon sends replaces the one before, whole,
-  and `src/core/conversations.ts` reads it as conversations.
+  behind `@estoc/daemon` (`packages/daemon`), and the app is a view over
+  the API of `@estoc/daemon-api`: records and bytes cross, no vault, key
+  or agent does. Only the host files import a backend package
+  (`src/daemon/worker.ts`, `keycache.ts`, `places.ts`,
+  `src/didcomm/wasm.ts`); a test keeps it so. By default the worker hosts
+  the daemon in a dedicated worker of the page, the SQLite pool over an
+  OPFS directory for the files, the unlocked seed in IndexedDB, and
+  serves the API over a port the page hands it. Served by a daemon itself
+  (its index.html marked, its link carrying the token as `?token=`,
+  remembered here), or opened with the `?_daemon=ws://…` link a daemon
+  prints, the page instead connects to that process over a WebSocket
+  (`src/daemon/client.ts`); the link is remembered until `?_daemon=off`.
+  `src/core/store.ts` is the UI side: the client's state, snapshot and
+  lines, with the snapshot indexed for the screens and its conversations
+  read as the daemon lays them out.
 - **Screens follow the disk**: nothing there → onboarding (create or
   restore); a vault without its cached seed → unlock; otherwise straight
   in — the daemon says which, by a `phase` event.

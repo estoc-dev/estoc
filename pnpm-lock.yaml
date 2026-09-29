@@ -23,6 +23,9 @@ importers:
       '@estoc/daemon':
         specifier: workspace:^
         version: link:../packages/daemon
+      '@estoc/daemon-api':
+        specifier: workspace:^
+        version: link:../packages/daemon-api
       '@estoc/didcomm':
         specifier: ^0.4.1-estoc.3
         version: 0.4.1-estoc.3

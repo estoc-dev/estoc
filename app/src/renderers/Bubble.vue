@@ -4,12 +4,14 @@ import { computed, ref } from "vue";
 import { cancel, completeResponse, eraseMessage, retry, state } from "../core/store.js";
 import type { MessageRecord } from "../core/types.js";
 import { timeOf } from "../ui/util.js";
+import { shownAttachment } from "./attachments.js";
 
 /**
  * The frame every renderer sits in: sent to the right, received to the
  * left, or a system aside in the middle; the time underneath. Renderers
  * put their reading of the message in the slot, which is shown only
- * while the content is here to read.
+ * while the content is here to read; what the message carries as
+ * attachments is listed under it by the frame, whatever its type.
  *
  * Under it, the vault's own account of the message, never the
  * renderer's: for one of ours, whether it arrived, and what is left to
@@ -45,16 +47,16 @@ const owed = computed(() => (state.snapshot?.pending.missingResponses ?? []).fil
 
 // Where a message of ours stands, in a word: on its way, arrived, or not sent and why.
 const delivery = computed(() => {
-  const { outcome, acknowledged, late, manualAction } = props.message;
-  if (outcome === null) {
+  const { delivery, acknowledged, late, manualAction } = props.message;
+  if (delivery === null) {
     return null;
   }
   const because = open.value?.because ?? null;
-  if (manualAction === "retry" || outcome.status === "terminal") {
-    const why = outcome.status === "terminal" ? outcome.code : because;
-    return { status: outcome.status, tone: "failed", word: why === null ? "not sent" : `not sent · ${why}`, because: undefined };
+  if (manualAction === "retry" || delivery.status === "terminal") {
+    const why = delivery.status === "terminal" ? delivery.code : because;
+    return { status: delivery.status, tone: "failed", word: why === null ? "not sent" : `not sent · ${why}`, because: undefined };
   }
-  switch (outcome.status) {
+  switch (delivery.status) {
     case "queued":
       return { status: "queued", tone: "waiting", word: "sending", because: undefined };
     case "prepared":
@@ -64,9 +66,11 @@ const delivery = computed(() => {
         ? { status: "acknowledged", tone: "", word: late ? "received, after it expired" : "received", because: undefined }
         : { status: "submitted", tone: "", word: "sent", because: undefined };
     case "conflict":
-      return { status: "conflict", tone: "conflict", word: "conflict", because: outcome.because };
+      return { status: "conflict", tone: "conflict", word: "conflict", because: delivery.because };
   }
 });
+
+const attachments = computed(() => (props.message.body.state === "available" ? props.message.body.attachments.map(shownAttachment) : []));
 
 const input = computed(() => {
   const status = props.message.input;
@@ -102,6 +106,14 @@ function erase() {
     <div class="bubble-body">
       <slot v-if="message.body.state === 'available'" />
       <span v-else class="gone">{{ message.body.state === "erased" ? "erased" : "the content is not here" }}</span>
+      <ul v-if="attachments.length > 0" class="attachments" data-attachments>
+        <li v-for="(attachment, i) in attachments" :key="i" data-attachment>
+          <span class="attachment-name">{{ attachment.name }}</span>
+          <span v-if="attachment.details">{{ attachment.details }}</span>
+          <span class="mono" :title="attachment.reference">{{ attachment.reference }}</span>
+        </li>
+        <li class="gone">attached; nothing here opens it yet</li>
+      </ul>
     </div>
     <div class="bubble-meta">
       <span>{{ timeOf(Date.parse(message.at)) }}</span>

@@ -1,7 +1,7 @@
 {
   "name": "@estoc/daemon-api",
   "version": "0.1.0",
-  "description": "The public contract between an Estoc daemon and its views: API-owned records, method inputs and results, events, stable error codes, runtime schemas and the API version. A view installs this package alone; the daemon adapts its domain results into these shapes.",
+  "description": "The public contract between an Estoc daemon and its views: API-owned records, method inputs and results, events, stable error codes, runtime schemas, the API version, and the pure helpers a view computes with. A view installs this package alone; the daemon adapts its domain results into these shapes.",
   "license": "Apache-2.0",
   "author": "merely",
   "repository": {
@@ -22,6 +22,10 @@
     "./wire": {
       "types": "./dist/wire/index.d.ts",
       "default": "./dist/wire/index.js"
+    },
+    "./views": {
+      "types": "./dist/views/index.d.ts",
+      "default": "./dist/views/index.js"
     }
   },
   "files": [

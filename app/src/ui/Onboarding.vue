@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-import { createIdentity, restoreIdentity, state } from "../core/store.js";
+import { createIdentity, heldNow, restoreIdentity, state } from "../core/store.js";
 import { bytesOf } from "./util.js";
 
 /**
@@ -60,7 +60,10 @@ async function restore() {
   }
   restoring.value = true;
   try {
-    await restoreIdentity(await bytesOf(backupFile.value), restorePass.value);
+    const held = heldNow();
+    const backup = await bytesOf(backupFile.value);
+    if (!held()) return;
+    await restoreIdentity(backup, restorePass.value);
   } catch (err) {
     restoreError.value = err instanceof Error ? err.message : String(err);
   } finally {

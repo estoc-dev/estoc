@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { announcedName } from "@estoc/agent-core";
+import { announcedName } from "@estoc/daemon-api/views";
 
 import type { MessageRecord } from "../core/types.js";
 import Bubble from "./Bubble.vue";
@@ -12,7 +12,7 @@ import Bubble from "./Bubble.vue";
 const props = defineProps<{ message: MessageRecord }>();
 
 const line = computed(() => {
-  const name = props.message.body.state === "available" ? (announcedName(props.message.body) ?? "") : "";
+  const name = props.message.body.state === "available" ? (announcedName(props.message.body.body) ?? "") : "";
   return props.message.direction === "out" ? `you introduced yourself as “${name}”` : `introduced themself as “${name}”`;
 });
 </script>

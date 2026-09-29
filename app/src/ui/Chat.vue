@@ -1,22 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
-import { pairKey } from "../core/conversations.js";
 import { draftIn, moveDraft, writeDraft, writtenDrafts } from "../core/drafts.js";
 import { markSeen } from "../core/seen.js";
 import { sendMessage, state } from "../core/store.js";
-import type { Channel, Conversation } from "../core/types.js";
+import type { ChannelId, ChannelRecord, Conversation, ConversationId } from "../core/types.js";
 import { rendererFor, showsInThread, typeOf } from "../renderers/index.js";
 import Icon from "./Icon.vue";
 import { FINE_POINTER, go, layout } from "./nav.js";
 import Sheet from "./Sheet.vue";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
-import { dayOf, initialOf, labelOf, shortDid } from "./util.js";
+import { dayOf, endsOf, initialOf, labelOf, shortDid } from "./util.js";
 
-const props = defineProps<{ conversationKey: string }>();
+const props = defineProps<{ conversationKey: ConversationId }>();
 
-const conversation = computed(() => state.conversations.find((c) => c.key === props.conversationKey) ?? null);
+const conversation = computed(() => state.conversations.find((c) => c.id === props.conversationKey) ?? null);
 const { mediation } = useStatus();
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
 
@@ -40,8 +39,8 @@ const subtitle = computed(() => {
   const c = conversation.value;
   if (c === null) return "";
   if (c.petname === null) return "not a contact yet";
-  if (c.claimedName === null || c.claimedName === c.petname) return "";
-  return `calls themself “${c.claimedName}”`;
+  if (c.claimedName === null || c.claimedName.name === c.petname) return "";
+  return `calls themself “${c.claimedName.name}”`;
 });
 
 // Opening the conversation, and every message that arrives while it is open, is it being read.
@@ -55,9 +54,12 @@ watch(
 
 const sending = ref(false);
 const sendError = ref("");
-/** the channel picked to write in, by pair; none while the conversation's own choice is taken */
-const picked = ref<string | null>(null);
+/** the channel picked to write in; none while the conversation's own choice is taken */
+const picked = ref<ChannelId | null>(null);
 const choosing = ref(false);
+
+/** The channel's record: among those the conversation shows, or anywhere in the snapshot. */
+const channelOf = (channelId: ChannelId): ChannelRecord | null => conversation.value?.channels.find((channel) => channel.channelId === channelId) ?? state.index?.channel(channelId) ?? null;
 
 // The channel this conversation writes in now. A send names it, never
 // the contact: what was written for one pair goes out in that pair, or
@@ -65,26 +67,27 @@ const choosing = ref(false);
 const target = computed(() => {
   const c = conversation.value;
   if (c === null) return null;
-  return c.writeTo.find((candidate) => pairKey(candidate) === picked.value) ?? c.defaultWriteTo;
+  const chosen = c.writeTo.find((candidate) => candidate === picked.value) ?? c.defaultWriteTo;
+  return chosen === null ? null : channelOf(chosen);
 });
 
 const draft = computed({
-  get: () => (target.value === null ? "" : (draftIn(target.value)?.text ?? "")),
+  get: () => (target.value === null ? "" : (draftIn(target.value.channelId)?.text ?? "")),
   set: (text) => {
     if (target.value !== null) writeDraft(target.value, text);
   },
 });
 
 // Picking another channel of the same conversation takes what is being written along.
-function pick(channel: Channel) {
+function pick(channelId: ChannelId) {
   const before = target.value;
-  picked.value = pairKey(channel);
+  picked.value = channelId;
   choosing.value = false;
-  if (before !== null && target.value !== null) moveDraft(before, target.value);
+  if (before !== null && target.value !== null) moveDraft(before.channelId, target.value);
   void nextTick(() => composerEl.value?.focus());
 }
 
-const pairsOf = (c: Conversation) => [...c.writeTo, ...c.channels.map(({ channel }) => channel)].map(pairKey);
+const channelsOf = (c: Conversation): ChannelId[] => [...c.writeTo, ...c.channels.map(({ channelId }) => channelId)];
 
 /**
  * What is written and not in the composer: in another channel of this
@@ -96,14 +99,15 @@ const pairsOf = (c: Conversation) => [...c.writeTo, ...c.channels.map(({ channel
  */
 const draftsElsewhere = computed(() => {
   const c = conversation.value;
-  const here = new Set(c === null ? [] : pairsOf(c));
-  const shown = new Set(state.conversations.flatMap(pairsOf));
-  const writable = new Set(c?.writeTo.map(pairKey) ?? []);
-  const current = target.value === null ? null : pairKey(target.value);
+  const here = new Set(c === null ? [] : channelsOf(c));
+  const shown = new Set(state.conversations.flatMap(channelsOf));
+  const writable = new Set(c?.writeTo ?? []);
+  const current = target.value?.channelId ?? null;
   return writtenDrafts().flatMap((draft) => {
-    const pair = pairKey(draft.channel);
-    if (pair === current || (shown.has(pair) && !here.has(pair))) return [];
-    return [{ pair, draft, writable: writable.has(pair) }];
+    const { channelId } = draft;
+    if (channelId === current || (shown.has(channelId) && !here.has(channelId))) return [];
+    const channel = channelOf(channelId);
+    return [{ channelId, draft, writable: writable.has(channelId), ends: channel === null ? channelId : endsOf(channel) }];
   });
 });
 
@@ -158,12 +162,12 @@ async function send() {
   if (text === "" || channel === null || sending.value) {
     return;
   }
-  // held by identity: the conversation on screen, and the pair the draft is under, may both move before this returns
-  const written = draftIn(channel);
+  // held by identity: the conversation on screen, and the channel the draft is under, may both move before this returns
+  const written = draftIn(channel.channelId);
   sending.value = true;
   sendError.value = "";
   try {
-    await sendMessage({ channel }, text);
+    await sendMessage({ channelId: channel.channelId }, text);
     if (written !== null && written.text.trim() === text) written.text = "";
     void toFoot();
   } catch (err) {
@@ -270,14 +274,14 @@ const details = () => go({ kind: "details", key: props.conversationKey });
     </div>
 
     <div v-if="conversation" class="composer-area">
-      <div v-for="{ pair, draft: kept, writable } in draftsElsewhere" :key="pair" class="composer-line" :title="`${kept.channel.localDid} → ${kept.channel.peerDid}`" data-draft-elsewhere>
+      <div v-for="{ channelId, draft: kept, writable, ends } in draftsElsewhere" :key="channelId" class="composer-line" :title="ends" data-draft-elsewhere>
         <span style="flex: 1; min-width: 0">
           <template v-if="writable">Something you wrote waits in another channel of theirs.</template>
           <template v-else>Something you wrote is in a channel that takes no send now.</template>
         </span>
-        <button v-if="writable" type="button" class="link" @click="picked = pair">write there</button>
+        <button v-if="writable" type="button" class="link" @click="picked = channelId">write there</button>
         <template v-else>
-          <button v-if="target !== null && draft === ''" type="button" class="link" data-draft-here @click="moveDraft(kept.channel, target)">write it here</button>
+          <button v-if="target !== null && draft === ''" type="button" class="link" data-draft-here @click="moveDraft(kept.channelId, target)">write it here</button>
           <button type="button" class="link" data-draft-copy @click="copy(kept.text)">copy</button>
         </template>
         <button type="button" class="link danger" data-draft-discard @click="kept.text = ''">discard</button>
@@ -317,13 +321,15 @@ const details = () => go({ kind: "details", key: props.conversationKey });
       <div class="sheet-title">Send as which address?</div>
       <p class="note">Each channel pairs one address of yours with one of theirs. The message goes out in the one you pick.</p>
       <div class="group">
-        <button v-for="channel in conversation.writeTo" :key="pairKey(channel)" class="row" type="button" :title="`${channel.localDid} → ${channel.peerDid}`" data-channel-option @click="pick(channel)">
-          <span class="row-main">
-            <span class="mono">you {{ shortDid(channel.localDid) }}</span>
-            <span class="mono" style="color: var(--steel)">them {{ shortDid(channel.peerDid) }}</span>
-          </span>
-          <Icon v-if="target && pairKey(channel) === pairKey(target)" name="check" class="chevron" :size="20" />
-        </button>
+        <template v-for="channelId in conversation.writeTo" :key="channelId">
+          <button v-if="channelOf(channelId)" class="row" type="button" :title="endsOf(channelOf(channelId)!)" data-channel-option @click="pick(channelId)">
+            <span class="row-main">
+              <span class="mono">you {{ shortDid(channelOf(channelId)!.localDid) }}</span>
+              <span class="mono" style="color: var(--steel)">them {{ shortDid(channelOf(channelId)!.peerDid) }}</span>
+            </span>
+            <Icon v-if="target && channelId === target.channelId" name="check" class="chevron" :size="20" />
+          </button>
+        </template>
       </div>
       <button class="btn-quiet" type="button" @click="choosing = false">Cancel</button>
     </Sheet>
