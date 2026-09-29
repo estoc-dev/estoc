@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-import { forgetDevice } from "../core/seen.js";
 import { forgetIdentity, state, unlock } from "../core/store.js";
 import { useUnconfirmed } from "./unconfirmed.js";
 
@@ -28,7 +27,6 @@ function forget() {
   const hold = state.hold;
   return remove("Delete this identity from this device? Its keys and messages here are gone for good. Only a backup brings them back.", async () => {
     await forgetIdentity(hold);
-    forgetDevice();
   });
 }
 </script>

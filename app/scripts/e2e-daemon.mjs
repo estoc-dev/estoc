@@ -124,7 +124,7 @@ function startDaemon(root) {
       if (m) {
         resolve({ own: m[1], elsewhere: m[2] });
       }
-      process.stderr.write(chunk.toString().replace(/^/gm, "[daemon] "));
+      process.stderr.write(chunk.toString().replace(/^(?=.)/gm, "[daemon] "));
     });
     child.once("exit", (code) => reject(new Error(`estoc serve exited with ${code}\n${out}`)));
   });
@@ -394,9 +394,12 @@ try {
   await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 15000 });
   ok("a lock whose answer was lost is shown as unconfirmed over the screen that followed, and the passphrase opens the vault again");
 
-  // the vault replaced while a page was cut off: a DID of the old vault was left on that page's
-  // You screen when its socket dropped; another page removed the vault and made a new one; the
-  // first page's next baseline is the new vault, open, and nothing of the old one stays on screen
+  // the vault replaced while a page was cut off: that page had a DID of the old vault on its You
+  // screen, had exported a backup of it, and had two pieces of work waiting on things other than
+  // the daemon, a mediator lookup and a file being read, when its socket dropped; another page
+  // locked the vault, removed it and made a new one; the first page's next baseline is the new
+  // vault, open. Nothing of the old one stays on screen, the work released now sends nothing to the
+  // new vault, and the new identity is not shown the old one's backup date
   const cut = await aliceCtx.newPage();
   watch(cut, "alice@cut");
   await cut.addInitScript(() => {
@@ -404,6 +407,13 @@ try {
   });
   let severed = false;
   let wire = null;
+  const called = [];
+  cut.on("websocket", (socket) =>
+    socket.on("framesent", ({ payload }) => {
+      const frame = wireOf(String(payload));
+      if (frame?.kind === "call") called.push(frame.method);
+    })
+  );
   await cut.routeWebSocket(/./, (ws) => {
     if (severed) {
       ws.close();
@@ -414,17 +424,39 @@ try {
     ws.onMessage((message) => server.send(message));
     server.onMessage((message) => ws.send(message));
   });
+  let releaseLookup = null;
+  await cut.route("http://mediator.invalid/**", (route) => {
+    releaseLookup = () => route.fulfill({ contentType: "application/json", body: JSON.stringify({ did: "did:web:mediator.invalid" }) });
+  });
   await cut.goto(new URL(link.own).origin + "/");
   await mediate(cut, "Alice");
   await cut.click("[data-public-did]");
   await cut.waitForSelector("[data-public-did-text]", { timeout: 15000 });
   const oldDid = await cut.inputValue("[data-public-did-text]");
+  await Promise.all([cut.waitForEvent("download", { timeout: 15000 }), cut.click("[data-export]")]);
+  await cut.waitForSelector('[data-export]:has-text("last:")', { timeout: 5000 });
+  await cut.click("[data-change-mediator]");
+  await cut.selectOption("[data-mediator-choice]", "custom");
+  await cut.fill("[data-mediator-paste]", "http://mediator.invalid/");
+  await cut.click("[data-mediator-use]");
+  while (releaseLookup === null) await cut.waitForTimeout(50);
+  await cut.evaluate(() => {
+    const read = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+      if (this.name !== "held.sqlite") return read.call(this);
+      return new Promise((resolve) => (globalThis.releaseFile = () => resolve(new Uint8Array([1, 2, 3]).buffer)));
+    };
+  });
+  await cut.setInputFiles("[data-import]", { name: "held.sqlite", mimeType: "application/vnd.sqlite3", buffer: Buffer.from([1, 2, 3]) });
+  await cut.waitForFunction(() => typeof globalThis.releaseFile === "function", null, { timeout: 5000 });
   severed = true;
   wire.close();
   await cut.waitForSelector('[data-status-sentence]:has-text("not answering")', { timeout: 10000 });
-  alice.once("dialog", (d) => void d.accept());
   await alice.click("[data-you]");
-  await alice.click("[data-forget]");
+  await alice.click("[data-lock]");
+  await alice.waitForSelector("[data-locked]", { timeout: 10000 });
+  alice.once("dialog", (d) => void d.accept());
+  await alice.click("[data-start-over]");
   await alice.waitForSelector("[data-onboarding] [data-your-name]", { timeout: 15000 });
   await alice.fill("[data-your-name]", "Alicia");
   await alice.fill("[data-passphrase]", PASS.Alice);
@@ -436,6 +468,16 @@ try {
   if (await cut.$("[data-public-did-text]")) {
     fail("the page cut off should come back on the new vault's list, not on the old vault's You screen");
   }
+  // the page asks the trace level once the new vault is open: the socket is up and answering by then
+  while (called.filter((method) => method === "traceLevel").length < 2) await cut.waitForTimeout(50);
+  const calledBefore = called.length;
+  await Promise.all([cut.waitForResponse("http://mediator.invalid/**", { timeout: 5000 }), releaseLookup()]);
+  await cut.evaluate(() => globalThis.releaseFile());
+  await cut.waitForTimeout(1000);
+  const sentOn = called.slice(calledBefore).filter((method) => method === "setMediator" || method === "mergeBackup");
+  if (sentOn.length > 0) {
+    fail(`work begun on the old vault must not go on into the new one, yet the page called ${sentOn.join(", ")}`);
+  }
   await cut.click("[data-you]");
   await cut.waitForSelector('[data-you-screen]:has-text("Alicia")', { timeout: 15000 });
   await cut.waitForSelector("[data-choose-mediator]", { timeout: 5000 });
@@ -443,8 +485,11 @@ try {
   if ((await cut.$("[data-public-did-text]")) || shown.includes(oldDid)) {
     fail(`the old vault's DID must not stay on screen under the new identity: ${oldDid}`);
   }
+  if (!(await cut.$('[data-export]:has-text("not yet")'))) {
+    fail(`the new identity must not be shown the old one's backup date: ${await cut.textContent("[data-export]")}`);
+  }
   await cut.close();
-  ok("a page cut off while the vault was replaced shows the new vault alone when it comes back");
+  ok("a page cut off while the vault was replaced shows the new vault alone when it comes back, sends nothing it had begun, and shows no backup of the old one");
 
   // the daemon gone: the page says so
   daemon.child.kill("SIGTERM");

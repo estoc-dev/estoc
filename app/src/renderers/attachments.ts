@@ -2,9 +2,10 @@ import type { AttachmentDescriptor } from "../core/types.js";
 
 /**
  * An attachment as the thread shows it: its descriptor in words, and
- * nothing that would open it. The daemon holds the content, and this
- * version of the API has no call that reads it back, so the reference
- * is shown as the text it is.
+ * nothing that would open it. The API hands over descriptors alone,
+ * whether the bytes are anywhere at hand is not said, and this version
+ * has no call that reads them, so the reference is shown as the text it
+ * is.
  */
 export interface ShownAttachment {
   name: string;

@@ -101,7 +101,7 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
 
   <Unlock v-else-if="state.phase === 'locked'" />
 
-  <!-- keyed by the vault held: another vault in its place gets screens of its own, with nothing of the old one's entered or under way -->
+  <!-- keyed by the vault held: another vault in its place gets screens of its own, with nothing entered on the old one's -->
   <Shell v-else-if="state.snapshot" :key="state.hold ?? ''" />
 
   <div v-if="state.applyUpdate" class="update-chip" data-update>

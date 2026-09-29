@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 
 import { MEDIATOR_CHOICES, mediatorLabel } from "../core/mediators.js";
-import { state } from "../core/store.js";
+import { heldNow, state } from "../core/store.js";
 import { CUSTOM, useMediatorInput } from "./mediator-input.js";
 
 /**
@@ -48,8 +48,9 @@ watch(
 
 async function submit() {
   pickError.value = null;
+  const held = heldNow();
   const did = await resolveChoice();
-  if (did === null) {
+  if (did === null || !held()) {
     return;
   }
   busy.value = true;

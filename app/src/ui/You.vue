@@ -2,8 +2,8 @@
 import { computed, ref } from "vue";
 
 import { mediatorLabel } from "../core/mediators.js";
-import { exportedAt, forgetDevice, markExported } from "../core/seen.js";
-import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import { exportedAt, forgetRemembered } from "../core/seen.js";
+import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useStatus } from "./status.js";
@@ -54,8 +54,10 @@ const minting = ref(false);
 async function copyAddress() {
   minting.value = true;
   addressNote.value = null;
+  const held = heldNow();
   try {
     const did = address.value ?? (await publicDid());
+    if (!held()) return;
     try {
       await navigator.clipboard.writeText(did);
       copiedAddress.value = true;
@@ -87,7 +89,6 @@ async function exportBackup() {
   exportNote.value = null;
   try {
     await downloadBackup();
-    markExported();
   } catch (err) {
     exportNote.value = reasonOf(err);
   } finally {
@@ -96,7 +97,7 @@ async function exportBackup() {
 }
 
 const lastExport = computed(() => {
-  const at = exportedAt();
+  const at = snapshot.value === null ? null : exportedAt(snapshot.value.anchor);
   return at === null ? "not yet" : `last: ${whenOf(at)}`;
 });
 
@@ -109,8 +110,11 @@ async function importBackup(event: Event) {
   if (file === undefined) return;
   importing.value = true;
   importNote.value = null;
+  const held = heldNow();
   try {
-    const merged = await mergeBackup(await bytesOf(file));
+    const backup = await bytesOf(file);
+    if (!held()) return;
+    const merged = await mergeBackup(backup);
     importNote.value =
       merged.added === 0 && merged.objects === 0
         ? "Nothing new in that backup."
@@ -153,9 +157,10 @@ const lockVault = () => attempt("Locking", lock);
 
 function forget() {
   const hold = state.hold;
+  const shown = snapshot.value;
   return remove("Delete this identity from this device? Keys, contacts and messages here are gone for good. Export a backup first if you want them back.", async () => {
     await forgetIdentity(hold);
-    forgetDevice();
+    if (shown !== null) forgetRemembered(shown);
   });
 }
 </script>

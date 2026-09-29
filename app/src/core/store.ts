@@ -10,6 +10,7 @@ import { saveFile } from "./backup.js";
 import { carryDrafts, dropDrafts } from "./drafts.js";
 import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
+import { markExported } from "./seen.js";
 import { isStoragePersisted, persistStorage } from "./storage.js";
 import type { ChannelId, ContactId, Conversation, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, Phase, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
 
@@ -259,8 +260,15 @@ export async function discardFolderVault(): Promise<void> {
 }
 
 export async function downloadBackup(): Promise<void> {
+  const held = heldNow();
+  const anchor = state.snapshot?.anchor ?? null;
   const { name, bytes } = await call((daemon) => daemon.exportBackup({}));
+  if (!held()) {
+    log(`${name} was not saved: the vault it backs up is no longer the one here`);
+    return;
+  }
   saveFile(name, bytes);
+  if (anchor !== null) markExported(anchor);
   log(`exported ${name} (${(bytes.length / 1024).toFixed(0)} KB)`);
 }
 
@@ -298,8 +306,9 @@ export function invitationLink(record: InvitationRecord): string | null {
 
 /** A link for one person: whoever opens it and writes first is the one it is for. */
 export async function createInvitation(): Promise<string> {
+  const held = heldNow();
   const { invitation } = await call((daemon) => daemon.createInvitation({ uses: "one" }));
-  state.links = { ...state.links, [invitation.id]: linkOf(invitation) };
+  if (held()) state.links = { ...state.links, [invitation.id]: linkOf(invitation) };
   return invitation.id;
 }
 
@@ -330,8 +339,28 @@ async function conversationOf(contactId: ContactId): Promise<ConversationId | nu
   return state.index?.contactConversation(contactId)?.id ?? null;
 }
 
-/** Whether the vault a procedure began in still stands: its next step is not taken in one that replaced it. */
-const stillHeld = (hold: Hold | null): boolean => state.hold === hold;
+/**
+ * Whether the vault standing when a piece of work began still stands.
+ * The screens are the vault's, and go with it; the work they began
+ * does not. Wherever it waits, on the daemon's answer, on a lookup over
+ * the network, on a file being read, it asks before its next step, and
+ * takes none in a vault that replaced the one it began in: nothing
+ * further is sent, saved, copied or shown for it. What had reached the
+ * daemon by then is answered as the daemon answers it, and never sent
+ * again.
+ */
+export function heldNow(): () => boolean {
+  const hold = state.hold;
+  return () => state.hold === hold;
+}
+
+/** Our introduction after the Ping that opened a contact, and the conversation it opened: each step in the vault the contact was made in. */
+async function conversationOpened(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
+  if (!held()) return null;
+  await introduceAfterPing(contactId);
+  if (!held()) return null;
+  return conversationOf(contactId);
+}
 
 /**
  * Accept an invitation under the name we give its issuer: a DID of ours
@@ -342,25 +371,21 @@ const stillHeld = (hold: Hold | null): boolean => state.hold === hold;
 export async function acceptInvitation(input: string | Invitation, petname: string): Promise<ConversationId | null> {
   // what crosses to the daemon must be plain: a Vue proxy does not clone
   const invitation = typeof input === "string" ? parseInvitation(input) : toRaw(input);
-  const hold = state.hold;
+  const held = heldNow();
   const accepted = await call((daemon) => daemon.acceptInvitation({ invitation, petname }));
   said("invitation accepted", accepted);
   if (state.pendingInvitation?.id === invitation.id) {
     state.pendingInvitation = null;
   }
-  if (!stillHeld(hold)) return null;
-  await introduceAfterPing(accepted.contactId);
-  return conversationOf(accepted.contactId);
+  return conversationOpened(held, accepted.contactId);
 }
 
 /** A contact under the name we give them, by a DID they handed over on its own: our DID for them alone, a Ping, and our introduction after it. */
 export async function addContactByDid(did: string, petname: string): Promise<ConversationId | null> {
-  const hold = state.hold;
+  const held = heldNow();
   const added = await call((daemon) => daemon.addContactByDid({ did, petname }));
   said("contact added by DID", added);
-  if (!stillHeld(hold)) return null;
-  await introduceAfterPing(added.contactId);
-  return conversationOf(added.contactId);
+  return conversationOpened(held, added.contactId);
 }
 
 /** Whatever was pasted for a person: their DID, or the invitation link they made for us. */
