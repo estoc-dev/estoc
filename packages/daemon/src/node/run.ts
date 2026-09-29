@@ -90,8 +90,7 @@ export async function runDaemon(options: RunOptions): Promise<Served> {
       app.searchParams.set("_daemon", served.url);
       log(`${served.appUrl === null ? "open:  " : "or:    "} ${app.href}`);
     }
-    // the daemon comes up on its own so a UI that connects finds it booted;
-    // a UI's own boot() is then a replay
+    // the daemon comes up on its own, so a view that connects finds it booted
     await served.daemon.boot();
     // A boot that could not take the folder leaves the daemon up to say so, with no claim on the folder to publish.
     if (folderTaken) {

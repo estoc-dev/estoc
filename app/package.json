@@ -1,6 +1,6 @@
 {
   "name": "@estoc/app",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The Estoc app, built: the static files of the offline-first DIDComm v2 messenger (app.estoc.dev), for anything that wants to serve them itself — `estoc serve` / `estoc-daemon` do.",
   "license": "Apache-2.0",
   "author": "merely",
@@ -22,7 +22,7 @@
     "dist-entry"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "vite",

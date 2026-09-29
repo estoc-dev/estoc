@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-09-29
 
 - **A folder a daemon holds is asked over the API** (`@estoc/daemon-api`):
   `estoc status` and `estoc init` connect with the SDK's client over the
@@ -14,7 +14,7 @@
   `@estoc/daemon/node`, `@estoc/agent-core`, `@estoc/event-store`,
   `@estoc/vault`, the `./v3` entries being gone.
 - **The vault is version 3**: `estoc init` makes `.estoc/vault.sqlite` as
-  the daemon's Node host keeps it (`@estoc/daemon/v3/node`), with the
+  the daemon's Node host keeps it (`@estoc/daemon/node`), with the
   seed sealed inside it and the label as its first `identity.label`, and
   `estoc serve` runs the version-3 daemon on it. A `.estoc` of the
   folder format is refused by every command and nothing is written
@@ -38,7 +38,7 @@
   either way; `/`, `` ` `` and `=` come out as entities too, and an
   array under `{{key}}` joins with `,`. The help names the body's key as
   it is, `{{{bodyHtml}}}`.
-- Node 22.13 is the oldest that runs it, which is what `node:sqlite`
+- Node 26 is the oldest that runs it, which is what `@estoc/daemon-api`
   needs.
 
 ## 0.5.0 — 2026-09-01

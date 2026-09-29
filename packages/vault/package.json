@@ -1,6 +1,6 @@
 {
   "name": "@estoc/vault",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "What the events of an .estoc vault mean (docs/replica-model): the identifiers, the schema of every event type and of the stored message, the vault's keys, DIDs and rotation proofs, the evidence kept of peers, the folds that read an event set into channels, contacts, invitations, inbound and outbound messages, and the procedures — over any @estoc/event-store.",
   "license": "Apache-2.0",
   "author": "merely",

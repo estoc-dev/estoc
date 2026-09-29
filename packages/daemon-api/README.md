@@ -20,6 +20,15 @@ drift apart. Unknown members of a record are ignored, message bodies
 pass through with every key kept, and an error code the schema does not
 know still reads as a failure with the effect it states.
 
+Within one API version a record gains only fields a receiver may lack,
+and a view that calls a new method handles `NoSuchMethod` with no
+unsafe fallback. A field made required, a method removed, a meaning
+changed, or a member added to a closed discriminated union such as
+`Phase` is a new API version, since the schema of the older side
+refuses what it does not know. Error codes stay open: an unknown code
+is a failure with the effect it states. The bootstrap's wire version
+moves on its own, apart from the application API version.
+
 The wire reads every value the same way on both transports: a plain,
 finite, acyclic tree, negative zero as zero, an undefined member left
 out, bytes only where a method's schema places them and copied to the
@@ -35,6 +44,19 @@ the session with a `StateUnavailable` fault. The WebSocket adapter
 waits for the socket to drain below a bound before it takes the next
 frame, since a socket's `send` only queues; the message port adapter
 closes with the port's other end.
+
+A host puts a daemon behind `serveApi(port, { methods, limits,
+implementation, attach, failed })`, one session per port it accepts:
+`methods` is the method table, one handler per name of the contract
+taking the validated input and answering the result or throwing a
+`Refusal` with its code and effect; `limits` the bounds the welcome
+advertises, from which the request budget follows; `attach` hands a
+session its baseline and subscribes it to what is published from then
+on; `failed` is where a throw of the daemon's own goes. `@estoc/daemon`
+is the daemon side of this: `methodsOf` and `attachTo` are that table
+and that hook over it, and the host — a browser worker over a message
+port, `estoc-daemon` over a WebSocket — boots the daemon itself, since
+`boot` is no method of the API.
 
 `connect(port)` gives a client that says hello, attaches after the
 welcome and is `connected` once the attachment's baseline is in; before

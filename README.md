@@ -12,7 +12,8 @@ The Estoc web app and the libraries it is made of, in one pnpm workspace:
 | `packages/did-peer/` | [`@estoc/did-peer`](https://www.npmjs.com/package/@estoc/did-peer) | did:peer:2 / did:peer:4 codec + didcomm-rust DIDDoc conversion |
 | `packages/folder-object/` | [`@estoc/folder-object`](https://www.npmjs.com/package/@estoc/folder-object) | an object is a folder — UnixFS merkle hashing, the folder-object format, did:key cards, signed objects |
 | `packages/post/` | [`@estoc/post`](https://www.npmjs.com/package/@estoc/post) | the post/1.0 format for folder-objects: recognise, validate, read, and the reference renderer |
-| `packages/daemon/` | `@estoc/daemon` | the daemon: agent + vault behind one RPC interface; a browser-worker host (the app) and a Node host (`estoc-daemon`, a SQLite vault in a folder on disk, the app served on the same origin) |
+| `packages/daemon-api/` | `@estoc/daemon-api` | the contract between a daemon and its views, the one package a view installs: the published state and records, the method table and error codes with a schema for each, the client, the wire, and the pure helpers a view computes with |
+| `packages/daemon/` | `@estoc/daemon` | the daemon: agent + vault behind the API; a browser-worker host (the app) and a Node host (`estoc-daemon`, a SQLite vault in a folder on disk, the app served on the same origin) |
 | `packages/cli/` | [`@estoc/cli`](https://www.npmjs.com/package/@estoc/cli) | `estoc` — vaults on disk, `estoc object hash\|sign\|verify`, `estoc serve` |
 
 Inside the workspace every `@estoc/*` dependency is `workspace:^`: the app
@@ -59,9 +60,18 @@ pnpm build && pnpm typecheck && pnpm test
   and `test/` both: vitest strips types without checking them, so a test
   that reads a field that does not exist would otherwise pass in silence),
   `vue-tsc -b` for the app.
-- `pnpm test` — every library's vitest suite. The app has no unit
-  suite; its build and typecheck are its check, plus the browser e2e
-  below.
+- `pnpm test` — every package's vitest suite, the app's among them.
+- `pnpm --filter @estoc/daemon-api consumer-check` — packs `daemon-api`,
+  installs it into an empty project outside the workspace, compiles and
+  runs a view against it, and fails when any daemon-side package came
+  along: what a view installs is the contract and nothing behind it.
+- `pnpm release-check` — packs the daemon and every workspace library
+  under it as they would be published, installs the tarballs into a
+  project outside the workspace, and runs a daemon over the API there:
+  a vault made through `agent-core` and one restored by the daemon
+  itself both publish a commit, the packed ranges accept the packed
+  siblings, and one copy of `event-store` serves both paths. Run it
+  before publishing the set.
 
 One package, one file, one test by name (vitest flags go after `--`):
 

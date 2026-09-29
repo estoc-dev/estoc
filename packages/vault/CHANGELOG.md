@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-29
 
 - **A saved pure ACK's frozen targets are validated by the evidence
   its inputs have**: the established input of a frozen wire ID is

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-09-29
 
 The contract between an Estoc daemon and its views, as one package a
 view installs alone.

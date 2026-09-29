@@ -1,6 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
 import { DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
-import type { Hold, Lines, Snapshot } from "@estoc/daemon-api/contract";
+import type { Hold, Lines, Phase, Snapshot } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
   Keys,
@@ -41,23 +41,20 @@ import {
   type InspectedRuntime,
 } from "@estoc/agent-core";
 
-import type { CompletionWord, Daemon, DispatchWord, Outcome, Phase, SendResult } from "./api.js";
+import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
 import { InvalidArgument, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
-import { legacyEvents, type Emit } from "./legacy.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
 
-export type { Emit } from "./legacy.js";
-
-/** The daemon as its host holds it: the UI's interface, the publisher a view attaches to, and a replay for one listener of the events. */
+/** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
 export interface DaemonCore extends Daemon {
-  /** whether `boot()` has run: a later `boot()` is a replay */
+  /** Take the files and land on the screen they dictate, published; once, a later call doing nothing. */
+  boot(): Promise<void>;
+  /** whether `boot()` has run */
   readonly booted: boolean;
   readonly publisher: Publisher<Snapshot, Lines>;
-  /** Say where things stand again, to `to` alone — for a listener that was not there the first time. */
-  replayTo(to: Emit): Promise<void>;
   /**
    * The user's own rotation away from a pair: the one live DID of this
    * vault at the pair's local end is rotated toward its peer, a fresh
@@ -133,7 +130,7 @@ interface Open {
 const NO_LINES: Lines = { connections: [], waiting: [], discarded: [] };
 
 /** A phase that shows no runtime, with the hold the phase allows: none where no file is held, the file's where one is. */
-function nonOpen(phase: Exclude<Phase, "open" | "unreachable">, hold: Hold | null, detail: string | null): NonOpenValue {
+function nonOpen(phase: Exclude<Phase, "open">, hold: Hold | null, detail: string | null): NonOpenValue {
   switch (phase) {
     case "elsewhere":
     case "onboarding":
@@ -212,14 +209,11 @@ function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
  * The daemon itself, wherever it runs: the vault among the host's
  * files, owned for as long as the daemon looks at it or runs it, the
  * seed unlocked from the vault's own wrapper and cached where the host
- * keeps such things, and the agent over it. A UI renders what the
- * events say and asks for things through the `Daemon` methods.
- *
- * `boot` is the entry and may be called again — by a second UI joining
- * a daemon already up, or one reconnecting — in which case it replays
- * where things stand rather than opening anything twice.
+ * keeps such things, and the agent over it. The host boots it, a view
+ * reads what the publisher says and asks for things through the
+ * `Daemon` methods.
  */
-export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
+export function createDaemon(host: DaemonHost): DaemonCore {
   let storage: DaemonStorage | null = null;
   /** the locked phase's hold on the vault: the file owned, nothing written, the wrapped seed for `unlock` */
   let inspected: InspectedRuntime | null = null;
@@ -239,9 +233,8 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       if (err instanceof DamagedHistory) void giveUpDamaged(err);
     },
   });
-  const legacy = legacyEvents(publisher, emit);
 
-  const phase = (p: Exclude<Phase, "open" | "unreachable">, why: string | null = null) => {
+  const phase = (p: Exclude<Phase, "open">, why: string | null = null) => {
     if (closing()) return;
     current = p;
     publisher.set(nonOpen(p, held, why));
@@ -609,7 +602,6 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
       return booted;
     },
     publisher,
-    replayTo: legacy.replayTo,
     close() {
       closed ??= inTurn(async () => {
         try {
@@ -626,10 +618,7 @@ export function createDaemon(host: DaemonHost, emit: Emit): DaemonCore {
     },
 
     async boot() {
-      if (booted) {
-        await legacy.replayTo(emit);
-        return;
-      }
+      if (booted) return;
       booted = true;
       await inTurn(async () => {
         const foreign = (await host.foreign?.()) ?? null;

@@ -10,5 +10,5 @@ export type Served = ServedOver;
 
 /** The daemon behind a WebSocket, under the rules of `serveOver`: one daemon, any number of views, each answered only with the token. */
 export function serveDaemon(options: ServeOptions): Promise<Served> {
-  return serveOver(options, createDaemon(options.host, () => undefined));
+  return serveOver(options, createDaemon(options.host));
 }

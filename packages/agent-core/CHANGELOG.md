@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 — 2026-09-29
 
 - `Unusable` carries `what` and `id`, so that a host can tell which
   kind of entity would not serve without reading the message.

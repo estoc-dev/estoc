@@ -87,7 +87,8 @@ your data never touches the place the app was served from.
 ## Run it
 
 This directory is one package of the [estoc-net/estoc] workspace, alongside
-the libraries it is built from (`packages/{did-peer,keystore,agent-core}`),
+the libraries it is built from (`packages/daemon-api` for the view, and
+`packages/{daemon,agent-core,event-store,keystore}` for the worker it hosts),
 which it takes straight from the tree — no publish step between a library
 change and the app seeing it. From the workspace root:
 
@@ -181,7 +182,8 @@ at the top of the script; an optional first argument sets the app URL.
   read as the daemon lays them out.
 - **Screens follow the disk**: nothing there → onboarding (create or
   restore); a vault without its cached seed → unlock; otherwise straight
-  in — the daemon says which, by a `phase` event.
+  in — the daemon says which, by the `phase` of the state it publishes,
+  read off the client's `state.value` as each state arrives.
 - **PWA**: [vite-plugin-pwa] generates the manifest and a Workbox service
   worker precaching the shell (scripts, styles, WASM). Updates wait for a
   nod (a chip offers to reload); `navigator.storage.persist()` is asked

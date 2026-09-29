@@ -55,7 +55,7 @@ const host: DaemonHost = {
   onOnline: (callback) => self.addEventListener("online", callback),
 };
 
-const daemon = createDaemon(host, () => undefined);
+const daemon = createDaemon(host);
 const limits = limitsOf("clone");
 const failed = (error: unknown) => console.error("estoc daemon:", error);
 const methods = methodsOf(daemon, limits, { failed });
