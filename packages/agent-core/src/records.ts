@@ -219,7 +219,6 @@ export interface OwedResponse {
   messageId: MessageId;
   effectType: string;
   channel: Channel;
-  /** none while the input's receipt is in an integrity conflict */
   entries: ManualEntry[];
 }
 
