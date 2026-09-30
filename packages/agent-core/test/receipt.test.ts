@@ -270,7 +270,7 @@ describe("the receipt", () => {
     await closeAll(alice, bob);
   });
 
-  test("the receipt admits the observation before the lock is released, judged among every other in first-receipt order: a message from the address the peer has since left is recorded and ignored, and deliveries recorded at once each have their admission decided before the next is recorded", async () => {
+  test("the receipt admits the observation before the lock is released, judged among every other in canonical event order: a message from the address the peer has since left is recorded and ignored, and deliveries recorded at once each have their admission decided before the next is recorded", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
     const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;

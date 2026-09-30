@@ -5,9 +5,8 @@
  * received; only an admission naming it lets it speak for its input's
  * intent, establish the input or acknowledge an outbound. An admission is effective when its source stands as
  * positive evidence on its own — its authentication complete, its
- * channel known, any proof it brought verified and bound — and no
- * author gave its ordinal to another observation. That is read from
- * the source's own evidence alone, never from the continuity around it
+ * channel known, any proof it brought verified and bound. That is read
+ * from the source's own evidence alone, never from the continuity around it
  * or the intents of its input, so that a replacement or a contradiction
  * learned later withdraws no acceptance already recorded. Missing
  * evidence leaves an admission pending; evidence that refuses the
@@ -18,17 +17,26 @@
  * what current policy holds against it — the peer's replacement, the
  * channel's denial, a conflict in the continuity its proof needs, a
  * contradiction of the intent its input already admitted — then what
- * still waits. The candidates, in first-receipt order, are what the
- * runtime walks when it records admissions; the fold records none. The
+ * still waits. The candidates, in canonical event order, are what the
+ * runtime walks when it records admissions; the fold records none. An
+ * admission already committed is displaced by no later candidate, but
+ * several unadmitted observations of one input may coexist, waiting
+ * for evidence, left by interrupted processing or merged from copies
+ * run apart, and among those eligible the order is canonical, not the
+ * order they were received in. A receipt-integrity conflict withholds
+ * no admission: a candidate contradicting the admitted intent is
+ * refused as any such candidate is, and a consistent duplicate harms
+ * nothing. The
  * disposition sums it up for anyone shown the observation: refused,
  * admitted, ignored because the peer moved on, or still pending with
  * what stands in the way.
  */
 
+import { compareEvents } from "@estoc/event-store";
+
 import type { VaultEvent } from "../schema.js";
 import type { EventCid } from "../types.js";
 import type { ChannelEvidence, Source } from "./channels.js";
-import { compareReceiptKeys, receiptOrderKey } from "./channels.js";
 import type { Continuity } from "./continuity.js";
 import type { InboundFold } from "./inbound.js";
 import { groupBy, type VaultEventSet } from "./set.js";
@@ -37,8 +45,7 @@ import { groupBy, type VaultEventSet } from "./set.js";
  * What one `message.admitted` establishes on its own. Effective admits
  * its source. Pending waits for evidence of the source that may still
  * arrive. Invalid is for good: the record names no observation, or one
- * that is anonymous, contradicted, under a refused proof or caught in a
- * receipt-integrity conflict.
+ * that is anonymous, contradicted or under a refused proof.
  */
 export type AdmissionStatus = { status: "effective" } | { status: "pending"; because: string } | { status: "invalid"; because: string };
 
@@ -85,8 +92,6 @@ function stillMissing(source: Source, evidence: ChannelEvidence): string | null 
   return null;
 }
 
-const INTEGRITY = "one author gave the source's ordinal to another observation";
-
 function admissionStatus(event: VaultEvent<"message.admitted">, set: VaultEventSet, evidence: ChannelEvidence): AdmissionStatus {
   const resolved = set.resolve(event.data.sourceEventCid, "message.in");
   if (resolved.status === "missing") return { status: "pending", because: "the source it names is not here" };
@@ -94,7 +99,6 @@ function admissionStatus(event: VaultEvent<"message.admitted">, set: VaultEventS
   const source = evidence.sources.get(resolved.event.cid)!;
   const refused = refusedForGood(source, evidence);
   if (refused !== null) return { status: "invalid", because: refused };
-  if (evidence.receipts.affected.has(source.event.data.messageId)) return { status: "invalid", because: INTEGRITY };
   const missing = stillMissing(source, evidence);
   if (missing !== null) return { status: "pending", because: missing };
   return { status: "effective" };
@@ -106,11 +110,9 @@ function admissionStatus(event: VaultEvent<"message.admitted">, set: VaultEventS
  * the peer has replaced its DID in the channel's context, the channel
  * is denied, the continuity the observation's proof needs is in
  * conflict, or the observation contradicts the intent its input has
- * admitted. Invalid is for good. An integrity conflict is an ordinal
- * one author gave to two observations: no admission, and no tie-break
- * by event order.
+ * admitted. Invalid is for good.
  */
-export type Eligibility = { status: "eligible" } | { status: "deferred"; because: string } | { status: "refused"; because: string } | { status: "invalid"; because: string } | { status: "integrity-conflict" };
+export type Eligibility = { status: "eligible" } | { status: "deferred"; because: string } | { status: "refused"; because: string } | { status: "invalid"; because: string };
 
 export interface AdmissionCandidate {
   readonly source: Source;
@@ -133,7 +135,7 @@ export type Disposition =
   | { status: "pending-admission"; because: string };
 
 export interface Dispositions {
-  /** every observation no effective or pending admission names, in first-receipt order, each with whether it may be admitted now */
+  /** every observation no effective or pending admission names, in canonical event order, each with whether it may be admitted now */
   readonly candidates: readonly AdmissionCandidate[];
   /** the observation as a candidate; null when an effective or pending admission names it, or it is not here */
   candidate(sourceEventCid: EventCid): AdmissionCandidate | null;
@@ -153,7 +155,7 @@ export function foldDispositions(evidence: ChannelEvidence, continuity: Continui
     candidates.push(candidate);
     byCid.set(cid, candidate);
   }
-  candidates.sort((a, b) => compareReceiptKeys(receiptOrderKey(a.source.event), receiptOrderKey(b.source.event)));
+  candidates.sort((a, b) => compareEvents(a.source.event, b.source.event));
   return {
     candidates,
     candidate: (sourceEventCid) => byCid.get(sourceEventCid) ?? null,
@@ -165,7 +167,6 @@ export function foldDispositions(evidence: ChannelEvidence, continuity: Continui
       if (effective.length > 0) return { status: "admitted", admissions: effective };
       const eligibility = eligibilities.get(sourceEventCid)!;
       if (eligibility.status === "invalid") return { status: "refused", because: eligibility.because };
-      if (eligibility.status === "integrity-conflict") return { status: "refused", because: INTEGRITY };
       if (source.channel !== null && continuity.superseded(source.channel)) return { status: "ignored-superseded" };
       const waiting = own.find(({ status }) => status.status === "pending");
       if (waiting !== undefined) return { status: "pending-admission", because: `an admission is recorded and waits: ${(waiting.status as { because: string }).because}` };
@@ -175,17 +176,10 @@ export function foldDispositions(evidence: ChannelEvidence, continuity: Continui
   };
 }
 
-/**
- * The verdicts in the order they are final: what refuses the
- * observation for good, the integrity of its receipt, what it still
- * lacks to be positive evidence, then current policy over the
- * channel it is positive in and the input it observes.
- */
 function eligibilityOf(source: Source, evidence: ChannelEvidence, continuity: Continuity, inbound: InboundFold): Eligibility {
   const refused = refusedForGood(source, evidence);
   if (refused !== null) return { status: "invalid", because: refused };
   const { cid, data } = source.event;
-  if (evidence.receipts.affected.has(data.messageId)) return { status: "integrity-conflict" };
   const missing = stillMissing(source, evidence);
   if (missing !== null) return { status: "deferred", because: missing };
   const witness = continuity.witness(cid);

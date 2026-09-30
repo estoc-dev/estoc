@@ -219,7 +219,6 @@ export interface OwedResponse {
   messageId: MessageId;
   effectType: string;
   channel: Channel;
-  /** none while the input's receipt is in an integrity conflict */
   entries: ManualEntry[];
 }
 
@@ -310,7 +309,7 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
       return contactRecord(view, records);
     },
     invitations: () => invitationRecords(fold),
-    pending: () => pendingWork(fold, work, responses),
+    pending: () => pendingWork(work, responses),
   };
 }
 
@@ -425,8 +424,7 @@ const shownBy = (execution: Execution): Member => execution.firstWitness ?? exec
 
 const INTEGRITY = "one author gave the receipt's ordinal to another observation";
 
-/** An output derived from a receipt in an integrity conflict takes no manual step. */
-function integrityHeld(fold: VaultFold, outbound: Outbound): boolean {
+function hasReceiptConflict(fold: VaultFold, outbound: Outbound): boolean {
   if (outbound.intent.status !== "consistent" || outbound.intent.data.sourceEventCid === null) return false;
   const source = fold.channels.sources.get(outbound.intent.data.sourceEventCid);
   return source !== undefined && fold.channels.receipts.affected.has(source.event.data.messageId);
@@ -492,7 +490,7 @@ async function inboundRecord(context: Context, execution: Execution, contactIds:
   if (execution.contradicting.length > 0) diagnostics.push({ kind: "contradicting", because: `${execution.contradicting.length} authenticated ${execution.contradicting.length === 1 ? "observation carries" : "observations carry"} another content than the one admitted` });
   const integrity = fold.channels.receipts.affected.has(execution.messageId);
   if (integrity) diagnostics.push({ kind: "receipt-integrity", because: INTEGRITY });
-  const completes = integrity ? [] : (context.completes.get(execution.messageId) ?? []);
+  const completes = context.completes.get(execution.messageId) ?? [];
   return {
     messageId: execution.messageId,
     direction: "in",
@@ -524,8 +522,8 @@ async function outboundRecord(context: Context, outbound: Outbound, channel: Cha
   const open = outbound.outcome.status === "queued" || outbound.outcome.status === "prepared";
   if (open && outbound.work.kind === "none") diagnostics.push({ kind: "work", because: outbound.work.because });
 
-  const held = integrityHeld(fold, outbound);
-  if (held) diagnostics.push({ kind: "receipt-integrity", because: INTEGRITY });
+  const receiptConflict = hasReceiptConflict(fold, outbound);
+  if (receiptConflict) diagnostics.push({ kind: "receipt-integrity", because: INTEGRITY });
   diagnostics.push(...reports);
   const rotationEventCid = intent?.rotationEventCid ?? null;
   return {
@@ -543,7 +541,7 @@ async function outboundRecord(context: Context, outbound: Outbound, channel: Cha
     acknowledged: outbound.acknowledged,
     late: outbound.late,
     verification: rotationEventCid === null ? { status: "not-present" } : fold.continuity.status(rotationEventCid),
-    manualAction: open && outbound.work.kind !== "none" && !outbound.erased && !held ? "retry" : "none",
+    manualAction: open && outbound.work.kind !== "none" && !outbound.erased ? "retry" : "none",
     completes: [],
     diagnostics,
   };
@@ -602,10 +600,10 @@ function invitationRecords(fold: VaultFold): InvitationRecord[] {
   }));
 }
 
-function pendingWork(fold: VaultFold, work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[]): PendingWork {
+function pendingWork(work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[]): PendingWork {
   return {
     pendingOutbounds: work.outbounds.map((outbound) => {
-      const because = outbound.work.kind === "none" ? outbound.work.because : integrityHeld(fold, outbound) ? INTEGRITY : null;
+      const because = outbound.work.kind === "none" ? outbound.work.because : null;
       return { messageId: outbound.messageId, channel: outbound.channel, outcome: outbound.outcome.status as "queued" | "prepared", because, entries: because === null ? ["retry", "cancel"] : ["cancel"] };
     }),
     missingResponses: responses.map(({ execution, effectType, channel }) => ({
@@ -613,7 +611,7 @@ function pendingWork(fold: VaultFold, work: ReturnType<typeof unfinishedWork>, r
       messageId: execution.messageId,
       effectType,
       channel,
-      entries: fold.channels.receipts.affected.has(execution.messageId) ? [] : ["completeResponse"],
+      entries: ["completeResponse"],
     })),
     missingNotifications: work.notifications.map(({ decision, channel, source }) => ({ rotationEventCid: decision.event.cid, channel, sourceEventCid: source?.event.cid ?? null, entries: ["completeNotification"] })),
     notificationConflicts: work.notificationConflicts.map(({ decision, notification }) => ({ rotationEventCid: decision.event.cid, messageIds: [...notification.messageIds], entries: [] })),

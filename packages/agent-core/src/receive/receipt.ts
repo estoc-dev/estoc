@@ -19,16 +19,17 @@
  *
  * Before the lock is released, the admissions the vault owes are
  * reconciled over a fold read again, the new observation's proof
- * judged in it and its admission decided among the rest in
- * first-receipt order. The writer lock is thus the one sequence every
- * receipt and admission goes through, whichever way the delivery
- * came: no observation is committed while an earlier one's admission
- * is undecided, and a replacement known by then is known to the
- * decision. Whether this call may earn the input automatic work is
- * decided there too, and holds whatever happens once the lock is
- * released: a first observation the pass admitted as its input's
- * witness is live; one the pass left waiting for evidence is not, and
- * the evidence, when it comes, admits the observation and revives no
+ * judged in it and its admission decided among the rest in canonical
+ * event order. The writer lock is thus the one sequence every receipt
+ * and admission goes through, whichever way the delivery came, and a
+ * replacement known by then is known to the decision. An observation
+ * waiting for evidence stays unadmitted, later ones of its input may
+ * wait with it, and the evidence, when it comes, admits among them in
+ * canonical order, not the order they were received in. Whether this
+ * call may earn the input automatic work is decided under the lock
+ * too, and holds whatever happens once it is released: a first
+ * observation the pass admitted as its input's witness is live; one
+ * the pass left waiting is not, and its later admission revives no
  * call.
  */
 

@@ -144,19 +144,19 @@ peer-only context whether or not they are projected; the package's
 admissions (`fold/admission.ts`: `foldAdmissions` reads each
 `message.admitted`, the runtime's acceptance of one exact observation
 for application use, against its source — `effective` when the source
-is positive evidence on its own and no author gave its ordinal to
-another observation, `pending` while the source or its evidence is
+is positive evidence on its own, `pending` while the source or its evidence is
 still to arrive, `invalid` for good — and says which observations are
 `admitted`; `foldDispositions` gives every observation its
 disposition, `refused` for good, `admitted`, `ignored-superseded` once
 the peer moved on without one, or `pending-admission` with what stands
 in the way, and lists the `candidates` no effective or pending
-admission names, in first-receipt order, each `eligible`, `deferred`
+admission names, in canonical event order, each `eligible`, `deferred`
 for evidence, `refused` by current policy — the peer's replacement, the
 channel's denial, a conflict in the continuity its proof needs, a
-contradiction of the intent its input admitted — `invalid` or in an
-`integrity-conflict`, for the runtime to walk when it records
-admissions, the fold recording none), the
+contradiction of the intent its input admitted — or `invalid`, for the
+runtime to walk when it records admissions, the fold recording none; a
+receipt-integrity conflict withholds no admission, staying a
+diagnostic), the
 invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
 disclosure as an address handed out, which whoever holds it writes to
 in a pair of their own, no receipt under it taking anything from the
@@ -210,8 +210,8 @@ successor keeping the peer, a path not verified yet being pending
 unless continuity is in conflict — and the built-in operation's shape — a pure ACK
 names exactly its source carrier's wire ID, which the carrier must request,
 its complete source witness validating the saved intent with or without an
-admission, a receipt-integrity or independently admitted intent conflict
-keeping it in conflict — and a
+admission, an independently admitted intent conflict keeping it in
+conflict — and a
 notification against its decision's continuity and selection, a
 control input triggering none; the `outcome` in the order conflict,
 submitted, terminal, prepared, queued, and the `work` left — a package
@@ -254,7 +254,7 @@ packages still name, in one commit, and `closeErasures` appends the
 equivalent erases a later observation or package made an erased
 message owed, `eraseDrafts` / `erasureClosure` being the decisions;
 `reconcileAdmissions` records the admissions the observations are
-owed, in first-receipt order and round by round under the lock, each
+owed, in canonical event order and round by round under the lock, each
 round the first eligible candidate of each input and the fold read
 again over the extended set before the next, so that a consistent
 duplicate is admitted after the first and a contradicting one refused

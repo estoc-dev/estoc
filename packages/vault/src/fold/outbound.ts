@@ -571,7 +571,6 @@ function builtInOf(data: MessageOut, source: Source | null, channel: Channel | n
       if (carried !== null && carried.msgType === EMPTY_MESSAGE_TYPE && carried.pleaseAck === null) return conflict("a pure ACK answers no pure ACK");
       if (carried !== null && data.ack[0] !== carried.wireMessageId) return conflict("a pure ACK names its carrier alone");
       if (carried !== null && !requestsAck(carried.wireMessageId, carried.pleaseAck)) return conflict("the source requests no receipt of itself");
-      if (carried !== null && inputs.evidence.receipts.affected.has(carried.messageId)) return conflict("the source's input is under a receipt conflict");
       return null;
     case PING_RESPONSE_EFFECT:
       if (data.msgType !== PING_RESPONSE_TYPE || !empty) return conflict("a Ping reply is a ping-response with an empty body and nothing else");

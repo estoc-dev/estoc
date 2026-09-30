@@ -2,6 +2,21 @@
 
 ## 0.4.0 — 2026-09-29
 
+- **Admission walks canonical event order** (behaviour change): the
+  `candidates` of `foldDispositions`, and so the rounds of
+  `admissionDrafts` and `admitReceipts`, are in canonical event order
+  (`at`, then event CID), not receipt order. An admission already
+  committed is displaced by no later candidate; among the eligible
+  unadmitted observations of one input, left waiting for evidence, by
+  interrupted processing or by a merge, the order is canonical, not the
+  order they were received in. A receipt-integrity conflict withholds
+  no admission: an admission of an observation it touches is
+  `effective` like any other, the observation is a candidate judged
+  like any other and `Eligibility` has no `integrity-conflict` member.
+  Nor does the conflict bar a pure ACK any more: `ackTarget` lists the
+  carrier's receipt of itself and `builtInOf` validates a saved one
+  whatever the ordinals around them; the conflict is a diagnostic,
+  read from `receipts.affected` alone.
 - **A spelling is decoded once** (behaviour change): the retained
   document of a numalgo-4 long form, and the decoding of a public key
   and its standing as a key-agreement key, are kept for the 4096

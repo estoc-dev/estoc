@@ -43,7 +43,7 @@ function picture(vault: VaultFold) {
 const expectSameOverEveryOrder = (scene: Scene, checks: Required<VaultChecks>) => expectOrderFree(scene.events, (set) => picture(foldVault(set, checks)));
 
 describe("an admission", () => {
-  it("is effective when its source is positive evidence on its own, pending while the source or its evidence is still to arrive, and invalid for good when the source can never be positive or the record names no observation", async () => {
+  it("is effective when its source is positive evidence on its own, a receipt-integrity conflict withholding nothing, pending while the source or its evidence is still to arrive, and invalid for good when the source can never be positive or the record names no observation", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
     const wire = uuidv7();
     const plain = observe(scene, { local: a0, peer: b0, ordinal: 1, wire });
@@ -82,10 +82,10 @@ describe("an admission", () => {
       [ofContradicted.cid, { status: "invalid", because: "the source's authentication is contradicted: the resolution it names is not of this sender at this key" }],
       [ofRefusedProof.cid, { status: "invalid", because: expect.stringMatching(/^the source's proof is invalid: not a compact JWT/) }],
       [misnamed.cid, { status: "invalid", because: "the source it names is a did.disclosed" }],
-      [ofClashing.cid, { status: "invalid", because: "one author gave the source's ordinal to another observation" }],
+      [ofClashing.cid, { status: "effective" }],
     ]);
     expect([admissions.of(plain.cid), admissions.of(carried.cid).length, admissions.of(repeated.cid), admissions.of(fakeEventCid())]).toEqual([[admissions.admissions.get(effective.cid)], 1, [], []]);
-    expect([plain, carried, unresolved, undocumented, anonymous, contradicted, refusedProof, repeated, clashing].map((event) => admissions.admitted(event.cid))).toEqual([true, true, false, false, false, false, false, false, false]);
+    expect([plain, carried, unresolved, undocumented, anonymous, contradicted, refusedProof, repeated, clashing].map((event) => admissions.admitted(event.cid))).toEqual([true, true, false, false, false, false, false, false, true]);
     expect(vault.inbound.ofSource(plain.cid)!.members.map(({ admitted: isAdmitted, witness }) => [isAdmitted, witness.status])).toEqual([
       [true, "complete"],
       [false, "complete"],
@@ -130,7 +130,8 @@ describe("a disposition", () => {
     expect(dispositions.disposition(denied.cid)).toEqual({ status: "pending-admission", because: "the channel is denied" });
     expect(dispositions.disposition(unresolved.cid)).toEqual({ status: "pending-admission", because: "the source's authentication is incomplete: the resolution it names is not here" });
     expect(dispositions.disposition(recorded.cid)).toEqual({ status: "pending-admission", because: "an admission is recorded and waits: the source's authentication is incomplete: the resolution it names is not here" });
-    for (const event of [clashing, clashingToo]) expect(dispositions.disposition(event.cid)).toEqual({ status: "refused", because: "one author gave the source's ordinal to another observation" });
+    expect(dispositions.disposition(clashing.cid)).toEqual({ status: "pending-admission", because: "the channel is denied" });
+    expect(dispositions.disposition(clashingToo.cid).status).toBe("admitted");
     expect(dispositions.disposition(fakeEventCid())).toEqual({ status: "pending-admission", because: "the source is not here" });
     expect(vault.inbound.ofSource(first.cid)).toMatchObject({ status: { status: "complete" }, intentHash: HASH, contradicting: [{ source: { event: { cid: contradicting.cid } } }] });
     expectSameOverEveryOrder(scene, vault.checks);
@@ -154,7 +155,7 @@ describe("a disposition", () => {
 });
 
 describe("the candidates", () => {
-  it("are every observation no effective or pending admission names, in first-receipt order, each judged for good, then by its receipt's integrity, then by what it lacks, then by current policy", async () => {
+  it("are every observation no effective or pending admission names, in canonical event order whatever their ordinals, each judged for good, then by what it lacks, then by current policy, a receipt-integrity conflict holding nothing against them", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
     const wire = uuidv7();
     const first = observe(scene, { local: a0, peer: b3, ordinal: 1, wire, admitted: true });
@@ -174,8 +175,6 @@ describe("the candidates", () => {
 
     const vault = await fold(scene, keys);
     expect(vault.dispositions.candidates.map(({ source, eligibility }) => [source.event.cid, eligibility])).toEqual([
-      [clashing.cid, { status: "integrity-conflict" }],
-      [clashingToo.cid, { status: "integrity-conflict" }],
       [consistent.cid, { status: "eligible" }],
       [contradicting.cid, { status: "refused", because: "the observation contradicts the intent its input has admitted" }],
       [refusedProof.cid, { status: "invalid", because: expect.stringMatching(/^the source's proof is invalid: not a compact JWT/) }],
@@ -184,9 +183,11 @@ describe("the candidates", () => {
       [carrier.cid, { status: "eligible" }],
       [superseded.cid, { status: "refused", because: "the peer has replaced its DID" }],
       [denied.cid, { status: "refused", because: "the channel is denied" }],
+      [clashing.cid, { status: "eligible" }],
+      [clashingToo.cid, { status: "eligible" }],
     ]);
     expect([first, recorded].map((event) => vault.dispositions.candidate(event.cid))).toEqual([null, null]);
-    expect(vault.dispositions.candidate(consistent.cid)).toBe(vault.dispositions.candidates[2]);
+    expect(vault.dispositions.candidate(consistent.cid)).toBe(vault.dispositions.candidates[0]);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
