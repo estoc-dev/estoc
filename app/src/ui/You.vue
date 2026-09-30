@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
+import { chooseLook, look, type Look } from "../core/look.js";
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
@@ -142,6 +143,12 @@ async function chooseTraceLevel(event: Event) {
   }
 }
 
+const LOOK_NOTES: Record<Look, string> = {
+  system: "as the system has it",
+  dark: "dark, whatever the system says",
+  light: "light, whatever the system says",
+};
+
 const { busy, attempt, remove } = useUnconfirmed();
 
 // Locking leaves this screen: what it fails with is shown wherever the person is by then.
@@ -253,6 +260,15 @@ function forget() {
             </select>
           </label>
           <p v-if="traceNote" class="note error-text" style="padding: 0 16px 12px" data-trace-note>{{ traceNote }}</p>
+          <label class="row">
+            <span class="row-main">
+              <span>Look</span>
+              <span class="row-sub">{{ LOOK_NOTES[look] }}</span>
+            </span>
+            <select :value="look" class="field" style="width: auto; min-height: 40px; padding: 6px 32px 6px 12px" data-look @change="chooseLook(($event.target as HTMLSelectElement).value as Look)">
+              <option v-for="(_note, name) in LOOK_NOTES" :key="name" :value="name">{{ name }}</option>
+            </select>
+          </label>
           <button class="row" type="button" :disabled="busy" data-lock @click="lockVault">
             <span class="row-main">
               <span>Lock</span>

@@ -1,27 +1,31 @@
 /* Copper and verdigris on one cool ground. What you send is copper, what
    arrives is verdigris; side and tail shape say the same, so colour is
    one cue among several. Every surface shares the ground's hue and
-   differs in lightness alone. Pale verdigris is the one accent, for
-   actions, identity and the live state; warm colour is kept for what is
-   yours, what is waiting and what has gone wrong. */
+   differs in lightness alone. Verdigris is the one accent, for actions,
+   identity and the live state; warm colour is kept for what is yours,
+   what is waiting and what has gone wrong.
+
+   Each colour is written for the light look first and the dark look
+   second. The dark look is the default; the light one follows the
+   system, or either is chosen outright by a data-theme on the root. */
 
 :root {
-  --ground: #172024;
-  --surface: #202b30;
-  --raised: #263238;
-  --line: #36464d;
-  --line-strong: #4a5d65;
-  --ink: #e9eeee;
-  --ink-soft: #aebcc2;
-  --accent: #9acbbb;
-  --on-accent: #202b30;
-  --verdigris-wash: #253e36;
-  --copper-wash: #44352d;
-  --alarm: #f0ac95;
-  --attention: #d9b872;
-  --attention-wash: #3a3226;
-  --scrim: #00000099;
-  --shadow: #00000088;
+  --ground: light-dark(#e3ebee, #172024);
+  --surface: light-dark(#eef3f5, #202b30);
+  --raised: light-dark(#f7fafb, #263238);
+  --line: light-dark(#b7c8ce, #36464d);
+  --line-strong: light-dark(#93a9b1, #4a5d65);
+  --ink: light-dark(#172024, #e9eeee);
+  --ink-soft: light-dark(#44565e, #aebcc2);
+  --accent: light-dark(#24634f, #9acbbb);
+  --on-accent: light-dark(#f7fafb, #202b30);
+  --verdigris-wash: light-dark(#b9d6c9, #253e36);
+  --copper-wash: light-dark(#dfc8ba, #44352d);
+  --alarm: light-dark(#9a3619, #f0ac95);
+  --attention: light-dark(#7d5c12, #d9b872);
+  --attention-wash: light-dark(#ebdcb8, #3a3226);
+  --scrim: light-dark(#17202466, #00000099);
+  --shadow: light-dark(#17202433, #00000088);
 
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -32,6 +36,16 @@
   --gutter: 20px;
 
   color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
