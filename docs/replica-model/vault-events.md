@@ -975,7 +975,12 @@ whether that DID still takes a first message under it. An invitation is
 available while the disclosed DID is live on a route that may deliver, and
 unavailable once the DID is retired or in conflict, its creation is missing,
 its route is retired, misconfigured or on a terminal mediation, or while the
-DID waits to be live. Receipts under the invitation are ordinary receipts
+DID waits to be live. An `oobId` that distinct disclosure events carry, as
+two merged histories may each have disclosed it, names no one invitation to
+hand out again: every disclosure under it is unavailable with a reason that
+says so, none is chosen by event order, and the conflict changes nothing of
+the DIDs' liveness, of receipts under them, or of channel identity and
+continuity. Receipts under the invitation are ordinary receipts
 under [section 6.1](#receipt-and-relationship-evidence): the fold records nothing
 of who used it, and nothing a peer sends under it takes it from the next.
 [channels.md](channels.md#invitations) owns the rule.

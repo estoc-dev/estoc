@@ -315,16 +315,18 @@ function linkOf(invitation: Invitation): string {
   return invitationUrl(`${location.origin}${location.pathname}`, invitation);
 }
 
-/** The link of an invitation the vault holds: the one it was made as while this page remembers it, and otherwise one that says the same without what it was for. */
+/**
+ * The link of an invitation the vault holds: the one it was made as while
+ * this page remembers it, and otherwise one that says the same without
+ * what it was for. A stranger resolves the DID from the link alone, so it
+ * carries the long form the snapshot holds for the entity; null until it
+ * does.
+ */
 export function invitationLink(record: InvitationRecord): string | null {
   const made = state.links[record.oobId];
-  if (made !== undefined) {
-    return made;
-  }
-  if (record.localDid === null) {
-    return null;
-  }
-  return linkOf(invitationOf(record.localDid, record.oobId, null));
+  if (made !== undefined) return made;
+  const longFormDid = state.snapshot?.dids.find((did) => did.didId === record.didId)?.longFormDid ?? null;
+  return longFormDid === null ? null : linkOf(invitationOf(longFormDid, record.oobId, null));
 }
 
 /** A link to hand out: whoever opens it writes to a DID minted for this link, each in a conversation of their own. */

@@ -24,7 +24,9 @@
   `Consumption`, `Candidate`, `consumptionDrafts`, `consumeInvitations`
   and `PendingWork.consumptions` are gone. No receipt takes an
   invitation from the next, so nothing about invitations depends on
-  the order receipts were recorded in.
+  the order receipts were recorded in. An `oobId` that distinct
+  disclosure events carry, as merged histories may, is `unavailable`
+  under every one of them; the DIDs and their receipts are unaffected.
 - **A pure ACK names its carrier alone** (behaviour change): the
   receipt a carrier earns is its own wire ID, when its `please_ack`
   names itself by `""` or its ID and it is the admitted complete

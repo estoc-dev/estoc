@@ -7,7 +7,10 @@
  * nothing of who used it; that is the channels' business. It is
  * available while the disclosed DID is live on a route that may
  * deliver, and unavailable once the DID or its route ended or while
- * one of them waits on something that may recover.
+ * one of them waits on something that may recover. An ID that two
+ * merged histories each disclosed names no one invitation to hand out
+ * again: every disclosure under it is unavailable, none wins by order,
+ * and the DIDs and whatever was received at them are as they were.
  */
 
 import type { VaultEvent } from "../schema.js";
@@ -32,16 +35,19 @@ export interface InvitationFold {
 }
 
 export function foldInvitations(set: VaultEventSet, routes: RouteFold): InvitationFold {
+  const disclosures = set.of("did.disclosed").filter((disclosure) => disclosure.data.as === "oob");
+  const disclosedUnder = new Map<string, number>();
+  for (const { data } of disclosures) disclosedUnder.set(data.oobId!, (disclosedUnder.get(data.oobId!) ?? 0) + 1);
   const invitations = new Map<EventCid, Invitation>();
-  for (const disclosure of set.of("did.disclosed")) {
-    if (disclosure.data.as !== "oob") continue;
+  for (const disclosure of disclosures) {
+    const oobId = disclosure.data.oobId!;
     const entity = routes.dids.get(disclosure.data.didId);
     invitations.set(disclosure.cid, {
       disclosure,
-      oobId: disclosure.data.oobId!,
+      oobId,
       didId: disclosure.data.didId,
       localDid: entity?.created?.did ?? null,
-      status: statusOf(entity, routes),
+      status: disclosedUnder.get(oobId)! > 1 ? { status: "unavailable", because: "the invitation's ID names more than one disclosure" } : statusOf(entity, routes),
     });
   }
   return { invitations };

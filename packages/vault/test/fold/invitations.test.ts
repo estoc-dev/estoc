@@ -10,7 +10,6 @@ const fold = (scene: Scene, keys: Keys | null, readObject: ReadObject = noObject
 /** A proof-free receipt from the peer at one of our DIDs, following the invitation. */
 const follower = (scene: Scene, local: Local, peer: Peer, oobId: string, ordinal: number) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), ordinal, overrides: { pthid: oobId } });
 
-/** The invitations as comparable data. */
 const picture = (vault: VaultFold) => [...vault.invitations.invitations.values()].map(({ oobId, localDid, status }) => ({ oobId, localDid, status }));
 
 const expectSameOverEveryOrder = (scene: Scene, checks: Required<VaultChecks>) => expectOrderFree(scene.events, (set) => picture(foldVault(set, checks)));
@@ -30,6 +29,27 @@ describe("an invitation", () => {
       { oobId: again.data.oobId, localDid: a0.did, status: { status: "available" } },
     ]);
     expect(vault.invitations.invitations.get(disclosure.cid)).toMatchObject({ disclosure, didId: a0.didId });
+    expectSameOverEveryOrder(scene, vault.checks);
+  });
+
+  it("is unavailable while its ID names more than one disclosure, on one DID or two, while the DIDs and what was received under it are as they were", async () => {
+    const { scene, keys, a0, a1, b0, b1 } = await vaults();
+    const first = invitation(scene, a0);
+    invitation(scene, a0, first.data.oobId!);
+    invitation(scene, a1, first.data.oobId!);
+    const apart = invitation(scene, a0);
+    const fromB0 = follower(scene, a0, b0, first.data.oobId!, 1);
+    const fromB1 = follower(scene, a0, b1, first.data.oobId!, 2);
+    const vault = await fold(scene, keys);
+    const twice = { status: "unavailable", because: "the invitation's ID names more than one disclosure" };
+    expect(picture(vault)).toEqual([
+      { oobId: first.data.oobId, localDid: a0.did, status: twice },
+      { oobId: first.data.oobId, localDid: a0.did, status: twice },
+      { oobId: first.data.oobId, localDid: a1.did, status: twice },
+      { oobId: apart.data.oobId, localDid: a0.did, status: { status: "available" } },
+    ]);
+    expect(vault.routes.dids.get(a0.didId)!.live).toBe(true);
+    for (const source of [fromB0, fromB1]) expect(vault.channels.sources.get(source.cid)).toMatchObject({ localDidId: a0.didId, standing: { status: "complete" } });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 

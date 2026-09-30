@@ -188,14 +188,17 @@ ordinal or message ID. That change alone grants no new automatic dispatch action
 
 An OOB invitation is an address handed out, not a token. Whoever holds it
 writes to the disclosed local DID in an exact channel of their own under
-[section 3](#model), and a receipt under it is an ordinary receipt: it needs
+[section 1](#model), and a receipt under it is an ordinary receipt: it needs
 no invitation state and grants none. No event records who used an invitation,
 and nothing a peer sends under one takes it from the next. An invitation is
 available while its disclosed DID is live on a route that may deliver, and
 unavailable once the DID or its route ended or while one of them waits on
 something that may recover; [the invitation fold](vault-events.md#invitation-fold)
-owns that view. Retirement of the disclosed DID ends new disclosure and sending
-at it while retained keys still receive under [section 3.1](#receipt).
+owns that view. An `oobId` that distinct disclosures carry, once histories
+that each disclosed it are merged, is unavailable under every one of them and
+handed out again under none; the DIDs and their receipts are as they were.
+Retirement of the disclosed DID ends new disclosure and sending at it while
+retained keys still receive under [section 3](#receipt).
 
 <a id="continuity"></a>
 <a id="channel-linked"></a>

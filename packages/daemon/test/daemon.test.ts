@@ -1040,7 +1040,12 @@ describe("two daemons over a mediator", () => {
     async () => {
       const mediator = await newMediator();
       const { bob, contactId } = await acquainted(mediator);
-      const forward = holding(mediator, (message) => message.type === FORWARD);
+      // Only the forward that carries this send is held: the automatic replies still crossing after the acquaintance go to Bob, or left him already.
+      await until("bob's earlier sends are through", () => bob.heard.snapshot().messages.every((message) => message.direction !== "out" || !["queued", "prepared"].includes(message.delivery?.status ?? "")));
+      const snapshot = bob.heard.snapshot();
+      const shown = new Set(snapshot.conversations.filter((conversation) => conversation.contactId === (contactId as string)).flatMap((conversation) => conversation.channels.map((channel) => channel.channelId)));
+      const alice = new Set(snapshot.channels.filter((channel) => shown.has(channel.channelId)).map((channel) => channel.peerDid));
+      const forward = holding(mediator, (message) => message.type === FORWARD && alice.has((message.body as { next?: string }).next ?? ""));
       try {
         const sending = bob.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "in transit" } });
         await until("the message is with the mediator", forward.reached);
