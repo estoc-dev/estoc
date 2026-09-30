@@ -411,31 +411,25 @@ The intent projection is:
 ```
 
 `please_ack` is null when the wire header is absent; otherwise it is the exact
-ordered wire array. Each string names a message whose explicit acknowledgment
-is requested. `""` means the current message, and the current wire ID MAY be
-used instead.
+ordered wire array. `""` means the current message, and the current wire ID MAY
+be used instead.
 
-Define:
+A message requests its own ACK when the array contains `""` or its own wire
+ID. An absent or empty array does not request it, while `[""]` and
+`[currentWireId]` do. This profile acknowledges one message at a time: a
+receipt is given to the message that asks for it, naming that message alone.
+A string naming any other message is preserved but asks nothing of this
+vault, so a sender that wants a receipt for a message asks for it in that
+message. This request never changes submission completion or retry
+eligibility.
 
-```text
-expandPleaseAck(currentWireId, values):
-    replace every "" with currentWireId
-    retain the first occurrence of each target
-    ignore later duplicate targets without reordering
-```
-
-An expanded array containing the current wire ID requests that message's ACK.
-An absent or empty array does not request it, while `[""]` and `[currentWireId]`
-do. This request never changes submission completion or retry eligibility.
-
-Writers SHOULD NOT emit duplicate targets. Readers preserve the accepted wire
-array exactly and apply deduplication only to receipt processing. Absent
-`please_ack` normalizes to null; absent `ack` normalizes to `[]`; absent
-`created_time` or `expires_time` normalizes to null; absent additional headers
-normalize to `{}`. The producer freezes and emits `ack` targets in
-oldest-to-newest receive order under section 8.1, never lexicographic order;
-this implements the ordering MUST in
-[DIDComm Messaging v2.1, ACKs](https://identity.foundation/didcomm-messaging/spec/v2.1/#acks).
+Readers preserve the accepted wire array exactly. Absent `please_ack`
+normalizes to null; absent `ack` normalizes to `[]`; absent `created_time` or
+`expires_time` normalizes to null; absent additional headers normalize to
+`{}`. The producer emits `ack` naming exactly one wire ID, the carrier's,
+under section 8.1; the ordering MUST in
+[DIDComm Messaging v2.1, ACKs](https://identity.foundation/didcomm-messaging/spec/v2.1/#acks)
+is therefore met by every emitted array.
 
 `headers` contains every permitted top-level DIDComm field not represented by
 a dedicated field. The reserved names `typ`, `id`, `type`, `from`, `to`,
@@ -542,9 +536,9 @@ be recreated for a duplicate input or manual "send again" with a new ID.
 
 ## 8. Durable end-to-end acknowledgment
 
-<a id="freezing-an-ack-target-set"></a>
+<a id="the-ack-target"></a>
 
-### 8.1 Freezing an ACK target set
+### 8.1 The ACK target
 
 Before creating an ACK intent, require an admitted eligible complete source witness
 and choose its exact sender/recipient under
@@ -552,42 +546,32 @@ and choose its exact sender/recipient under
 channel in the same contact is never a substitute. If no eligible sender exists,
 preserve the input for manual action; do not commit an incomplete response or
 automatically dispatch it after a later restore. An ACK uses retained receipt
-and header evidence, so body erasure alone does not disqualify its source or
-targets. It does not restore any permission for content-derived work.
+and header evidence, so body erasure alone does not disqualify its source.
+It does not restore any permission for content-derived work.
 
 Under the operation lock, look up the pure-ACK tuple for this execution before
-choosing timing or targets. Reuse its fixed intent without sending it on
+choosing timing. Reuse its fixed intent without sending it on
 duplicate/recovery. Eligible live input and current ACK policy may create that
 intent immediately, independently of any natural reply or rotation notification.
 Explicit manual completion of pending ACK work follows the same checks under
 [the dispatch contract](channels.md#fixed-outbound-channel).
 
 Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
-If it is null/empty this profile creates no requested-ACK work. Otherwise
-expand `""` to the carrier's wire ID, ignore later duplicate requests for
-selection and preserve the original stored wire array. A named target must
-have admitted complete source-witness evidence from the same peer direction in this
-channel or a verified role-preserving predecessor channel. Validate the exact path,
-authentication and requesting peer; no vault-global wire-ID match or display
-group grants a target.
-If multiple otherwise eligible channel inputs with that wire ID are ambiguous,
-omit it. The current carrier can identify itself by its exact source.
+A carrier that does not request its own receipt under
+[section 5.1](#semantic-projection) creates no requested-ACK work, whatever
+other messages its request names. Otherwise the one target is the carrier's
+own wire ID, which names its exact source input: the carrier must be the
+admitted complete witness establishing that input, and the input's admitted
+intents must agree. No other message is ever a target, so no receipt order,
+wire-ID lookup, predecessor-channel search or ambiguity rule enters the
+selection, and later discovery cannot change the saved `ack`.
 
-Sort eligible targets by their minimum admitted complete receipt key, then freeze their
-wire IDs in one output. Unknown, conflicted or unauthorized targets are
-omitted and later discovery cannot change the saved array.
-
-Validation of a saved pure ACK first resolves each frozen wire ID using
-admitted complete target witnesses under the same direction, path and
-integrity checks as new target selection. When these establish exactly one
-target input, additional unadmitted inputs do not make that target ambiguous.
-If admitted evidence establishes no target, validation may instead use complete
-observation evidence without admission to establish the historical target; when
-several such inputs remain, validation waits for an admission to decide between
-them. This fallback MUST NOT resolve an ambiguity among admitted eligible
-inputs or suppress an applicable receipt-integrity or independently admitted
-intent conflict. It grants neither admission nor eligibility for new target
-selection. The carrier's own wire ID continues to name its exact source input. Generic replies use
+Validation of a saved pure ACK checks that its `ack` is exactly the carrier's
+wire ID, that the carrier requests its own receipt, and that the carrier's
+input is under neither a receipt-integrity nor an independently admitted intent
+conflict. The intent stands on the carrier's complete witness, admitted or
+not: a history rebuilt without the admission revokes no saved intent, while a
+new ACK is created only for an admitted carrier. Generic replies use
 `thid = carrier.thid ?? carrier.wireMessageId`, copy nullable `pthid`, and follow
 the producing protocol's response rules. No-response errors still do not reply.
 
@@ -610,8 +594,8 @@ effectType = https://estoc.dev/distributed-delivery/1.0#pure-ack
 ```
 
 Copy the carrier's normalized nullable creation time; expiry is null. Body is
-`{}`, attachments empty, `pleaseAck` null and `headers` empty. Threads and ACK
-targets follow section 8.1.
+`{}`, attachments empty, `pleaseAck` null and `headers` empty. Threads and the
+one ACK target follow section 8.1.
 
 The executable fixture uses recipient
 `did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd`,
@@ -972,9 +956,9 @@ or mediator-visible IDs.
    the wire.
 - <a id="dd-4"></a> **DD-4.** `pleaseAck == []` requests no explicit acknowledgment.
 - <a id="dd-5"></a> **DD-5.** `pleaseAck` containing `""` or the current wire ID requests its receipt;
-   an array naming only older IDs does not. Neither changes submission work.
+   an array naming only other IDs does not, and earns those messages nothing. Neither changes submission work.
 - <a id="dd-6"></a> **DD-6.** A receiver accepts the standard empty-string sentinel and current-message
-   ID form and expands them to the current wire ID for processing.
+   ID form as the request for the current message's receipt.
 - <a id="dd-7"></a> **DD-7.** Intent freezes `createdTime`, `expiresTime`, exact `pleaseAck`, exact `ack`
    and every supported additional header.
 - <a id="dd-8"></a> **DD-8.** `return_route` in vault application headers or innermost plaintext is
@@ -1005,8 +989,8 @@ or mediator-visible IDs.
     `createdTime == null` and omits the wire header on every preparation.
 - <a id="dd-19"></a> **DD-19.** The channel pure-ACK fixture derives execution ccee59f0-8c79-5011-8822-dbb14de9cf7d, effect Vyjgpd9idT4bb9ejAEdwT5J8dX-kL6FfSniCkFZDB20 and wire ID 3543ac01-4ac6-5c14-b160-4f8f4e2e6811.
 
-- <a id="dd-20"></a> **DD-20.** One carrier that requests current and older known IDs freezes one ordered
-    deduplicated ACK target set; unknown targets arriving later do not mutate
+- <a id="dd-20"></a> **DD-20.** One carrier that requests its own receipt beside other IDs freezes one
+    pure ACK naming its own wire ID alone; inputs arriving later do not mutate
     the response effect.
 - <a id="dd-21"></a> **DD-21.** A valid ACK before submitted adds receipt information only; another transport call still requires manual action and the exact package.
 
@@ -1065,19 +1049,19 @@ or mediator-visible IDs.
 ### Normalization, ACK and retention regressions (DD-40–DD-49)
 
 - <a id="dd-40"></a> **DD-40.** A reader preserves duplicate `please_ack` or `ack` wire targets exactly,
-    expands the current-message sentinel only for processing, and ignores
-    later duplicate targets without changing the stored array.
+    reads the current-message sentinel only for processing, and never changes
+    the stored array.
 - <a id="dd-41"></a> **DD-41.** Two implementations normalize every accepted attachment carrier, missing
     value, null, empty string and closed metadata field to the same semantic
     projection used by `intentHash`.
 - <a id="dd-42"></a> **DD-42.** Conforming mediator operation persists and logs no application plaintext;
     any explicitly enabled bounded diagnostic mode is visibly outside the
     no-plaintext profile.
-- <a id="dd-43"></a> **DD-43.** ACK targets require exact same-channel or verified role-preserving successor authorization; shared contacts and wire IDs alone supply none.
+- <a id="dd-43"></a> **DD-43.** Attributing a received ACK to an outbound requires exact same-channel or verified role-preserving successor authorization; shared contacts and wire IDs alone supply none.
 
-- <a id="dd-44"></a> **DD-44.** ACK target order uses the minimum admitted complete receipt key, not canonical event
-    order or EventStore change order; a clock rollback between two receives
-    does not reverse their ACK order in a linear history.
+- <a id="dd-44"></a> **DD-44.** A pure ACK names its carrier alone, so no receipt order, canonical event
+    order, EventStore change order or clock rollback between two receives
+    enters what a receipt acknowledges.
 - <a id="dd-45"></a> **DD-45.** Submitted completion survives restart, loss of local state, clock rollback,
     later termination and envelope collection. Later duplicate input cannot
     reopen submission or require the collected envelope.

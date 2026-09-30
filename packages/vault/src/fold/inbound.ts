@@ -95,7 +95,7 @@ export interface Execution {
   readonly status: ExecutionStatus;
   /** the first admitted complete witness, in first-receipt order: the observation an operation reads the input's fields from; null while the input is not established */
   readonly firstWitness: Member | null;
-  /** the receipt key of `firstWitness`: the order ACK targets are frozen in */
+  /** the receipt key of `firstWitness`: the order inputs are listed in */
   readonly firstReceiptKey: ReceiptKey | null;
   /** an erasure names the message: its content produces no new work */
   readonly erased: boolean;

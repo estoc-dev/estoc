@@ -178,7 +178,7 @@ describe("dispatch to a direct endpoint", () => {
     await alice.runtime.vault.commit(drafted.objects, [drafted.draft]);
     f = await fold(alice);
     const before = f.outbound.outbounds.get(drafted.messageId)!;
-    expect([f.dispositions.disposition(sourceEventCid).status, f.outbound.ackTargets(sourceEventCid), before.effect, before.work]).toEqual(["pending-admission", [], { status: "complete" }, { kind: "prepare" }]);
+    expect([f.dispositions.disposition(sourceEventCid).status, f.outbound.ackTarget(sourceEventCid), before.effect, before.work]).toEqual(["pending-admission", { status: "none", because: "the carrier is not admitted" }, { status: "complete" }, { kind: "prepare" }]);
 
     const wire = posting(accepted);
     submitted(await dispatch(alice.runtime, alice.keys, new LiveAction(drafted.messageId, "manual"), { didcomm, fetch: wire.fetch }));
@@ -188,14 +188,13 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  test("a pure ACK completed by hand for a carrier whose target the replaced peer's ignored observation shares a wire ID with is made and carried at once: the target admission decided is the target, and the ignored observation adds no ambiguity", async () => {
+  test("a pure ACK completed by hand for a carrier is made and carried at once, naming the carrier alone whatever else its request names; the replaced peer's ignored observation under the same wire ID is another input and adds no ambiguity", async () => {
     const { alice, bob } = await parties();
     const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
-    await delivered(alice, bob, { id: "shared", from_prior: proof });
-    const carrier = await delivered(alice, bob, { id: "carrier", please_ack: ["shared"] });
+    const carrier = await delivered(alice, bob, { id: "shared", from_prior: proof, please_ack: ["elsewhere", ""] });
     const ignored = await delivered(alice, { ...bob, didId: prior.didId, did: prior.did, longFormDid: prior.longFormDid }, { id: "shared" });
     let f = await fold(alice);
-    expect([f.dispositions.disposition(ignored).status, f.outbound.ackTargets(carrier)]).toEqual(["ignored-superseded", ["shared"]]);
+    expect([f.dispositions.disposition(ignored).status, f.outbound.ackTarget(carrier)]).toEqual(["ignored-superseded", { status: "eligible", wireMessageId: "shared" }]);
 
     const wire = posting(accepted);
     const made = await completeResponse(alice.runtime, alice.keys, f.inbound.ofSource(carrier)!.id, PURE_ACK_EFFECT, { dispatch: (action) => dispatch(alice.runtime, alice.keys, action, { didcomm, fetch: wire.fetch }) });
@@ -206,30 +205,29 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  test("a saved pure ACK whose target is under an intent or a receipt conflict is carried by no manual dispatch, before or after the replaced peer's ignored observation of the same wire ID arrives: the conflict stands, no package is prepared and nothing is posted", async () => {
+  test("a saved pure ACK whose carrier's input is under an intent or a receipt conflict is carried by no manual dispatch, before or after the replaced peer's ignored observation of the same wire ID arrives: the conflict stands, no package is prepared and nothing is posted", async () => {
     for (const fault of ["intent", "receipt"] as const) {
       const { alice, bob } = await parties();
       const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
       const asPrior = { ...bob, didId: prior.didId, did: prior.did, longFormDid: prior.longFormDid };
       await delivered(alice, asPrior, { id: "before" });
-      const target = await delivered(alice, bob, { id: "shared", from_prior: proof });
-      const carrier = await delivered(alice, bob, { id: "carrier", please_ack: ["shared"] });
+      const carrier = await delivered(alice, bob, { id: "carrier", from_prior: proof, please_ack: [""] });
       let f = await fold(alice);
-      expect([f.dispositions.disposition(target).status, f.outbound.ackTargets(carrier)]).toEqual(["admitted", ["shared"]]);
+      expect([f.dispositions.disposition(carrier).status, f.outbound.ackTarget(carrier)]).toEqual(["admitted", { status: "eligible", wireMessageId: "carrier" }]);
       const effect = { execution: f.inbound.ofSource(carrier)!, source: f.channels.sources.get(carrier)!, effectType: PURE_ACK_EFFECT, channel: channelOf(alice.did, bob.did) };
-      const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "carrier", ack: ["shared"] });
+      const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "carrier", ack: ["carrier"] });
       if (drafted.existing !== null) throw new Error("recorded already");
       await alice.runtime.vault.commit(drafted.objects, [drafted.draft]);
 
-      if (fault === "intent") await received(alice, bob, "shared", { type: BASIC_MESSAGE, body: { content: "another reading" } });
-      else await observed(alice, bob, "collision", { type: BASIC_MESSAGE, body: { content: "same ordinal" } }, alice, f.channels.sources.get(target)!.event.data.receiptOrdinal);
+      if (fault === "intent") await received(alice, bob, "carrier", { type: BASIC_MESSAGE, body: { content: "another reading" } });
+      else await observed(alice, bob, "collision", { type: BASIC_MESSAGE, body: { content: "same ordinal" } }, alice, f.channels.sources.get(carrier)!.event.data.receiptOrdinal);
       const wire = posting(accepted);
       const blocked = await dispatch(alice.runtime, alice.keys, new LiveAction(drafted.messageId, "manual"), { didcomm, fetch: wire.fetch });
-      const ignored = await delivered(alice, asPrior, { id: "shared" });
+      const ignored = await delivered(alice, asPrior, { id: "carrier" });
       const still = await dispatch(alice.runtime, alice.keys, new LiveAction(drafted.messageId, "manual"), { didcomm, fetch: wire.fetch });
       f = await fold(alice);
-      const conflict = fault === "intent" ? "the input with wire ID shared is in conflict: 2 intents are admitted for one input" : "the input with wire ID shared is under a receipt conflict";
-      expect([blocked.outcome, still.outcome, wire.posts, f.dispositions.disposition(ignored).status, f.outbound.ackTargets(carrier)]).toEqual(["none", "none", [], "ignored-superseded", []]);
+      const conflict = fault === "intent" ? "the source's input is in conflict: 2 intents are admitted for one input" : "the source's input is under a receipt conflict";
+      expect([blocked.outcome, still.outcome, wire.posts, f.dispositions.disposition(ignored).status, f.outbound.ackTarget(carrier).status]).toEqual(["none", "none", [], "ignored-superseded", "none"]);
       expect(f.outbound.outbounds.get(drafted.messageId)!).toMatchObject({ effect: { status: "conflict", because: conflict }, work: { kind: "none" }, outcome: { status: "conflict" } });
       await closeAll(alice, bob);
     }

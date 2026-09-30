@@ -292,7 +292,7 @@ no `message.in`, contact or response effect.
 Input to an eligible retired local key MUST pass through ordinary
 decryption, authentication and durable receipt. It does not require renewed
 recipient registration. Channel denials and
-the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#freezing-an-ack-target-set) still govern subsequent work. Its mediation stays in the required
+the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target) still govern subsequent work. Its mediation stays in the required
 receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while its bound route
 remains configured, non-retired and conflict-free and the mediation is usable.
 Explicit channel blocking remains independent of contact display deletion under

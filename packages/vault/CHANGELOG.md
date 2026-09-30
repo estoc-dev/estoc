@@ -14,6 +14,17 @@
   document. A scan of a history decodes each spelling it names once
   for as long as the process keeps it, where it decoded each on every
   scan. Needs `@estoc/did-peer` 0.2.0.
+- **A pure ACK names its carrier alone** (behaviour change): the
+  receipt a carrier earns is its own wire ID, when its `please_ack`
+  names itself by `""` or its ID and it is the admitted complete
+  witness establishing an input whose admitted intents agree; a
+  request naming other messages earns them nothing. No receipt order,
+  wire-ID lookup or predecessor-channel search enters it, so what a
+  receipt says never depends on the order inputs were received in.
+  `OutboundFold.ackTarget` gives the one target or why there is none,
+  in place of `ackTargets`; `expandPleaseAck` is gone, `requestsAck`
+  reading the request alone. A saved pure ACK is in conflict unless
+  its `ack` is exactly its carrier's wire ID.
 - **A saved pure ACK's frozen targets are validated by the evidence
   its inputs have**: the established input of a frozen wire ID is
   the target, an input beside it that no admission names — an

@@ -333,7 +333,7 @@ function missingResponses(fold: VaultFold): MissingResponse[] {
     if (execution.firstWitness === null) continue;
     const { source } = execution.firstWitness;
     const candidates: string[] = [];
-    if (fold.outbound.ackTargets(source.event.cid).length > 0) candidates.push(PURE_ACK_EFFECT);
+    if (fold.outbound.ackTarget(source.event.cid).status === "eligible") candidates.push(PURE_ACK_EFFECT);
     if (source.event.data.msgType === PING_TYPE && !execution.erased) candidates.push(PING_RESPONSE_EFFECT);
     if (candidates.length === 0) continue;
     const channel = responseChannel(fold, execution);
