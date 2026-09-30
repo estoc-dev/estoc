@@ -15,6 +15,7 @@ const PATHS: Record<string, string> = {
   paste: "M9 2h6a1 1 0 0 1 1 1v3H8V3a1 1 0 0 1 1-1zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
   check: "M20 6L9 17l-5-5",
   copy: "M8 8h12v12H8zM16 8V4H4v12h4",
+  more: "M4.5 12h1M11.5 12h1M18.5 12h1",
 };
 
 defineProps<{ name: keyof typeof PATHS | string; size?: number }>();

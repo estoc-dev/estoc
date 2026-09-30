@@ -52,6 +52,20 @@ describe("the frame a message sits in", () => {
     expect(html).not.toContain("data-attachments");
   });
 
+  it("offers More under an available message at first, and no Erase confirmation yet", async () => {
+    const html = await rendered({ state: "available", body: { content: "hi back" }, attachments: [] });
+    expect(html).toContain("data-more");
+    expect(html).not.toContain("data-erase");
+    expect(html).not.toMatch(/>erase</);
+  });
+
+  it("offers nothing to erase on a message erased or not here", async () => {
+    for (const body of [{ state: "erased" }, { state: "missing" }] as const) {
+      const html = await rendered(body);
+      expect(html).not.toContain("data-more");
+    }
+  });
+
   it("shows neither content nor attachments of a message erased or not here", async () => {
     for (const [body, said] of [
       [{ state: "erased" }, "erased"],
