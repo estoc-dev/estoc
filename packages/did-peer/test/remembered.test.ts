@@ -4,7 +4,7 @@ import { frozen, remembered } from "../src/remembered.js";
 
 class Refused extends Error {}
 
-/** A function that counts how often it was worked out: the input in a list, or a refusal for an input that starts with `!`. */
+/** The inputs worked out, in order; an input that starts with `!` is refused, one that starts with `?` fails for another reason. */
 function counted(limit?: number) {
   const worked: string[] = [];
   const compute = (input: string): string[] => {
@@ -73,5 +73,15 @@ describe("frozen", () => {
     expect(() => value.list.push({ deep: { deeper: [] } })).toThrow(TypeError);
     expect(frozen("text")).toBe("text");
     expect(frozen(null)).toBe(null);
+  });
+
+  it("freezes a value nested deeper than the call stack allows", () => {
+    const depth = 20_000;
+    const value = JSON.parse(`{"extra":${"[".repeat(depth)}0${"]".repeat(depth)}}`) as { extra: unknown };
+    expect(frozen(value)).toBe(value);
+    let frozenLevels = 0;
+    for (let level: unknown = value.extra; Object.isFrozen(level) && Array.isArray(level); level = level[0]) frozenLevels += 1;
+    expect(Object.isFrozen(value)).toBe(true);
+    expect(frozenLevels).toBe(depth);
   });
 });

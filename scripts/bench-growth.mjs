@@ -1,10 +1,13 @@
 // What one message costs a daemon whose vault already holds a history: two
 // daemons over a mediator in this process write to each other until the
 // history is as long as asked, and a send, its receipt, an acknowledged send
-// and a retried one are then measured in full, from the call to the state
-// published. Afterwards the sender's vault is opened by a daemon, and one read
-// of it timed step by step, each in a process of its own that has decoded
-// nothing yet. Run from the root, after `pnpm build`:
+// and a retried one are then measured in full: from the call, through the
+// intent committed, the transport call answered and the acceptance committed,
+// to each state published by the daemon and consumed by a view over a port.
+// Afterwards the sender's vault is started by a daemon in a process of its
+// own, and read in another: the open's own scan, which decodes everything for
+// the first time, timed by function, and each step of a read after it timed
+// on what that scan left remembered. Run from the root, after `pnpm build`:
 //   node scripts/bench-growth.mjs --messages 1000
 // The result is one JSON document on stdout, or in the file `--out` names;
 // progress goes to stderr. Times are of this machine; the counts are not.
@@ -49,6 +52,7 @@ const { values: flags } = parseArgs({
     messages: { type: "string", default: "100" },
     conversations: { type: "string", default: "1" },
     "body-bytes": { type: "string", default: "64" },
+    // views of the sender over a port each: the first is the one whose consumption of each state is timed
     views: { type: "string", default: "1" },
     "slow-views": { type: "string", default: "1" },
     "slow-ms": { type: "string", default: "250" },
@@ -70,7 +74,7 @@ const asked = {
   messages: count("messages", 0),
   conversations: count("conversations", 1),
   bodyBytes: count("body-bytes", 1),
-  views: count("views", 0),
+  views: count("views", 1),
   slowViews: count("slow-views", 0),
   slowMs: count("slow-ms", 0),
   samples: count("samples", 1),
@@ -95,6 +99,25 @@ const perSample = (totals, samples) => Object.fromEntries(Object.entries(totals)
 
 /** How long each runtime's writer lock was waited for and held, by the anchor of the vault it is over. */
 const locks = new Map();
+/** The moment each message's intent, and its acceptance by the endpoint called, was committed: the transaction done, the lock still held. */
+const committed = { intents: new Map(), acceptances: new Map() };
+let commitsRecorded = false;
+function recordCommits(held) {
+  if (commitsRecorded) return;
+  commitsRecorded = true;
+  let owner = Object.getPrototypeOf(held);
+  while (!Object.hasOwn(owner, "commit")) owner = Object.getPrototypeOf(owner);
+  const commit = owner.commit;
+  owner.commit = async function (objects, drafts) {
+    const events = await commit.call(this, objects, drafts);
+    const at = now();
+    for (const { type, data } of events) {
+      if (type === "message.out") committed.intents.set(data.messageId, at);
+      else if (type === "delivery.submitted") committed.acceptances.set(data.messageId, at);
+    }
+    return events;
+  };
+}
 {
   let owner = SqliteVault.prototype;
   while (!Object.hasOwn(owner, "locked")) owner = Object.getPrototypeOf(owner);
@@ -105,6 +128,7 @@ const locks = new Map();
     locks.set(anchor, lock);
     const askedAt = now();
     return locked.call(this, async (held) => {
+      recordCommits(held);
       const takenAt = now();
       lock.taken += 1;
       lock.waitedMs += takenAt - askedAt;
@@ -146,13 +170,28 @@ async function alone(what, folder) {
 const root = await mkdtemp(path.join(tmpdir(), "estoc-bench-"));
 const mediator = new FakeMediator(await deriveIdentity(await importSeed(new Uint8Array(32).fill(200)), "anchor"));
 
-/** A daemon over a folder of its own, its database's reads counted, and every state it publishes kept with the moment it was published. */
+/** What one source shows of the vault, snapshot by snapshot: how many so far, the last, and who waits for one. */
+const watching = (name) => ({ name, states: 0, last: null, waiting: new Set() });
+function saw(watch, snapshot) {
+  const at = now();
+  watch.states += 1;
+  watch.last = snapshot;
+  for (const waiter of watch.waiting) if (waiter.met(snapshot)) waiter.resolve(at);
+}
+
+/** A daemon over a folder of its own, its database's reads counted, every transport call's completion kept, and every state it publishes watched. */
 async function person(name) {
   const folder = path.join(root, name);
   const reads = noReads();
   const net = { down: false };
+  const transport = [];
   const host = nodeHost(folder, {
-    fetch: (input, init) => (net.down ? Promise.reject(new Error("the network is down")) : mediator.fetch(input, init)),
+    fetch: async (input, init) => {
+      if (net.down) throw new Error("the network is down");
+      const response = await mediator.fetch(input, init);
+      transport.push(now());
+      return response;
+    },
     WebSocket: mediator.WebSocket,
   });
   const daemon = createDaemon({
@@ -164,14 +203,10 @@ async function person(name) {
     // A dispatch that failed is tried again by hand here, so that a retry measured is the one asked for.
     agentOptions: { ...host.agentOptions, retry: { firstWaitMs: 3_600_000 } },
   });
-  const published = { states: 0, last: null, waiting: new Set() };
+  const published = watching(`${name}'s daemon`);
   daemon.publisher.attach({
     state: ({ value }) => {
-      if (value.phase !== "open") return;
-      const at = now();
-      published.states += 1;
-      published.last = value.snapshot;
-      for (const waiter of published.waiting) if (waiter.met(value.snapshot)) waiter.resolve(at);
+      if (value.phase === "open") saw(published, value.snapshot);
     },
     lines: () => undefined,
     log: () => undefined,
@@ -180,27 +215,34 @@ async function person(name) {
   await daemon.boot();
   await daemon.createIdentity(name, PASSPHRASE);
   await daemon.setMediator(mediator.did);
-  return { name, folder, daemon, reads, net, published, anchor: published.last.anchor };
+  return { name, folder, daemon, reads, net, transport, published, anchor: published.last.anchor };
 }
 
-/** The moment a state `met` holds of was published, which is now when the last one does. */
-function shown(who, what, met) {
-  if (who.published.last !== null && met(who.published.last)) return Promise.resolve(now());
+/** The moment `watch` first shows a snapshot `met` holds of, which is now when the last one does. */
+function shown(watch, what, met) {
+  if (watch.last !== null && met(watch.last)) return Promise.resolve(now());
   return new Promise((resolve, reject) => {
     const waiter = {
       met,
       resolve: (at) => {
         clearTimeout(timer);
-        who.published.waiting.delete(waiter);
+        watch.waiting.delete(waiter);
         resolve(at);
       },
     };
     const timer = setTimeout(() => {
-      who.published.waiting.delete(waiter);
-      reject(new Error(`${who.name} was not shown ${what} within two minutes`));
+      watch.waiting.delete(waiter);
+      reject(new Error(`${watch.name} did not show ${what} within two minutes`));
     }, 120_000);
-    who.published.waiting.add(waiter);
+    watch.waiting.add(waiter);
   });
+}
+
+/** The moment `who`'s transport last completed a call between `since` and `by`: the one whose acceptance was committed at `by`. */
+function transportDone(who, since, by) {
+  const at = who.transport.findLast((done) => done >= since && done <= by);
+  if (at === undefined) throw new Error(`${who.name} completed no transport call between the call and the acceptance`);
+  return at;
 }
 
 /** The message among the last of a snapshot: what is looked for was written last. */
@@ -223,9 +265,9 @@ async function acquainted(alice, bob, n) {
   const known = new Set(alice.published.last.channels.map(({ channelId }) => channelId));
   const { invitation } = await alice.daemon.createInvitation("one");
   const accepted = await bob.daemon.acceptInvitation(invitation, `Alice ${n}`);
-  await shown(bob, "its Ping acknowledged", has(accepted.messageId, (message) => message.acknowledged));
+  await shown(bob.published, "its Ping acknowledged", has(accepted.messageId, (message) => message.acknowledged));
   const moved = (snapshot) => snapshot.channels.find((channel) => !known.has(channel.channelId) && channel.headChannelId !== null && channelOf(channel.headChannelId).localDid !== channel.localDid);
-  await shown(alice, "the successor it writes to Bob from", (snapshot) => moved(snapshot) !== undefined);
+  await shown(alice.published, "the successor it writes to Bob from", (snapshot) => moved(snapshot) !== undefined);
   const head = channelOf(moved(alice.published.last).headChannelId);
   return { fromAlice: await alice.daemon.createContact(`Bob ${n}`, [head]), fromBob: accepted.contactId };
 }
@@ -240,7 +282,39 @@ async function settled(...people) {
   }
 }
 
-/** A view of `who` over a port in memory, which hands each frame over `slowMs` after it was written. */
+/** Every one of `views` having consumed what `who`'s daemon has published: its state and its lines, at their revisions of now. */
+function caughtUp(who, views) {
+  const { state, lines } = who.daemon.publisher.current;
+  const reached = (consumed, target) => consumed !== null && consumed.epoch === target.epoch && consumed.revision >= target.revision;
+  return Promise.all(
+    views.map(
+      ({ client }) =>
+        new Promise((resolve, reject) => {
+          const stops = [];
+          const timer = setTimeout(() => {
+            for (const stop of stops) stop();
+            reject(new Error(`a view of ${who.name} did not catch up with its daemon within two minutes`));
+          }, 120_000);
+          const check = () => {
+            if (!reached(client.state, state) || !reached(client.lines, lines)) return;
+            clearTimeout(timer);
+            for (const stop of stops) stop();
+            resolve();
+          };
+          stops.push(client.onState(check), client.onLines(check));
+          check();
+        })
+    )
+  );
+}
+
+/** Both daemons settled and every view of each caught up with it. */
+async function quiet(alice, bob, views) {
+  await settled(alice, bob);
+  await Promise.all([caughtUp(alice, views.sender), caughtUp(bob, views.receiver)]);
+}
+
+/** A view of `who` over a port in memory, which hands each frame over `slowMs` after it was written; what the view consumes is watched. */
 async function view(who, slowMs) {
   const written = { frames: 0, bytes: 0, slowMs };
   const ends = { served: null, viewed: null };
@@ -269,28 +343,40 @@ async function view(who, slowMs) {
     { methods: methodsOf(who.daemon, limits), limits, implementation: "bench", attach: (session) => attachTo(who.daemon.publisher, session) }
   );
   const client = connect(end("viewed", "served"));
+  const viewed = watching(`${who.name}'s view${slowMs > 0 ? ` of ${slowMs} ms` : ""}`);
+  client.onState(({ value }) => {
+    if (value.phase === "open") saw(viewed, value.snapshot);
+  });
   const began = now();
   await client.connected();
-  return { client, written, attachMs: now() - began, baselineBytes: written.bytes };
+  return { client, written, viewed, attachMs: now() - began, baselineBytes: written.bytes };
 }
 
 function counters(alice, bob, views) {
   const taken = (who) => ({ ...who.reads, states: who.published.states, lock: { ...(locks.get(who.anchor) ?? {}) } });
-  return { alice: taken(alice), bob: taken(bob), calls: { counts: { ...calls.counts }, ms: { ...calls.ms } }, views: views.map(({ written }) => ({ ...written })) };
+  const frames = (list) => list.map(({ written }) => ({ ...written }));
+  return { alice: taken(alice), bob: taken(bob), calls: { counts: { ...calls.counts }, ms: { ...calls.ms } }, views: { sender: frames(views.sender), receiver: frames(views.receiver) } };
 }
 
 const minus = (after, before) => Object.fromEntries(Object.entries(after).map(([name, value]) => [name, typeof value === "number" ? value - (before[name] ?? 0) : value]));
 
-/** `flow` run `asked.samples` times with both daemons settled before and after each, its times spread and what it read counted per sample. */
+/**
+ * `flow` run `asked.samples` times, its times spread and what it read
+ * and wrote counted per sample. Before and after each, both daemons are
+ * settled and every view has consumed what they published, so that a
+ * sample's frames are its own: none of a view's lag is carried into the
+ * next sample, and none is left uncounted at the end.
+ */
 async function measured(name, alice, bob, views, flow) {
   const times = {};
-  const total = { sender: noReads(), receiver: noReads(), senderStates: 0, receiverStates: 0, senderLock: {}, receiverLock: {}, calls: {}, callMs: {}, views: views.map(() => ({ frames: 0, bytes: 0 })) };
+  const empty = (list) => list.map(() => ({ frames: 0, bytes: 0 }));
+  const total = { sender: noReads(), receiver: noReads(), senderStates: 0, receiverStates: 0, senderLock: {}, receiverLock: {}, calls: {}, callMs: {}, views: { sender: empty(views.sender), receiver: empty(views.receiver) } };
   const add = (into, more) => Object.entries(more).forEach(([key, value]) => (into[key] = (into[key] ?? 0) + value));
   for (let sample = 0; sample < asked.samples; sample += 1) {
-    await settled(alice, bob);
+    await quiet(alice, bob, views);
     const before = counters(alice, bob, views);
     for (const [mark, ms] of Object.entries(await flow(sample))) (times[mark] ??= []).push(ms);
-    await settled(alice, bob);
+    await quiet(alice, bob, views);
     const after = counters(alice, bob, views);
     const { states: senderStates, lock: senderLock, ...sender } = minus(after.alice, before.alice);
     const { states: receiverStates, lock: receiverLock, ...receiver } = minus(after.bob, before.bob);
@@ -302,10 +388,11 @@ async function measured(name, alice, bob, views, flow) {
     add(total.receiverLock, minus(after.bob.lock, before.bob.lock));
     add(total.calls, minus(after.calls.counts, before.calls.counts));
     add(total.callMs, minus(after.calls.ms, before.calls.ms));
-    after.views.forEach((written, i) => add(total.views[i], { frames: written.frames - before.views[i].frames, bytes: written.bytes - before.views[i].bytes }));
+    for (const side of ["sender", "receiver"]) after.views[side].forEach((written, i) => add(total.views[side][i], { frames: written.frames - before.views[side][i].frames, bytes: written.bytes - before.views[side][i].bytes }));
     said(`${name}: sample ${sample + 1} of ${asked.samples}`);
   }
   const lock = ({ longestHeldMs: _, ...sums }) => perSample(sums, asked.samples);
+  const perView = (side) => total.views[side].map((written, i) => ({ slowMs: views[side][i].written.slowMs, ...perSample(written, asked.samples) }));
   return {
     ms: Object.fromEntries(Object.entries(times).map(([mark, samples]) => [mark, spread(samples)])),
     perSample: {
@@ -314,7 +401,8 @@ async function measured(name, alice, bob, views, flow) {
       // Both daemons run in this process and on these modules: a call is counted whichever of them made it.
       callsOfBoth: perSample(total.calls, asked.samples),
       callMsOfBoth: perSample(total.callMs, asked.samples),
-      viewsOfSender: total.views.map((written, i) => ({ slowMs: views[i].written.slowMs, ...perSample(written, asked.samples) })),
+      viewsOfSender: perView("sender"),
+      viewsOfReceiver: perView("receiver"),
     },
   };
 }
@@ -326,7 +414,7 @@ function collected() {
   return { heapUsedBytes: heapUsed, rssBytes: rss, arrayBuffersBytes: arrayBuffers };
 }
 
-/** `step` run `asked.reads` times: the first, which finds nothing remembered, and the middle one of the rest. */
+/** `step` run `asked.reads` times: the first sample, taken after the open's own scan has remembered every spelling, and the middle one of the rest. */
 async function timed(step) {
   const times = [];
   let result;
@@ -335,15 +423,22 @@ async function timed(step) {
     result = await step();
     times.push(now() - began);
   }
-  const [first, ...rest] = times;
-  return { result, ms: { first: round(first), later: spread(rest).p50 } };
+  const [firstAfterOpen, ...rest] = times;
+  return { result, ms: { firstAfterOpen: round(firstAfterOpen), later: spread(rest).p50 } };
 }
 
-/** One read of the vault in `folder`, as the daemon makes it for a state, a step at a time. */
+/**
+ * One read of the vault in `folder`, as the daemon makes it for a state:
+ * the open, whose scan of the whole history is the first in this process
+ * and decodes every spelling it names, timed by function; then a read
+ * a step at a time on what that scan remembered.
+ */
 async function readApart(folder) {
+  calls.reset();
   const opening = now();
   const { runtime, keys } = await openVault(openNodeSqlite(path.join(folder, VAULT), { mode: "readwrite" }), { passphrase: PASSPHRASE }, SCAN);
   const openMs = now() - opening;
+  const firstScan = { ms: Object.fromEntries(Object.entries(calls.ms).map(([name, ms]) => [name, round(ms)])), calls: { ...calls.counts } };
   try {
     return await runtime.locked(async (vault) => {
       const readObject = objectReader(vault.objects);
@@ -374,6 +469,7 @@ async function readApart(folder) {
       return {
         events: set.size,
         records: Object.fromEntries(["mediations", "dids", "contacts", "channels", "messages", "observations", "conversations", "invitations"].map((table) => [table, snapshot[table].length])),
+        firstScan,
         ms: {
           openAndFirstScan: round(openMs),
           eventsAndSchema: events.ms,
@@ -406,13 +502,13 @@ async function kept(alice, bob, { fromAlice, fromBob }, directory) {
   const { foldText, hashOf, readCorpus, snapshotText } = await import("../packages/daemon/test/corpus.ts");
   const asking = { ...body("acknowledged"), pleaseAck: [""] };
   await alice.daemon.send({ contactId: fromAlice }, asking);
-  await shown(alice, "the acknowledgement", written(asking, (message) => message.acknowledged));
+  await shown(alice.published, "the acknowledgement", written(asking, (message) => message.acknowledged));
 
   const failing = async (content) => {
     alice.net.down = true;
     try {
       const { messageId } = await alice.daemon.send({ contactId: fromAlice }, content);
-      await shown(alice, "the send that failed", has(messageId, (message) => message.manualAction === "retry"));
+      await shown(alice.published, "the send that failed", has(messageId, (message) => message.manualAction === "retry"));
       return messageId;
     } finally {
       alice.net.down = false;
@@ -420,7 +516,7 @@ async function kept(alice, bob, { fromAlice, fromBob }, directory) {
   };
   const again = body("sent again");
   await alice.daemon.retry(await failing(again));
-  await shown(bob, "the message sent again", received(again));
+  await shown(bob.published, "the message sent again", received(again));
   await failing(body("waiting"));
 
   const heard = alice.published.last.messages.findLast((message) => message.direction === "in" && message.body.state === "available" && message.kind !== null);
@@ -438,7 +534,7 @@ async function kept(alice, bob, { fromAlice, fromBob }, directory) {
   ]) {
     const content = body(text);
     await from.daemon.send({ contactId }, content);
-    await shown(to, text, received(content));
+    await shown(to.published, text, received(content));
   }
   await settled(alice, bob);
 
@@ -467,7 +563,7 @@ try {
     const content = body(sent);
     const { messageId, outcome, because } = await from.daemon.send({ contactId }, content);
     if (outcome !== "submitted") throw new Error(`message ${sent} was ${outcome}: ${because}`);
-    await Promise.all([shown(from, "its message submitted", has(messageId, submitted)), shown(to, "the message received", received(content))]);
+    await Promise.all([shown(from.published, "its message submitted", has(messageId, submitted)), shown(to.published, "the message received", received(content))]);
     sent += 1;
   }
   const filling = now();
@@ -485,30 +581,63 @@ try {
     process.exit(0);
   }
 
-  const views = [];
-  for (let n = 0; n < asked.views + asked.slowViews; n += 1) views.push(await view(alice, n < asked.views ? 0 : asked.slowMs));
+  const views = { sender: [], receiver: [await view(bob, 0)] };
+  for (let n = 0; n < asked.views + asked.slowViews; n += 1) views.sender.push(await view(alice, n < asked.views ? 0 : asked.slowMs));
+  const [senderView] = views.sender;
+  const [receiverView] = views.receiver;
   for (let n = 0; n < 4; n += 1) await exchanged();
   calls.reset();
 
   const { fromAlice: contactId } = contacts[0];
+  /** The moments each stage of a message is shown by the sender's daemon and its first view, and the receipt by the receiver's. */
+  const stages = (content) => {
+    const bySender = (what, holds) => ({ published: shown(alice.published, what, written(content, holds)), viewed: shown(senderView.viewed, what, written(content, holds)) });
+    return {
+      intent: bySender("the intent"),
+      delivery: bySender("the submission", submitted),
+      receipt: { published: shown(bob.published, "the message", received(content)), viewed: shown(receiverView.viewed, "the message", received(content)) },
+    };
+  };
+  /** The spans of a send, from the call at `began` through the intent, the transport, the acceptance and the receipt, each stage as the daemon published it and as the view consumed it. */
+  const spans = async (began, answered, messageId, { intent, delivery, receipt }) => {
+    const intentCommitted = committed.intents.get(messageId);
+    const acceptanceCommitted = committed.acceptances.get(messageId);
+    const transportAnswered = transportDone(alice, began, acceptanceCommitted);
+    const [intentPublished, intentViewed, deliveryPublished, deliveryViewed, receiptPublished, receiptViewed] = await Promise.all([intent.published, intent.viewed, delivery.published, delivery.viewed, receipt.published, receipt.viewed]);
+    return {
+      callToIntentCommitted: intentCommitted - began,
+      intentCommittedToIntentPublished: intentPublished - intentCommitted,
+      intentPublishedToIntentViewed: intentViewed - intentPublished,
+      callToIntentViewed: intentViewed - began,
+      callToAnswer: answered - began,
+      callToTransportAnswered: transportAnswered - began,
+      transportAnsweredToAcceptanceCommitted: acceptanceCommitted - transportAnswered,
+      acceptanceCommittedToDeliveryPublished: deliveryPublished - acceptanceCommitted,
+      deliveryPublishedToDeliveryViewed: deliveryViewed - deliveryPublished,
+      callToDeliveryViewed: deliveryViewed - began,
+      callToReceiptPublished: receiptPublished - began,
+      receiptPublishedToReceiptViewed: receiptViewed - receiptPublished,
+      callToReceiptViewed: receiptViewed - began,
+    };
+  };
   const flows = {};
   flows.send = await measured("send", alice, bob, views, async (sample) => {
     const content = body(`send ${sample}`);
-    const receipt = shown(bob, "the message", received(content));
-    const intent = shown(alice, "the intent", written(content));
-    const delivery = shown(alice, "the submission", written(content, submitted));
+    const staged = stages(content);
     const began = now();
-    await alice.daemon.send({ contactId }, content);
+    const { messageId } = await alice.daemon.send({ contactId }, content);
     const answered = now();
-    return { callToIntentPublished: (await intent) - began, callToAnswer: answered - began, callToDeliveryPublished: (await delivery) - began, answerToDeliveryPublished: (await delivery) - answered, callToReceiptPublished: (await receipt) - began };
+    return spans(began, answered, messageId, staged);
   });
   flows.acknowledged = await measured("acknowledged send", alice, bob, views, async (sample) => {
     const content = { ...body(`ack ${sample}`), pleaseAck: [""] };
-    const acknowledged = shown(alice, "the acknowledgement", written(content, (message) => message.acknowledged));
+    const acknowledged = (message) => message.acknowledged;
+    const acknowledgementPublished = shown(alice.published, "the acknowledgement", written(content, acknowledged));
+    const acknowledgementViewed = shown(senderView.viewed, "the acknowledgement", written(content, acknowledged));
     const began = now();
     await alice.daemon.send({ contactId }, content);
     const answered = now();
-    return { callToAnswer: answered - began, callToAcknowledgementPublished: (await acknowledged) - began };
+    return { callToAnswer: answered - began, callToAcknowledgementPublished: (await acknowledgementPublished) - began, acknowledgementPublishedToAcknowledgementViewed: (await acknowledgementViewed) - (await acknowledgementPublished), callToAcknowledgementViewed: (await acknowledgementViewed) - began };
   });
   flows.retry = await measured("retried send", alice, bob, views, async (sample) => {
     const content = body(`retry ${sample}`);
@@ -516,25 +645,26 @@ try {
     let messageId;
     try {
       ({ messageId } = await alice.daemon.send({ contactId }, content));
-      await shown(alice, "the send that failed", has(messageId, (message) => message.manualAction === "retry"));
+      await shown(alice.published, "the send that failed", has(messageId, (message) => message.manualAction === "retry"));
     } finally {
       alice.net.down = false;
     }
-    const delivery = shown(alice, "the submission", has(messageId, submitted));
-    const receipt = shown(bob, "the message", received(content));
+    await quiet(alice, bob, views);
+    const staged = stages(content);
     const began = now();
     const { outcome, because } = await alice.daemon.retry(messageId);
     if (outcome !== "submitted") throw new Error(`the retry was ${outcome}: ${because}`);
     const answered = now();
-    return { retryToAnswer: answered - began, retryToDeliveryPublished: (await delivery) - began, answerToDeliveryPublished: (await delivery) - answered, retryToReceiptPublished: (await receipt) - began };
+    const { callToIntentCommitted: _intent, intentCommittedToIntentPublished: _published, intentPublishedToIntentViewed: _viewed, callToIntentViewed: _call, ...retried } = await spans(began, answered, messageId, staged);
+    return Object.fromEntries(Object.entries(retried).map(([name, ms]) => [name.replace(/^call/, "retry"), ms]));
   });
 
-  await settled(alice, bob);
+  await quiet(alice, bob, views);
   const attached = await view(alice, 0);
   const memory = collected();
   const live = { attachMs: round(attached.attachMs), baselineBytes: attached.baselineBytes, memory };
   attached.client.close();
-  for (const { client } of views) client.close();
+  for (const { client } of [...views.sender, ...views.receiver]) client.close();
   await Promise.all([alice.daemon.close(), bob.daemon.close()]);
 
   said("the sender's vault, started and read a step at a time");
@@ -549,7 +679,7 @@ try {
     flows,
     attach: live,
     coldStart,
-    read: { ms: read.ms, bytes: read.bytes },
+    read: { firstScan: read.firstScan, ms: read.ms, bytes: read.bytes },
   };
 } finally {
   await rm(root, { recursive: true, force: true });

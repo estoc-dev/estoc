@@ -7,18 +7,22 @@ import { describe, expect, it } from "vitest";
 
 import {
   InvalidDidDocument,
+  VaultEventSet,
   authorizedMethodIds,
   canonicalDidOf,
   canonicalPublicKey,
   didcommServiceUris,
+  foldVaultChecked,
   methodPublicKey,
   peerResolution,
   rawCidOfBytes,
   splitDidUrl,
+  verifyResolutions,
   type Did,
   type DidUrl,
 } from "../src/index.js";
 import { retainedDocumentAnew } from "../src/peer-document.js";
+import { noObjects, resolved, vaults } from "./fold/scene.js";
 
 const ED_PUBLIC = ed25519.getPublicKey(new Uint8Array(32).fill(1));
 const ED_PUBLIC2 = ed25519.getPublicKey(new Uint8Array(32).fill(2));
@@ -100,6 +104,24 @@ describe("peerResolution", () => {
     expect(refusal()).toBeInstanceOf(InvalidDidDocument);
     expect(refusal()).toBe(refusal());
     expect(() => retainedDocumentAnew(tampered)).toThrow(InvalidDidDocument);
+  });
+
+  it("refuses a long form whose document nests deeper than the event format allows as an invalid document, and a scan naming it goes on", { timeout: 30_000 }, async () => {
+    const depth = 9_000;
+    const deep = encodeLongForm({ extra: JSON.parse("[".repeat(depth) + "0" + "]".repeat(depth)) }) as Did;
+    expect(() => peerResolution(deep)).toThrow(InvalidDidDocument);
+    expect(() => peerResolution(deep)).toThrow(/nested deeper/);
+    expect(() => retainedDocumentAnew(deep)).toThrow(InvalidDidDocument);
+
+    const { scene, a0, b0 } = await vaults();
+    const tooDeep = resolved(scene, a0.didId, b0, { presentedDid: deep, did: deep.slice(0, deep.lastIndexOf(":")) as Did, authenticationMethodIds: [], keyAgreementMethodIds: [] });
+    const genuine = resolved(scene, a0.didId, b0);
+    const set = VaultEventSet.of(scene.events);
+    expect(set.invalid).toEqual([]);
+    const checks = await verifyResolutions(set, noObjects);
+    expect(checks.get(tooDeep.cid)).toBe("invalid");
+    expect(checks.get(genuine.cid)).toBe("verified");
+    await expect(foldVaultChecked(set, null, noObjects)).resolves.toBeDefined();
   });
 
   it("serializes the document as RFC 8785 JSON under its raw CID, the same bytes on every resolution", () => {

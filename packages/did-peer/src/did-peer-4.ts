@@ -4,7 +4,7 @@ import bs58 from "bs58";
 import { frozen, remembered } from "./remembered.js";
 
 /**
- * did:peer:4 (numalgo 4) — https://identity.foundation/peer-did-method-spec/
+ * did:peer:4 (numalgo 4).
  *
  * Port of the reference implementation at references/did-peer-4-ts. The upstream
  * package is not published to npm, so the ~170 lines live here instead. The

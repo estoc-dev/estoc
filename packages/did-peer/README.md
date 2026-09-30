@@ -4,11 +4,12 @@ did:peer:2 and did:peer:4 — encoding, resolution, and conversion to the flat
 `DIDDoc` shape [didcomm-rust](https://github.com/sicpa-dlab/didcomm-rust)
 expects.
 
-Everything here is pure encoding/decoding. For both peer methods the document
-*is* the identifier, so resolution never touches the network — no fetch, no
-cache, no store to be out of date. One source runs unchanged in Node (≥18),
-Cloudflare workerd, and the browser: sha256 comes from `@noble/hashes`, base64
-from `atob`/`btoa`.
+Everything here is pure encoding/decoding of the [Peer DID method](https://identity.foundation/peer-did-method-spec/).
+For both peer methods the document *is* the identifier, so resolution never
+touches the network and no store can be out of date: what a long form decodes
+to is worked out from its text, and once worked out is kept in memory (see
+below). One source runs unchanged in Node (≥18), Cloudflare workerd, and the
+browser: sha256 comes from `@noble/hashes`, base64 from `atob`/`btoa`.
 
 ```sh
 npm install @estoc/did-peer
