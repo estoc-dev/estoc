@@ -320,7 +320,7 @@ describe("reconciling recipients", () => {
       const reconciled = await reconcile(p.link, p.runtime, p.keys, p.mediationId);
       expect(reconciled.refused).toEqual([a.minted.did]);
       expect(registered(reconciled, a.minted.did)).toBe(false);
-      await expect(disclose(p.link, p.runtime, p.keys, a.minted.didId, { as: "oob", uses: "one" })).rejects.toBeInstanceOf(Unregistered);
+      await expect(disclose(p.link, p.runtime, p.keys, a.minted.didId, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
     }
     expect(mediator.recipients.has(a.minted.did)).toBe(false);
     mediator.intercept = null;
@@ -346,11 +346,11 @@ describe("reconciling recipients", () => {
       }
       return undefined;
     };
-    const firstDisclosure = disclose(p.link, p.runtime, p.keys, first.minted.didId, { as: "oob", uses: "one" });
+    const firstDisclosure = disclose(p.link, p.runtime, p.keys, first.minted.didId, { as: "oob" });
     await paused;
     const second = await createDid(p.runtime, p.keys, routeId);
     const other = new MediatorLink({ ...p.linkOptions, me: p.created.data.me.did });
-    const secondDisclosure = disclose(other, p.runtime, p.keys, second.minted.didId, { as: "oob", uses: "one" });
+    const secondDisclosure = disclose(other, p.runtime, p.keys, second.minted.didId, { as: "oob" });
     expect(mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY)).toHaveLength(2);
     expect(mediator.recipients.size).toBe(0);
     release();

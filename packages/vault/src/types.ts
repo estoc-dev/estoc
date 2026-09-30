@@ -62,7 +62,6 @@ export type EpochSeconds = number;
 
 export type RouteKind = "mediated" | "direct";
 export type DisclosureAs = "oob" | "direct";
-export type DisclosureUses = "one" | "many";
 export type ContactOrigin = "user" | "automatic";
 /** Why an unsubmitted outbound ended: its expiry was reached, or the user cancelled it. */
 export type DeliveryFailureCode = "expired" | "cancelled";
@@ -156,9 +155,8 @@ export type VaultData = {
     | { routeId: RouteId; kind: "mediated"; mediationId: MediationId; endpoint: null }
     | { routeId: RouteId; kind: "direct"; mediationId: null; endpoint: string };
   "route.retired": { routeId: RouteId; because: string };
-  "did.disclosed": { didId: DidId; as: DisclosureAs; uses: DisclosureUses; oobId: string | null; goal: string | null };
+  "did.disclosed": { didId: DidId; as: DisclosureAs; oobId: string | null; goal: string | null };
   "did.retired": { didId: DidId; because: string };
-  "invitation.consumed": { disclosureEventCid: EventReference<"did.disclosed">; sourceEventCid: EventReference<"message.in"> };
   "message.admitted": { sourceEventCid: EventReference<"message.in"> };
   "did.rotationSelected": { fromDidId: DidId; peerDid: Did; toDidId: DidId; sourceEventCid: EventReference<"message.in"> | null; fromPrior: string };
   "channel.blocked": { localDid: Did; peerDid: Did; includeSuccessors: boolean };

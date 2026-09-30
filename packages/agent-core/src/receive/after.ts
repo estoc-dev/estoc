@@ -11,21 +11,19 @@
  * what the vault owes on its own, in the order it is owed: first the
  * admissions, in first-receipt order and round by round, so that each
  * candidate is judged against what the earlier ones admitted, and
- * only then, over the fold as the admissions left it, a one-use
- * invitation consumed by the first eligible admitted receipt and a
- * peer's acknowledgement of an outbound. `admitted`, `consumed` and
- * `acknowledged` hold whatever this pass recorded, an earlier
+ * only then, over the fold as the admissions left it, a peer's
+ * acknowledgement of an outbound. `admitted` and `acknowledged` hold
+ * whatever this pass recorded, an earlier
  * observation's included, while `cid` only selects what is reported
  * of the observation in hand: its proof and its disposition, left as
  * diagnostics in the trace when the one did not verify or the other
  * did not admit it. Nothing here is sent. An automatic reply is an
  * operation's effect, decided elsewhere over the same fold, and
- * neither admission, consumption nor acknowledgement grants it
- * anything.
+ * neither admission nor acknowledgement grants it anything.
  */
 
 import type { Held, VaultRuntime } from "@estoc/event-store";
-import { admitReceipts, consumptionDrafts, readVaultEvent, scanVault, type Disposition, type EventReference, type Keys, type Status, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { admitReceipts, readVaultEvent, scanVault, type Disposition, type EventReference, type Keys, type Status, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { note, type AgentTrace } from "../trace.js";
 import { acknowledgementDrafts } from "./acks.js";
@@ -33,7 +31,6 @@ import { acknowledgementDrafts } from "./acks.js";
 /** What one pass over the whole fold recorded of what the vault owes on its own. */
 export interface Owed {
   admitted: VaultEvent<"message.admitted">[];
-  consumed: VaultEvent<"invitation.consumed">[];
   acknowledged: VaultEvent<"delivery.acknowledged">[];
 }
 
@@ -61,8 +58,8 @@ export async function afterReceipt(runtime: VaultRuntime, keys: Keys, cid: Event
 
 /** The same pass with no observation in hand: an open's, over whatever a crash left between a receipt and its pass; the host's, once it brought evidence. */
 export async function recordOwed(runtime: VaultRuntime, keys: Keys): Promise<Owed> {
-  const { admitted, consumed, acknowledged } = await pass(runtime, keys);
-  return { admitted, consumed, acknowledged };
+  const { admitted, acknowledged } = await pass(runtime, keys);
+  return { admitted, acknowledged };
 }
 
 function pass(runtime: VaultRuntime, keys: Keys): Promise<Owed & { fold: VaultFold }> {
@@ -72,12 +69,11 @@ function pass(runtime: VaultRuntime, keys: Keys): Promise<Owed & { fold: VaultFo
 /** The pass for a caller that holds the writer lock already: the fold returned is the one the pass left, every event it committed folded in, for whatever the caller decides next. */
 export async function recordOwedUnderLock(held: Held, keys: Keys): Promise<Owed & { fold: VaultFold }> {
   const { fold: admittedFold, events: admitted } = await admitReceipts(held, await scanVault(held, keys));
-  const drafts = [...consumptionDrafts(admittedFold), ...acknowledgementDrafts(admittedFold)];
+  const drafts = acknowledgementDrafts(admittedFold);
   const events = drafts.length === 0 ? [] : (await held.commit([], drafts)).map(readVaultEvent);
   return {
     fold: events.length === 0 ? admittedFold : await scanVault(held, keys),
     admitted,
-    consumed: events.filter((event): event is VaultEvent<"invitation.consumed"> => event.type === "invitation.consumed"),
     acknowledged: events.filter((event): event is VaultEvent<"delivery.acknowledged"> => event.type === "delivery.acknowledged"),
   };
 }

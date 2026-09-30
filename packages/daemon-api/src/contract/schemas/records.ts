@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DISCLOSURE_AS, DISCLOSURE_USES } from "../protocol.js";
+import { DISCLOSURE_AS } from "../protocol.js";
 import { MANUAL_ENTRIES } from "../records.js";
 import type {
   AttachmentDescriptor,
@@ -53,7 +53,7 @@ export const localDidRecord: z.ZodType<LocalDidRecord> = z.object({
   longFormDid: z.string().nullable(),
   live: z.boolean(),
   retired: z.string().nullable(),
-  disclosures: z.array(z.object({ as: z.enum(DISCLOSURE_AS), uses: z.enum(DISCLOSURE_USES) })),
+  disclosures: z.array(z.object({ as: z.enum(DISCLOSURE_AS) })),
   diagnostics: strings,
 });
 
@@ -185,22 +185,14 @@ export const observationRecord: z.ZodType<ObservationRecord> = z.object({
   contradicting: z.boolean(),
 });
 
-export const invitationStatus: z.ZodType<InvitationStatus> = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("available") }),
-  z.object({ status: z.literal("consumed"), consumer: z.string() }),
-  z.object({ status: z.literal("pending"), ...because.shape }),
-  z.object({ status: z.literal("unavailable"), ...because.shape }),
-  z.object({ status: z.literal("conflict"), ...because.shape }),
-]);
+export const invitationStatus: z.ZodType<InvitationStatus> = z.discriminatedUnion("status", [z.object({ status: z.literal("available") }), z.object({ status: z.literal("unavailable"), ...because.shape })]);
 
 export const invitationRecord: z.ZodType<InvitationRecord> = z.object({
   disclosureEventCid: eventCid,
   oobId: z.string(),
   didId,
   localDid: z.string().nullable(),
-  uses: z.enum(DISCLOSURE_USES),
   state: invitationStatus,
-  consumer: z.string().nullable(),
 });
 
 export const conversationRecord: z.ZodType<ConversationRecord> = z.object({

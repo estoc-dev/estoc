@@ -63,7 +63,7 @@ export function localDidRecords(routes: VaultFold["routes"]): LocalDidRecord[] {
     longFormDid: entity.created?.longFormDid ?? null,
     live: entity.live,
     retired: entity.retired,
-    disclosures: entity.disclosures.map(({ data }) => ({ as: data.as, uses: data.uses })),
+    disclosures: entity.disclosures.map(({ data }) => ({ as: data.as })),
     diagnostics: [...entity.faults],
   }));
 }
@@ -122,7 +122,7 @@ function observationRecord({ sourceEventCid, messageId, channel, at, standing, v
   return { sourceEventCid: apiId(sourceEventCid), messageId: apiId(messageId), channelId: channelId(channel), at: displayTime(at), standing, verification, disposition, contradicting };
 }
 
-const invitationRecord = ({ disclosureEventCid, oobId, didId, localDid, uses, state, consumer }: read.InvitationRecord): InvitationRecord => ({ disclosureEventCid: apiId(disclosureEventCid), oobId, didId: apiId(didId), localDid, uses, state, consumer });
+const invitationRecord = ({ disclosureEventCid, oobId, didId, localDid, state }: read.InvitationRecord): InvitationRecord => ({ disclosureEventCid: apiId(disclosureEventCid), oobId, didId: apiId(didId), localDid, state });
 
 function pendingWork(pending: read.PendingWork): PendingWork {
   return {

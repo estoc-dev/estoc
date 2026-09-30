@@ -20,10 +20,6 @@ export const GOAL_CONNECT = "connect";
 export const TRACE_LEVELS = ["off", "normal", "verbose"] as const;
 export type TraceLevel = (typeof TRACE_LEVELS)[number];
 
-export const DISCLOSURE_USES = ["one", "many"] as const;
-/** How many strangers a disclosed DID is for: one, or anyone who finds it. */
-export type DisclosureUses = (typeof DISCLOSURE_USES)[number];
-
 export const DISCLOSURE_AS = ["oob", "direct"] as const;
 /** The form a DID was disclosed in: inside an out-of-band invitation, or handed over on its own. */
 export type DisclosureAs = (typeof DISCLOSURE_AS)[number];

@@ -16,7 +16,7 @@ const HELLO = "019b0000-0000-7000-8000-000000000102" as MessageId;
 afterEach(stopAll);
 
 describe("first contact over a mediator", () => {
-  test("a Ping to a one-use invitation is consumed, answered and acknowledged once, however often it is delivered; a refused call is made again only by a retry, with the same package", async () => {
+  test("a Ping to an invitation is answered and acknowledged once, however often it is delivered; a refused call is made again only by a retry, with the same package", async () => {
     const mediator = await newMediator();
     const forwards: IMessage[] = [];
     mediator.intercept = (msg) => {
@@ -27,7 +27,7 @@ describe("first contact over a mediator", () => {
     const bob = await run(mediator, 2, BOB, { privateAddresses: false });
     expect(alice.agent.connections()).toMatchObject([{ unreachable: null, drained: { ended: "empty" }, live: true }]);
 
-    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob", uses: "one" });
+    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob" });
     const ping = await bob.agent.send(
       { channel: { localDid: bob.party.did, peerDid: alice.party.did }, recipientDid: invitation!.from },
       { type: PING_TYPE, body: { response_requested: true }, pthid: invitation!.id, pleaseAck: [""] },
@@ -38,7 +38,6 @@ describe("first contact over a mediator", () => {
     await until("alice has followed the Ping", () => alice.inbounds.length === 1);
     const [first] = alice.inbounds;
     expect(first!.received).toMatchObject({ outcome: "received", live: true });
-    expect(first!.after!.consumed).toHaveLength(1);
     const effects = first!.reacted!.effects;
     expect(effects.map((effect) => [effect.effectType, effect.outcome])).toEqual([
       [PURE_ACK_EFFECT, "created"],
@@ -47,7 +46,7 @@ describe("first contact over a mediator", () => {
     for (const effect of effects) expect(effect).toMatchObject({ action: { kind: "initial", spent: true }, dispatched: { outcome: "submitted" } });
 
     const ofAlice = await fold(alice);
-    expect([...ofAlice.invitations.invitations.values()].map((each) => each.status.status)).toEqual(["consumed"]);
+    expect([...ofAlice.invitations.invitations.values()].map((each) => each.status.status)).toEqual(["available"]);
     const outputs = [...ofAlice.outbound.outbounds.values()];
     expect(outputs.map((output) => [output.intent.status, output.outcome.status])).toEqual([
       ["consistent", "submitted"],

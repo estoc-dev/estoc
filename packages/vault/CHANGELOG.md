@@ -14,6 +14,19 @@
   document. A scan of a history decodes each spelling it names once
   for as long as the process keeps it, where it decoded each on every
   scan. Needs `@estoc/did-peer` 0.2.0.
+- **An invitation is a reusable address** (behaviour change):
+  `did.disclosed` has no `uses` member and `invitation.consumed` is
+  no event type, so a history holding either is refused by the
+  schema. `foldInvitations` takes the set and the routes alone and
+  reads each OOB disclosure with whether its DID still takes a first
+  message under it, `available` or `unavailable`; `Invitation` has no
+  `consumptions`, `consumer` or `candidates`, and `ConsumptionStatus`,
+  `Consumption`, `Candidate`, `consumptionDrafts`, `consumeInvitations`
+  and `PendingWork.consumptions` are gone. No receipt takes an
+  invitation from the next, so nothing about invitations depends on
+  the order receipts were recorded in. An `oobId` that distinct
+  disclosure events carry, as merged histories may, is `unavailable`
+  under every one of them; the DIDs and their receipts are unaffected.
 - **A pure ACK names its carrier alone** (behaviour change): the
   receipt a carrier earns is its own wire ID, when its `please_ack`
   names itself by `""` or its ID and it is the admitted complete

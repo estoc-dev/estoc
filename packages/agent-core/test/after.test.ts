@@ -63,7 +63,7 @@ describe("after the receipt", () => {
     const wire = crypto.randomUUID() as WireMessageId;
 
     const early = await receivedThen(receiver, alice, bob, { id: wire, ack: [MESSAGE] });
-    expect(early.after).toMatchObject({ proof: { status: "not-present" }, disposition: { status: "admitted", admissions: [{ event: { data: { sourceEventCid: early.cid } }, status: { status: "effective" } }] }, admitted: [], consumed: [], acknowledged: [] });
+    expect(early.after).toMatchObject({ proof: { status: "not-present" }, disposition: { status: "admitted", admissions: [{ event: { data: { sourceEventCid: early.cid } }, status: { status: "effective" } }] }, admitted: [], acknowledged: [] });
     expect((await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm })).outcome).toBe("prepared");
     expect((await eventsOf(alice, "delivery.acknowledged")).map(({ data }) => data)).toEqual([
       { messageId: MESSAGE, localKeyName: didKeyName(DID, "key-agreement"), peerPublicKey: seen[0]!.sender!.peerPublicKey, ackMessageId: inboundMessageId(bob.did, alice.did, wire), ackWireMessageId: wire },
@@ -82,19 +82,23 @@ describe("after the receipt", () => {
     await closeAll(alice, bob, carol);
   });
 
-  test("a one-use invitation is consumed by the first eligible receipt under its ID and by no later one; a receipt under no invitation consumes nothing", async () => {
+  test("an invitation is taken by no one: receipts under its ID from one peer and then another are each admitted, and it stays available to the next", async () => {
     const { alice, bob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
-    const { disclosed, invitation } = await disclose(null, alice.runtime, alice.keys, DID, { as: "oob", uses: "one" });
+    const { disclosed, invitation } = await disclose(null, alice.runtime, alice.keys, DID, { as: "oob" });
     const { receiver } = await receiving(alice);
 
     const plain = await receivedThen(receiver, alice, bob, {});
     const first = await receivedThen(receiver, alice, bob, { pthid: invitation!.id });
-    expect([plain.after.consumed, first.after.consumed.map(({ data }) => data)]).toEqual([[], [{ disclosureEventCid: disclosed.cid, sourceEventCid: first.cid }]]);
-    expect((await foldOf(alice)).invitations.invitations.get(disclosed.cid)!.status).toEqual({ status: "consumed", consumer: bob.did });
-
     const later = await receivedThen(receiver, alice, carol, { pthid: invitation!.id });
-    expect([later.after.consumed, (await eventsOf(alice, "invitation.consumed")).length]).toEqual([[], 1]);
+    for (const { after } of [plain, first, later]) expect(after).toMatchObject({ disposition: { status: "admitted" }, acknowledged: [] });
+    const fold = await foldOf(alice);
+    expect(fold.invitations.invitations.get(disclosed.cid)!.status).toEqual({ status: "available" });
+    expect([...fold.inbound.executions.values()].map((execution) => [execution.channel.peerDid, execution.status.status])).toEqual([
+      [bob.did, "complete"],
+      [bob.did, "complete"],
+      [carol.did, "complete"],
+    ]);
     await closeAll(alice, bob, carol);
   });
 
@@ -108,8 +112,8 @@ describe("after the receipt", () => {
     const [orphan] = await eventsOf(alice, "message.in");
     expect([orphan!.type, await eventsOf(alice, "message.admitted")]).toEqual(["message.in", []]);
     const recovered = await recordOwed(alice.runtime, alice.keys);
-    expect([recovered.admitted.map(({ data }) => data.sourceEventCid), recovered.consumed, recovered.acknowledged]).toEqual([[orphan!.cid], [], []]);
-    expect(await recordOwed(alice.runtime, alice.keys)).toEqual({ admitted: [], consumed: [], acknowledged: [] });
+    expect([recovered.admitted.map(({ data }) => data.sourceEventCid), recovered.acknowledged]).toEqual([[orphan!.cid], []]);
+    expect(await recordOwed(alice.runtime, alice.keys)).toEqual({ admitted: [], acknowledged: [] });
 
     const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);

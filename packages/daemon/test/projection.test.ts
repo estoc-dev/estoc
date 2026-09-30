@@ -345,7 +345,7 @@ describe("the snapshot", () => {
       ],
       dids: [
         { didId: "d2" as never, did: null, longFormDid: null, live: false, retired: null, disclosures: [], diagnostics: [] },
-        { didId: "d1" as never, did: "did:example:a", longFormDid: "did:example:a", live: true, retired: null, disclosures: [{ as: "oob", uses: "one" }], diagnostics: [] },
+        { didId: "d1" as never, did: "did:example:a", longFormDid: "did:example:a", live: true, retired: null, disclosures: [{ as: "oob" }], diagnostics: [] },
       ],
     };
     const ordered = await snapshotOf({}, vault);

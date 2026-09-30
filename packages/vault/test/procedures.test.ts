@@ -23,8 +23,6 @@ import {
   closeErasures,
   collectGarbage,
   compareChannels,
-  consumeInvitations,
-  consumptionDrafts,
   decisionFor,
   deleteContact,
   reconcileAdmissions,
@@ -48,8 +46,8 @@ import {
   type MessageId,
   type PendingWork,
 } from "../src/index.js";
-import { AUTHOR2, HASH, SEED, Scene, cidOf, expectOrderFree } from "./fold/helpers.js";
-import { IAT, PURE_ACK, automatic, blocked, channel, intent, invitation, noObjects, observation, packageOf, proof, receipt, ref, resolved, rotation, vaults, type Local, type Peer } from "./fold/scene.js";
+import { HASH, SEED, Scene, cidOf, expectOrderFree } from "./fold/helpers.js";
+import { IAT, PURE_ACK, automatic, blocked, channel, intent, noObjects, observation, packageOf, proof, receipt, ref, resolved, rotation, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const encoder = new TextEncoder();
 
@@ -164,7 +162,6 @@ const workSnapshot = (work: PendingWork) => ({
   notifications: work.notifications.map((n) => [n.decision.event.cid, n.channel, n.source?.event.cid ?? null]),
   notificationConflicts: work.notificationConflicts.map((c) => [c.decision.event.cid, c.notification.messageIds]),
   proofs: work.proofs.map((c) => c.source.event.cid),
-  consumptions: work.consumptions.map((d) => d.data),
 });
 
 describe("admitting receipts", () => {
@@ -246,63 +243,6 @@ describe("admitting receipts", () => {
   });
 });
 
-describe("consuming invitations", () => {
-  it("records the first eligible receipt of each available invitation, passes over refused ones, stops at one that waits, and never reopens a consumer", async () => {
-    const { scene, keys, a0, a1, b0, b1, b2 } = await vaults();
-    const disclosure = invitation(scene, a0);
-    const other = invitation(scene, a1);
-    const denied = proofFreeReceipt(scene, a0, b2, 1, { pthid: disclosure.data.oobId });
-    blocked(scene, a0, b2);
-    const first = proofFreeReceipt(scene, a0, b0, 2, { pthid: disclosure.data.oobId });
-    const second = proofFreeReceipt(scene, a0, b1, 3, { pthid: disclosure.data.oobId });
-    const outside = proofFreeReceipt(scene, a1, b0, 4, { pthid: other.data.oobId });
-    const vault = await fold(scene, keys);
-    expect(vault.invitations.invitations.get(disclosure.cid)!.candidates.map((c) => [c.source.event.cid, c.eligibility.status])).toEqual([
-      [denied.cid, "refused"],
-      [first.cid, "eligible"],
-      [second.cid, "eligible"],
-    ]);
-    const drafts = consumptionDrafts(vault);
-    expect(drafts.map((draft) => draft.data)).toEqual([
-      { disclosureEventCid: disclosure.cid, sourceEventCid: first.cid },
-      { disclosureEventCid: other.cid, sourceEventCid: outside.cid },
-    ]);
-    expectOrderFree(scene.events, (set) => consumptionDrafts(foldVault(set, vault.checks)).map((draft) => draft.data));
-
-    const memory = await vaultOf(scene);
-    const events = await consumeInvitations(memory, keys);
-    expect(events.map((event) => event.data)).toEqual(drafts.map((draft) => draft.data));
-    expect(await consumeInvitations(memory, keys)).toEqual([]);
-    const after = await scanVault(memory.vault, keys);
-    expect(after.invitations.invitations.get(disclosure.cid)!.status).toEqual({ status: "consumed", consumer: b0.did });
-
-    const earlier = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 1, overrides: { pthid: disclosure.data.oobId } }, { author: AUTHOR2 });
-    await memory.ingest(scene.events.slice(-2));
-    expect((await scanVault(memory.vault, keys)).invitations.invitations.get(disclosure.cid)!.candidates[1]!.source.event.cid).toBe(earlier.cid);
-    expect(consumptionDrafts(await scanVault(memory.vault, keys))).toEqual([]);
-  });
-
-  it("waits with the invitation when a candidate ahead waits for evidence, and takes nothing behind an integrity conflict", async () => {
-    const { scene, a0, b0, b1 } = await vaults();
-    const disclosure = invitation(scene, a0);
-    proofFreeReceipt(scene, a0, b0, 1, { pthid: disclosure.data.oobId });
-    proofFreeReceipt(scene, a0, b1, 2, { pthid: disclosure.data.oobId });
-    const unseeded = await fold(scene, null);
-    expect(unseeded.invitations.invitations.get(disclosure.cid)!.status.status).toBe("pending");
-    expect(consumptionDrafts(unseeded)).toEqual([]);
-
-    const { scene: other, keys: otherKeys, a0: c0, b0: d0, b1: d1 } = await vaults();
-    const twice = invitation(other, c0);
-    const root = resolved(other, c0.didId, d0);
-    receipt(other, { local: c0, peer: d0, resolution: root, ordinal: 1, overrides: { pthid: twice.data.oobId } });
-    receipt(other, { local: c0, peer: d0, resolution: root, ordinal: 1, overrides: { pthid: twice.data.oobId } });
-    proofFreeReceipt(other, c0, d1, 2, { pthid: twice.data.oobId });
-    const conflicted = await fold(other, otherKeys);
-    expect(conflicted.invitations.invitations.get(twice.cid)!.status.status).toBe("conflict");
-    expect(consumptionDrafts(conflicted)).toEqual([]);
-  });
-});
-
 describe("unfinished work", () => {
   it("lists the outbounds still to prepare or dispatch, the reply candidates of established inputs under the built-in address rule, and the proofs waiting for issuer material", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b2, b3 } = await vaults();
@@ -337,7 +277,6 @@ describe("unfinished work", () => {
       notifications: [],
       notificationConflicts: [],
       proofs: [waiting.cid],
-      consumptions: [],
     });
     expect(work.outbounds.find((o) => o.messageId === prepared.data.messageId)!.work).toMatchObject({ kind: "dispatch", package: { event: pkg } });
     expect(vault.inbound.ofMessage(silent.data.messageId)).not.toBeNull();

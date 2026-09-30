@@ -488,15 +488,15 @@ describe("records", () => {
     await closeAll(alice, bob);
   });
 
-  it("lists a one-use invitation as available, then consumed by the peer whose first message took it", async () => {
+  it("lists an invitation as available, still after a peer's first message under it", async () => {
     const { alice, bob } = await parties();
     const { receive } = await hosting(alice);
-    const disclosed = await disclose(null, alice.runtime, alice.keys, ALICE, { as: "oob", uses: "one" });
+    const disclosed = await disclose(null, alice.runtime, alice.keys, ALICE, { as: "oob" });
     const before = (await readRecords(alice.runtime, alice.keys)).invitations();
-    expect(before).toMatchObject([{ disclosureEventCid: disclosed.disclosed.cid, didId: ALICE, localDid: alice.did, uses: "one", state: { status: "available" }, consumer: null }]);
+    expect(before).toEqual([{ disclosureEventCid: disclosed.disclosed.cid, oobId: disclosed.invitation!.id, didId: ALICE, localDid: alice.did, state: { status: "available" } }]);
 
     await afterReceipt(alice.runtime, alice.keys, await receive(bob, { id: crypto.randomUUID(), pthid: before[0]!.oobId, body: { content: "hello" } }));
-    expect((await readRecords(alice.runtime, alice.keys)).invitations()).toMatchObject([{ state: { status: "consumed", consumer: bob.did }, consumer: bob.did }]);
+    expect((await readRecords(alice.runtime, alice.keys)).invitations()).toEqual(before);
     await closeAll(alice, bob);
   });
 });

@@ -323,14 +323,12 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
   "route.configured": schema(routeConfigured, none),
   "route.retired": schema(shape({ routeId: idMembers.routeId, because: nonEmpty }), none),
   "did.disclosed": schema(
-    checked(shape({ didId: idMembers.didId, as: oneOf(["oob", "direct"]), uses: oneOf(["one", "many"]), oobId: nullable(nonEmpty), goal: nullable(text) }), (data) => {
+    checked(shape({ didId: idMembers.didId, as: oneOf(["oob", "direct"]), oobId: nullable(nonEmpty), goal: nullable(text) }), (data) => {
       if ((data.as === "oob") !== (data.oobId !== null)) throw new Fault("oobId is present exactly for an oob disclosure");
-      if (data.as === "direct" && data.uses !== "many") throw new Fault("a direct disclosure is for many uses");
     }),
     none
   ),
   "did.retired": schema(shape({ didId: idMembers.didId, because: nonEmpty }), none),
-  "invitation.consumed": schema(shape({ disclosureEventCid: ref<"did.disclosed">(), sourceEventCid: ref<"message.in">() }), none),
   "message.admitted": schema(shape({ sourceEventCid: ref<"message.in">() }), none),
   "did.rotationSelected": schema(
     checked(shape({ fromDidId: idMembers.didId, peerDid: channelDid, toDidId: idMembers.didId, sourceEventCid: nullable(ref<"message.in">()), fromPrior: compactJwt }), (data) => {

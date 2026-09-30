@@ -7,7 +7,7 @@
  */
 
 import type { ChannelId, ContactId, ConversationId, DidId, DisplayTime, EventCid, ExecutionId, MediationId, MessageId } from "./ids.js";
-import type { DisclosureAs, DisclosureUses } from "./protocol.js";
+import type { DisclosureAs } from "./protocol.js";
 import type { JsonObject } from "./values.js";
 
 export interface Snapshot {
@@ -51,7 +51,7 @@ export interface LocalDidRecord {
   longFormDid: string | null;
   live: boolean;
   retired: string | null;
-  disclosures: { as: DisclosureAs; uses: DisclosureUses }[];
+  disclosures: { as: DisclosureAs }[];
   diagnostics: string[];
 }
 
@@ -205,22 +205,15 @@ export interface ObservationRecord {
   contradicting: boolean;
 }
 
-export type InvitationStatus =
-  | { status: "available" }
-  | { status: "consumed"; consumer: string }
-  | { status: "pending"; because: string }
-  | { status: "unavailable"; because: string }
-  | { status: "conflict"; because: string };
+/** Whether the disclosed DID still takes a first message under the invitation: anyone holding it may write, however many did before. */
+export type InvitationStatus = { status: "available" } | { status: "unavailable"; because: string };
 
 export interface InvitationRecord {
   disclosureEventCid: EventCid;
   oobId: string;
   didId: DidId;
   localDid: string | null;
-  uses: DisclosureUses;
   state: InvitationStatus;
-  /** the DID that took the invitation; null while none has */
-  consumer: string | null;
 }
 
 /** What a view is shown of one relationship: a contact's, or a nameless group of channels under one head. */

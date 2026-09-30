@@ -262,7 +262,7 @@ const written = (content, holds) => saying("out", content, holds);
 /** One more pair of channels between the two, each side's contact selecting its own. */
 async function acquainted(alice, bob, n) {
   const known = new Set(alice.published.last.channels.map(({ channelId }) => channelId));
-  const { invitation } = await alice.daemon.createInvitation("one");
+  const { invitation } = await alice.daemon.createInvitation();
   const accepted = await bob.daemon.acceptInvitation(invitation, `Alice ${n}`);
   await shown(bob.published, "its Ping acknowledged", has(accepted.messageId, (message) => message.acknowledged));
   const moved = (snapshot) => snapshot.channels.find((channel) => !known.has(channel.channelId) && channel.headChannelId !== null && channelOf(channel.headChannelId).localDid !== channel.localDid);

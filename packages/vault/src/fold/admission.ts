@@ -3,8 +3,7 @@
  * exact observation for application use, and what every observation
  * stands as without one. A `message.in` records that something was
  * received; only an admission naming it lets it speak for its input's
- * intent, establish the input, consume an invitation or acknowledge
- * an outbound. An admission is effective when its source stands as
+ * intent, establish the input or acknowledge an outbound. An admission is effective when its source stands as
  * positive evidence on its own — its authentication complete, its
  * channel known, any proof it brought verified and bound — and no
  * author gave its ordinal to another observation. That is read from

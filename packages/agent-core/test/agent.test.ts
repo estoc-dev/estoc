@@ -16,6 +16,7 @@ const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const BOB_PRIOR = "019b0000-0000-7000-8000-0000000000b1" as DidId;
 const PING = "019b0000-0000-7000-8000-000000000101" as MessageId;
 const PING_AGAIN = "019b0000-0000-7000-8000-000000000102" as MessageId;
+const HELLO = "019b0000-0000-7000-8000-000000000103" as MessageId;
 
 const opened: { agent: Agent | null; party: MediatedParty }[] = [];
 
@@ -76,11 +77,11 @@ afterEach(async () => {
 });
 
 describe("opening an agent", () => {
-  it("records what the vault owed over an input a crash left unfollowed, lists the replies it still earns and calls nothing until each is completed by hand", async () => {
+  it("lists the replies an input a crash left unfollowed still earns, records nothing more over it and calls nothing until each is completed by hand", async () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob", uses: "one" });
+    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob" });
     const bobAgent = await agentOf(bob, "start");
     const ping = await bobAgent.send(
       { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: invitation!.from },
@@ -92,11 +93,11 @@ describe("opening an agent", () => {
     const receiver = new Receiver(alice.runtime, alice.keys, alice.ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
     expect(await new Pickup(alice.link, receiver.pickupHandle(alice.mediationId)).drain()).toMatchObject({ acked: 1 });
     receiver.close();
-    expect((await fold(alice)).set.of("invitation.consumed")).toHaveLength(0);
+    expect((await fold(alice)).set.of("message.admitted")).toHaveLength(1);
 
     const sentBefore = forwardsSeen(mediator);
     const agent = await agentOf(alice, "start");
-    expect(agent.recovered.consumed).toHaveLength(1);
+    expect(agent.recovered).toEqual({ admitted: [], acknowledged: [] });
     expect(agent.connections()).toMatchObject([{ unreachable: null, drained: { acked: 0, ended: "empty" }, live: false }]);
     const recovered = await fold(alice);
     expect(recovered.outbound.outbounds.size).toBe(0);
@@ -463,7 +464,7 @@ describe("opening an agent", () => {
     expect(agent.connections()).toMatchObject([{ reconciled: { unknown: [] }, unknownRegistrations: [atGrant] }]);
 
     const atDisclosure = unknown("atDisclosure");
-    await agent.disclose(alice.didId, { as: "oob", uses: "many" });
+    await agent.disclose(alice.didId, { as: "oob" });
     expect(mediator.recipients.has(atDisclosure)).toBe(false);
     expect(agent.connections()[0]!.unknownRegistrations).toEqual([atGrant, atDisclosure]);
 
@@ -540,18 +541,16 @@ describe("a live input", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob", uses: "one" });
-    const bobAgent = await agentOf(bob, "start");
-    await bobAgent.send(
-      { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: invitation!.from },
-      { type: PING_TYPE, body: { response_requested: true }, pthid: invitation!.id, pleaseAck: [""] },
-      { messageId: PING }
-    );
-
+    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob" });
+    await disclose(bob.link, bob.runtime, bob.keys, BOB, { as: "direct" });
     const inbounds: Inbound[] = [];
     const log: string[] = [];
-    const agent = await agentOf(alice, "open", { onInbound: (inbound) => inbounds.push(inbound), log: (line) => log.push(line) });
-    refuseCommits(alice.runtime, "invitation.consumed", 3);
+    const agent = await agentOf(alice, "start", { onInbound: (inbound) => inbounds.push(inbound), log: (line) => log.push(line) });
+    // Alice writes to Bob first, so that his Ping, acknowledging it, earns her a record to make on receipt.
+    expect((await agent.send({ channel: { localDid: alice.did, peerDid: bob.did }, recipientDid: bob.longFormDid }, { type: BASIC_MESSAGE, body: { content: "hello" } }, { messageId: HELLO })).dispatched).toMatchObject({ outcome: "submitted" });
+    const packed = await sealed(await peerSealer(bob), invitation!.from, { id: PING, type: PING_TYPE, body: { response_requested: true }, pthid: invitation!.id, please_ack: [""], ack: [HELLO] });
+    mediator.queues.set(alice.created.data.me.did, [...(mediator.queues.get(alice.created.data.me.did) ?? []), { id: "ping", packed }]);
+    refuseCommits(alice.runtime, "delivery.acknowledged", 3);
     let cut = true;
     mediator.intercept = (msg, from) => {
       if (!cut || msg.type !== MESSAGES_RECEIVED) return undefined;
@@ -566,15 +565,15 @@ describe("a live input", () => {
     expect(log.filter((line) => line.includes("what the vault owes"))).toHaveLength(1);
     const stopped = { messageId: expect.any(String), reason: "the pass the preparation runs stopped: the disk is full for now" };
     expect((await alice.trace.read({ type: "diag.admission" })).map((entry) => entry.data)).toEqual([stopped, stopped]);
-    expect((await fold(alice)).set.of("invitation.consumed")).toHaveLength(0);
+    expect((await fold(alice)).set.of("delivery.acknowledged")).toHaveLength(0);
 
     const sentBefore = forwardsSeen(mediator);
     expect(await agent.connect()).toMatchObject([{ drained: { acked: 1, ended: "empty" } }]);
     await agent.settled();
-    expect(inbounds[1]).toMatchObject({ received: { ...inbounds[0]!.received, live: false }, after: { consumed: [expect.anything()] }, reacted: null, address: null });
+    expect(inbounds[1]).toMatchObject({ received: { ...inbounds[0]!.received, live: false }, after: { acknowledged: [expect.anything()] }, reacted: null, address: null });
     const told = await fold(alice);
     expect(told.set.of("message.in")).toHaveLength(1);
-    expect(told.set.of("invitation.consumed")).toHaveLength(1);
+    expect(told.set.of("delivery.acknowledged")).toHaveLength(1);
     expect(forwardsSeen(mediator)).toBe(sentBefore);
   });
 

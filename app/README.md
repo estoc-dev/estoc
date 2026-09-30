@@ -29,11 +29,12 @@ your data never touches the place the app was served from.
 - **Invitation links, and no public DID.** There is no address of yours
   for strangers to write to. The **+** button opens the new-conversation
   sheet: *Show my QR code* and *Copy an invitation link* mint a DID for
-  one person and put it in a link (and a QR code): this deployment's URL
+  the link and put it in one (and a QR code): this deployment's URL
   carrying `?_oob=`, the DIDComm out-of-band invitation, which any Estoc
   opens. Whoever opens it names you and accepts, from a DID minted for you
-  alone; the first to write takes the link and a second is turned away.
-  Someone else's link goes into the same sheet, scanned or pasted.
+  alone, and arrives as a conversation of their own; the link stays good
+  for the next person you hand it to. Someone else's link goes into the
+  same sheet, scanned or pasted.
 - **Channels, and a DID per conversation.** A conversation is one or more
   channels, each a pair of one DID of yours and one of theirs. The DID in a
   link was disclosed, so the first message written to it moves you to a
@@ -212,7 +213,7 @@ at the top of the script; an optional first argument sets the app URL.
 
 ## Status
 
-Early. A DID per conversation, single-use invitation links, rotation,
+Early. A DID per conversation, invitation links, rotation,
 manual completion of whatever a crash or a restore left undone; no push
 notifications (a mediator extension); keys in the browser under your
 passphrase. Storage is only guaranteed once the browser grants

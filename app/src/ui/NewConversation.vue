@@ -12,8 +12,8 @@ import Sheet from "./Sheet.vue";
 import { useStatus } from "./status.js";
 
 /**
- * How a conversation starts: a link of ours for one person, shown as a
- * QR code or copied, or theirs for us, scanned or pasted, and accepted
+ * How a conversation starts: a link of ours, shown as a QR code or
+ * copied, or theirs for us, scanned or pasted, and accepted
  * under the name we give them; a DID they handed over on its own is
  * pasted the same way. A link this page was opened with is offered
  * here too.
@@ -36,8 +36,8 @@ function show(next: Mode) {
   mode.value = next;
 }
 
-// our invitations: a link for one person; the QR is the same link, for a phone
-const openInvitations = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.uses === "one" && i.state.status === "available"));
+// our invitations: each a link anyone holding it may write to; the QR is the same link, for a phone
+const openInvitations = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.state.status === "available"));
 const inviting = ref(false);
 const shownInvitation = ref<string | null>(null);
 const copied = ref(false);
@@ -61,12 +61,6 @@ async function invite(then: "qr" | "copy") {
 
 const shownRecord = computed(() => state.snapshot?.invitations.find((i) => i.oobId === shownInvitation.value) ?? null);
 const shownUrl = computed(() => (shownRecord.value === null || shownRecord.value.state.status !== "available" ? null : invitationLink(shownRecord.value)));
-// the link on screen was taken while it was showing: the conversation it opened
-const takenBy = computed(() => {
-  const record = shownRecord.value;
-  if (record === null || record.state.status !== "consumed") return null;
-  return state.conversations.find((c) => c.channels.some((channel) => channel.peerDid === record.consumer)) ?? null;
-});
 
 // A link can outgrow what a QR code holds: its length follows the DID,
 // and so the mediator's endpoints in it. The link is whole either way.
@@ -195,11 +189,11 @@ const offered = computed(() => scanned.value ?? pending.value);
         <div class="group">
           <button class="row" type="button" :disabled="!ready || inviting" data-show-qr @click="invite('qr')">
             <Icon name="qr" class="chevron" style="color: var(--accent)" />
-            <span class="row-main"><span>Show my QR code</span><span class="row-sub">for one person, in front of you</span></span>
+            <span class="row-main"><span>Show my QR code</span><span class="row-sub">for whoever is in front of you</span></span>
           </button>
           <button class="row" type="button" :disabled="!ready || inviting" data-copy-link @click="invite('copy')">
             <Icon name="link" class="chevron" style="color: var(--accent)" />
-            <span class="row-main"><span>Copy an invitation link</span><span class="row-sub">for one person, sent any way you like</span></span>
+            <span class="row-main"><span>Copy an invitation link</span><span class="row-sub">sent any way you like</span></span>
           </button>
         </div>
       </div>
@@ -229,16 +223,12 @@ const offered = computed(() => scanned.value ?? pending.value);
 
     <template v-else-if="mode === 'qr'">
       <div class="sheet-title">Your invitation</div>
-      <template v-if="takenBy !== null || (shownRecord && shownRecord.state.status === 'consumed')">
-        <p class="note" data-invitation-taken>That link was taken: a new conversation is open.</p>
-        <button v-if="takenBy" class="btn" type="button" @click="swap({ kind: 'chat', key: takenBy.id })">Open it</button>
-      </template>
-      <template v-else-if="shownUrl">
+      <template v-if="shownUrl">
         <div v-if="qrSvg" class="qr" v-html="qrSvg"></div>
         <p v-else class="note" data-no-qr>This link is too long for a QR code. Copy it instead.</p>
         <button class="btn" type="button" :title="shownUrl" data-invitation-url @click="copy(shownUrl)">{{ copied ? "Copied" : "Copy the link" }}</button>
         <input v-if="readable" class="field mono" readonly :value="shownUrl" aria-label="The invitation link" data-invitation-text @focus="selectAll" />
-        <p class="note">For one person: whoever opens it and writes first is the one it is for.</p>
+        <p class="note">Whoever opens it and writes arrives as a new conversation; the link stays good for the next.</p>
       </template>
       <p v-else class="note">Minting…</p>
       <p v-if="error" class="error-text">{{ error }}</p>

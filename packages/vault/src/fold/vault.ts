@@ -93,7 +93,7 @@ export function foldVault(set: VaultEventSet, checks: VaultChecks = {}, options:
     admissions,
     inbound,
     dispositions,
-    invitations: foldInvitations(set, routes, channels, continuity, inbound, dispositions, erasures),
+    invitations: foldInvitations(set, routes),
     contacts,
     outbound,
     erasures,

@@ -719,7 +719,7 @@ describe("two copies of one runtime, both written to", () => {
       const here = daemonOver(first.root, mediator);
       await here.daemon.boot();
       await here.daemon.unlock(PASSPHRASE);
-      const { didId, invitation } = await here.daemon.createInvitation("many");
+      const { didId, invitation } = await here.daemon.createInvitation();
       const invited = here.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
       const backup = await here.daemon.exportBackup();
       await here.daemon.close();
@@ -864,7 +864,7 @@ describe("two daemons over a mediator", () => {
         const next = daemonOver(root, mediator);
         await next.daemon.boot();
         await next.daemon.unlock(PASSPHRASE);
-        await next.daemon.createInvitation("one");
+        await next.daemon.createInvitation();
         expect(mediator.recipients.size).toBe(1);
         expect(mediator.seenTypes.slice(seen).filter((type) => type === RECIPIENT_UPDATE)).toHaveLength(1);
       } finally {
@@ -882,7 +882,7 @@ describe("two daemons over a mediator", () => {
         const mediator = await newMediator();
         const original = await person(mediator, "Alice");
         const before = await original.daemon.exportBackup();
-        await original.daemon.createInvitation("one");
+        await original.daemon.createInvitation();
         const newer = await original.daemon.exportBackup();
         const registered = [...mediator.recipients.keys()];
         expect(registered).toHaveLength(1);
@@ -931,7 +931,7 @@ describe("two daemons over a mediator", () => {
       const mediator = await newMediator();
       const original = await person(mediator, "Alice");
       const before = await original.daemon.exportBackup();
-      await original.daemon.createInvitation("one");
+      await original.daemon.createInvitation();
       const newer = await original.daemon.exportBackup();
       const [[invited, account]] = [...mediator.recipients] as [[string, string]];
       await original.daemon.close();
@@ -944,7 +944,7 @@ describe("two daemons over a mediator", () => {
       await current.daemon.explainedRestore();
       expect(mediator.recipients.has(invited)).toBe(false);
       const bob = await person(mediator, "Bob");
-      const { invitation } = await bob.daemon.createInvitation("many");
+      const { invitation } = await bob.daemon.createInvitation();
 
       // Another copy of the vault, from after the invitation, registers its address again.
       const ahead = daemonOver(await folder(), mediator);
@@ -1001,7 +1001,7 @@ describe("two daemons over a mediator", () => {
     await bob.daemon.boot();
     await bob.daemon.createIdentity("Bob", PASSPHRASE);
     await bob.daemon.setMediator(mediator.did);
-    const { invitation } = await alice.daemon.createInvitation("one");
+    const { invitation } = await alice.daemon.createInvitation();
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
     await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
     return { alice, bob, contactId: accepted.contactId };
@@ -1014,7 +1014,7 @@ describe("two daemons over a mediator", () => {
     async () => {
       const mediator = await newMediator();
       const { alice, bob } = await acquainted(mediator, { retry: { firstWaitMs: 200 } });
-      const { invitation } = await alice.daemon.createInvitation("one");
+      const { invitation } = await alice.daemon.createInvitation();
       // Every registration asked about meanwhile is refused, the one the Ping's address needs among them: the dispatcher tries the Ping again on its own.
       let refusing = true;
       mediator.intercept = async (message) => {
@@ -1040,7 +1040,12 @@ describe("two daemons over a mediator", () => {
     async () => {
       const mediator = await newMediator();
       const { bob, contactId } = await acquainted(mediator);
-      const forward = holding(mediator, (message) => message.type === FORWARD);
+      // Only the forward that carries this send is held: the automatic replies still crossing after the acquaintance go to Bob, or left him already.
+      await until("bob's earlier sends are through", () => bob.heard.snapshot().messages.every((message) => message.direction !== "out" || !["queued", "prepared"].includes(message.delivery?.status ?? "")));
+      const snapshot = bob.heard.snapshot();
+      const shown = new Set(snapshot.conversations.filter((conversation) => conversation.contactId === (contactId as string)).flatMap((conversation) => conversation.channels.map((channel) => channel.channelId)));
+      const alice = new Set(snapshot.channels.filter((channel) => shown.has(channel.channelId)).map((channel) => channel.peerDid));
+      const forward = holding(mediator, (message) => message.type === FORWARD && alice.has((message.body as { next?: string }).next ?? ""));
       try {
         const sending = bob.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "in transit" } });
         await until("the message is with the mediator", forward.reached);
@@ -1070,7 +1075,7 @@ describe("two daemons over a mediator", () => {
       expect(alice.heard.snapshot().mediations).toMatchObject([{ mediatorDid: mediator.did, selected: true, usable: true }]);
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
 
-      const { invitation, didId } = await alice.daemon.createInvitation("one");
+      const { invitation, didId } = await alice.daemon.createInvitation();
       expect(alice.heard.snapshot().invitations).toMatchObject([{ oobId: invitation.id, didId, state: { status: "available" } }]);
 
       const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
@@ -1078,7 +1083,6 @@ describe("two daemons over a mediator", () => {
       expect(contactsOf(bob.heard.snapshot())).toMatchObject([{ petname: "Alice", channels: [{ channelId: channelIdOf(accepted.channel), selected: true }] }]);
 
       await until("alice holds bob's Ping", () => alice.heard.snapshot().messages.some((message) => message.direction === "in" && message.headers?.type === PING_TYPE));
-      await until("the invitation is consumed", () => alice.heard.snapshot().invitations[0]?.state.status === "consumed");
       await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
 
       // Bob's first word at a disclosed address has Alice select a private successor toward him: the pair she names is the one she now writes from.
@@ -1190,7 +1194,7 @@ describe("two daemons over a mediator", () => {
       const [handedOut, alongside] = await Promise.all([alice.daemon.publicDid(), alice.daemon.publicDid()]);
       expect(alongside).toEqual(handedOut);
       expect(await alice.daemon.publicDid()).toEqual(handedOut);
-      expect(alice.heard.snapshot().dids.filter((did) => did.disclosures.length > 0)).toMatchObject([{ didId: handedOut.didId, longFormDid: handedOut.did, live: true, disclosures: [{ as: "direct", uses: "many" }] }]);
+      expect(alice.heard.snapshot().dids.filter((did) => did.disclosures.length > 0)).toMatchObject([{ didId: handedOut.didId, longFormDid: handedOut.did, live: true, disclosures: [{ as: "direct" }] }]);
       expect(alice.heard.snapshot().invitations).toEqual([]);
       expect(mediator.recipients.has(alice.heard.snapshot().dids[0]!.did!)).toBe(true);
 
@@ -1255,7 +1259,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       await alice.daemon.createIdentity("Alice", PASSPHRASE);
       await alice.daemon.setMediator(mediator.did);
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
-      const { invitation, didId } = await alice.daemon.createInvitation("many");
+      const { invitation, didId } = await alice.daemon.createInvitation();
       const a0 = alice.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
 
       // Bob's first word has Alice move to a private address toward him; he writes there before he moves himself.
@@ -1354,7 +1358,7 @@ describe("a daemon whose vault records an observation it does not admit", () => 
       await alice.daemon.createIdentity("Alice", PASSPHRASE);
       await alice.daemon.setMediator(mediator.did);
       await until("alice's line is live", () => alice.heard.lines()?.connections[0]?.live === true);
-      const { invitation, didId } = await alice.daemon.createInvitation("many");
+      const { invitation, didId } = await alice.daemon.createInvitation();
       const a0 = alice.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
 
       const bob = await run(mediator, 2, BOB, { privateAddresses: false });

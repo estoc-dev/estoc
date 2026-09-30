@@ -4,8 +4,8 @@
  * runtime the host opened and still owns. Opening one recovers and
  * sends nothing. The fold it reads has already judged every proof and
  * listed every piece of unfinished work; the open records what the
- * vault owes on its own over what a crash may have left behind — a
- * one-use invitation's consumption, a peer's acknowledgement — and
+ * vault owes on its own over what a crash may have left behind — an
+ * admission, a peer's acknowledgement — and
  * mints no action: an outbound found waiting, a reply or a
  * notification an earlier input still earns, is listed for the user,
  * who retries, completes or cancels it. Connecting reconciles each

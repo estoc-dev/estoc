@@ -19,6 +19,11 @@ its own.
   (`createDaemon`, `DaemonHost`, `DaemonStorage`, `VAULT_FILE`,
   `methodsOf`, `attachTo`, `limitsOf`, the publisher and the refusals)
   and the domain's `Daemon` interface, nothing a view would import.
+- **An invitation is a reusable address** (behaviour change):
+  `createInvitation(goal?)` takes no use limit, and the snapshot's
+  invitations carry `state` `available` or `unavailable` and no
+  consumer: whoever holds a link writes under it, each in a
+  conversation of their own, and the link stays open for the next.
 - **The Node endpoint serves the API** (`@estoc/daemon-api`): every
   socket is a port of `serveApi`, from the bootstrap on — hello, welcome
   with the daemon's bounds, `attach` handed the state and lines
