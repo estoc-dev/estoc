@@ -24,20 +24,12 @@
   `OutboundFold.ackTarget` gives the one target or why there is none,
   in place of `ackTargets`; `expandPleaseAck` is gone, `requestsAck`
   reading the request alone. A saved pure ACK is in conflict unless
-  its `ack` is exactly its carrier's wire ID.
-- **A saved pure ACK's frozen targets are validated by the evidence
-  its inputs have**: the established input of a frozen wire ID is
-  the target, an input beside it that no admission names — an
-  observation of the replaced peer ignored as superseded, say —
-  adding no ambiguity; while no input is established, one under a
-  receipt-integrity or intent conflict keeps the intent in conflict,
-  which no unadmitted input makes up for; only then does one with a
-  complete witness no admission names stand for the target, so a
-  history rebuilt without its admissions keeps the intent's
-  `effect`, its package and its submission, and a manual dispatch
-  carries it at the first call; two such inputs wait for an
-  admission to decide between them. The targets of a new ACK are
-  still selected among established inputs alone.
+  its `ack` is exactly its carrier's wire ID; it stands on the
+  carrier's complete witness, admitted or not, so a history rebuilt
+  without its admissions keeps the intent's `effect`, its package
+  and its submission, and a manual dispatch carries it at the first
+  call, while a carrier whose input is under a receipt-integrity or
+  intent conflict keeps it in conflict.
 - **One send gate at both ends, read by every path to the wire**
   (behaviour change): `senderGate` closes a channel whose local DID
   cannot send, whose pair is denied or in conflicted continuity,
@@ -60,7 +52,7 @@
   `confirmed`. A saved decision is still validated over the model's
   confirmation; `foldContinuity` takes the admissions.
 - **A receipt is read as the peer acknowledging, answering or asking
-  only once admitted**: `ackWitnesses`, `ackTargets` and `inReplyTo`
+  only once admitted**: `ackWitnesses`, `ackTarget` and `inReplyTo`
   require an admitted complete witness of an input whose admitted
   intents agree, and a `delivery.acknowledged` naming an observation
   no admission names is pending as such; a same-channel witness is
@@ -159,7 +151,6 @@
   `ackWitnesses` leave out every observation of an input whose
   observations carry different intents, however complete each witness
   is: which of its `ack` lists the peer meant is not known.
-- The outbound fold reads `please_ack` through `expandPleaseAck`.
 
 ## 0.3.0 — 2026-09-20
 

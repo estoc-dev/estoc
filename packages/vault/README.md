@@ -43,8 +43,9 @@ apart into intent, stored content and addressing, `semanticProjection`
 and `intentProjection` return the projection objects, `intentHash` and
 `plaintextHash` compute the hashes the events carry over the intent
 projection and the exact plaintext, `wirePlaintext` is the inverse of `readPlaintext`, and
-`expandPleaseAck` / `requestsAck` read `please_ack` without rewriting
-it), the keys and communication DIDs (`identity.ts`: `Keys` opens over
+`requestsAck` reads whether `please_ack` requests the current message's
+receipt, by `""` or its own wire ID, without rewriting the array), the keys
+and communication DIDs (`identity.ts`: `Keys` opens over
 a seed only once it derives the recorded anchor, or `unlock`s the
 wrapped seed with the passphrase, and derives each named key on demand,
 an Ed25519 key and the keystore's own X25519 key per name, the latter for key agreement;
@@ -197,7 +198,7 @@ listed and counted for nothing, those with no input to join are
 `unplaced`, and the `anonymous` ones are apart; each complete input
 has the agreed intent's `kind` — application, pure ACK in its exact
 shape, any other Empty message, ping-response or problem report — its
-`firstReceiptKey` for freezing ACK targets in order, and whether an
+`firstReceiptKey` for ordering established inputs, and whether an
 erasure names it), the outbound
 messages (`fold/outbound.ts`: `foldOutbound` reads, for each message
 ID, the intent its `message.out` records must agree on and the
@@ -219,10 +220,11 @@ earliest witness against the expiry; an intent derived from an input
 has its `effect` checked against the input's execution, the source's
 witness, the output's channel — the source's, or a verified local
 successor keeping the peer, a path not verified yet being pending
-unless continuity is in conflict — and the built-in operation's shape — a pure ACK's frozen
-targets each requested by the source and established for it, or, while
-no input is and none is under a conflict, witnessed for it by a
-complete observation no admission names — and a
+unless continuity is in conflict — and the built-in operation's shape — a pure ACK
+names exactly its source carrier's wire ID, which the carrier must request,
+its complete source witness validating the saved intent with or without an
+admission, a receipt-integrity or independently admitted intent conflict
+keeping it in conflict — and a
 notification against its decision's continuity and selection, a
 control input triggering none; the `outcome` in the order conflict,
 submitted, terminal, prepared, queued, and the `work` left — a package
@@ -232,9 +234,9 @@ the runtime alone deciding whether to make the call; the messages
 whose envelope contribution is `released`, submitted or terminated
 under a consistent intent, which the held roots drop;
 `notificationFor` a decision, one intent selecting and several
-conflicting; `ackTargets` a carrier's request names, established
-inputs of its channel or a verified predecessor in first-receipt
-order, the carrier's own by its exact source; and `inReplyTo`, the
+conflicting; `ackTarget` the carrier's own wire ID when it requests its
+receipt and is an admitted complete witness of an input whose admitted
+intents agree, or the reason it earns none; and `inReplyTo`, the
 outbound a ping-response or problem report answers), the whole fold
 (`fold/vault.ts`: `foldVault` runs every fold over one set, each fed
 the ones it reads, and adds the retention edge by edge and the roots

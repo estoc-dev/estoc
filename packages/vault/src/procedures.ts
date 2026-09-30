@@ -318,10 +318,10 @@ export function unfinishedWork(fold: VaultFold): PendingWork {
 }
 
 /**
- * A pure ACK is a candidate for every established input whose request
- * names an eligible target, its own wire ID or an earlier input's,
- * whatever the input's kind, an erased body included: the request is
- * in the headers, and honoring it is policy the completion applies. A
+ * A pure ACK is a candidate for every established input requesting its
+ * own receipt, whatever the input's kind, an erased body included: the
+ * request is in the headers, and honoring it is policy the completion
+ * applies. A
  * Ping reply is a candidate for an established, unerased Ping; whether
  * it asked for a response, and whether it has expired, is in its body
  * and its timing, which the completion reads.

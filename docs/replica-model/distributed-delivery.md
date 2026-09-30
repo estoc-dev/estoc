@@ -558,7 +558,7 @@ Explicit manual completion of pending ACK work follows the same checks under
 
 Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
 A carrier that does not request its own receipt under
-[section 5.1](#semantic-projection) creates no requested-ACK work, whatever
+[section 5.2](#intent-projection) creates no requested-ACK work, whatever
 other messages its request names. Otherwise the one target is the carrier's
 own wire ID, which names its exact source input: the carrier must be the
 admitted complete witness establishing that input, and the input's admitted

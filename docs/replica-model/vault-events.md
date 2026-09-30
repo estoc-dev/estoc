@@ -1533,8 +1533,10 @@ Requirements:
 - when both are non-null, `expiresTime` is strictly greater than
   `createdTime`;
 - null `createdTime` omits the DIDComm `created_time` header;
-- `pleaseAck` is null or the exact ordered wire array; `ack` is `[]`, or for
-  a pure ACK the one wire ID of its carrier;
+- `pleaseAck` is null or the exact ordered wire array; `ack` is `[]`, or,
+  for a pure ACK or an explicit ACK another application protocol defines,
+  exactly the source carrier's wire ID under
+  [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target);
 - `headers` contains every otherwise-unmodeled supported top-level DIDComm
   header and no reserved field, including `return_route`;
 - `bodyCid` names the canonical stored message document;
@@ -2000,11 +2002,15 @@ Compare the tuples ascending, first by exact integer ordinal and then by the
 canonical author string. The minimum is one complete observation key, not
 independent minima of its components; it is undefined when no admitted complete
 observation qualifies. Raw unadmitted duplicates cannot change this minimum.
-Admission order, invitation consumption and display use this key; no output's
-content depends on it, since a pure ACK names its carrier alone. In a linear
-single-writer history it preserves first-receipt order, including across
-restore and author changes. For independently run histories it defines deterministic recovery
-order, not a claim about physical receive time between disconnected writers.
+Admission reconciliation orders candidate observations by each observation's
+own `receiptOrderKey`, as does invitation consumption among its candidate
+receipts. `firstReceiptKey` orders established logical messages for display;
+it is no admission prerequisite. A pure ACK names its carrier alone, so no
+target array is ordered by either key. In a linear single-writer history
+`receiptOrderKey` preserves first-receipt order, including across restore and
+author changes. For independently run histories it defines deterministic
+recovery order, not a claim about physical receive time between disconnected
+writers.
 This rule permits history union; it does not enable concurrent phase-1 writers
 or establish multi-writer effect convergence.
 
@@ -2142,10 +2148,8 @@ merely because an admission is absent. A committed local decision still needs
 independent complete predecessor-confirming evidence, without an admission
 prerequisite for that witness. Missing exact evidence still defers validation.
 For a saved pure ACK, validate its one target under
-[distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target).
-Admission-free historical evidence can fill an absent admission prerequisite;
-it does not add unadmitted inputs as competitors to an otherwise unique
-admitted target.
+[distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target)
+on the carrier's complete witness, admitted or not.
 These records do not grant admission to their sources or populate accepted
 chat/profile/ACK views. A saved `delivery.acknowledged` likewise cannot substitute
 for the admitted witnesses required by section 9.7.
@@ -2898,8 +2902,8 @@ derivation requires a new vault version.
 - <a id="ve-70"></a> **VE-70.** Shared envelope bytes remain held by another non-erased message even after
     one message/root relation is erased.
 - <a id="ve-71"></a> **VE-71.** Each new duplicate observation receives a fresh ordinal; exact re-ingest
-    does not. The logical group's minimum complete `(integer ordinal, author)`
-    key orders future admissions without changing any committed intent.
+    does not. Admission reconciliation orders each candidate observation by its
+    own `receiptOrderKey`; a later observation changes no committed intent.
 - <a id="ve-72"></a> **VE-72.** Restore, restart and loss of local caches recover the ordinal high-water mark
     across all historical authors. Cross-author equal ordinals survive import
     and sort by author on a tie; allocation resumes above the union's maximum.
