@@ -18,7 +18,7 @@
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { channelOf, sameChannel } from "../ids.js";
 import { canonicalDidOf } from "../peer-document.js";
-import { expandPleaseAck } from "../projection.js";
+import { requestsAck } from "../projection.js";
 import { agreementKey } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
 import type { Channel, Did, EventCid, MessageId, MessageOut, WireMessageId } from "../types.js";
@@ -69,6 +69,13 @@ export interface Termination {
   readonly event: VaultEvent<"delivery.failed">;
   readonly status: TerminationStatus;
 }
+
+/**
+ * The receipt a carrier earns: its own wire ID, or none. A pure ACK
+ * acknowledges its carrier alone, so what it says never depends on
+ * the order inputs were received in.
+ */
+export type AckTarget = { status: "eligible"; wireMessageId: WireMessageId } | { status: "none"; because: string };
 
 /** An admitted complete witness in the outbound's channel, or a role-preserving successor of it, whose `ack` names the outbound. */
 export interface AckWitness {
@@ -149,13 +156,12 @@ export interface OutboundFold {
   /** the notification intents naming a rotation decision, whatever their form: one selects, several conflict and stop each one's work */
   notificationFor(rotationEventCid: EventCid): Notification;
   /**
-   * The ACK targets a carrier's request names, in first-receipt order:
-   * each an established input of this channel or a verified
-   * role-preserving predecessor, not under a receipt-integrity
-   * conflict, and unambiguous under its wire ID. A carrier that is no
-   * admitted complete witness, or requests nothing, names none.
+   * The receipt a carrier earns: its own wire ID when its request
+   * names itself and it is the admitted complete witness establishing
+   * an input whose admitted intents agree. A request naming other
+   * messages earns them nothing.
    */
-  ackTargets(sourceEventCid: EventCid): readonly WireMessageId[];
+  ackTarget(sourceEventCid: EventCid): AckTarget;
   /** the outbound a ping-response or problem report answers, when its thread names one this carrier may answer */
   inReplyTo(sourceEventCid: EventCid): Outbound | null;
 }
@@ -188,7 +194,6 @@ export function foldOutbound(
     const selected = selections.get(event.data.rotationEventCid) ?? [];
     if (!selected.includes(event.data.messageId)) selections.set(event.data.rotationEventCid, [...selected, event.data.messageId].sort());
   }
-  const executionsByWire = groupBy(inbound.executions.values(), (execution) => execution.wireMessageId);
 
   const outbounds = new Map<MessageId, Outbound>();
   const released = new Set<MessageId>();
@@ -208,7 +213,6 @@ export function foldOutbound(
       resolutionChecks,
       known,
       selections,
-      executionsByWire,
     });
     outbounds.set(messageId, outbound);
     if (outbound.released) released.add(messageId);
@@ -229,7 +233,7 @@ export function foldOutbound(
       if (messageIds.length === 0) return { status: "none" };
       return messageIds.length === 1 ? { status: "selected", messageId: messageIds[0]! } : { status: "conflict", messageIds };
     },
-    ackTargets: (sourceEventCid) => ackTargetsOf(sourceEventCid, evidence, continuity, inbound, executionsByWire),
+    ackTarget: (sourceEventCid) => ackTargetOf(sourceEventCid, evidence, inbound),
     inReplyTo: (sourceEventCid) => {
       const source = evidence.sources.get(sourceEventCid);
       const execution = inbound.ofSource(sourceEventCid);
@@ -292,7 +296,6 @@ type Inputs = {
   known: ReadonlySet<string>;
   /** the distinct notification message IDs naming each rotation */
   selections: ReadonlyMap<EventCid, readonly MessageId[]>;
-  executionsByWire: ReadonlyMap<WireMessageId, Execution[]>;
 };
 
 function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.out">[], inputs: Inputs): Outbound {
@@ -521,7 +524,7 @@ function effectOf(data: MessageOut, channel: Channel | null, inputs: Inputs): Ef
     if (verdict !== null) return verdict;
   } else if (data.effectType !== null) {
     if (!inputs.known.has(data.effectType)) return pending(`no operation here produces ${data.effectType}`);
-    const verdict = builtInOf(data, source, execution, channel, inputs, missing);
+    const verdict = builtInOf(data, source, channel, inputs, missing);
     if (verdict !== null) return verdict;
   }
 
@@ -551,7 +554,7 @@ function continues(data: MessageOut, source: Source, channel: Channel | null, in
   return { status: "pending", because: `${because} yet: no verified rotation to the output's sender is here` };
 }
 
-function builtInOf(data: MessageOut, source: Source | null, execution: Execution | null, channel: Channel | null, inputs: Inputs, missing: string[]): EffectStatus | null {
+function builtInOf(data: MessageOut, source: Source | null, channel: Channel | null, inputs: Inputs, missing: string[]): EffectStatus | null {
   const conflict = (because: string): EffectStatus => ({ status: "conflict", because });
   const carried = source?.event.data ?? null;
   const continued = source === null ? null : continues(data, source, channel, inputs);
@@ -563,10 +566,13 @@ function builtInOf(data: MessageOut, source: Source | null, execution: Execution
     case PURE_ACK_EFFECT:
       if (data.msgType !== EMPTY_MESSAGE_TYPE || !empty) return conflict("a pure ACK is an Empty message with body {} and nothing else");
       if (data.pleaseAck !== null || data.expiresTime !== null) return conflict("a pure ACK requests no ACK and does not expire");
-      if (data.ack.length === 0) return conflict("a pure ACK names at least one target");
+      if (data.ack.length !== 1) return conflict("a pure ACK names one target, its carrier");
       if (!threaded || (carried !== null && data.createdTime !== carried.createdTime)) return conflict("a pure ACK keeps the carrier's thread and creation time");
       if (carried !== null && carried.msgType === EMPTY_MESSAGE_TYPE && carried.pleaseAck === null) return conflict("a pure ACK answers no pure ACK");
-      return source === null ? null : ackTargetsIn(data.ack, source, execution, inputs, missing);
+      if (carried !== null && data.ack[0] !== carried.wireMessageId) return conflict("a pure ACK names its carrier alone");
+      if (carried !== null && !requestsAck(carried.wireMessageId, carried.pleaseAck)) return conflict("the source requests no receipt of itself");
+      if (carried !== null && inputs.evidence.receipts.affected.has(carried.messageId)) return conflict("the source's input is under a receipt conflict");
+      return null;
     case PING_RESPONSE_EFFECT:
       if (data.msgType !== PING_RESPONSE_TYPE || !empty) return conflict("a Ping reply is a ping-response with an empty body and nothing else");
       if (data.pleaseAck !== null || data.ack.length > 0) return conflict("a Ping reply neither requests nor carries an ACK");
@@ -578,72 +584,6 @@ function builtInOf(data: MessageOut, source: Source | null, execution: Execution
     default:
       return null;
   }
-}
-
-/**
- * The frozen targets of a pure ACK, each checked against the source's
- * request and against the input it names as `targetOf` judges it. The
- * saved array is checked, never rebuilt, so that later inputs do not
- * rewrite an intent.
- */
-function ackTargetsIn(targets: readonly string[], source: Source, execution: Execution | null, inputs: Inputs, missing: string[]): EffectStatus | null {
-  const carried = source.event.data;
-  if (carried.pleaseAck === null || carried.pleaseAck.length === 0) return { status: "conflict", because: "the source requests no ACK" };
-  const requested = new Set(expandPleaseAck(carried.wireMessageId, carried.pleaseAck));
-  for (const target of targets) if (!requested.has(target)) return { status: "conflict", because: `the source does not request an ACK of ${target}` };
-  if (source.channel === null) {
-    missing.push("the source's channel is not known yet");
-    return null;
-  }
-  for (const target of targets) {
-    const verdict = targetOf(target as WireMessageId, source, source.channel, execution, true, inputs.evidence, inputs.continuity, inputs.executionsByWire);
-    if (verdict.status === "conflict") return verdict;
-    if (verdict.status === "pending") missing.push(verdict.because);
-  }
-  return null;
-}
-
-type Target = { status: "eligible"; execution: Execution } | { status: "pending"; because: string } | { status: "conflict"; because: string };
-
-/**
- * The input a wire ID names for a carrier: the carrier's own input
- * when it is the carrier's wire ID, else the one input of that wire ID
- * in the carrier's channel or a verified role-preserving predecessor.
- * The established input — its admitted observations agreeing, one of
- * them a complete witness — is the target, two established being a
- * conflict; an input beside it that no admission names adds no
- * ambiguity, since admission decided between them. While no input is
- * established, one under a receipt-integrity or intent conflict is a
- * conflict: contradicted evidence is never made up for by an input no
- * admission names. Only then is a frozen target of a saved ACK the one
- * input with a complete witness no admission names: the saved intent
- * is validated by the evidence its inputs have, not by their
- * admission, which a history rebuilt without it revokes no intent for,
- * and two such inputs wait for an admission to decide between them.
- * None here is pending.
- */
-function targetOf(wanted: WireMessageId, source: Source, channel: Channel, own: Execution | null, frozen: boolean, evidence: ChannelEvidence, continuity: Continuity, executionsByWire: ReadonlyMap<WireMessageId, Execution[]>): Target {
-  const related =
-    wanted === source.event.data.wireMessageId
-      ? own === null
-        ? []
-        : [own]
-      : (executionsByWire.get(wanted) ?? []).filter((execution) => continuity.ackPath(execution.channel, channel));
-  if (related.length === 0) return { status: "pending", because: `no input of the channel or a verified predecessor has wire ID ${wanted}` };
-  const contradicted = (execution: Execution) => execution.status.status === "conflict" || evidence.receipts.affected.has(execution.messageId);
-  const established = related.filter((execution) => execution.status.status === "complete" && !contradicted(execution));
-  if (established.length === 1) return { status: "eligible", execution: established[0]! };
-  if (established.length > 1) return { status: "conflict", because: `wire ID ${wanted} names ${established.length} inputs` };
-  const contradiction = related.find(contradicted);
-  if (contradiction !== undefined) {
-    return { status: "conflict", because: contradiction.status.status === "conflict" ? `the input with wire ID ${wanted} is in conflict: ${contradiction.status.because}` : `the input with wire ID ${wanted} is under a receipt conflict` };
-  }
-  if (frozen) {
-    const witnessed = related.filter((execution) => execution.members.some((member) => member.witness.status === "complete"));
-    if (witnessed.length === 1) return { status: "eligible", execution: witnessed[0]! };
-    if (witnessed.length > 1) return { status: "pending", because: `wire ID ${wanted} names ${witnessed.length} inputs no admission decides between` };
-  }
-  return { status: "pending", because: `the input with wire ID ${wanted} ${frozen ? "has no complete witness yet" : "is not established yet"}` };
 }
 
 /**
@@ -715,17 +655,18 @@ function workOf(w: WorkInputs): Work {
   return { kind: "dispatch", package: w.package };
 }
 
-function ackTargetsOf(sourceEventCid: EventCid, evidence: ChannelEvidence, continuity: Continuity, inbound: InboundFold, executionsByWire: ReadonlyMap<WireMessageId, Execution[]>): WireMessageId[] {
+function ackTargetOf(sourceEventCid: EventCid, evidence: ChannelEvidence, inbound: InboundFold): AckTarget {
+  const none = (because: string): AckTarget => ({ status: "none", because });
   const source = evidence.sources.get(sourceEventCid);
-  const requested = source?.event.data.pleaseAck;
-  if (source === undefined || source.channel === null || requested == null || requested.length === 0) return [];
-  if (!admittedWitness(sourceEventCid, inbound)) return [];
-  const own = inbound.ofSource(sourceEventCid);
-  const targets: Execution[] = [];
-  for (const wanted of expandPleaseAck(source.event.data.wireMessageId, requested)) {
-    const target = targetOf(wanted as WireMessageId, source, source.channel, own, false, evidence, continuity, executionsByWire);
-    if (target.status === "eligible") targets.push(target.execution);
-  }
-  targets.sort((a, b) => compareReceiptKeys(a.firstReceiptKey!, b.firstReceiptKey!));
-  return targets.map((execution) => execution.wireMessageId);
+  if (source === undefined) return none("the carrier is not here");
+  const { data } = source.event;
+  if (!requestsAck(data.wireMessageId, data.pleaseAck)) return none("the carrier requests no receipt of itself");
+  if (source.channel === null) return none("the carrier's channel is not known");
+  const member = inbound.memberOf(sourceEventCid);
+  if (member === null) return none("the carrier is in no input here");
+  if (!member.admitted) return none("the carrier is not admitted");
+  if (member.witness.status !== "complete") return none(`the carrier is no complete witness: ${member.witness.because}`);
+  const execution = inbound.ofSource(sourceEventCid)!;
+  if (execution.status.status === "conflict") return none(`the carrier's input is in conflict: ${execution.status.because}`);
+  return { status: "eligible", wireMessageId: data.wireMessageId };
 }

@@ -128,17 +128,14 @@ function hashOf(value: JsonObject, what: string): MessageHash {
 }
 
 /**
- * The `please_ack` targets as receipt processing reads them: `""` stands
- * for the current message, each target once, in first-seen order. The
- * stored array is never rewritten; this is for processing only.
+ * Does the message ask for its own acknowledgment? Null and `[]` do
+ * not; `""` and its own wire ID do. A receipt is given to the message
+ * that asks for it, naming that message alone, so a request for
+ * another message asks nothing of this vault; the stored array is
+ * never rewritten.
  */
-export function expandPleaseAck(currentWireId: string, values: readonly string[]): string[] {
-  return [...new Set(values.map((value) => (value === "" ? currentWireId : value)))];
-}
-
-/** Does the message ask for its own acknowledgment? Null and `[]` do not; `""` and its own wire ID do. */
 export function requestsAck(currentWireId: string, pleaseAck: readonly string[] | null): boolean {
-  return pleaseAck !== null && expandPleaseAck(currentWireId, pleaseAck).includes(currentWireId);
+  return pleaseAck !== null && pleaseAck.some((target) => target === "" || target === currentWireId);
 }
 
 /** The intent a committed `message.out` froze, given the document `bodyCid` names. */

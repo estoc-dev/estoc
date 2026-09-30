@@ -8,7 +8,6 @@ import {
   PLAINTEXT_TYP,
   RESERVED_HEADERS,
   checkHeaders,
-  expandPleaseAck,
   intentHash,
   intentOfOutbound,
   intentProjection,
@@ -199,22 +198,18 @@ describe("the intent hash", () => {
 });
 
 describe("please_ack processing", () => {
-  it("expands the empty sentinel to the current wire ID and keeps the first of each target, in order", () => {
-    expect(expandPleaseAck("cur", ["", "older", "", "cur", "older", "z"])).toEqual(["cur", "older", "z"]);
-    expect(expandPleaseAck("cur", [])).toEqual([]);
-  });
-
   it("requests the current message's receipt only through the sentinel or its own ID", () => {
     expect(requestsAck("cur", null)).toBe(false);
     expect(requestsAck("cur", [])).toBe(false);
     expect(requestsAck("cur", ["older"])).toBe(false);
     expect(requestsAck("cur", [""])).toBe(true);
     expect(requestsAck("cur", ["older", "cur"])).toBe(true);
+    expect(requestsAck("cur", ["older", ""])).toBe(true);
   });
 
   it("leaves the stored array as it was", () => {
     const read = readPlaintext(PLAINTEXT);
-    expandPleaseAck(PLAINTEXT.id, read.intent.pleaseAck as string[]);
+    expect(requestsAck(PLAINTEXT.id, read.intent.pleaseAck)).toBe(true);
     expect(read.intent.pleaseAck).toEqual(["", "older", ""]);
   });
 });

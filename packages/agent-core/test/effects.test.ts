@@ -250,7 +250,7 @@ describe("the automatic effects of a live input", () => {
     await closeAll(alice, bob);
   });
 
-  test("each operation follows its own policy: a Ping asking for no reply gets its receipt alone, one asking for no receipt its reply alone, chat only what it asks, a pure acknowledgement nothing, an expired Ping no reply, and a request naming nothing here no receipt", async () => {
+  test("each operation follows its own policy: a Ping asking for no reply gets its receipt alone, one asking for no receipt its reply alone, chat only what it asks, a pure acknowledgement nothing, an expired Ping no reply, and a request naming only another message no receipt and no operation asked", async () => {
     const { alice, bob } = await parties();
     const { live } = await reacting(alice, { now: () => (CREATED + 100) * 1000 });
 
@@ -273,7 +273,7 @@ describe("the automatic effects of a live input", () => {
       [PING_RESPONSE_EFFECT, "none", "the Ping has expired"],
     ]);
     const stranger = await live(bob, { type: BASIC_MESSAGE, please_ack: [crypto.randomUUID()] });
-    expect(outcomes(stranger.effects)).toEqual([[PURE_ACK_EFFECT, "none", "the request names no input of the channel that is established and unambiguous"]]);
+    expect(outcomes(stranger.effects)).toEqual([]);
     await closeAll(alice, bob);
   });
 

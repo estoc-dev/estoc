@@ -17,6 +17,11 @@
   on again; what was queued meanwhile is picked up by the connection
   that comes back. `AgentOptions.upkeep` sets the waits, `UPKEEP` is
   their default, and none of it runs with `liveDelivery` off.
+- **A pure ACK names its carrier alone** (behaviour change): the
+  receipt an input requests of itself is given naming that input's
+  wire ID and nothing else; an input whose `please_ack` names only
+  other messages is asked no receipt operation at all. Needs
+  `@estoc/vault` with `OutboundFold.ackTarget`.
 
 - **Records read an input from its admitted observations alone**
   (behaviour change): a channel's `messages` hold the inputs an

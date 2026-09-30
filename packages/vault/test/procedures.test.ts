@@ -347,25 +347,25 @@ describe("unfinished work", () => {
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });
 
-  it("lists a pure ACK for an input whose request names an earlier input, none for one naming nothing here, none once the tuple has an intent, and one from the peer's successor naming the predecessor's input", async () => {
+  it("lists a pure ACK for an input requesting its own receipt, whatever else it names, none for one requesting only another's, and none once the tuple has an intent", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const first = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
-    const namingFirst = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { pleaseAck: [first.data.wireMessageId] } });
-    const namingNothing = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { pleaseAck: [uuidv7()] } });
+    const asking = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { pleaseAck: [first.data.wireMessageId, ""] } });
+    const namingFirst = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { pleaseAck: [first.data.wireMessageId] } });
     let vault = await fold(scene, keys);
-    expect(vault.outbound.ackTargets(namingFirst.cid)).toEqual([first.data.wireMessageId]);
-    expect(vault.outbound.ackTargets(namingNothing.cid)).toEqual([]);
-    expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[namingFirst.data.messageId, PURE_ACK_EFFECT, channel(a0, b0)]]);
+    expect(vault.outbound.ackTarget(asking.cid)).toEqual({ status: "eligible", wireMessageId: asking.data.wireMessageId });
+    expect(vault.outbound.ackTarget(namingFirst.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
+    expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[asking.data.messageId, PURE_ACK_EFFECT, channel(a0, b0)]]);
 
-    automatic(scene, a0, b0, namingFirst, inputOf(namingFirst, b0, a0), PURE_ACK, { bodyCid: EMPTY_CONTENT_CID, thid: namingFirst.data.wireMessageId, ack: [first.data.wireMessageId] });
+    automatic(scene, a0, b0, asking, inputOf(asking, b0, a0), PURE_ACK, { bodyCid: EMPTY_CONTENT_CID, thid: asking.data.wireMessageId, ack: [asking.data.wireMessageId] });
     const ack = scene.events.at(-1)!.data as { messageId: MessageId };
     vault = await fold(scene, keys);
     expect(workSnapshot(unfinishedWork(vault))).toMatchObject({ outbounds: [[ack.messageId, "prepare"]], responses: [] });
 
-    const fromSuccessor = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 4, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: [first.data.wireMessageId] } });
+    const fromSuccessor = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 4, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: [first.data.wireMessageId, ""] } });
     vault = await fold(scene, keys);
-    expect(vault.outbound.ackTargets(fromSuccessor.cid)).toEqual([first.data.wireMessageId]);
+    expect(vault.outbound.ackTarget(fromSuccessor.cid)).toEqual({ status: "eligible", wireMessageId: fromSuccessor.data.wireMessageId });
     expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[fromSuccessor.data.messageId, PURE_ACK_EFFECT, channel(a0, b1)]]);
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });

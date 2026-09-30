@@ -1533,8 +1533,10 @@ Requirements:
 - when both are non-null, `expiresTime` is strictly greater than
   `createdTime`;
 - null `createdTime` omits the DIDComm `created_time` header;
-- `pleaseAck` is null or the exact ordered wire array; `ack` is the exact
-  oldest-to-newest target array frozen by the response algorithm;
+- `pleaseAck` is null or the exact ordered wire array; `ack` is `[]`, or,
+  for a pure ACK or an explicit ACK another application protocol defines,
+  exactly the source carrier's wire ID under
+  [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target);
 - `headers` contains every otherwise-unmodeled supported top-level DIDComm
   header and no reserved field, including `return_route`;
 - `bodyCid` names the canonical stored message document;
@@ -1943,8 +1945,8 @@ Requirements:
 - `fromPrior` is null when absent, otherwise the exact original string, even
   when it is not a valid JWT. Parsing, claim and signature failures belong to
   continuity verification and do not invalidate this authenticated observation;
-- ACK processing expands `""` in `pleaseAck` to this `wireMessageId` and ignores only
-  later duplicate targets; stored arrays are not rewritten;
+- ACK processing reads from `pleaseAck` only whether this message requests its
+  own receipt, by `""` or this `wireMessageId`; stored arrays are not rewritten;
 - `headers` contains every otherwise-unmodeled permitted top-level member and
   MUST NOT contain any reserved field, including `return_route`;
 - `thid` and `pthid` are present with null when absent;
@@ -2000,24 +2002,27 @@ Compare the tuples ascending, first by exact integer ordinal and then by the
 canonical author string. The minimum is one complete observation key, not
 independent minima of its components; it is undefined when no admitted complete
 observation qualifies. Raw unadmitted duplicates cannot change this minimum.
-ACK-target ordering uses this key only
-among targets authorized by the carrier's exact channel or verified successor
-path. In a linear single-writer
-history it preserves first-receipt order, including across restore and author
-changes. For independently run histories it defines deterministic recovery
-order, not a claim about physical receive time between disconnected writers.
+Admission reconciliation orders candidate observations by each observation's
+own `receiptOrderKey`, as does invitation consumption among its candidate
+receipts. `firstReceiptKey` orders established logical messages for display;
+it is no admission prerequisite. A pure ACK names its carrier alone, so no
+target array is ordered by either key. In a linear single-writer history
+`receiptOrderKey` preserves first-receipt order, including across restore and
+author changes. For independently run histories it defines deterministic
+recovery order, not a claim about physical receive time between disconnected
+writers.
 This rule permits history union; it does not enable concurrent phase-1 writers
 or establish multi-writer effect convergence.
 
 A later observation does not renumber earlier events. Learning an older alias
 or importing history may change this derived key for future decisions, but
-MUST NOT change an ACK array already frozen in a committed `message.out`.
+MUST NOT change a committed `message.out`.
 
 After `cid` deduplication, distinct events with the same `(author,
 receiptOrdinal)` are a receipt-integrity conflict. Affected logical messages
 are those observed by the conflicting events. Retain those events and
-surface the conflict; do not use affected logical messages as newly
-frozen ACK targets. Unaffected messages remain processable. Full import MUST
+surface the conflict; an affected input is admitted by nothing and earns no
+new pure ACK. Unaffected messages remain processable. Full import MUST
 NOT reject an event union merely for receipt-ordinal reuse or this projected
 conflict. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
 `ForkedAuthor` check detects unseen events under the current local author; it
@@ -2072,7 +2077,9 @@ cannot move one outbound wire ID across channels; external peer behavior does
 not create a cross-channel exactly-once guarantee.
 
 A pure ACK has Empty type, `{}` body, no attachments, nonempty `ack` and null
-`pleaseAck`. It is control input; invalid variants are not treated as pure ACKs.
+`pleaseAck`. This vault produces one whose `ack` names exactly its carrier; a
+received one may name several. It is control input; invalid variants are not
+treated as pure ACKs.
 Receipt/erasure skeletons retain this classification and frozen headers.
 
 <a id="pickup-versus-ultimate-acknowledgment"></a>
@@ -2140,11 +2147,9 @@ frozen intents/packages and submitted facts do not become pending or invalid
 merely because an admission is absent. A committed local decision still needs
 independent complete predecessor-confirming evidence, without an admission
 prerequisite for that witness. Missing exact evidence still defers validation.
-For a saved pure ACK, validate frozen targets under the frozen-target rules in
-[distributed-delivery.md section 8.1](distributed-delivery.md#freezing-an-ack-target-set).
-Admission-free historical evidence can fill an absent admission prerequisite;
-it does not add unadmitted inputs as competitors to an otherwise unique
-admitted target.
+For a saved pure ACK, validate its one target under
+[distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target)
+on the carrier's complete witness, admitted or not.
 These records do not grant admission to their sources or populate accepted
 chat/profile/ACK views. A saved `delivery.acknowledged` likewise cannot substitute
 for the admitted witnesses required by section 9.7.
@@ -2869,8 +2874,8 @@ derivation requires a new vault version.
 
 - <a id="ve-60"></a> **VE-60.** ACK lookup validates the exact outbound fixed channel and a role-preserving path from its peer to a carrier with an admitted complete source witness; shared contact/wire ID alone is insufficient.
 
-- <a id="ve-61"></a> **VE-61.** Every committed inbound carries a durable phase-1 receipt ordinal. ACK arrays
-    use `firstReceiptKey` over admitted complete observations only; clock rollback does not reverse receipt order in a
+- <a id="ve-61"></a> **VE-61.** Every committed inbound carries a durable phase-1 receipt ordinal. `firstReceiptKey`
+    is taken over admitted complete observations only; clock rollback does not reverse receipt order in a
     linear history, and cross-author ties have deterministic recovery order.
 - <a id="ve-62"></a> **VE-62.** Invitation consumption is an independent local decision and grants no preparation, automatic output, rotation or ACK/error authority. Erasure retains its exact source/disclosure evidence without freezing later peer keys.
 
@@ -2897,8 +2902,8 @@ derivation requires a new vault version.
 - <a id="ve-70"></a> **VE-70.** Shared envelope bytes remain held by another non-erased message even after
     one message/root relation is erased.
 - <a id="ve-71"></a> **VE-71.** Each new duplicate observation receives a fresh ordinal; exact re-ingest
-    does not. The logical group's minimum complete `(integer ordinal, author)`
-    key orders future ACKs without changing any already frozen ACK array.
+    does not. Admission reconciliation orders each candidate observation by its
+    own `receiptOrderKey`; a later observation changes no committed intent.
 - <a id="ve-72"></a> **VE-72.** Restore, restart and loss of local caches recover the ordinal high-water mark
     across all historical authors. Cross-author equal ordinals survive import
     and sort by author on a tie; allocation resumes above the union's maximum.
@@ -2925,8 +2930,8 @@ derivation requires a new vault version.
 
 - <a id="ve-80"></a> **VE-80.** Distinct events sharing a receipt `(author, ordinal)` pair remain history
     with a projected receipt-integrity conflict, not a full-import failure.
-    Only affected logical messages are excluded from newly frozen ACK targets.
-- <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never frozen ACK arrays.
+    Only affected logical messages are excluded from admission and from earning a new pure ACK.
+- <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never a committed intent.
 
 - <a id="ve-82"></a> **VE-82.** An available one-use invitation automatically records consumption for the first eligible retained receipt in receiptOrderKey order. Earlier pending evidence cannot be bypassed. Reopen/import may complete this local record but cannot replace a recorded consumer or dispatch output; receipt or matching pthid alone records no consumer.
 

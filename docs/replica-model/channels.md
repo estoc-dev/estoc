@@ -854,7 +854,7 @@ Import admissions with their exact sources and
 proof evidence; import order must not determine their meaning. Once the same
 complete union is available, all readers derive the same admitted history and
 current restrictions. A late duplicate without its own admission cannot extend
-a previously admitted message's ACK targets, receipt timing or profile content.
+a previously admitted message's receipt timing or profile content.
 A consistent admitted duplicate keeps the original logical input accepted;
 contradictory independently admitted claims still expose an application intent
 conflict. A late unadmitted old-peer duplicate cannot create that conflict.
@@ -994,7 +994,7 @@ Rotation changes current eligibility but MUST NOT move an existing
 intent, including an unprepared or automatic one, to another channel.
 If that channel can no longer send, retain the original outcome and require an
 explicit new send with a new wire ID to use a successor channel. Message IDs,
-automatic effect IDs and frozen ACK arrays are never rewritten to follow it.
+automatic effect IDs and committed intents are never rewritten to follow it.
 
 Before transport, commit `message.prepared` to freeze one package for the
 message. Every call uses that package's exact bytes and ID, including the first

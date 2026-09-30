@@ -20,9 +20,9 @@
  * a body gone or a handler that would decide otherwise now, and the
  * same input delivered again, a package retried, a body erased or a
  * clock moved never make a second output. Two operations are the
- * vault's own — the receipt an input requests, given under local
- * policy to the targets the fold freezes in first-receipt order, and
- * the notification of a rotation, decided with the rotation — and the
+ * vault's own — the receipt an input requests of itself, given under
+ * local policy and naming the carrier alone, and the notification of
+ * a rotation, decided with the rotation — and the
  * rest are the protocols', each through its handler. An intent is
  * dispatched only under an action a live input minted, once the lock
  * is released and, over a pickup, off the turn the delivery came in,
@@ -39,6 +39,7 @@ import {
   objectReader,
   readStoredDocument,
   readVaultEvent,
+  requestsAck,
   automaticIntent,
   responseChannel,
   scanVault,
@@ -50,7 +51,6 @@ import {
   type Source,
   type VaultEvent,
   type VaultFold,
-  type WireMessageId,
 } from "@estoc/vault";
 
 import { LiveAction, type LiveInput } from "./action.js";
@@ -235,19 +235,18 @@ async function settle(held: Held, fold: VaultFold, execution: Execution, options
 }
 
 /**
- * The receipt the input requests, to the targets the fold freezes: an
- * Empty message on the carrier's thread with its creation time, naming
- * the targets and requesting nothing. A request that names no
- * eligible target is answered with nothing rather than an empty
- * receipt, since the array must name what it acknowledges.
+ * The receipt the input requests of itself: an Empty message on the
+ * carrier's thread with its creation time, naming the carrier alone
+ * and requesting nothing. An input that requests no receipt of itself
+ * is asked nothing; one the fold gives none is answered with nothing.
  */
 function acknowledgement(fold: VaultFold, source: Source, acknowledge: boolean): Response[] {
   const { data } = source.event;
-  if (data.pleaseAck === null || data.pleaseAck.length === 0) return [];
+  if (!requestsAck(data.wireMessageId, data.pleaseAck)) return [];
   if (!acknowledge) return [{ effectType: PURE_ACK_EFFECT, content: null, because: "receipts are not given here" }];
-  const targets: readonly WireMessageId[] = fold.outbound.ackTargets(source.event.cid);
-  if (targets.length === 0) return [{ effectType: PURE_ACK_EFFECT, content: null, because: "the request names no input of the channel that is established and unambiguous" }];
-  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: data.thid ?? data.wireMessageId, pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: targets };
+  const target = fold.outbound.ackTarget(source.event.cid);
+  if (target.status !== "eligible") return [{ effectType: PURE_ACK_EFFECT, content: null, because: target.because }];
+  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: data.thid ?? data.wireMessageId, pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: [target.wireMessageId] };
   return [{ effectType: PURE_ACK_EFFECT, content }];
 }
 
