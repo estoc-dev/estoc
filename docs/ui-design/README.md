@@ -4,6 +4,8 @@ Estoc has two looks, dark and light, and the dark one came first. This document 
 
 The light look is derived from the relations below, not by brightening the dark swatches. It follows the system by default; either look can be chosen outright under You.
 
+The selected light palette and its preview are saved in the [light palette proposal](light/README.md).
+
 ## In one line
 
 On one cool ground, what arrives is verdigris and what you send is copper.
