@@ -100,6 +100,56 @@ describe.skipIf(browserPath === undefined)("erasing a message on a touch screen"
     expect(await sheetOpen()).toBe(false);
   });
 
+  it("keys pressed while the finger is still held do not let its lift press Erase", async () => {
+    for (const key of ["Shift", "Tab"]) {
+      await mount("basic");
+      await touch("touchStart", await center(".bubble-body"));
+      await tab.waitForTimeout(HOLD_MS);
+      expect(await sheetOpen()).toBe(true);
+      await tab.keyboard.press(key);
+      expect(await actions()).toEqual([]);
+      await touch("touchEnd");
+      await tab.waitForTimeout(SETTLE_MS);
+      expect(await sheetOpen()).toBe(true);
+      expect(await actions()).toEqual([]);
+
+      await tap("[data-erase]");
+      expect(await actions()).toEqual([{ name: "eraseMessage", args: ["message-1"] }]);
+      expect(await sheetOpen()).toBe(false);
+    }
+  });
+
+  it("a control activated from the keyboard while the finger is still held is honoured", async () => {
+    await mount("basic");
+    await touch("touchStart", await center(".bubble-body"));
+    await tab.waitForTimeout(HOLD_MS);
+    expect(await sheetOpen()).toBe(true);
+    await tab.keyboard.press("Tab");
+    expect(await tab.evaluate(() => document.activeElement?.textContent?.trim())).toBe("Cancel");
+    await tab.keyboard.press("Enter");
+    expect(await sheetOpen()).toBe(false);
+    await touch("touchEnd");
+    await tab.waitForTimeout(SETTLE_MS);
+    expect(await sheetOpen()).toBe(false);
+    expect(await actions()).toEqual([]);
+  });
+
+  it.each<[string, string, { name: string; args: string[] }[]]>([
+    ["Erase", "[data-erase]", [{ name: "eraseMessage", args: ["message-1"] }]],
+    ["Cancel", "[data-cancel]", []],
+  ])("%s pressed for longer than a hold, after the sheet was opened some other way, still answers", async (_, control, expected) => {
+    await mount("basic");
+    const point = await center(".bubble-body");
+    await tab.mouse.click(point.x, point.y, { button: "right" });
+    expect(await sheetOpen()).toBe(true);
+    await touch("touchStart", await center(control));
+    await tab.waitForTimeout(HOLD_MS);
+    await touch("touchEnd");
+    await tab.waitForTimeout(SETTLE_MS);
+    expect(await sheetOpen()).toBe(false);
+    expect(await actions()).toEqual(expected);
+  });
+
   it("a short tap, or a finger that drifts while held, opens nothing", async () => {
     await mount("basic");
     await tap(".bubble-body");

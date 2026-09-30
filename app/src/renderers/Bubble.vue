@@ -116,16 +116,17 @@ function erase() {
 // A finger that drifts further than this while held is scrolling, not pressing.
 const HOLD_MS = 500;
 const HOLD_SLACK_PX = 10;
-let hold: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
+let hold: { timer: ReturnType<typeof setTimeout>; pointerId: number; x: number; y: number } | null = null;
 
 function pressed(event: PointerEvent) {
-  if (event.pointerType === "mouse" || event.button !== 0) return;
+  if (event.pointerType === "mouse" || event.button !== 0 || erasing.value) return;
   released();
+  const pointerId = event.pointerId;
   const timer = setTimeout(() => {
     hold = null;
-    offerEraseFromTouch();
+    offerEraseFromTouch(pointerId);
   }, HOLD_MS);
-  hold = { timer, x: event.clientX, y: event.clientY };
+  hold = { timer, pointerId, x: event.clientX, y: event.clientY };
 }
 
 function moved(event: PointerEvent) {
@@ -142,27 +143,50 @@ function released() {
 // When the finger that held the message lifts, the browser turns it into a
 // click aimed at whatever is under it by then, which is the sheet's Erase
 // button. That click belongs to a gesture that has already had its effect,
-// so it is dropped; the sheet's controls answer only to a press or key that
-// starts after it.
+// so it is dropped: only the click that follows that finger's own lift,
+// told from other fingers by the pointer a click names where the browser
+// names one, and by its order after the lift where it does not. A key
+// pressed or another finger set down while the finger stays held does not
+// end its gesture, and a control activated from the keyboard meanwhile is
+// honoured. A lift the browser follows with no click, as after a native
+// long press, leaves the sheet answering normally once a moment has passed.
+const CLICK_AFTER_LIFT_MS = 400;
 let settleTouch: (() => void) | null = null;
 
-function offerEraseFromTouch() {
+function offerEraseFromTouch(pointerId: number) {
+  if (erasing.value) return;
   offerErase();
-  if (!erasing.value || settleTouch !== null) return;
-  const drop = (event: Event) => {
+  if (!erasing.value) return;
+  settleTouch?.();
+  let lifted = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const settle = () => {
+    window.removeEventListener("click", drop, true);
+    window.removeEventListener("pointerup", ended, true);
+    window.removeEventListener("pointercancel", ended, true);
+    if (timer !== null) clearTimeout(timer);
+    settleTouch = null;
+  };
+  const fromKeyboard = (event: MouseEvent) => event.detail === 0;
+  const fromAnotherPointer = (event: MouseEvent) => event instanceof PointerEvent && event.pointerId !== pointerId;
+  const drop = (event: MouseEvent) => {
+    if (!lifted || fromKeyboard(event) || fromAnotherPointer(event)) return;
     event.stopPropagation();
     event.preventDefault();
     settle();
   };
-  const settle = () => {
-    window.removeEventListener("click", drop, true);
-    window.removeEventListener("pointerdown", settle, true);
-    window.removeEventListener("keydown", settle, true);
-    settleTouch = null;
+  const ended = (event: PointerEvent) => {
+    if (event.pointerId !== pointerId) return;
+    if (event.type === "pointercancel") {
+      settle();
+      return;
+    }
+    lifted = true;
+    timer = setTimeout(settle, CLICK_AFTER_LIFT_MS);
   };
   window.addEventListener("click", drop, true);
-  window.addEventListener("pointerdown", settle, true);
-  window.addEventListener("keydown", settle, true);
+  window.addEventListener("pointerup", ended, true);
+  window.addEventListener("pointercancel", ended, true);
   settleTouch = settle;
 }
 
@@ -176,10 +200,11 @@ function contextMenu(event: MouseEvent) {
   event.preventDefault();
   if (hold === null) {
     offerErase();
-  } else {
-    released();
-    offerEraseFromTouch();
+    return;
   }
+  const { pointerId } = hold;
+  released();
+  offerEraseFromTouch(pointerId);
 }
 </script>
 
@@ -238,7 +263,7 @@ function contextMenu(event: MouseEvent) {
       <div class="sheet-title">Erase this message's content?</div>
       <p class="note">Every copy this vault is merged with erases it too. The other side keeps theirs.</p>
       <button class="btn-danger" type="button" data-erase @click="erase">Erase</button>
-      <button class="btn-quiet" type="button" @click="erasing = false">Cancel</button>
+      <button class="btn-quiet" type="button" data-cancel @click="erasing = false">Cancel</button>
     </Sheet>
   </div>
 </template>
