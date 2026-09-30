@@ -277,6 +277,15 @@ select.field {
     right 14px center;
 }
 
+/* Forced colours drop gradient backgrounds, so the native arrow is
+   put back and drawn in the person's own colours. */
+@media (forced-colors: active) {
+  select.field {
+    appearance: auto;
+    background-image: none;
+  }
+}
+
 .file-btn {
   position: relative;
   overflow: hidden;
