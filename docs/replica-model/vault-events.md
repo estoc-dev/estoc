@@ -2007,8 +2007,10 @@ After `cid` deduplication, distinct events with the same `(author,
 receiptOrdinal)` are a receipt-integrity conflict. Affected logical messages
 are those observed by the conflicting events. Retain those events and
 surface the conflict; an affected input earns no new pure ACK, while
-admission judges its observations like any other, since a contradiction among
-them is already an intent conflict and a consistent duplicate harms nothing.
+admission judges its observations like any other: a candidate contradicting
+the admitted intent is refused as any such candidate is, two independently
+admitted contradictory observations are the intent conflict they would be
+under distinct ordinals, and a consistent duplicate harms nothing.
 Unaffected messages remain processable. Full import MUST
 NOT reject an event union merely for receipt-ordinal reuse or this projected
 conflict. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)

@@ -671,9 +671,8 @@ cannot lend authority to another duplicate's headers or authentication.
 The single active executor serializes admission with receipt, evidence import,
 rotation decisions and policy changes under the operation lock. Before admitting,
 fold all available evidence, verify the source as a complete witness and reject
-receipt-integrity faults or a candidate contradicting already admitted logical
-intent. A conflicting candidate remains a raw diagnostic, not a second local
-acceptance. This intentionally preserves the first locally admitted content
+a candidate contradicting already admitted logical intent. A conflicting
+candidate remains a raw diagnostic, not a second local acceptance. This intentionally preserves the first locally admitted content
 even when the conflicting duplicate's peer is still current. It does not select
 a winner between conflicting admissions imported from independent histories.
 Check current channel denial and peer supersession; retirement alone does
@@ -712,11 +711,10 @@ content. Their raw discrepancy remains visible as a diagnostic.
 
 An **effective admission** is a schema-valid `message.admitted` whose exact source
 has complete positive authentication and endpoint evidence, whose own carried
-JWT, if present, verifies and derives a valid peer pair, and whose logical input
-is unaffected by receipt-integrity faults. Check these per-source facts
-independently of aggregate intent or continuity conflicts and current policy.
-Missing exact evidence leaves the admission pending; invalid source/proof
-evidence or a receipt-integrity fault grants no effective admission.
+JWT, if present, verifies and derives a valid peer pair. Check these per-source
+facts independently of aggregate intent, continuity or receipt-integrity
+conflicts and current policy. Missing exact evidence leaves the admission
+pending; invalid source/proof evidence grants no effective admission.
 
 Then compare claims across effective admissions. Contradictory admitted claims
 remain admitted, with a separate logical-input conflict that suppresses affected
@@ -736,7 +734,7 @@ following table from top to bottom; the first matching row wins:
 
 | Disposition | Meaning |
 | --- | --- |
-| `refused` | Definitive source authentication, endpoint or carried-proof invalidity, or a receipt/source-reference integrity fault; expose the reason |
+| `refused` | Definitive source authentication, endpoint or carried-proof invalidity, or a source-reference integrity fault; expose the reason |
 | `admitted` | At least one effective admission names this exact source, including after later denial or supersession |
 | `ignored-superseded` | No effective admission, and the authenticated peer has a verified replacement in this channel context |
 | `pending-admission` | None of the above; expose missing evidence, unfinished admission or the current admission blocker |
@@ -771,14 +769,15 @@ import, durable receipt and recovery of required evidence.
 Under the operation lock, rebuild the full available graph and existing
 admissions first, then evaluate sources without
 effective admission in [canonical event order](event-store.md#canonical-order).
-The order decides only between eligible unadmitted observations of one input
-whose intents differ, and a live receipt never leaves such a pair behind: each
-receipt is admitted under the lock that committed it. The pair arises only
-when independently run copies merge, and there canonical order is what every
-reader of the same union derives; no physical receive order exists between
-them. A receipt-integrity conflict withholds no admission: the observations
-it touches are judged like any other, and the conflict remains a diagnostic
-and an ACK restriction under [vault-events.md](vault-events.md#message-in).
+An admission committed before the next receipt fixes the intent its input
+accepted; no later candidate displaces it by sorting earlier. Several
+unadmitted observations of one input may still coexist: while evidence they
+need is missing, after interrupted processing, or once independently run
+copies merge. Reconciliation then takes the eligible ones in canonical event
+order, which need not match local receipt order. A receipt-integrity conflict
+withholds no admission: the observations it touches are judged like any
+other, and the conflict remains a diagnostic and an ACK restriction under
+[vault-events.md](vault-events.md#message-in).
 Reapply the checks above
 to each candidate; missing evidence for one does not block unrelated candidates.
 Commit each new admission and refresh effective admissions and logical intent
@@ -1053,13 +1052,13 @@ own model/proof tests alone does not establish application conformance.
 
 - <a id="ch-57"></a> **CH-57.** B0 sends an admitted chat/ACK, then a verified B0-to-B1 proof is learned. A later B0 chat/ACK is stored and pickup-ACKed but stays ignored-superseded: no chat notification, profile update, ACK attribution/timing, address confirmation or response. Prior admitted history remains. The sender's earlier created_time/iat does not bypass the restriction.
 - <a id="ch-58"></a> **CH-58.** Crash after receipt but before message.admitted produces no application effect. Recovery with a newly known replacement leaves that old source ignored; without supersession and with complete current evidence it commits admission now, never dispatch. Required evidence arriving during normal operation triggers the same ordered reconciliation without restart or redelivery; missing evidence for one candidate does not block unrelated admissions. Crash after admission preserves accepted history. Uncertain commits are resolved before another admission or application effect.
-- <a id="ch-59"></a> **CH-59.** message.admitted has exactly non-null sourceEventCid referencing message.in and empty roots. Missing exact evidence stays pending; invalid source/proof evidence or receipt-integrity faults prevent effective admission; admitted-intent conflict is exposed separately and grants no application authority. Multiple admissions of one source are idempotent. An admitted duplicate cannot authorize a late duplicate's headers or change ACK timing through that unadmitted duplicate. A conflicting unadmitted old-peer payload cannot poison admitted chat or ACK history; conflicting independent admissions do expose an application conflict.
+- <a id="ch-59"></a> **CH-59.** message.admitted has exactly non-null sourceEventCid referencing message.in and empty roots. Missing exact evidence stays pending; invalid source/proof evidence prevents effective admission and a receipt-integrity conflict prevents none; admitted-intent conflict is exposed separately and grants no application authority. Multiple admissions of one source are idempotent. An admitted duplicate cannot authorize a late duplicate's headers or change ACK timing through that unadmitted duplicate. A conflicting unadmitted old-peer payload cannot poison admitted chat or ACK history; conflicting independent admissions do expose an application conflict.
 - <a id="ch-60"></a> **CH-60.** Every permutation of the same event union yields the same admissions, accepted history and current restrictions. Importing a rotation never fabricates a receipt cutoff or deletes a valid prior admission. A valid admission from independently run history remains evidence, without claiming the other runtime knew the rotation or undoing effects already sent.
 - <a id="ch-61"></a> **CH-61.** A proof pending for issuer material does not admit its carrier, even with complete current-sender authentication. If material never arrives, the carrier remains diagnostic indefinitely; invalid proof is refused and neither case falls back to a new relationship. Restoring the material derives continuity independently of admission; new admission/effects recheck the full graph. Unadmitted old-peer input cannot newly confirm a local address; admitted historical confirmation remains available without introducing a self-supporting rotation cycle.
 - <a id="ch-62"></a> **CH-62.** A restored snapshot without an admission does not prove historical acceptance. Reconciliation can only admit currently eligible sources now; unadmitted superseded sources remain ignored diagnostics and supply no chat/profile/ACK state. Known replacements forbid manual old-address sends within their context; a deliberate new relationship at an unrelated local DID remains possible without inheriting old authority, while a verified local successor cannot bypass the restriction; missing rotation history is an explicit rollback limitation, not reconstructed from a seed, receipt ordinal, UUID or wall clock. Erasure retains admission metadata but restores no content.
 - <a id="ch-63"></a> **CH-63.** A queued or prepared old-endpoint intent cannot dispatch or retry once its endpoint is replaced, including manual actions. Its fixed bytes and history remain. A transport call authorized before replacement may complete and record its actual outcome; no subsequent call is authorized. Independent contexts sharing the DID remain usable.
 - <a id="ch-64"></a> **CH-64.** Validation of committed rotation, automatic outbound, package and submission records with complete evidence preserves their derived local links, fixed intents/packages and submitted state regardless of whether source admissions are available, even after peer supersession. Missing exact authentication/proof/confirmation references still defer those records. They supply no chat/profile/ACK admission and cannot authorize a new source-derived decision or intent without an admitted source.
-- <a id="ch-65"></a> **CH-65.** Source/proof invalidity or receipt-integrity faults take precedence over a saved admission. Otherwise an effective admission stays admitted after denial, supersession or an independently admitted intent conflict; that conflict separately blocks application use. Without effective admission, verified supersession precedes pending-admission. Denial alone leaves an unadmitted source pending with a denial blocker, including a late ACK for a pre-block outbound; an ACK admitted before blocking retains its attribution. Competing B0-to-B1 and B0-to-B2 proofs block new admission of those proof-carrying sources, but do not by themselves block an otherwise eligible proof-free source from B1 in its own channel.
+- <a id="ch-65"></a> **CH-65.** Source/proof invalidity takes precedence over a saved admission. Otherwise an effective admission stays admitted after denial, supersession, a receipt-integrity conflict or an independently admitted intent conflict; that conflict separately blocks application use. Without effective admission, verified supersession precedes pending-admission. Denial alone leaves an unadmitted source pending with a denial blocker, including a late ACK for a pre-block outbound; an ACK admitted before blocking retains its attribution. Competing B0-to-B1 and B0-to-B2 proofs block new admission of those proof-carrying sources, but do not by themselves block an otherwise eligible proof-free source from B1 in its own channel.
 - <a id="ch-66"></a> **CH-66.** In one pickup batch, an eligible B0 chat followed by a verified B0-to-B1 carrier completes receipt and admission before the rotation receipt commits, preserving the chat as admitted history. Reverse pickup order leaves the B0 chat ignored-superseded. Parallel decryption cannot change that result. A replacement imported before the chat's admission still blocks it; a crash after its receipt but before admission follows current-policy recovery rather than reconstructing batch order.
 
 - <a id="ch-67"></a> **CH-67.** Rebuilding or restoring the same source inventory yields identical CID-derived fact IDs, event-CID evidence references, anchor namespace and profile, despite different replica IDs or event enumeration. A carrier produces a transition and observation with the same receipt reference; another carrier's proof cannot complete it. Changed source bytes form a different event and cannot retarget an existing admission or saved decision; if the exact referenced CID is absent, those prerequisites stay missing.

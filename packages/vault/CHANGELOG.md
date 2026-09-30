@@ -5,11 +5,12 @@
 - **Admission walks canonical event order** (behaviour change): the
   `candidates` of `foldDispositions`, and so the rounds of
   `admissionDrafts` and `admitReceipts`, are in canonical event order
-  (`at`, then event CID), not receipt order; the order decides only
-  between eligible observations of one input whose intents differ,
-  which a live receipt never leaves behind, and over a merged union
-  every reader derives the same one. A receipt-integrity conflict
-  withholds no admission: an admission of an observation it touches is
+  (`at`, then event CID), not receipt order. An admission already
+  committed is displaced by no later candidate; among the eligible
+  unadmitted observations of one input, left waiting for evidence, by
+  interrupted processing or by a merge, the order is canonical, not the
+  order they were received in. A receipt-integrity conflict withholds
+  no admission: an admission of an observation it touches is
   `effective` like any other, the observation is a candidate judged
   like any other and `Eligibility` has no `integrity-conflict` member.
   The conflict still bars a new pure ACK, now from `ackTarget` too, as

@@ -144,8 +144,7 @@ peer-only context whether or not they are projected; the package's
 admissions (`fold/admission.ts`: `foldAdmissions` reads each
 `message.admitted`, the runtime's acceptance of one exact observation
 for application use, against its source — `effective` when the source
-is positive evidence on its own and no author gave its ordinal to
-another observation, `pending` while the source or its evidence is
+is positive evidence on its own, `pending` while the source or its evidence is
 still to arrive, `invalid` for good — and says which observations are
 `admitted`; `foldDispositions` gives every observation its
 disposition, `refused` for good, `admitted`, `ignored-superseded` once

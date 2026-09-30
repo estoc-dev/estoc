@@ -18,15 +18,15 @@
  * channel's denial, a conflict in the continuity its proof needs, a
  * contradiction of the intent its input already admitted — then what
  * still waits. The candidates, in canonical event order, are what the
- * runtime walks when it records admissions; the fold records none. The
- * order decides only between eligible observations of one input whose
- * intents differ, a pair a live receipt never leaves behind, since each
- * is admitted under the lock that committed it; when independently run
- * copies merge, canonical order is what every reader of the union
- * derives, there being no physical receive order between them. A
- * receipt-integrity conflict withholds no admission: a contradiction
- * among the observations it touches is an intent conflict already, and
- * a consistent duplicate harms nothing. The
+ * runtime walks when it records admissions; the fold records none. An
+ * admission already committed is displaced by no later candidate, but
+ * several unadmitted observations of one input may coexist, waiting
+ * for evidence, left by interrupted processing or merged from copies
+ * run apart, and among those eligible the order is canonical, not the
+ * order they were received in. A receipt-integrity conflict withholds
+ * no admission: a candidate contradicting the admitted intent is
+ * refused as any such candidate is, and a consistent duplicate harms
+ * nothing. The
  * disposition sums it up for anyone shown the observation: refused,
  * admitted, ignored because the peer moved on, or still pending with
  * what stands in the way.
@@ -176,12 +176,6 @@ export function foldDispositions(evidence: ChannelEvidence, continuity: Continui
   };
 }
 
-/**
- * The verdicts in the order they are final: what refuses the
- * observation for good, what it still lacks to be positive evidence,
- * then current policy over the
- * channel it is positive in and the input it observes.
- */
 function eligibilityOf(source: Source, evidence: ChannelEvidence, continuity: Continuity, inbound: InboundFold): Eligibility {
   const refused = refusedForGood(source, evidence);
   if (refused !== null) return { status: "invalid", because: refused };
