@@ -35,7 +35,6 @@ export function chooseLook(next: Look): void {
   }
 }
 
-/** Dresses the page in the chosen look, and keeps it dressed as the choice or the system changes. */
 export function wearLook(): void {
   const systemLight = matchMedia("(prefers-color-scheme: light)");
   const systemIsLight = ref(systemLight.matches);
