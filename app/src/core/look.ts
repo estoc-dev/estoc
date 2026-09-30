@@ -12,7 +12,7 @@ export type Look = "system" | "dark" | "light";
 const KEY = "estoc.look";
 const LOOKS: readonly Look[] = ["system", "dark", "light"];
 
-const SURFACE = { dark: "#202b30", light: "#eef3f5" };
+const SURFACE = { dark: "#202b30", light: "#f7f9fa" };
 
 function stored(): Look {
   try {

@@ -10,22 +10,22 @@
    system, or either is chosen outright by a data-theme on the root. */
 
 :root {
-  --ground: light-dark(#e3ebee, #172024);
-  --surface: light-dark(#eef3f5, #202b30);
-  --raised: light-dark(#f7fafb, #263238);
-  --line: light-dark(#b7c8ce, #36464d);
-  --line-strong: light-dark(#93a9b1, #4a5d65);
-  --ink: light-dark(#172024, #e9eeee);
-  --ink-soft: light-dark(#44565e, #aebcc2);
-  --accent: light-dark(#24634f, #9acbbb);
-  --on-accent: light-dark(#f7fafb, #202b30);
-  --verdigris-wash: light-dark(#b9d6c9, #253e36);
-  --copper-wash: light-dark(#dfc8ba, #44352d);
-  --alarm: light-dark(#9a3619, #f0ac95);
-  --attention: light-dark(#7d5c12, #d9b872);
-  --attention-wash: light-dark(#ebdcb8, #3a3226);
-  --scrim: light-dark(#17202466, #00000099);
-  --shadow: light-dark(#17202433, #00000088);
+  --ground: light-dark(#edf2f4, #172024);
+  --surface: light-dark(#f7f9fa, #202b30);
+  --raised: light-dark(#ffffff, #263238);
+  --line: light-dark(#d3dfe3, #36464d);
+  --line-strong: light-dark(#b3c6cd, #4a5d65);
+  --ink: light-dark(#233238, #e9eeee);
+  --ink-soft: light-dark(#495e65, #aebcc2);
+  --accent: light-dark(#2d6a58, #9acbbb);
+  --on-accent: light-dark(#ffffff, #202b30);
+  --verdigris-wash: light-dark(#d1e4db, #253e36);
+  --copper-wash: light-dark(#e8d9cd, #44352d);
+  --alarm: light-dark(#a54430, #f0ac95);
+  --attention: light-dark(#795916, #d9b872);
+  --attention-wash: light-dark(#f2e8ce, #3a3226);
+  --scrim: light-dark(#23323866, #00000099);
+  --shadow: light-dark(#23323833, #00000088);
 
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
