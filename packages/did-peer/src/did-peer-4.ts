@@ -1,8 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2";
 import bs58 from "bs58";
 
+import { frozen, remembered } from "./remembered.js";
+
 /**
- * did:peer:4 (numalgo 4) — https://identity.foundation/peer-did-method-spec/
+ * did:peer:4 (numalgo 4).
  *
  * Port of the reference implementation at references/did-peer-4-ts. The upstream
  * package is not published to npm, so the ~170 lines live here instead. The
@@ -61,6 +63,28 @@ function decodeDocument(encodedDocument: string): PeerDocument {
   }
   return { ...parsed };
 }
+
+/** The input document of a well-formed long form, worked out from its text: the hash checked and the document decoded. */
+export function decodeAnew(did: string): PeerDocument {
+  const [hash, encodedDocument] = did.slice("did:peer:4".length).split(":");
+  if (hash === undefined || encodedDocument === undefined) {
+    throw new PeerDID4Error("Invalid did:peer:4");
+  }
+  if (hash !== hashDocument(encodedDocument)) {
+    throw new PeerDID4Error(`Hash is invalid for did: ${did}`);
+  }
+  return decodeDocument(encodedDocument);
+}
+
+/**
+ * What a well-formed long form decodes to, kept by its spelling: a
+ * long form is decoded for every message it is named in, and base58
+ * costs the square of its length.
+ */
+const decoded = remembered(
+  (did) => frozen(decodeAnew(did)),
+  (error) => error instanceof PeerDID4Error || error instanceof SyntaxError
+);
 
 function hashDocument(encodedDocument: string): string {
   const digest = sha256(new TextEncoder().encode(encodedDocument));
@@ -164,7 +188,8 @@ export function longToShort(did: string): string {
 
 /**
  * Recover the input document from a long form did:peer:4, verifying that the
- * embedded hash matches the encoded document.
+ * embedded hash matches the encoded document. One long form gives the same
+ * document every time, frozen all the way down: copy it to change it.
  */
 export function decode(did: string): PeerDocument {
   if (!isPeerDID4(did)) {
@@ -179,15 +204,7 @@ export function decode(did: string): PeerDocument {
     throw new PeerDID4Error("Invalid did:peer:4");
   }
 
-  const [hash, encodedDocument] = did.slice("did:peer:4".length).split(":");
-  if (hash === undefined || encodedDocument === undefined) {
-    throw new PeerDID4Error("Invalid did:peer:4");
-  }
-  if (hash !== hashDocument(encodedDocument)) {
-    throw new PeerDID4Error(`Hash is invalid for did: ${did}`);
-  }
-
-  return decodeDocument(encodedDocument);
+  return decoded(did);
 }
 
 const VERIFICATION_RELATIONSHIPS = [

@@ -7,6 +7,7 @@
  * authorization check that involves a peer key uses it.
  */
 
+import { remembered } from "@estoc/did-peer/remembered";
 import { x25519 } from "@noble/curves/ed25519";
 import { p256, p384, p521 } from "@noble/curves/nist";
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -140,10 +141,25 @@ export function parsePublicKey(text: string): PublicKey {
   return canonical;
 }
 
-/** The type and raw bytes a canonical value carries. */
-export function decodePublicKey(key: PublicKey): DecodedPublicKey {
+const invalidKey = (error: unknown): boolean => error instanceof InvalidPublicKey;
+
+/**
+ * A key of the caller's own from one that is kept: bytes cannot be
+ * frozen, so the kept ones never leave this module.
+ */
+const copyOf = ({ type, bytes }: DecodedPublicKey): DecodedPublicKey => ({ type, bytes: bytes.slice() });
+
+/** The type and raw bytes a canonical value carries, worked out from its text. */
+export function decodePublicKeyAnew(key: string): DecodedPublicKey {
   const { codec, bytes } = decodeMultibase(key);
   return { type: codec.type, bytes };
+}
+
+const decoded = remembered(decodePublicKeyAnew, invalidKey);
+
+/** The type and raw bytes a canonical value carries. */
+export function decodePublicKey(key: PublicKey): DecodedPublicKey {
+  return copyOf(decoded(key));
 }
 
 /**
@@ -161,14 +177,23 @@ const ZERO_SCALAR = new Uint8Array(32);
  * infinity, which no encoding decodes to.
  */
 export function agreementKey(key: PublicKey): DecodedPublicKey {
-  const decoded = decodePublicKey(key);
-  if (!KEY_AGREEMENT_TYPES.has(decoded.type)) throw new InvalidPublicKey(`${key} is a ${decoded.type} key, which agrees no keys`);
-  if (decoded.type === "X25519") {
+  return copyOf(agreeing(key));
+}
+
+function agrees(key: string, candidate: DecodedPublicKey): DecodedPublicKey {
+  if (!KEY_AGREEMENT_TYPES.has(candidate.type)) throw new InvalidPublicKey(`${key} is a ${candidate.type} key, which agrees no keys`);
+  if (candidate.type === "X25519") {
     try {
-      x25519.getSharedSecret(ZERO_SCALAR, decoded.bytes);
+      x25519.getSharedSecret(ZERO_SCALAR, candidate.bytes);
     } catch {
       throw new InvalidPublicKey(`${key} is a low-order X25519 point, which agrees no keys`);
     }
   }
-  return decoded;
+  return candidate;
 }
+
+/** The key as one that agrees keys, worked out from its text. */
+export const agreementKeyAnew = (key: string): DecodedPublicKey => agrees(key, decodePublicKeyAnew(key));
+
+/** A scan asks of every key-agreement key it meets, and the answer for X25519 is a scalar multiplication. */
+const agreeing = remembered((key) => agrees(key, decoded(key)), invalidKey);

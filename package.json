@@ -12,6 +12,7 @@
     "dev": "pnpm -r --parallel run dev",
     "e2e": "pnpm --filter @estoc/app run e2e",
     "release-check": "node scripts/release-check.mjs",
+    "bench": "node scripts/bench-growth.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

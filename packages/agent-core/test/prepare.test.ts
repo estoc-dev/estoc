@@ -278,12 +278,10 @@ describe("prepare", () => {
 
   it("seals to the first authorized key-agreement key the sender can agree with, passing over one it cannot; a document with none makes no package and does not stop the batch", async () => {
     const { alice, bob, toBob } = await parties();
-    const mixed = decodeLongForm(bob.longFormDid);
-    mixed.keyAgreement = ["#key-1", "#key-2"];
+    const mixed = { ...decodeLongForm(bob.longFormDid), keyAgreement: ["#key-1", "#key-2"] };
     const mixedDid = encodeLongForm(mixed) as Did;
     const mixedShort = longToShort(mixedDid) as Did;
-    const signingOnly = decodeLongForm(bob.longFormDid);
-    signingOnly.keyAgreement = ["#key-1"];
+    const signingOnly = { ...decodeLongForm(bob.longFormDid), keyAgreement: ["#key-1"] };
     const signingOnlyDid = encodeLongForm(signingOnly) as Did;
     const signingOnlyShort = longToShort(signingOnlyDid) as Did;
     await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, mixedShort), recipientDid: mixedDid }, HELLO, { messageId: MESSAGE });

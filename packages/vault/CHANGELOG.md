@@ -2,6 +2,18 @@
 
 ## 0.4.0 — 2026-09-29
 
+- **A spelling is decoded once** (behaviour change): the retained
+  document of a numalgo-4 long form, and the decoding of a public key
+  and its standing as a key-agreement key, are kept for the 4096
+  inputs each saw last. `peerResolution(did).document` is one
+  document for every resolution of that spelling, frozen all the way
+  down: a caller that changed it copies it first. Its `bytes`, and
+  the `bytes` of `decodePublicKey` and `agreementKey`, are the
+  caller's own each time. A refusal is kept with its input and thrown
+  again as the same error. `canonicalDidOf` reads the same kept
+  document. A scan of a history decodes each spelling it names once
+  for as long as the process keeps it, where it decoded each on every
+  scan. Needs `@estoc/did-peer` 0.2.0.
 - **A saved pure ACK's frozen targets are validated by the evidence
   its inputs have**: the established input of a frozen wire ID is
   the target, an input beside it that no admission names — an

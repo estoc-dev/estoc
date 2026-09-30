@@ -7,17 +7,22 @@ import { describe, expect, it } from "vitest";
 
 import {
   InvalidDidDocument,
+  VaultEventSet,
   authorizedMethodIds,
   canonicalDidOf,
   canonicalPublicKey,
   didcommServiceUris,
+  foldVaultChecked,
   methodPublicKey,
   peerResolution,
   rawCidOfBytes,
   splitDidUrl,
+  verifyResolutions,
   type Did,
   type DidUrl,
 } from "../src/index.js";
+import { retainedDocumentAnew } from "../src/peer-document.js";
+import { noObjects, resolved, vaults } from "./fold/scene.js";
 
 const ED_PUBLIC = ed25519.getPublicKey(new Uint8Array(32).fill(1));
 const ED_PUBLIC2 = ed25519.getPublicKey(new Uint8Array(32).fill(2));
@@ -68,6 +73,55 @@ describe("peerResolution", () => {
       authentication: ["#key-1", { id: "#embedded", type: "Multikey", publicKeyMultibase: ED_KEY2, controller: LONG }],
     });
     expect(Object.keys(resolved.document).sort()).toEqual([...Object.keys(INPUT), "id"].sort());
+  });
+
+  it("hands every resolution of one spelling the same document, frozen all the way down and equal to the one worked out from its text, with bytes of its own", () => {
+    const first = peerResolution(LONG);
+    const second = peerResolution(LONG);
+    expect(second.document).toBe(first.document);
+    expect(first.document).toEqual(retainedDocumentAnew(LONG));
+    const frozenThrough = (value: unknown): boolean => value === null || typeof value !== "object" || (Object.isFrozen(value) && Object.values(value).every(frozenThrough));
+    expect(frozenThrough(first.document)).toBe(true);
+    expect(() => {
+      first.document["id"] = "did:example:mine";
+    }).toThrow(TypeError);
+
+    first.bytes.fill(0);
+    expect(second.bytes).toEqual(canonicalize(second.document));
+    expect(peerResolution(LONG).bytes).toEqual(second.bytes);
+  });
+
+  it("refuses a spelling with the same refusal however often it is asked", () => {
+    const tampered = LONG.slice(0, -1) + (LONG.endsWith("1") ? "2" : "1");
+    const refusal = (): unknown => {
+      try {
+        peerResolution(tampered);
+      } catch (error) {
+        return error;
+      }
+      throw new Error("the spelling was not refused");
+    };
+    expect(refusal()).toBeInstanceOf(InvalidDidDocument);
+    expect(refusal()).toBe(refusal());
+    expect(() => retainedDocumentAnew(tampered)).toThrow(InvalidDidDocument);
+  });
+
+  it("refuses a long form whose document nests deeper than the event format allows as an invalid document, and a scan naming it goes on", { timeout: 30_000 }, async () => {
+    const depth = 9_000;
+    const deep = encodeLongForm({ extra: JSON.parse("[".repeat(depth) + "0" + "]".repeat(depth)) }) as Did;
+    expect(() => peerResolution(deep)).toThrow(InvalidDidDocument);
+    expect(() => peerResolution(deep)).toThrow(/nested deeper/);
+    expect(() => retainedDocumentAnew(deep)).toThrow(InvalidDidDocument);
+
+    const { scene, a0, b0 } = await vaults();
+    const tooDeep = resolved(scene, a0.didId, b0, { presentedDid: deep, did: deep.slice(0, deep.lastIndexOf(":")) as Did, authenticationMethodIds: [], keyAgreementMethodIds: [] });
+    const genuine = resolved(scene, a0.didId, b0);
+    const set = VaultEventSet.of(scene.events);
+    expect(set.invalid).toEqual([]);
+    const checks = await verifyResolutions(set, noObjects);
+    expect(checks.get(tooDeep.cid)).toBe("invalid");
+    expect(checks.get(genuine.cid)).toBe("verified");
+    await expect(foldVaultChecked(set, null, noObjects)).resolves.toBeDefined();
   });
 
   it("serializes the document as RFC 8785 JSON under its raw CID, the same bytes on every resolution", () => {

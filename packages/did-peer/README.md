@@ -4,11 +4,12 @@ did:peer:2 and did:peer:4 — encoding, resolution, and conversion to the flat
 `DIDDoc` shape [didcomm-rust](https://github.com/sicpa-dlab/didcomm-rust)
 expects.
 
-Everything here is pure encoding/decoding. For both peer methods the document
-*is* the identifier, so resolution never touches the network — no fetch, no
-cache, no store to be out of date. One source runs unchanged in Node (≥18),
-Cloudflare workerd, and the browser: sha256 comes from `@noble/hashes`, base64
-from `atob`/`btoa`.
+Everything here is pure encoding/decoding of the [Peer DID method](https://identity.foundation/peer-did-method-spec/).
+For both peer methods the document *is* the identifier, so resolution never
+touches the network and no store can be out of date: what a long form decodes
+to is worked out from its text, and once worked out is kept in memory (see
+below). One source runs unchanged in Node (≥18), Cloudflare workerd, and the
+browser: sha256 comes from `@noble/hashes`, base64 from `atob`/`btoa`.
 
 ```sh
 npm install @estoc/did-peer
@@ -54,6 +55,13 @@ const converted = toDIDCommDIDDoc(raw);
 - **`resolveDIDCommDoc`** — both peer methods straight to a `DIDDoc`, the
   signature a didcomm resolver wants
 - **base64url helpers** — `Buffer`-free, work everywhere
+- **`@estoc/did-peer/remembered`** — `remembered` keeps what a pure function of
+  a string made of the inputs it saw last; `frozen` makes a result one that
+  every caller can be handed
+
+A did:peer:4 long form decodes to the same document every time, so
+`decodeLongForm` works each spelling out once and hands every caller the same
+frozen document. Copy it to change it.
 
 ## What's out, by design
 

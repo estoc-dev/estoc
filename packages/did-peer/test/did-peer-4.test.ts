@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   absolutizeReferences,
   decode,
+  decodeAnew,
   encodeLongForm,
   encodeShortForm,
   isLongForm,
@@ -34,6 +35,40 @@ describe("did:peer:4 encoding", () => {
 
   it("round-trips the input document", () => {
     expect(decode(LONG_DID)).toStrictEqual(PEER_4_INPUT_DOCUMENT);
+  });
+
+  it("decodes one long form to one document, frozen all the way down and equal to the one worked out from its text", () => {
+    const document = decode(LONG_DID);
+    expect(decode(LONG_DID)).toBe(document);
+    expect(document).toStrictEqual(decodeAnew(LONG_DID));
+    const frozenThrough = (value: unknown): boolean => value === null || typeof value !== "object" || (Object.isFrozen(value) && Object.values(value).every(frozenThrough));
+    expect(frozenThrough(document)).toBe(true);
+    expect(() => {
+      document.id = "did:example:mine";
+    }).toThrow(TypeError);
+    expect(resolveLongForm(LONG_DID)).toStrictEqual(resolveLongForm(LONG_DID));
+  });
+
+  it("decodes a long form whose document nests deeper than the call stack allows, equal to the one worked out from its text", { timeout: 30_000 }, () => {
+    const depth = 12_000;
+    const deep = encodeLongForm({ extra: JSON.parse("[".repeat(depth) + "0" + "]".repeat(depth)) });
+    expect(isLongForm(deep)).toBe(true);
+    const nesting = (document: Record<string, unknown>): { levels: number; frozenLevels: number; innermost: unknown } => {
+      let levels = 0;
+      let frozenLevels = Object.isFrozen(document) ? 1 : 0;
+      let level: unknown = document.extra;
+      for (; Array.isArray(level) && level.length === 1; level = level[0]) {
+        levels += 1;
+        if (Object.isFrozen(level)) frozenLevels += 1;
+      }
+      return { levels, frozenLevels, innermost: level };
+    };
+    const document = decode(deep);
+    expect(decode(deep)).toBe(document);
+    const anew = decodeAnew(deep);
+    expect(Object.keys(document)).toEqual(Object.keys(anew));
+    expect(nesting(anew)).toEqual({ levels: depth, frozenLevels: 0, innermost: 0 });
+    expect(nesting(document)).toEqual({ levels: depth, frozenLevels: depth + 1, innermost: 0 });
   });
 
   it("rejects a tampered document", () => {

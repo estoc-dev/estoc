@@ -1,6 +1,6 @@
 {
   "name": "@estoc/did-peer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "did:peer:2 and did:peer:4 — encoding, resolution, and conversion to the DIDDoc shape didcomm-rust expects. Pure decoding, no IO; runs in Node, workerd, and the browser.",
   "license": "Apache-2.0",
   "author": "merely",
@@ -14,6 +14,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./remembered": {
+      "types": "./dist/remembered.d.ts",
+      "default": "./dist/remembered.js"
     }
   },
   "files": [
