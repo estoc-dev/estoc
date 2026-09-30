@@ -149,8 +149,9 @@
 
 - **A contradicted input acknowledges nothing.** An outbound's
   `ackWitnesses` leave out every observation of an input whose
-  observations carry different intents, however complete each witness
-  is: which of its `ack` lists the peer meant is not known.
+  admitted observations carry different intents, however complete
+  each witness is: which of its `ack` lists the peer meant is not
+  known.
 
 ## 0.3.0 — 2026-09-20
 
