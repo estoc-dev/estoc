@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 
 import { cancel, completeResponse, eraseMessage, retry, state } from "../core/store.js";
 import type { MessageRecord } from "../core/types.js";
@@ -21,10 +21,11 @@ import { shownAttachment } from "./attachments.js";
  * what became of a continuity proof it brought, and the replies it may
  * still be given.
  *
- * What is rarely done to a message, erasing its content, is not on the
- * bubble. It is behind a press-and-hold or a right click on the bubble,
- * and on a hover button where there is a mouse, so that it neither
- * crowds the line under every message nor gets pressed by accident.
+ * What is rarely done to a message, erasing its content, does not take
+ * room on the bubble. A press-and-hold or a right click on the bubble
+ * opens it; so does a More button, shown on hover where there is a
+ * mouse and otherwise kept out of sight until the keyboard reaches it,
+ * so that assistive technology always has a named control to activate.
  */
 const props = defineProps<{
   message: MessageRecord;
@@ -52,7 +53,6 @@ const verification = computed(() => {
 const open = computed(() => state.snapshot?.pending.pendingOutbounds.find((outbound) => outbound.messageId === props.message.messageId) ?? null);
 const owed = computed(() => (state.snapshot?.pending.missingResponses ?? []).filter((response) => response.messageId === props.message.messageId && response.entries.includes("completeResponse")));
 
-// Where a message of ours stands, in a word: on its way, arrived, or not sent and why.
 const delivery = computed(() => {
   const { delivery, acknowledged, late, manualAction } = props.message;
   if (delivery === null) {
@@ -113,8 +113,7 @@ function erase() {
   void act(() => eraseMessage(props.message.messageId));
 }
 
-// A press held this long on a touch screen opens the same sheet a right click does;
-// a finger that drifts further than this while held is scrolling, not pressing.
+// A finger that drifts further than this while held is scrolling, not pressing.
 const HOLD_MS = 500;
 const HOLD_SLACK_PX = 10;
 let hold: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
@@ -124,7 +123,7 @@ function pressed(event: PointerEvent) {
   released();
   const timer = setTimeout(() => {
     hold = null;
-    offerErase();
+    offerEraseFromTouch();
   }, HOLD_MS);
   hold = { timer, x: event.clientX, y: event.clientY };
 }
@@ -140,10 +139,47 @@ function released() {
   }
 }
 
+// When the finger that held the message lifts, the browser turns it into a
+// click aimed at whatever is under it by then, which is the sheet's Erase
+// button. That click belongs to a gesture that has already had its effect,
+// so it is dropped; the sheet's controls answer only to a press or key that
+// starts after it.
+let settleTouch: (() => void) | null = null;
+
+function offerEraseFromTouch() {
+  offerErase();
+  if (!erasing.value || settleTouch !== null) return;
+  const drop = (event: Event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    settle();
+  };
+  const settle = () => {
+    window.removeEventListener("click", drop, true);
+    window.removeEventListener("pointerdown", settle, true);
+    window.removeEventListener("keydown", settle, true);
+    settleTouch = null;
+  };
+  window.addEventListener("click", drop, true);
+  window.addEventListener("pointerdown", settle, true);
+  window.addEventListener("keydown", settle, true);
+  settleTouch = settle;
+}
+
+onBeforeUnmount(() => {
+  released();
+  settleTouch?.();
+});
+
 function contextMenu(event: MouseEvent) {
   if (!erasable.value) return;
   event.preventDefault();
-  offerErase();
+  if (hold === null) {
+    offerErase();
+  } else {
+    released();
+    offerEraseFromTouch();
+  }
 }
 </script>
 

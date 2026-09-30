@@ -64,7 +64,7 @@ The relations between colours matter more than any single value. Change a colour
 - A phone shows one screen at a time: list, then chat, then details. A wide window keeps the list beside the chat, with details at the side.
 - The list is home. The avatar at the top left opens You and settings, the button at the top right starts a conversation, and the connection status sits under the title.
 - The chat screen holds messages and the composer. What the protocol keeps is one step below details.
-- What is rarely done to a message, such as erasing its content, is behind a press-and-hold or a right click on the bubble, and a button that shows on hover where there is a mouse. The line under a message carries only its status and what it asks to be done now.
+- What is rarely done to a message, such as erasing its content, stays off the line under it, which carries only the message's status and what it asks to be done now. It remains available through a focusable, labelled control on every device, shown on hover where there is a mouse and otherwise out of sight until the keyboard or assistive technology reaches it. A press-and-hold or a right click on the bubble is a shortcut to the same place.
 - A problem that blocks what the person is doing is shown on that screen. The full reason opens from there.
 
 ## Words

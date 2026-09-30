@@ -1100,7 +1100,19 @@ a.row:hover {
 
 @media (hover: none) {
   .bubble-meta .more {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .bubble-meta .more:focus-visible {
+    position: static;
+    width: var(--tap);
+    height: var(--tap);
+    overflow: visible;
+    clip-path: none;
   }
 }
 

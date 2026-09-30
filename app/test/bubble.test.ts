@@ -52,7 +52,7 @@ describe("the frame a message sits in", () => {
     expect(html).not.toContain("data-attachments");
   });
 
-  it("keeps erasing off the line under an available message, behind a button that only a hover shows", async () => {
+  it("offers More under an available message at first, and no Erase confirmation yet", async () => {
     const html = await rendered({ state: "available", body: { content: "hi back" }, attachments: [] });
     expect(html).toContain("data-more");
     expect(html).not.toContain("data-erase");
