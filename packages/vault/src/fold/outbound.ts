@@ -571,7 +571,6 @@ function builtInOf(data: MessageOut, source: Source | null, channel: Channel | n
       if (carried !== null && carried.msgType === EMPTY_MESSAGE_TYPE && carried.pleaseAck === null) return conflict("a pure ACK answers no pure ACK");
       if (carried !== null && data.ack[0] !== carried.wireMessageId) return conflict("a pure ACK names its carrier alone");
       if (carried !== null && !requestsAck(carried.wireMessageId, carried.pleaseAck)) return conflict("the source requests no receipt of itself");
-      if (carried !== null && inputs.evidence.receipts.affected.has(carried.messageId)) return conflict("the source's input is under a receipt conflict");
       return null;
     case PING_RESPONSE_EFFECT:
       if (data.msgType !== PING_RESPONSE_TYPE || !empty) return conflict("a Ping reply is a ping-response with an empty body and nothing else");
@@ -668,6 +667,5 @@ function ackTargetOf(sourceEventCid: EventCid, evidence: ChannelEvidence, inboun
   if (member.witness.status !== "complete") return none(`the carrier is no complete witness: ${member.witness.because}`);
   const execution = inbound.ofSource(sourceEventCid)!;
   if (execution.status.status === "conflict") return none(`the carrier's input is in conflict: ${execution.status.because}`);
-  if (evidence.receipts.affected.has(data.messageId)) return none("the carrier's input is under a receipt conflict");
   return { status: "eligible", wireMessageId: data.wireMessageId };
 }

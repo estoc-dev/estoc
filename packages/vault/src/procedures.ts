@@ -128,7 +128,7 @@ export function closeErasures(runtime: VaultRuntime, keys: Keys | null, options:
 
 /**
  * The admissions one round of the ordered pass records: of each
- * input, the first candidate observation in first-receipt order that
+ * input, the first candidate observation in canonical event order that
  * may be admitted now. Only one observation of an input is taken per
  * round, since the next of the same input is judged against the
  * intent this one admits — the same intent is admitted in the next

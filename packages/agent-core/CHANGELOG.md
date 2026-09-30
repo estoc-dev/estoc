@@ -2,6 +2,14 @@
 
 ## 0.20.0 — 2026-09-29
 
+- **A receipt-integrity conflict hides no manual step** (behaviour
+  change): the records of an input whose author reused its receipt
+  ordinal list the response it is owed with `completeResponse`, its
+  `manualAction` and `completes` as for any input, and an output derived
+  from it offers `retry` as any other; the conflict stays a
+  `receipt-integrity` diagnostic on each. Whether a step may be taken
+  is read from the fold alone, which admits and acknowledges such an
+  input like any other.
 - `Unusable` carries `what` and `id`, so that a host can tell which
   kind of entity would not serve without reading the message.
 - **`AgentOptions.onLines`** tells the host the agent's lines whole —

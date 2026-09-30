@@ -443,7 +443,7 @@ describe("an outbound message", () => {
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
-  it("checks a pure ACK's one target, the carrier's own wire ID, against the carrier's request: a request for other messages earns them nothing, and the receipt is kept from a carrier whose input is under a receipt conflict", async () => {
+  it("checks a pure ACK's one target, the carrier's own wire ID, against the carrier's request: a request for other messages earns them nothing, and a receipt conflict over the carrier's input keeps nothing from it", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const silent = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
@@ -482,8 +482,8 @@ describe("an outbound message", () => {
     receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 4, admitted: false, overrides: { intentHash: OTHER_HASH } });
     vault = await fold(scene, keys);
     expect(vault.channels.receipts.affected.has(source.data.messageId)).toBe(true);
-    expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "none", because: "the carrier's input is under a receipt conflict" });
-    expect(variant(scene, vault.checks, own, variants)).toMatchObject({ effect: { status: "conflict", because: "the source's input is under a receipt conflict" }, work: { kind: "none" } });
+    expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "eligible", wireMessageId: source.data.wireMessageId });
+    expect(variant(scene, vault.checks, own, variants)).toMatchObject({ effect: { status: "complete" }, work: { kind: "prepare" } });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
@@ -744,7 +744,7 @@ describe("an outbound message", () => {
     expectOrderFree(unresolved.events, (set) => picture(foldVault(set, vault.checks)));
   });
 
-  it("gives a carrier the receipt of itself alone: requesting it as the admitted witness of an established input earns its own wire ID, whatever else the request names and whatever the replaced peer's ignored observation under the same wire ID; requesting only others', an unproven proof, no admission or a receipt conflict earns none", async () => {
+  it("gives a carrier the receipt of itself alone: requesting it as the admitted witness of an established input earns its own wire ID, whatever else the request names and whatever the replaced peer's ignored observation under the same wire ID; requesting only others', an unproven proof or no admission earns none, and a receipt conflict over the input takes nothing away", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const successorRoot = resolved(scene, a0.didId, b1);
@@ -766,7 +766,7 @@ describe("an outbound message", () => {
     expect(vault.outbound.ackTarget(silent.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
     expect(vault.outbound.ackTarget(unproven.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
     expect(vault.outbound.ackTarget(unadmitted.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
-    expect(vault.outbound.ackTarget(disputed.cid)).toEqual({ status: "none", because: "the carrier's input is under a receipt conflict" });
+    expect(vault.outbound.ackTarget(disputed.cid)).toEqual({ status: "eligible", wireMessageId: disputed.data.wireMessageId });
     expect(vault.outbound.ackTarget(fakeEventCid())).toEqual({ status: "none", because: "the carrier is not here" });
     expectOrderFree(scene.events, (set) => foldVault(set, vault.checks).outbound.ackTarget(carrier.cid));
   });

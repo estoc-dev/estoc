@@ -156,7 +156,7 @@ channel's denial, a conflict in the continuity its proof needs, a
 contradiction of the intent its input admitted — or `invalid`, for the
 runtime to walk when it records admissions, the fold recording none; a
 receipt-integrity conflict withholds no admission, staying a
-diagnostic and a bar to a new pure ACK), the
+diagnostic), the
 invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
 disclosure as an address handed out, which whoever holds it writes to
 in a pair of their own, no receipt under it taking anything from the
@@ -210,8 +210,8 @@ successor keeping the peer, a path not verified yet being pending
 unless continuity is in conflict — and the built-in operation's shape — a pure ACK
 names exactly its source carrier's wire ID, which the carrier must request,
 its complete source witness validating the saved intent with or without an
-admission, a receipt-integrity or independently admitted intent conflict
-keeping it in conflict — and a
+admission, an independently admitted intent conflict keeping it in
+conflict — and a
 notification against its decision's continuity and selection, a
 control input triggering none; the `outcome` in the order conflict,
 submitted, terminal, prepared, queued, and the `work` left — a package

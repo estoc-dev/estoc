@@ -2006,12 +2006,15 @@ MUST NOT change a committed `message.out`.
 After `cid` deduplication, distinct events with the same `(author,
 receiptOrdinal)` are a receipt-integrity conflict. Affected logical messages
 are those observed by the conflicting events. Retain those events and
-surface the conflict; an affected input earns no new pure ACK, while
-admission judges its observations like any other: a candidate contradicting
-the admitted intent is refused as any such candidate is, two independently
-admitted contradictory observations are the intent conflict they would be
-under distinct ordinals, and a consistent duplicate harms nothing.
-Unaffected messages remain processable. Full import MUST
+surface the conflict as a diagnostic of local receipt history. By itself it
+neither blocks nor invalidates application admission, a pure-ACK intent, an
+incoming ACK witness or exact-address confirmation: admission judges the
+observations like any other, a candidate contradicting the admitted intent
+refused as any such candidate is, two independently admitted contradictory
+observations the intent conflict they would be under distinct ordinals, and a
+consistent duplicate harming nothing; every operation still requires its own
+source and authorization evidence, and intent conflicts keep their rules.
+Full import MUST
 NOT reject an event union merely for receipt-ordinal reuse or this projected
 conflict. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
 `ForkedAuthor` check detects unseen events under the current local author; it
@@ -2914,7 +2917,7 @@ derivation requires a new vault version.
 
 - <a id="ve-80"></a> **VE-80.** Distinct events sharing a receipt `(author, ordinal)` pair remain history
     with a projected receipt-integrity conflict, not a full-import failure.
-    Only affected logical messages are excluded from earning a new pure ACK; admission is not withheld.
+    The conflict is a diagnostic only: it withholds neither admission nor a pure ACK, an ACK witness or an address confirmation.
 - <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never a committed intent.
 
 

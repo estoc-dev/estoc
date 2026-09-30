@@ -417,8 +417,8 @@ frozen proof; it does not edit a committed package or acknowledge
 any particular wire ID.
 
 For new exact-address confirmation, a source must have effective admission,
-complete authentication and any carried proof, valid exact references, and no
-receipt-integrity fault. An application intent conflict over the input's
+complete authentication and any carried proof, and valid exact references.
+An application intent conflict over the input's
 contents does not by itself withdraw this address-knowledge witness: each
 qualifying observation independently shows the peer addressing the same local
 DID. This exception authorizes no input-derived response, ACK attribution or
@@ -426,7 +426,7 @@ content projection.
 
 For ACK attribution in the exact same canonical channel, compare both endpoint
 roles directly and require the admitted source's own authentication/proof,
-receipt integrity, admitted intent agreement and target/package evidence.
+admitted intent agreement and target/package evidence.
 An unrelated aggregate rotation conflict does not by itself invalidate this
 same-channel historical observation. Do not require `path(c, c)` to be usable:
 the package deliberately reports conflict even for that query in a conflicted
@@ -776,7 +776,7 @@ need is missing, after interrupted processing, or once independently run
 copies merge. Reconciliation then takes the eligible ones in canonical event
 order, which need not match local receipt order. A receipt-integrity conflict
 withholds no admission: the observations it touches are judged like any
-other, and the conflict remains a diagnostic and an ACK restriction under
+other, and the conflict remains a diagnostic under
 [vault-events.md](vault-events.md#message-in).
 Reapply the checks above
 to each candidate; missing evidence for one does not block unrelated candidates.

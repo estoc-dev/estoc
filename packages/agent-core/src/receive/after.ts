@@ -9,7 +9,7 @@
  * has already judged every observation: whether the proof it carried
  * verifies, and what its `ack` earns. One pass under the lock records
  * what the vault owes on its own, in the order it is owed: first the
- * admissions, in first-receipt order and round by round, so that each
+ * admissions, in canonical event order and round by round, so that each
  * candidate is judged against what the earlier ones admitted, and
  * only then, over the fold as the admissions left it, a peer's
  * acknowledgement of an outbound. `admitted` and `acknowledged` hold

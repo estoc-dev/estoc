@@ -13,8 +13,10 @@
   no admission: an admission of an observation it touches is
   `effective` like any other, the observation is a candidate judged
   like any other and `Eligibility` has no `integrity-conflict` member.
-  The conflict still bars a new pure ACK, now from `ackTarget` too, as
-  `the carrier's input is under a receipt conflict`.
+  Nor does the conflict bar a pure ACK any more: `ackTarget` lists the
+  carrier's receipt of itself and `builtInOf` validates a saved one
+  whatever the ordinals around them; the conflict is a diagnostic,
+  read from `receipts.affected` alone.
 - **A spelling is decoded once** (behaviour change): the retained
   document of a numalgo-4 long form, and the decoding of a public key
   and its standing as a key-agreement key, are kept for the 4096

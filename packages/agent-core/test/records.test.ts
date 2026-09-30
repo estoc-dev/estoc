@@ -351,21 +351,43 @@ describe("records", () => {
     expect(reportedProblem({ comment: 7 })).toBe("unknown");
   });
 
-  test("a receipt-integrity conflict withholds no admission: each observation it touches is admitted and shown as an input carrying the conflict as a diagnostic, and the reply the ping is owed takes no manual step", async () => {
+  test("a receipt-integrity conflict withholds no admission and no manual step: each observation it touches is admitted and shown as an input carrying the conflict as a diagnostic, the reply the ping is owed and the receipt the chat requests are completed by hand, and the reply the transport refused is retried by hand with the same envelope", async () => {
     const { alice, bob } = await parties();
+    let answer = refused;
+    const { wire, manual, channel } = await hosting(alice, () => answer());
     const pair = { localDid: alice.did, peerDid: bob.did };
     const ping = await received(alice, bob, crypto.randomUUID(), { type: PING_TYPE, body: { response_requested: true }, created_time: CREATED }, alice, "1" as ReceiptOrdinal);
-    const chat = await received(alice, bob, crypto.randomUUID(), { type: BASIC_MESSAGE, body: { content: "same ordinal" } }, alice, "1" as ReceiptOrdinal);
+    const chat = await received(alice, bob, crypto.randomUUID(), { type: BASIC_MESSAGE, body: { content: "same ordinal" }, please_ack: [""] }, alice, "1" as ReceiptOrdinal);
 
     const records = await readRecords(alice.runtime, alice.keys);
     const record = await records.channel(pair);
     const integrity = { kind: "receipt-integrity", because: "one author gave the receipt's ordinal to another observation" };
-    expect(record.messages.map(({ direction, body, input, diagnostics }) => [direction, body, input, diagnostics])).toEqual([
-      ["in", { state: "available", body: { response_requested: true }, attachments: [] }, { status: "complete" }, [integrity]],
-      ["in", { state: "available", body: { content: "same ordinal" }, attachments: [] }, { status: "complete" }, [integrity]],
+    expect(record.messages.map(({ direction, body, input, manualAction, completes, diagnostics }) => [direction, body, input, manualAction, completes, diagnostics])).toEqual([
+      ["in", { state: "available", body: { response_requested: true }, attachments: [] }, { status: "complete" }, "complete", [PING_RESPONSE_EFFECT], [integrity]],
+      ["in", { state: "available", body: { content: "same ordinal" }, attachments: [] }, { status: "complete" }, "complete", [PURE_ACK_EFFECT], [integrity]],
     ]);
     expect(record.observations.map(({ sourceEventCid, standing, disposition }) => [sourceEventCid, standing, disposition])).toEqual([ping, chat].map((cid) => [cid, { status: "complete" }, { status: "admitted" }]));
-    expect(records.pending().missingResponses.map(({ messageId, entries }) => [messageId, entries])).toEqual([[record.messages[0]!.messageId, []]]);
+    const owed = records.pending().missingResponses;
+    expect(new Map(owed.map(({ effectType, messageId, entries }) => [effectType, [messageId, entries]]))).toEqual(new Map([
+      [PING_RESPONSE_EFFECT, [record.messages[0]!.messageId, ["completeResponse"]]],
+      [PURE_ACK_EFFECT, [record.messages[1]!.messageId, ["completeResponse"]]],
+    ]));
+    const owedFor = (effectType: string) => owed.find((response) => response.effectType === effectType)!;
+
+    const reply = await manual.completeResponse(owedFor(PING_RESPONSE_EFFECT).executionId, PING_RESPONSE_EFFECT);
+    if (reply.outcome !== "created") throw new Error(`not created: ${JSON.stringify(reply)}`);
+    expect(reply.dispatched).toMatchObject({ outcome: "failed" });
+    const refusedReply = only(await channel(pair), "out");
+    expect(refusedReply).toMatchObject({ messageId: reply.messageId, effectType: PING_RESPONSE_EFFECT, outcome: { status: "prepared" }, manualAction: "retry", diagnostics: [integrity] });
+    expect((await readRecords(alice.runtime, alice.keys)).pending().pendingOutbounds).toEqual([{ messageId: reply.messageId, channel: pair, outcome: "prepared", because: null, entries: ["retry", "cancel"] }]);
+    answer = accepted;
+    expect(await manual.retry(reply.messageId)).toMatchObject({ outcome: "submitted" });
+    expect(wire.posts.map((post) => post.body)).toEqual([wire.posts[0]!.body, wire.posts[0]!.body]);
+    expect(only(await channel(pair), "out")).toMatchObject({ outcome: { status: "submitted" }, manualAction: "none", diagnostics: [integrity] });
+
+    expect(await manual.completeResponse(owedFor(PURE_ACK_EFFECT).executionId, PURE_ACK_EFFECT)).toMatchObject({ outcome: "created", dispatched: { outcome: "submitted" } });
+    expect(wire.posts).toHaveLength(3);
+    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     await closeAll(alice, bob);
   });
 
