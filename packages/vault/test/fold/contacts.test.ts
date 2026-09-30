@@ -69,9 +69,9 @@ describe("the contacts", () => {
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
     packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { ack: [out.data.messageId], pleaseAck: [""] } });
-    receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 2, fromPrior: await proof(peerKeys, b0, b1) });
-    receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), ordinal: 3 });
+    receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [out.data.messageId], pleaseAck: [""] } });
+    receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), fromPrior: await proof(peerKeys, b0, b1) });
+    receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0) });
     blocked(scene, a1, b0);
     const authority = async () => {
       const vault = await foldVaultChecked(scene.set(), keys, noObjects);

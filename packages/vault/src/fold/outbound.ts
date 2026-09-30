@@ -17,12 +17,13 @@
 
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { channelOf, sameChannel } from "../ids.js";
+import { compareEvents } from "@estoc/event-store";
 import { canonicalDidOf } from "../peer-document.js";
 import { requestsAck } from "../projection.js";
 import { agreementKey } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
 import type { Channel, Did, EventCid, MessageId, MessageOut, WireMessageId } from "../types.js";
-import { compareReceiptKeys, keyAgreementTypeOf, receiptOrderKey, type ChannelEvidence, type Source } from "./channels.js";
+import { keyAgreementTypeOf, type ChannelEvidence, type Source } from "./channels.js";
 import type { Continuity } from "./continuity.js";
 import type { EvidenceCheck } from "./evidence.js";
 import type { Erasures } from "./held.js";
@@ -127,7 +128,7 @@ export interface Outbound {
   /** the first valid termination in canonical order */
   readonly terminal: Termination | null;
   readonly effect: EffectStatus;
-  /** the admitted witnesses whose `ack` names the message, in first-receipt order; none until a complete package is here to attribute the receipts to */
+  /** the admitted witnesses whose `ack` names the message, in canonical event order; none until a complete package is here to attribute the receipts to */
   readonly ackWitnesses: readonly AckWitness[];
   readonly acknowledgements: readonly Acknowledgement[];
   readonly acknowledged: boolean;
@@ -265,10 +266,10 @@ function admittedWitness(sourceEventCid: EventCid, inbound: InboundFold): boolea
   return member !== null && member.admitted && member.witness.status === "complete" && inbound.ofSource(sourceEventCid)!.status.status !== "conflict";
 }
 
-/** The admitted witnesses whose `ack` names each wire ID, in first-receipt order. */
+/** The admitted witnesses whose `ack` names each wire ID, in canonical event order. */
 function witnessesByTarget(evidence: ChannelEvidence, inbound: InboundFold): Map<string, Source[]> {
   const byTarget = new Map<string, Source[]>();
-  const sources = [...evidence.sources.values()].sort((a, b) => compareReceiptKeys(receiptOrderKey(a.event), receiptOrderKey(b.event)));
+  const sources = [...evidence.sources.values()].sort((a, b) => compareEvents(a.event, b.event));
   for (const source of sources) {
     if (source.channel === null || source.event.data.ack.length === 0 || !admittedWitness(source.event.cid, inbound)) continue;
     for (const target of new Set(source.event.data.ack)) {

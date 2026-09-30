@@ -298,10 +298,10 @@ describe("an outbound message", () => {
     const out = intent(scene, a0, b0, { expiresTime: start + 1 });
     const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     const target = out.data.messageId;
-    const elsewhere = receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), ordinal: 1, overrides: { ack: [target] } });
+    const elsewhere = receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), overrides: { ack: [target] } });
     const successorRoot = resolved(scene, a0.didId, b1);
-    const bySuccessor = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 2, fromPrior: await proof(peerKeys, b0, b1), overrides: { ack: [target] } });
-    const unproven = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 3, fromPrior: "not a JWT", overrides: { ack: [target] } });
+    const bySuccessor = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, fromPrior: await proof(peerKeys, b0, b1), overrides: { ack: [target] } });
+    const unproven = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, fromPrior: "not a JWT", overrides: { ack: [target] } });
     let vault = await fold(scene, keys);
     let outbound = outboundOf(vault, out);
     expect(outbound.ackWitnesses.map(({ source }) => source.event.cid)).toEqual([bySuccessor.cid]);
@@ -311,7 +311,7 @@ describe("an outbound message", () => {
     expect(vault.continuity.ackPath(outbound.channel!, vault.channels.sources.get(elsewhere.cid)!.channel!)).toBe(false);
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const direct = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 4, overrides: { ack: [target, target] } }, { at: "2026-09-13T00:00:01.000Z" });
+    const direct = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [target, target] } }, { at: "2026-09-13T00:00:01.000Z" });
     const recorded = acknowledged(scene, out, direct, b0, a0);
     const wrongWire = acknowledged(scene, out, direct, b0, a0, { ackWireMessageId: uuidv7() as WireMessageId });
     const wrongKey = acknowledged(scene, out, direct, b0, a0, { peerPublicKey: b1.publicKey });
@@ -332,10 +332,10 @@ describe("an outbound message", () => {
 
     const lateOut = intent(scene, a0, b0, { expiresTime: start });
     packageOf(scene, lateOut, { sender: a0.didId, recipient: b0, resolution: root });
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 5, overrides: { ack: [lateOut.data.messageId] } });
+    receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [lateOut.data.messageId] } });
     const noExpiry = intent(scene, a0, b0);
     packageOf(scene, noExpiry, { sender: a0.didId, recipient: b0, resolution: root });
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 6, overrides: { ack: [noExpiry.data.messageId] } });
+    receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [noExpiry.data.messageId] } });
     vault = await fold(scene, keys);
     expect(outboundOf(vault, lateOut)).toMatchObject({ acknowledged: true, late: true });
     expect(outboundOf(vault, noExpiry)).toMatchObject({ acknowledged: true, late: false });
@@ -347,11 +347,11 @@ describe("an outbound message", () => {
     const out = intent(scene, a0, b0);
     packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     const wire = uuidv7() as WireMessageId;
-    const first = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, wire, overrides: { ack: [out.data.messageId] } });
+    const first = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { ack: [out.data.messageId] } });
     let vault = await fold(scene, keys);
     expect(outboundOf(vault, out).ackWitnesses.map(({ source }) => source.event.cid)).toEqual([first.cid]);
 
-    const second = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, wire, overrides: { ack: [out.data.messageId], intentHash: OTHER_HASH } });
+    const second = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { ack: [out.data.messageId], intentHash: OTHER_HASH } });
     vault = await fold(scene, keys);
     expect(vault.continuity.witness(first.cid).status).toBe("complete");
     expect(vault.continuity.witness(second.cid).status).toBe("complete");
@@ -364,15 +364,15 @@ describe("an outbound message", () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const unpackaged = intent(scene, a0, b0, { expiresTime: 1 });
-    const unpackagedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { ack: [unpackaged.data.messageId] } });
+    const unpackagedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [unpackaged.data.messageId] } });
     const unpackagedRecord = acknowledged(scene, unpackaged, unpackagedCarrier, b0, a0);
     const waiting = intent(scene, a0, b0);
     packageOf(scene, waiting, { sender: a0.didId, recipient: b0, resolution: root, overrides: { peerResolutionEventCid: fakeEventCid() as never } });
-    const waitingCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { ack: [waiting.data.messageId] } });
+    const waitingCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [waiting.data.messageId] } });
     acknowledged(scene, waiting, waitingCarrier, b0, a0);
     const contradicted = intent(scene, a0, b0);
     packageOf(scene, contradicted, { sender: a0.didId, recipient: b0, resolution: root, overrides: { intentHash: OTHER_HASH } });
-    const contradictedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { ack: [contradicted.data.messageId] } });
+    const contradictedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [contradicted.data.messageId] } });
     acknowledged(scene, contradicted, contradictedCarrier, b0, a0);
     let vault = await fold(scene, keys);
     expect(outboundOf(vault, unpackaged)).toMatchObject({ ackWitnesses: [], acknowledged: false, late: false, acknowledgements: [{ status: { status: "pending", because: "no package is prepared here" } }], work: { kind: "prepare" } });
@@ -389,7 +389,7 @@ describe("an outbound message", () => {
   it("checks an automatic intent against its source's input and the operation's rules, for good when they contradict it and pending while evidence is missing", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1, b2 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
     const ack = pureAck(scene, a0, b0, source);
     const wrongExecution = automatic(scene, a0, b0, source, executionId(b0.did, a1.did, source.data.wireMessageId), PURE_ACK, { bodyCid: EMPTY_CONTENT_CID, ack: [source.data.wireMessageId], thid: "thread", createdTime: 1_700_000_000 });
     const misshapen = pureAck(scene, a0, b0, source, { pleaseAck: [""] });
@@ -400,7 +400,7 @@ describe("an outbound message", () => {
     const elsewhere = pureAck(scene, a1, b0, source, {}, a0);
     const unknown = automatic(scene, a0, b0, source, inputOf(source, b0, a0), "https://example.com/op#reply");
     const missing = automatic(scene, a0, b0, source, executionId(b0.did, a0.did, uuidv7() as WireMessageId), PURE_ACK, { sourceEventCid: fakeEventCid() as never, bodyCid: EMPTY_CONTENT_CID, ack: [source.data.wireMessageId] });
-    const ping = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { msgType: PING_TYPE, pthid: "parent", expiresTime: 1_900_000_000 } });
+    const ping = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_TYPE, pthid: "parent", expiresTime: 1_900_000_000 } });
     const pong = automatic(scene, a0, b0, ping, inputOf(ping, b0, a0), PING_RESPONSE_EFFECT, { msgType: PING_RESPONSE_TYPE, bodyCid: EMPTY_CONTENT_CID, thid: ping.data.wireMessageId, pthid: "parent", expiresTime: 1_900_000_000 });
     const pongOfNoPing = automatic(scene, a0, b0, source, inputOf(source, b0, a0), PING_RESPONSE_EFFECT, { msgType: PING_RESPONSE_TYPE, bodyCid: EMPTY_CONTENT_CID, thid: source.data.wireMessageId, createdTime: 1_700_000_000 });
     const toOtherPeer = automatic(scene, a0, b1, source, inputOf(source, b0, a0), PURE_ACK, { bodyCid: EMPTY_CONTENT_CID, ack: [source.data.wireMessageId], thid: "thread", createdTime: 1_700_000_000 });
@@ -430,29 +430,29 @@ describe("an outbound message", () => {
     expect(outboundOf(foldVault(scene.set(), vault.checks, { effectTypes: ["https://example.com/op#reply"] }), unknown).effect).toEqual({ status: "complete" });
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const carried = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 3, fromPrior: await proof(peerKeys, b2, b1), overrides: { pleaseAck: [""] } });
+    const carried = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), fromPrior: await proof(peerKeys, b2, b1), overrides: { pleaseAck: [""] } });
     const ackOfCarried = pureAck(scene, a0, b1, carried);
     vault = await fold(scene, keys);
     expect(outboundOf(vault, ackOfCarried).effect).toEqual({ status: "complete" });
     expect(vault.continuity.witness(carried.cid).status).toBe("complete");
 
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 4, wire: source.data.wireMessageId, overrides: { intentHash: OTHER_HASH, pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
+    receipt(scene, { local: a0, peer: b0, resolution: root, wire: source.data.wireMessageId, overrides: { intentHash: OTHER_HASH, pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
     vault = await fold(scene, keys);
     expect(variant(scene, vault.checks, ack, variants).effect).toEqual({ status: "conflict", because: "the source's input is in conflict: 2 intents are admitted for one input" });
     expect(outboundOf(vault, pong).effect).toEqual({ status: "complete" });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
-  it("checks a pure ACK's one target, the carrier's own wire ID, against the carrier's request: a request for other messages earns them nothing, and a receipt conflict over the carrier's input keeps nothing from it", async () => {
+  it("checks a pure ACK's one target, the carrier's own wire ID, against the carrier's request: a request for other messages earns them nothing, and a contradicting observation of the carrier's input, admitted by nothing, keeps nothing from it", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const silent = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const silent = receipt(scene, { local: a0, peer: b0, resolution: root });
     const ackOfSilent = pureAck(scene, a0, b0, silent);
-    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2 });
-    const namingEarlier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { pleaseAck: [earlier.data.wireMessageId] } });
+    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root });
+    const namingEarlier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [earlier.data.wireMessageId] } });
     const ackForEarlier = pureAck(scene, a0, b0, namingEarlier, { ack: [earlier.data.wireMessageId] });
     const successorRoot = resolved(scene, a0.didId, b1);
-    const source = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 4, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: [earlier.data.wireMessageId, "", uuidv7(), ""] } });
+    const source = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: [earlier.data.wireMessageId, "", uuidv7(), ""] } });
     const own = pureAck(scene, a0, b1, source);
     const withEarlier = pureAck(scene, a0, b1, source, { ack: [earlier.data.wireMessageId, source.data.wireMessageId] });
     const ofEarlier = pureAck(scene, a0, b1, source, { ack: [earlier.data.wireMessageId] });
@@ -479,9 +479,9 @@ describe("an outbound message", () => {
     expect(variant(unplaced, vault.checks, ofEarlier, variants).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone" });
     expectOrderFree(unplaced.events, (set) => picture(foldVault(set, vault.checks)));
 
-    receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 4, admitted: false, overrides: { intentHash: OTHER_HASH } });
+    const contradicting = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, wire: source.data.wireMessageId, admitted: false, overrides: { intentHash: OTHER_HASH } });
     vault = await fold(scene, keys);
-    expect(vault.channels.receipts.affected.has(source.data.messageId)).toBe(true);
+    expect(vault.inbound.ofSource(source.cid)!.contradicting.map((member) => member.source.event.cid)).toEqual([contradicting.cid]);
     expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "eligible", wireMessageId: source.data.wireMessageId });
     expect(variant(scene, vault.checks, own, variants)).toMatchObject({ effect: { status: "complete" }, work: { kind: "prepare" } });
     expectSameOverEveryOrder(scene, vault.checks);
@@ -490,7 +490,7 @@ describe("an outbound message", () => {
   it("validates a saved pure ACK by the witness its source has, admitted or not: an absent admission leaves the effect, the package and the submission as they are, while the source earns no new receipt until admitted", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { pleaseAck: [""] }, admitted: false });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] }, admitted: false });
     const out = pureAck(scene, a0, b0, source);
     let vault = await fold(scene, keys);
     expect([vault.continuity.witness(source.cid), vault.admissions.admitted(source.cid)]).toEqual([{ status: "complete" }, false]);
@@ -514,10 +514,10 @@ describe("an outbound message", () => {
   it("lets an automatic output continue its source's channel at a verified local successor, and a triggered notification follow its decision", async () => {
     const { scene, keys, a0, a1, a2, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { pleaseAck: [""] } });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
     const ackAtSuccessor = pureAck(scene, a1, b0, source, {}, a0);
-    const ping = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { msgType: PING_TYPE } });
+    const ping = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_TYPE } });
     const pongAtSuccessor = automatic(scene, a1, b0, ping, inputOf(ping, b0, a0), PING_RESPONSE_EFFECT, { msgType: PING_RESPONSE_TYPE, bodyCid: EMPTY_CONTENT_CID, thid: ping.data.wireMessageId });
     const notification = automatic(scene, a1, b0, source, inputOf(source, b0, a0), ROTATION_NOTIFICATION_EFFECT, { bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], thid: source.data.wireMessageId, rotationEventCid: ref(decision) });
     const fromPredecessor = automatic(scene, a0, b0, source, inputOf(source, b0, a0), ROTATION_NOTIFICATION_EFFECT, { bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], thid: source.data.wireMessageId, rotationEventCid: ref(decision) });
@@ -562,7 +562,7 @@ describe("an outbound message", () => {
     expect(beside.continuity.conflicts).toEqual([]);
     expect(outboundOf(beside, ackAtSuccessor).effect).toEqual(noPath);
     expect(outboundOf(beside, pongAtSuccessor).effect).toEqual(noPath);
-    const trigger = receipt(new Scene(), { local: a0, peer: b0, resolution: root, ordinal: 4 });
+    const trigger = receipt(new Scene(), { local: a0, peer: b0, resolution: root });
     await rotation(sidelong, keys, { from: a0, peer: b0, to: a1, source: trigger });
     beside = await fold(sidelong, keys);
     const unsourced = { status: "pending", because: "the output's channel does not continue the source's yet: the source it names is not here" };
@@ -576,7 +576,7 @@ describe("an outbound message", () => {
 
     const forked = new Scene();
     forked.events.push(...scene.events.filter((event) => event === ackAtSuccessor || !variants.includes(event as VaultEvent<"message.out">)));
-    receipt(forked, { local: a2, peer: b0, resolution: resolved(forked, a2.didId, b0), ordinal: 5 });
+    receipt(forked, { local: a2, peer: b0, resolution: resolved(forked, a2.didId, b0) });
     await rotation(forked, keys, { from: a0, peer: b0, to: a2, source: null });
     const split = await fold(forked, keys);
     expect(split.continuity.conflicted({ localDid: a0.did, peerDid: b0.did })).toBe(true);
@@ -584,7 +584,7 @@ describe("an outbound message", () => {
     expect(outboundOf(split, ackAtSuccessor)).toMatchObject({ effect: inConflict, outcome: { status: "conflict" }, work: { kind: "none" } });
     expect(outboundOf(split, pongAtSuccessor).effect).toEqual(inConflict);
 
-    receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), ordinal: 2 });
+    receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0) });
     const manual = await rotation(scene, keys, { from: a1, peer: b0, to: a2, source: null });
     const announced = intent(scene, a2, b0, { msgType: EMPTY_MESSAGE_TYPE, bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], rotationEventCid: ref(manual) });
     const threaded = intent(scene, a2, b0, { msgType: EMPTY_MESSAGE_TYPE, bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], thid: "thread", rotationEventCid: ref(manual) });
@@ -608,7 +608,7 @@ describe("an outbound message", () => {
   it("stops the work of two well-formed notifications selected for one rotation, keeps a submitted one submitted, and waits while the rotation's predecessor is unconfirmed", async () => {
     const { scene, keys, a0, a1, a2, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { pleaseAck: [""] } });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
     const confirmed = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: null });
     const first = intent(scene, a1, b0, { msgType: EMPTY_MESSAGE_TYPE, bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], rotationEventCid: ref(confirmed) });
     const pkg = packageOf(scene, first, { sender: a1.didId, recipient: b0, resolution: resolved(scene, a1.didId, b0) });
@@ -654,8 +654,8 @@ describe("an outbound message", () => {
     const forked = intent(scene, a2, b1);
     const forkedPackage = packageOf(scene, forked, { sender: a2.didId, recipient: b1, resolution: forkedRoot });
     const unprepared = intent(scene, a2, b1);
-    receipt(scene, { local: a2, peer: b2, resolution: resolved(scene, a2.didId, b2), ordinal: 1, fromPrior: await proof(peerKeys, b1, b2) });
-    receipt(scene, { local: a2, peer: b3, resolution: resolved(scene, a2.didId, b3), ordinal: 2, fromPrior: await proof(peerKeys, b1, b3) });
+    receipt(scene, { local: a2, peer: b2, resolution: resolved(scene, a2.didId, b2), fromPrior: await proof(peerKeys, b1, b2) });
+    receipt(scene, { local: a2, peer: b3, resolution: resolved(scene, a2.didId, b3), fromPrior: await proof(peerKeys, b1, b3) });
     const vault = await fold(scene, keys);
     expect(outboundOf(vault, retired).work).toEqual({ kind: "none", because: "the local DID cannot send: retired: done" });
     expect(outboundOf(vault, denied).work).toEqual({ kind: "none", because: "the channel is denied" });
@@ -688,8 +688,8 @@ describe("an outbound message", () => {
       { peer: b3, msgType: PROBLEM_REPORT_TYPE, kind: "error" },
     ];
     const notifications: { notification: VaultEvent<"message.out">; decision: VaultEvent<"did.rotationSelected">; kind: string }[] = [];
-    for (const [ordinal, { peer, msgType, kind }] of controls.entries()) {
-      const source = receipt(scene, { local: a0, peer, resolution: resolved(scene, a0.didId, peer), ordinal: ordinal + 1, overrides: { msgType, pleaseAck: [""] } });
+    for (const { peer, msgType, kind } of controls) {
+      const source = receipt(scene, { local: a0, peer, resolution: resolved(scene, a0.didId, peer), overrides: { msgType, pleaseAck: [""] } });
       const decision = await rotation(scene, keys, { from: a0, peer, to: a1, source });
       const notification = automatic(scene, a1, peer, source, inputOf(source, peer, a0), ROTATION_NOTIFICATION_EFFECT, { bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""], thid: source.data.wireMessageId, rotationEventCid: ref(decision) });
       notifications.push({ notification, decision, kind });
@@ -710,9 +710,9 @@ describe("an outbound message", () => {
     const out = intent(scene, a0, peer);
     packageOf(scene, out, { sender: a0.didId, recipient: peer, resolution: root });
     const wire = uuidv7();
-    const underFirst = receipt(scene, { local: a0, peer, resolution: root, ordinal: 1, wire, overrides: { ack: [out.data.messageId] } });
+    const underFirst = receipt(scene, { local: a0, peer, resolution: root, wire, overrides: { ack: [out.data.messageId] } });
     const secondRoot = resolved(scene, a0.didId, peer, { peerPublicKey: b1.publicKey });
-    const underSecond = receipt(scene, { local: a0, peer, resolution: secondRoot, ordinal: 2, wire, overrides: { ack: [out.data.messageId] } });
+    const underSecond = receipt(scene, { local: a0, peer, resolution: secondRoot, wire, overrides: { ack: [out.data.messageId] } });
     const ofSecond = acknowledged(scene, out, underSecond, peer, a0, { peerPublicKey: b1.publicKey });
     const ofFirst = acknowledged(scene, out, underFirst, peer, a0);
     const ofNeither = acknowledged(scene, out, underFirst, peer, a0, { peerPublicKey: b0.publicKey });
@@ -744,22 +744,22 @@ describe("an outbound message", () => {
     expectOrderFree(unresolved.events, (set) => picture(foldVault(set, vault.checks)));
   });
 
-  it("gives a carrier the receipt of itself alone: requesting it as the admitted witness of an established input earns its own wire ID, whatever else the request names and whatever the replaced peer's ignored observation under the same wire ID; requesting only others', an unproven proof or no admission earns none, and a receipt conflict over the input takes nothing away", async () => {
+  it("gives a carrier the receipt of itself alone: requesting it as the admitted witness of an established input earns its own wire ID, whatever else the request names and whatever the replaced peer's ignored observation under the same wire ID; requesting only others', an unproven proof or no admission earns none, and a contradicting observation of the input, admitted by nothing, takes nothing away", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const successorRoot = resolved(scene, a0.didId, b1);
-    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 2, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: ["", earlier.data.wireMessageId, uuidv7(), ""] } });
-    const ignored = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, wire: carrier.data.wireMessageId, admitted: false });
-    const namingEarlier = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 4, overrides: { pleaseAck: [earlier.data.wireMessageId] } });
-    const unproven = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 5, fromPrior: "not a JWT", overrides: { pleaseAck: [""] } });
-    const silent = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 6, overrides: { pleaseAck: [] } });
-    const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 7, overrides: { pleaseAck: [""] }, admitted: false });
-    const disputed = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 8, overrides: { pleaseAck: [""] } });
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 8, admitted: false, overrides: { intentHash: OTHER_HASH } });
+    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, fromPrior: await proof(peerKeys, b0, b1), overrides: { pleaseAck: ["", earlier.data.wireMessageId, uuidv7(), ""] } });
+    const ignored = receipt(scene, { local: a0, peer: b0, resolution: root, wire: carrier.data.wireMessageId, admitted: false });
+    const namingEarlier = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, overrides: { pleaseAck: [earlier.data.wireMessageId] } });
+    const unproven = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, fromPrior: "not a JWT", overrides: { pleaseAck: [""] } });
+    const silent = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [] } });
+    const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] }, admitted: false });
+    const disputed = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
+    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: root, wire: disputed.data.wireMessageId, admitted: false, overrides: { intentHash: OTHER_HASH } });
     const vault = await fold(scene, keys);
     expect(vault.dispositions.disposition(ignored.cid).status).toBe("ignored-superseded");
-    expect(vault.channels.receipts.affected.has(disputed.data.messageId)).toBe(true);
+    expect(vault.inbound.ofSource(disputed.cid)!.contradicting.map((member) => member.source.event.cid)).toEqual([contradicting.cid]);
     expect(vault.outbound.ackTarget(carrier.cid)).toEqual({ status: "eligible", wireMessageId: carrier.data.wireMessageId });
     expect(vault.outbound.ackTarget(namingEarlier.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
     expect(vault.outbound.ackTarget(earlier.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
@@ -777,10 +777,10 @@ describe("an outbound message", () => {
     const out = intent(scene, a0, b0, { msgType: PING_TYPE });
     packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     const target = out.data.messageId;
-    const ack = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { ack: [target] }, admitted: false });
+    const ack = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [target] }, admitted: false });
     const record = acknowledged(scene, out, ack, b0, a0);
-    const pong = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { msgType: PING_RESPONSE_TYPE, thid: target }, admitted: false });
-    const asking = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { pleaseAck: [""] }, admitted: false });
+    const pong = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_RESPONSE_TYPE, thid: target }, admitted: false });
+    const asking = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] }, admitted: false });
     let vault = await fold(scene, keys);
     for (const source of [ack, pong, asking]) expect(vault.continuity.witness(source.cid)).toEqual({ status: "complete" });
     expect(outboundOf(vault, out)).toMatchObject({ ackWitnesses: [], acknowledged: false, acknowledgements: [{ event: record, status: { status: "pending", because: "the carrier it names is not admitted" } }] });
@@ -795,8 +795,8 @@ describe("an outbound message", () => {
     expect(vault.outbound.ackTarget(asking.cid)).toEqual({ status: "eligible", wireMessageId: asking.data.wireMessageId });
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const viaFirst = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), ordinal: 4, fromPrior: await proof(peerKeys, b0, b1), overrides: { ack: [target] } });
-    receipt(scene, { local: a0, peer: b2, resolution: resolved(scene, a0.didId, b2), ordinal: 5, fromPrior: await proof(peerKeys, b0, b2), overrides: { ack: [target] } });
+    const viaFirst = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), fromPrior: await proof(peerKeys, b0, b1), overrides: { ack: [target] } });
+    receipt(scene, { local: a0, peer: b2, resolution: resolved(scene, a0.didId, b2), fromPrior: await proof(peerKeys, b0, b2), overrides: { ack: [target] } });
     vault = await fold(scene, keys);
     expect(vault.continuity.conflicted(channel(a0, b0))).toBe(true);
     expect(vault.continuity.witness(viaFirst.cid).status).toBe("conflict");
@@ -809,11 +809,11 @@ describe("an outbound message", () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0, { msgType: PING_TYPE });
-    const pong = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { msgType: PING_RESPONSE_TYPE, thid: out.data.messageId } });
-    const report = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: out.data.messageId, bodyCid: cidOf("problem") } });
-    const elsewhere = receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), ordinal: 3, overrides: { msgType: PING_RESPONSE_TYPE, thid: out.data.messageId } });
-    const unthreaded = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 4, overrides: { msgType: PING_RESPONSE_TYPE, thid: uuidv7() } });
-    const application = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 5, overrides: { thid: out.data.messageId } });
+    const pong = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_RESPONSE_TYPE, thid: out.data.messageId } });
+    const report = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: out.data.messageId, bodyCid: cidOf("problem") } });
+    const elsewhere = receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), overrides: { msgType: PING_RESPONSE_TYPE, thid: out.data.messageId } });
+    const unthreaded = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_RESPONSE_TYPE, thid: uuidv7() } });
+    const application = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { thid: out.data.messageId } });
     const vault = await fold(scene, keys);
     expect(vault.outbound.inReplyTo(pong.cid)?.messageId).toBe(out.data.messageId);
     expect(vault.outbound.inReplyTo(report.cid)?.messageId).toBe(out.data.messageId);

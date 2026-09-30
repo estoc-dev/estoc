@@ -128,7 +128,6 @@ export type Receipt = {
   local: Local;
   peer: Peer;
   resolution: VaultEvent<"peer.resolved">;
-  ordinal: number;
   fromPrior?: string | null;
   wire?: string;
   presentedDid?: Did;
@@ -152,7 +151,6 @@ export function observation(scene: Scene, r: Receipt, options: EventOptions = {}
     {
       messageId: inboundMessageId(r.peer.did, r.local.did, wire),
       wireMessageId: wire,
-      receiptOrdinal: String(r.ordinal) as VaultData["message.in"]["receiptOrdinal"],
       intentHash: HASH as VaultData["message.in"]["intentHash"],
       plaintextHash: HASH as VaultData["message.in"]["plaintextHash"],
       localKeyName: didKeyName(r.local.didId, "key-agreement"),

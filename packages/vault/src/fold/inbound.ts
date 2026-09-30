@@ -16,11 +16,12 @@
  * is the outbound fold's question.
  */
 
+import { compareEvents } from "@estoc/event-store";
 import { storeMessage } from "../document.js";
 import { executionId } from "../ids.js";
 import type { Channel, EventCid, ExecutionId, MessageHash, MessageId, MessageIn, WireMessageId } from "../types.js";
 import type { AdmissionFold } from "./admission.js";
-import { compareReceiptKeys, receiptOrderKey, type ChannelEvidence, type ReceiptKey, type Source } from "./channels.js";
+import type { ChannelEvidence, Source } from "./channels.js";
 import type { Continuity, Witness } from "./continuity.js";
 import type { Erasures } from "./held.js";
 
@@ -83,9 +84,9 @@ export interface Execution {
   readonly messageId: MessageId;
   readonly channel: Channel;
   readonly wireMessageId: WireMessageId;
-  /** in first-receipt order */
+  /** in canonical event order */
   readonly members: readonly Member[];
-  /** the observations of this input whose own authentication is incomplete or contradicted, in first-receipt order */
+  /** the observations of this input whose own authentication is incomplete or contradicted, in canonical event order */
   readonly siblings: readonly Source[];
   /** the positive members no admission names whose intent differs from the admitted one: a discrepancy shown beside the input, never a conflict */
   readonly contradicting: readonly Member[];
@@ -93,10 +94,8 @@ export interface Execution {
   readonly intentHash: MessageHash | null;
   readonly kind: InboundKind | null;
   readonly status: ExecutionStatus;
-  /** the first admitted complete witness, in first-receipt order: the observation an operation reads the input's fields from; null while the input is not established */
+  /** the first admitted complete witness, in canonical event order: the observation an operation reads the input's fields from; null while the input is not established */
   readonly firstWitness: Member | null;
-  /** the receipt key of `firstWitness`: the order inputs are listed in */
-  readonly firstReceiptKey: ReceiptKey | null;
   /** an erasure names the message: its content produces no new work */
   readonly erased: boolean;
 }
@@ -104,7 +103,7 @@ export interface Execution {
 export interface InboundFold {
   /** every input one complete authentication places in a channel, by its execution */
   readonly executions: ReadonlyMap<ExecutionId, Execution>;
-  /** the anonymous observations, in first-receipt order */
+  /** the anonymous observations, in canonical event order */
   readonly anonymous: readonly Source[];
   /** the authenticated observations no execution places: their own authentication is incomplete or contradicted, and so is every sibling's */
   readonly unplaced: readonly Source[];
@@ -133,7 +132,7 @@ export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, a
   const byMessage = new Map<MessageId, Execution>();
   const executions = new Map<ExecutionId, Execution>();
   for (const [messageId, sources] of members) {
-    const execution = executionOf(messageId, sources.sort(byReceipt), (siblings.get(messageId) ?? []).sort(byReceipt), evidence, continuity, admissions, erasures);
+    const execution = executionOf(messageId, sources.sort(byEvent), (siblings.get(messageId) ?? []).sort(byEvent), evidence, continuity, admissions, erasures);
     byMessage.set(messageId, execution);
     executions.set(execution.id, execution);
   }
@@ -145,15 +144,15 @@ export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, a
   };
   return {
     executions,
-    anonymous: anonymous.sort(byReceipt),
-    unplaced: unplaced.sort(byReceipt),
+    anonymous: anonymous.sort(byEvent),
+    unplaced: unplaced.sort(byEvent),
     ofMessage: (messageId) => byMessage.get(messageId) ?? null,
     ofSource,
     memberOf: (sourceEventCid) => ofSource(sourceEventCid)?.members.find((member) => member.source.event.cid === sourceEventCid) ?? null,
   };
 }
 
-const byReceipt = (a: Source, b: Source) => compareReceiptKeys(receiptOrderKey(a.event), receiptOrderKey(b.event));
+const byEvent = (a: Source, b: Source) => compareEvents(a.event, b.event);
 
 /**
  * The members share the message ID, and a complete authentication has
@@ -168,13 +167,13 @@ function executionOf(messageId: MessageId, sources: readonly Source[], siblings:
   const intents = new Set<MessageHash>();
   for (const member of admitted) intents.add(member.source.event.data.intentHash);
   const shared = { id: executionId(channel.peerDid, channel.localDid, wireMessageId), messageId, channel, wireMessageId, members, siblings, erased: erasures.has(messageId) };
-  if (intents.size > 1) return { ...shared, contradicting: [], intentHash: null, kind: null, status: { status: "conflict", because: `${intents.size} intents are admitted for one input` }, firstWitness: null, firstReceiptKey: null };
+  if (intents.size > 1) return { ...shared, contradicting: [], intentHash: null, kind: null, status: { status: "conflict", because: `${intents.size} intents are admitted for one input` }, firstWitness: null };
   const intentHash = intents.size === 1 ? [...intents][0]! : null;
   const contradicting = intentHash === null ? [] : members.filter((member) => member.positive && !member.admitted && member.source.event.data.intentHash !== intentHash);
   const kind = intentHash === null ? null : kindOf(admitted[0]!.source.event.data);
   const firstWitness = admitted.find((member) => member.witness.status === "complete") ?? null;
-  if (firstWitness !== null) return { ...shared, contradicting, intentHash, kind, status: { status: "complete" }, firstWitness, firstReceiptKey: receiptOrderKey(firstWitness.source.event) };
+  if (firstWitness !== null) return { ...shared, contradicting, intentHash, kind, status: { status: "complete" }, firstWitness };
   const waiting = admitted.find((member) => member.witness.status === "pending") ?? admitted[0];
   const because = waiting === undefined ? "no observation of the input is admitted" : `no admitted observation is a complete witness: ${(waiting.witness as Exclude<Witness, { status: "complete" }>).because}`;
-  return { ...shared, contradicting, intentHash, kind, status: { status: "pending", because }, firstWitness: null, firstReceiptKey: null };
+  return { ...shared, contradicting, intentHash, kind, status: { status: "pending", because }, firstWitness: null };
 }

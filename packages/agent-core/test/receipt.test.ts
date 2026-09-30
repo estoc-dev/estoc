@@ -77,7 +77,7 @@ async function rawEventsOf(holder: Fresh, ...types: string[]): Promise<unknown[]
 const ATTACHMENT = { id: "a1", media_type: "text/plain", data: { base64: "aGVsbG8gZmlsZQ==" } };
 
 describe("the receipt", () => {
-  test("a first message from a peer commits its resolution and then the observation naming it by the ID the commit returned, with its content held as objects; the fold places it in its channel; the next message reuses the resolution and takes the next ordinal", async () => {
+  test("a first message from a peer commits its resolution and then the observation naming it by the ID the commit returned, with its content held as objects; the fold places it in its channel; the next message reuses the resolution", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
     const { receiver, seen } = await receiving(alice, { trace });
@@ -93,7 +93,6 @@ describe("the receipt", () => {
     expect(event!.data).toEqual({
       messageId: inboundMessageId(bob.did, alice.did, wire),
       wireMessageId: wire,
-      receiptOrdinal: "1",
       intentHash: read.intentHash,
       plaintextHash: read.plaintextHash,
       localKeyName: didKeyName(DID, "key-agreement"),
@@ -125,10 +124,7 @@ describe("the receipt", () => {
 
     expect((await receiver.receive({ packed: await sealed(sealer, alice.longFormDid), source: DIRECT })).outcome).toBe("received");
     const events = await eventsOf(alice, "message.in");
-    expect(events.map(({ data }) => [data.receiptOrdinal, data.peerResolutionEventCid])).toEqual([
-      ["1", resolved!.cid],
-      ["2", resolved!.cid],
-    ]);
+    expect(events.map(({ data }) => data.peerResolutionEventCid)).toEqual([resolved!.cid, resolved!.cid]);
     expect(await eventsOf(alice, "peer.resolved")).toHaveLength(1);
     await closeAll(alice, bob);
   });
@@ -158,7 +154,7 @@ describe("the receipt", () => {
     await closeAll(alice, bob, carol);
   });
 
-  test("a message delivered again is another observation of the same input under its own ordinal, live for the first alone, whichever receiver records the others: one execution, no second resolution; the same wire ID with other content is recorded, refused admission and listed as the contradiction it is", async () => {
+  test("a message delivered again is another observation of the same input, live for the first alone, whichever receiver records the others: one execution, no second resolution; the same wire ID with other content is recorded, refused admission and listed as the contradiction it is", async () => {
     const { alice, bob } = await parties();
     const sealer = await peerSealer(bob);
     const wire = crypto.randomUUID();
@@ -172,10 +168,10 @@ describe("the receipt", () => {
     expect(await again.receive({ packed, source: pickup("d1") })).toMatchObject({ outcome: "received", live: false });
     expect(await again.receive({ packed: await sealed(sealer, alice.longFormDid, { id: wire }), source: DIRECT })).toMatchObject({ outcome: "received", live: false });
     const events = await eventsOf(alice, "message.in");
-    expect(events.map(({ data }) => [data.receiptOrdinal, data.messageId, data.receivedVia])).toEqual([
-      ["1", messageId, { mediationId: MEDIATION, deliveryId: "d1" }],
-      ["2", messageId, { mediationId: MEDIATION, deliveryId: "d1" }],
-      ["3", messageId, { mediationId: null, deliveryId: null }],
+    expect(events.map(({ data }) => [data.messageId, data.receivedVia])).toEqual([
+      [messageId, { mediationId: MEDIATION, deliveryId: "d1" }],
+      [messageId, { mediationId: MEDIATION, deliveryId: "d1" }],
+      [messageId, { mediationId: null, deliveryId: null }],
     ]);
     expect(await eventsOf(alice, "peer.resolved")).toHaveLength(1);
     const fold = await foldOf(alice);

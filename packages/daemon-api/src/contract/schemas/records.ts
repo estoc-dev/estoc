@@ -135,7 +135,7 @@ export const verificationStatus: z.ZodType<VerificationStatus> = z.discriminated
 ]);
 
 export const diagnostic: z.ZodType<Diagnostic> = z.object({
-  kind: z.enum(["input", "observations", "contradicting", "receipt-integrity", "intent", "outcome", "effect", "work", "remote-error"]),
+  kind: z.enum(["input", "observations", "contradicting", "intent", "outcome", "effect", "work", "remote-error"]),
   because: z.string(),
   reportMessageId: messageId.nullable(),
 });

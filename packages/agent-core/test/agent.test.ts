@@ -599,7 +599,7 @@ describe("a live input", () => {
     const agent = await agentOf(alice, "start", { onInbound: (inbound) => inbounds.push(inbound) });
     expect(agent.connections()).toMatchObject([{ drained: { acked: 2, ended: "empty" } }]);
     const taken = await fold(alice);
-    expect(taken.set.of("message.in").map(({ data }) => data.receiptOrdinal)).toEqual(["1", "2"]);
+    expect(taken.set.of("message.in")).toHaveLength(2);
     expect(taken.set.of("message.admitted").map(({ data }) => data.sourceEventCid)).toEqual(taken.set.of("message.in").map(({ cid }) => cid));
     expect(taken.set.of("message.out")).toHaveLength(2);
     await until("the first receipt is on the wire", () => forwards.length === 1);

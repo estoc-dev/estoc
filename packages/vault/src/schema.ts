@@ -14,7 +14,7 @@ import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, ef
 import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
-import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short, isReceiptOrdinal } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type {
   Channel,
   Cid,
@@ -30,7 +30,6 @@ import type {
   MessageId,
   PackageId,
   PublicKey,
-  ReceiptOrdinal,
   RouteId,
   VaultData,
   VaultEventType,
@@ -76,7 +75,6 @@ const publicKey: Check<PublicKey> = (value, at) => {
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
 const hash: Check<MessageHash> = (value, at) => (isMessageHash(value) ? (value as MessageHash) : fail(at, "an unpadded base64url SHA-256"));
 const compactJwt: Check<string> = (value, at) => (isCompactJwt(value) ? value : fail(at, "a compact JWT"));
-const receiptOrdinal: Check<ReceiptOrdinal> = (value, at) => (isReceiptOrdinal(value) ? (value as ReceiptOrdinal) : fail(at, "a canonical positive decimal"));
 const headers: Check<VaultData["message.out"]["headers"]> = (value, at) => {
   try {
     return checkHeaders(value, at);
@@ -127,6 +125,15 @@ const shape =
     const out: Record<string, unknown> = {};
     for (const [member, check] of Object.entries(members)) out[member] = check(value[member], `${at}.${member}`);
     return out as Of<S>;
+  };
+
+/** A member older writers stored and no reader uses any more: accepted whatever it holds, and left out of the payload read. */
+const retired =
+  <T>(member: string, check: Check<T>): Check<T> =>
+  (value, at) => {
+    if (!isJsonObject(value) || !Object.hasOwn(value, member)) return check(value, at);
+    const { [member]: _, ...rest } = value;
+    return check(rest, at);
   };
 
 const checked =
@@ -227,26 +234,28 @@ const messageOut = checked(
 ) as Check<VaultData["message.out"]>;
 
 const messageIn = checked(
-  shape({
-    messageId: derived<MessageId>(),
-    wireMessageId: nonEmpty as Check<WireMessageId>,
-    receiptOrdinal,
-    intentHash: hash,
-    plaintextHash: hash,
-    localKeyName: keyName,
-    msgType: nonEmpty,
-    peerResolutionEventCid: nullable(ref<"peer.resolved">()),
-    presentedDid: nullable(peerDid),
-    did: nullable(channelDid),
-    thid: nullable(nonEmpty),
-    pthid: nullable(nonEmpty),
-    ...timing,
-    fromPrior: nullable(text),
-    bodyCid: cid,
-    attachmentCids: arrayOf(cid, { distinct: true }),
-    bytes: count,
-    receivedVia: shape({ mediationId: nullable(idMembers.mediationId), deliveryId: nullable(nonEmpty) }),
-  }),
+  retired(
+    "receiptOrdinal",
+    shape({
+      messageId: derived<MessageId>(),
+      wireMessageId: nonEmpty as Check<WireMessageId>,
+      intentHash: hash,
+      plaintextHash: hash,
+      localKeyName: keyName,
+      msgType: nonEmpty,
+      peerResolutionEventCid: nullable(ref<"peer.resolved">()),
+      presentedDid: nullable(peerDid),
+      did: nullable(channelDid),
+      thid: nullable(nonEmpty),
+      pthid: nullable(nonEmpty),
+      ...timing,
+      fromPrior: nullable(text),
+      bodyCid: cid,
+      attachmentCids: arrayOf(cid, { distinct: true }),
+      bytes: count,
+      receivedVia: shape({ mediationId: nullable(idMembers.mediationId), deliveryId: nullable(nonEmpty) }),
+    })
+  ),
   (data) => {
     expiryAfterCreation(data);
     const anonymous = data.peerResolutionEventCid === null;

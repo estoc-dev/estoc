@@ -19,6 +19,8 @@ view installs alone.
   an `InvitationRecord` has no `uses` or `consumer` and its `state` is
   `available` or `unavailable`, and `DISCLOSURE_USES` and
   `DisclosureUses` are gone.
+- `DiagnosticKind` has no `receipt-integrity` member: the vault records
+  no receipt ordinal for an author to reuse.
 - `@estoc/daemon-api/views`: the pure helpers a view computes with,
   no daemon in reach: the snapshot indexed by ID with every
   conversation's channels, messages and observations assembled from

@@ -222,7 +222,7 @@ Local appends assign the current author and sampled timestamp, then compute
 the CID of the complete canonical envelope. Equal envelopes represent one
 event, even when produced by separate append calls or repeated drafts in a
 batch. A domain that must distinguish occurrences records that distinction in
-its payload, such as a message ID or receipt ordinal. Hashing or validation
+its payload, such as a message ID. Hashing or validation
 failure aborts the whole local batch before acceptance.
 
 `at` is one integer Unix-millisecond wall-clock observation, truncating any
@@ -548,8 +548,8 @@ it outside that lock, in that order. Success still requires completed output.
 [SQ §§11–12](vault-sqlite.md#portable-source-validation) define stable-source
 validation and atomic same-anchor union. Validate source-only properties before
 taking the target lock; perform target-dependent checks under it. Apply
-CID validation/deduplication, own-author fork, known payload,
-[receipt-integrity](vault-events.md#message-in) and erasure rules. Every root
+CID validation/deduplication, own-author fork, known payload and erasure
+rules. Every root
 retained by a newly accepted source event in the prospective union, and every
 root held by the union but not by the target before import, must have verified
 source bytes or [sound accepted target bytes](dasl-objects.md#read-operations);

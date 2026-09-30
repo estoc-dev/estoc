@@ -16,13 +16,11 @@ import {
   canonicalPublicKey,
   didKeyName,
   foldChannelEvidence,
-  foldReceipts,
   foldVault,
   foldVaultChecked,
   canonicalDidOf,
   inputDocumentOf,
   methodPublicKey,
-  receiptOrderKey,
   type ChannelChecks,
   type ChannelEvidence,
   type Cid,
@@ -36,7 +34,7 @@ import {
   type VaultEvent,
   type WireMessageId,
 } from "../../src/index.js";
-import { AUTHOR2, ENDPOINT, MEDIATED, ROUTE, checksOf, createdDid, expectOrderFree, foldChecked, snapshot, type KeyChecks, type Scene, fakeEventCid } from "./helpers.js";
+import { ENDPOINT, MEDIATED, ROUTE, checksOf, createdDid, expectOrderFree, foldChecked, type KeyChecks, type Scene, fakeEventCid } from "./helpers.js";
 import { IAT, PEER_ID3, asPeer, channel, evidenceChecks, factsOf, noObjects, peerAgreeingOn, proof, receipt, resolved, rotation, vaults, type Peer } from "./scene.js";
 
 const UNCREATED = "019b7000-0000-7000-8000-000000000c00" as DidId;
@@ -81,9 +79,9 @@ describe("foldSources", () => {
   it("gives an authenticated receipt its entity, channel and complete standing, and an anonymous one no channel", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const authenticated = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const authenticated = receipt(scene, { local: a0, peer: b0, resolution: root });
     const wire = uuidv7() as WireMessageId;
-    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
+    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
     const { evidence } = await fold(scene, keys);
     expect(evidence.sources.get(authenticated.cid)).toMatchObject({ localDidId: a0.didId, resolution: root, channel: channel(a0, b0), standing: { status: "complete" } });
     expect(evidence.sources.get(anonymous.cid)).toMatchObject({ localDidId: a0.didId, resolution: null, channel: null, standing: { status: "complete" } });
@@ -98,10 +96,10 @@ describe("foldSources", () => {
     const root = resolved(scene, a0.didId, b0);
     const short = resolved(scene, a0.didId, b0, { short: true });
     const atUncreated = resolved(scene, UNCREATED, b0);
-    const noEntity = receipt(scene, { local: a0, peer: b0, resolution: atUncreated, ordinal: 1, overrides: { localKeyName: didKeyName(UNCREATED, "key-agreement") } });
-    const noResolution = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { peerResolutionEventCid: fakeEventCid() as EventReference<"peer.resolved"> } });
-    const noDocument = receipt(scene, { local: a0, peer: b0, resolution: short, ordinal: 3, presentedDid: b0.did });
-    const retired = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 4 });
+    const noEntity = receipt(scene, { local: a0, peer: b0, resolution: atUncreated, overrides: { localKeyName: didKeyName(UNCREATED, "key-agreement") } });
+    const noResolution = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { peerResolutionEventCid: fakeEventCid() as EventReference<"peer.resolved"> } });
+    const noDocument = receipt(scene, { local: a0, peer: b0, resolution: short, presentedDid: b0.did });
+    const retired = receipt(scene, { local: a0, peer: b0, resolution: root });
     scene.add("did.retired", { didId: a0.didId, because: "done" });
     const { evidence } = await fold(scene, keys);
     expect(evidence.sources.get(noEntity.cid)).toMatchObject({ localDidId: null, channel: null, standing: { status: "incomplete", because: "no communication DID here derives the local key" } });
@@ -122,13 +120,13 @@ describe("foldSources", () => {
     const [authentication] = authorizedMethodIds(b0.resolution.document, "authentication");
     const signingKey = resolved(scene, a0.didId, b0, { peerPublicKey: methodPublicKey(b0.resolution.document, authentication!) });
     const self = resolved(scene, a0.didId, asPeer(a0));
-    const authenticationKey = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { localKeyName: didKeyName(a0.didId, "authentication") } });
-    const wrongType = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, overrides: { peerResolutionEventCid: scene.events[0]!.cid as EventReference<"peer.resolved"> } });
-    const notItsOwn = receipt(scene, { local: a0, peer: b0, resolution: otherKey, ordinal: 3 });
-    const invalidSnapshot = receipt(scene, { local: a0, peer: b0, resolution: forged, ordinal: 4 });
-    const signingKeyOnly = receipt(scene, { local: a0, peer: b0, resolution: signingKey, ordinal: 5 });
-    const wrongId = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 6, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), "x" as WireMessageId) } });
-    const fromSelf = receipt(scene, { local: a0, peer: asPeer(a0), resolution: self, ordinal: 7 });
+    const authenticationKey = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { localKeyName: didKeyName(a0.didId, "authentication") } });
+    const wrongType = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { peerResolutionEventCid: scene.events[0]!.cid as EventReference<"peer.resolved"> } });
+    const notItsOwn = receipt(scene, { local: a0, peer: b0, resolution: otherKey });
+    const invalidSnapshot = receipt(scene, { local: a0, peer: b0, resolution: forged });
+    const signingKeyOnly = receipt(scene, { local: a0, peer: b0, resolution: signingKey });
+    const wrongId = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), "x" as WireMessageId) } });
+    const fromSelf = receipt(scene, { local: a0, peer: asPeer(a0), resolution: self });
     const { evidence } = await fold(scene, keys);
     const because = (event: VaultEvent<"message.in">) => evidence.sources.get(event.cid)!.standing;
     expect(because(authenticationKey)).toEqual({ status: "conflict", because: "the local key is not the entity's key-agreement key" });
@@ -151,9 +149,9 @@ describe("foldSources", () => {
     const root = resolved(scene, a0.didId, b0);
     const atForeign = resolved(scene, FOREIGN, b0);
     const atRetiredOnly = resolved(scene, UNCREATED, b0);
-    const ours = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
-    const theirs = receipt(scene, { local: foreign, peer: b0, resolution: atForeign, ordinal: 2 });
-    const noCreation = receipt(scene, { local: a1, peer: b0, resolution: atRetiredOnly, ordinal: 3, overrides: { localKeyName: didKeyName(UNCREATED, "key-agreement") } });
+    const ours = receipt(scene, { local: a0, peer: b0, resolution: root });
+    const theirs = receipt(scene, { local: foreign, peer: b0, resolution: atForeign });
+    const noCreation = receipt(scene, { local: a1, peer: b0, resolution: atRetiredOnly, overrides: { localKeyName: didKeyName(UNCREATED, "key-agreement") } });
     scene.add("did.retired", { didId: UNCREATED, because: "never created here" });
     const withSeed = await fold(scene, keys);
     expect(withSeed.checks.dids.get(FOREIGN)).toBe("mismatch");
@@ -177,7 +175,7 @@ describe("foldSources", () => {
       const { scene, keys, peerKeys, a0, a1, b0 } = await vaults();
       const peer = await peerAgreeingOn(peerKeys, PEER_ID3, nistKey(curve, crv, size));
       const root = resolved(scene, a0.didId, peer);
-      const carrier = receipt(scene, { local: a0, peer, resolution: root, ordinal: 1, fromPrior: await proof(peerKeys, b0, peer) });
+      const carrier = receipt(scene, { local: a0, peer, resolution: root, fromPrior: await proof(peerKeys, b0, peer) });
       const decision = await rotation(scene, keys, { from: a0, peer, to: a1, source: carrier });
       const because = `the peer key is ${crv} and the entity's key-agreement key X25519: no key is agreed across curves`;
       const { evidence, checks, proofs } = await fold(scene, keys);
@@ -194,31 +192,12 @@ describe("foldSources", () => {
   });
 });
 
-describe("foldReceipts", () => {
-  it("finds the next ordinal past every author's, and one author's reuse of an ordinal as a conflict over the messages it observed", async () => {
-    const { scene, keys, a0, b0 } = await vaults();
-    const root = resolved(scene, a0.didId, b0);
-    expect(foldReceipts(scene.set())).toEqual({ nextReceiptOrdinal: 1n, conflicts: [], affected: new Set() });
-    const first = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
-    const twice = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2 });
-    const again = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2 });
-    const otherAuthor = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2 }, { author: AUTHOR2 });
-    const far = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 5, overrides: { receiptOrdinal: "90071992547409920" as VaultData["message.in"]["receiptOrdinal"] } });
-    scene.add("message.erased", { messageId: far.data.messageId, dropCids: [far.data.bodyCid], because: "user" });
-    const { evidence } = await fold(scene, keys);
-    expect(evidence.receipts).toEqual({ nextReceiptOrdinal: 90071992547409921n, conflicts: [[twice, again]], affected: new Set([twice.data.messageId, again.data.messageId]) });
-    expect(evidence.receipts.affected.has(first.data.messageId)).toBe(false);
-    expect(receiptOrderKey(otherAuthor)).toEqual({ ordinal: 2n, author: AUTHOR2 });
-    expect(receiptOrderKey(far).ordinal).toBe(90071992547409920n);
-  });
-});
-
 describe("foldCarriers", () => {
   it("binds a verified long-form proof on a complete carrier into the peer transition and the observation of its successor, with no earlier message in the predecessor's channel", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
     const jwt = await proof(peerKeys, b0, b1);
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: jwt });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt });
     const { evidence, checks, proofs } = await fold(scene, keys);
     expect(proofs.proofChecks.get(carrier.cid)).toMatchObject({ status: "verified" });
     const verified = { token: jwt, issuer: { presented: b0.longFormDid, canonical: b0.did }, change: { kind: "rotate", successor: { presented: b1.longFormDid, canonical: b1.did } }, iat: IAT };
@@ -231,7 +210,7 @@ describe("foldCarriers", () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
     const jwt = await resign(peerKeys, b0.didId, { alg: "EdDSA", typ: "JWT", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { iss: b0.did, sub: b1.longFormDid, iat: IAT });
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: jwt });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt });
     const pending = await fold(scene, keys);
     expect(pending.proofs.proofChecks.has(carrier.cid)).toBe(false);
     expect(pending.evidence.carriers.get(carrier.cid)).toMatchObject({ proof: { status: "pending-proof" }, facts: [], source: { standing: { status: "complete" } } });
@@ -256,10 +235,10 @@ describe("foldCarriers", () => {
     const root1 = resolved(scene, a0.didId, b1);
     const root2 = resolved(scene, a0.didId, b2);
     const jwt = await proof(peerKeys, b0, b1);
-    const wrongSub = receipt(scene, { local: a0, peer: b2, resolution: root2, ordinal: 1, fromPrior: jwt });
-    const wrongKid = receipt(scene, { local: a0, peer: b1, resolution: root1, ordinal: 2, fromPrior: await resign(peerKeys, b0.didId, { alg: "EdDSA", kid: `${b1.longFormDid}${AUTHENTICATION_METHOD}` }, { iss: b0.longFormDid, sub: b1.longFormDid, iat: IAT }) });
-    const notJwt = receipt(scene, { local: a0, peer: b1, resolution: root1, ordinal: 3, fromPrior: "hello" });
-    const sameDid = receipt(scene, { local: a0, peer: b1, resolution: root1, ordinal: 4, fromPrior: await resign(peerKeys, b1.didId, { alg: "EdDSA", kid: `${b1.did}${AUTHENTICATION_METHOD}` }, { iss: b1.did, sub: b1.longFormDid, iat: IAT }) });
+    const wrongSub = receipt(scene, { local: a0, peer: b2, resolution: root2, fromPrior: jwt });
+    const wrongKid = receipt(scene, { local: a0, peer: b1, resolution: root1, fromPrior: await resign(peerKeys, b0.didId, { alg: "EdDSA", kid: `${b1.longFormDid}${AUTHENTICATION_METHOD}` }, { iss: b0.longFormDid, sub: b1.longFormDid, iat: IAT }) });
+    const notJwt = receipt(scene, { local: a0, peer: b1, resolution: root1, fromPrior: "hello" });
+    const sameDid = receipt(scene, { local: a0, peer: b1, resolution: root1, fromPrior: await resign(peerKeys, b1.didId, { alg: "EdDSA", kid: `${b1.did}${AUTHENTICATION_METHOD}` }, { iss: b1.did, sub: b1.longFormDid, iat: IAT }) });
     const { evidence, proofs } = await fold(scene, keys);
     expect(evidence.carriers.get(wrongSub.cid)!.proof).toEqual({ status: "invalid", because: `sub is ${b1.longFormDid} but the sender is ${b2.longFormDid}` });
     expect(evidence.carriers.get(wrongKid.cid)!.proof).toEqual({ status: "invalid", because: "the kid names a key of iss" });
@@ -277,10 +256,10 @@ describe("foldCarriers", () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
     const [header, payload] = segments(await proof(peerKeys, b0, b1));
-    const badSignature = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: `${header}.${payload}.${segments(await proof(peerKeys, b0, b1, IAT + 1))[2]}` });
-    const ourPredecessor = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: await proof(keys, a0, b1) });
+    const badSignature = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: `${header}.${payload}.${segments(await proof(peerKeys, b0, b1, IAT + 1))[2]}` });
+    const ourPredecessor = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await proof(keys, a0, b1) });
     const shortJwt = await resign(keys, a0.didId, { alg: "EdDSA", typ: "JWT", kid: `${a0.did}${AUTHENTICATION_METHOD}` }, { iss: a0.did, sub: b1.longFormDid, iat: IAT });
-    const ourShortPredecessor = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 3, fromPrior: shortJwt });
+    const ourShortPredecessor = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: shortJwt });
     const { evidence, proofs } = await fold(scene, keys);
     expect(proofs.proofChecks.get(badSignature.cid)).toMatchObject({ status: "invalid" });
     expect(evidence.carriers.get(badSignature.cid)!.proof).toMatchObject({ status: "invalid", because: expect.stringMatching(/^the signature does not verify under /) });
@@ -303,9 +282,9 @@ describe("foldCarriers", () => {
     const untyped = encodeLongForm({ verificationMethod: [{ id: "#key-1", publicKeyJwk: { kty: "OKP", crv: "Ed25519", x } }], authentication: ["#key-1"] });
     for (const iss of [twoServices, untyped]) expect(() => canonicalDidOf(iss)).toThrow(InvalidDidDocument);
     const carried = async (iss: string) => resign(peerKeys, b0.didId, { alg: "EdDSA", kid: `${iss}${AUTHENTICATION_METHOD}` }, { iss, sub: b1.longFormDid, iat: IAT });
-    const verified = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: await carried(twoServices) });
+    const verified = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await carried(twoServices) });
     const [header, payload] = segments(await carried(untyped));
-    const unsigned = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: `${header}.${payload}.${base64urlnopad.encode(new Uint8Array(64))}` });
+    const unsigned = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: `${header}.${payload}.${base64urlnopad.encode(new Uint8Array(64))}` });
     const { evidence, proofs, checks } = await fold(scene, keys);
     expect(proofs.proofChecks.get(verified.cid)).toMatchObject({ status: "verified" });
     expect(evidence.carriers.get(verified.cid)!.facts).toEqual(factsOf(verified, a0, { did: longToShort(twoServices) as Did }, b1));
@@ -320,10 +299,10 @@ describe("foldCarriers", () => {
     const root = resolved(scene, a0.didId, b1);
     const jwt = await proof(peerKeys, b0, b1);
     const wire = uuidv7();
-    const complete = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: jwt, wire });
-    const unauthenticated = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: jwt, wire, overrides: { peerResolutionEventCid: fakeEventCid() as EventReference<"peer.resolved"> } });
+    const complete = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt, wire });
+    const unauthenticated = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt, wire, overrides: { peerResolutionEventCid: fakeEventCid() as EventReference<"peer.resolved"> } });
     const [header, payload] = segments(jwt);
-    const broken = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 3, fromPrior: `${header}.${payload}.${segments(await proof(peerKeys, b0, b1, IAT + 1))[2]}`, wire });
+    const broken = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: `${header}.${payload}.${segments(await proof(peerKeys, b0, b1, IAT + 1))[2]}`, wire });
     expect(new Set([complete, unauthenticated, broken].map((event) => event.data.messageId)).size).toBe(1);
     const { evidence, checks, proofs } = await fold(scene, keys);
     expect(evidence.carriers.get(complete.cid)!.facts).toEqual(factsOf(complete, a0, b0, b1));
@@ -337,7 +316,7 @@ describe("foldCarriers", () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const [authentication] = authorizedMethodIds(b1.resolution.document, "authentication");
     const signingKey = resolved(scene, a0.didId, b1, { peerPublicKey: methodPublicKey(b1.resolution.document, authentication!) });
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: signingKey, ordinal: 1, fromPrior: await proof(peerKeys, b0, b1) });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: signingKey, fromPrior: await proof(peerKeys, b0, b1) });
     const { evidence, proofs } = await fold(scene, keys);
     expect(proofs.resolutionChecks.get(signingKey.cid)).toBe("invalid");
     expect(proofs.proofChecks.get(carrier.cid)).toMatchObject({ status: "verified" });
@@ -351,7 +330,7 @@ describe("foldCarriers", () => {
       const lowOrder = x25519Key(u);
       const peer = await peerAgreeingOn(peerKeys, PEER_ID3, lowOrder);
       const root = resolved(scene, a0.didId, peer);
-      const carrier = receipt(scene, { local: a0, peer, resolution: root, ordinal: 1, fromPrior: await proof(peerKeys, b0, peer) });
+      const carrier = receipt(scene, { local: a0, peer, resolution: root, fromPrior: await proof(peerKeys, b0, peer) });
       const decision = await rotation(scene, keys, { from: a0, peer, to: a1, source: carrier });
       const because = agreesNoKeys(lowOrder, "a low-order X25519 point");
       const { evidence, checks, proofs } = await fold(scene, keys);
@@ -372,7 +351,7 @@ describe("foldCarriers", () => {
   it("keeps a verified proof through erasure of the message's content, the proof being event metadata", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: await proof(peerKeys, b0, b1) });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await proof(peerKeys, b0, b1) });
     scene.add("message.erased", { messageId: carrier.data.messageId, dropCids: [carrier.data.bodyCid], because: "user" });
     const { evidence } = await fold(scene, keys);
     expect(evidence.carriers.get(carrier.cid)!.facts).toHaveLength(2);
@@ -384,7 +363,7 @@ describe("foldDecisions", () => {
   it("makes a local-decision candidate of a decision whose entities, proof and positive source in the old pair all check, and of a manual one", async () => {
     const { scene, keys, a0, a1, a2, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root });
     const sourced = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
     const manual = await rotation(scene, keys, { from: a2, peer: b0, to: a1 });
     const { evidence, checks, proofs } = await fold(scene, keys);
@@ -399,7 +378,7 @@ describe("foldDecisions", () => {
   it("is pending while an entity's creation, the proof's verdict or the source is missing, or the source is not yet positive", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const short = resolved(scene, a0.didId, b0, { short: true });
-    const unverified = receipt(scene, { local: a0, peer: b0, resolution: short, ordinal: 1, presentedDid: b0.did });
+    const unverified = receipt(scene, { local: a0, peer: b0, resolution: short, presentedDid: b0.did });
     const noSuccessor = await rotation(scene, keys, { from: a0, peer: b0, to: { didId: UNCREATED, did: a1.did, longFormDid: a1.longFormDid } });
     const noPredecessor = await rotation(scene, keys, { from: a0, peer: b0, to: a1, overrides: { fromDidId: UNCREATED } });
     const noSource = await rotation(scene, keys, { from: a0, peer: b0, to: a1, overrides: { sourceEventCid: fakeEventCid() as EventReference<"message.in"> } });
@@ -439,7 +418,7 @@ describe("foldDecisions", () => {
   it("is pending while the seed has not confirmed either entity, and a candidate once it has", async () => {
     const { scene, keys, a0, a1, a2, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const source = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const source = receipt(scene, { local: a0, peer: b0, resolution: root });
     const sourced = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
     const manual = await rotation(scene, keys, { from: a2, peer: b0, to: a1 });
     const withoutSeed = (await foldVaultChecked(scene.set(), null, noObjects)).channels;
@@ -457,7 +436,7 @@ describe("foldDecisions", () => {
     const { scene, keys, peerKeys, a1, b0 } = await vaults();
     const foreign = await createdDid(scene, peerKeys, FOREIGN, ROUTE, MEDIATED);
     const root = resolved(scene, FOREIGN, b0);
-    const source = receipt(scene, { local: foreign, peer: b0, resolution: root, ordinal: 1 });
+    const source = receipt(scene, { local: foreign, peer: b0, resolution: root });
     const sourced = await rotation(scene, peerKeys, { from: foreign, peer: b0, to: a1, source });
     const manual = await rotation(scene, peerKeys, { from: foreign, peer: b0, to: a1 });
     const withoutSeed = (await foldVaultChecked(scene.set(), null, noObjects)).channels;
@@ -473,11 +452,11 @@ describe("foldDecisions", () => {
     const { scene, keys, peerKeys, a0, a1, b0, b2, b3 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const wire = uuidv7() as WireMessageId;
-    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
-    const refused = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, fromPrior: "not-a-jwt" });
+    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
+    const refused = receipt(scene, { local: a0, peer: b0, resolution: root, fromPrior: "not-a-jwt" });
     const fromB3 = resolved(scene, a0.didId, b3);
     const shortJwt = await resign(peerKeys, b2.didId, { alg: "EdDSA", typ: "JWT", kid: `${b2.did}${AUTHENTICATION_METHOD}` }, { iss: b2.did, sub: b3.longFormDid, iat: IAT });
-    const waiting = receipt(scene, { local: a0, peer: b3, resolution: fromB3, ordinal: 3, fromPrior: shortJwt });
+    const waiting = receipt(scene, { local: a0, peer: b3, resolution: fromB3, fromPrior: shortJwt });
     const fromAnonymous = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: anonymous });
     const fromRefused = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: refused });
     const fromWaiting = await rotation(scene, keys, { from: a0, peer: b3, to: a1, source: waiting });
@@ -501,13 +480,13 @@ describe("foldDecisions", () => {
   it("reports a contradiction that already stands over whatever is still missing: a refused proof beside an absent document, a refused resolution or an anonymous source beside an unconsulted seed", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const short = resolved(scene, a0.didId, b0, { short: true });
-    const refused = receipt(scene, { local: a0, peer: b0, resolution: short, ordinal: 1, presentedDid: b0.did, fromPrior: "not-a-jwt" });
-    const sound = receipt(scene, { local: a0, peer: b0, resolution: short, ordinal: 2, presentedDid: b0.did });
+    const refused = receipt(scene, { local: a0, peer: b0, resolution: short, presentedDid: b0.did, fromPrior: "not-a-jwt" });
+    const sound = receipt(scene, { local: a0, peer: b0, resolution: short, presentedDid: b0.did });
     const [authentication] = authorizedMethodIds(b0.resolution.document, "authentication");
     const signingKey = resolved(scene, a0.didId, b0, { peerPublicKey: methodPublicKey(b0.resolution.document, authentication!) });
-    const atSigningKey = receipt(scene, { local: a0, peer: b0, resolution: signingKey, ordinal: 3 });
+    const atSigningKey = receipt(scene, { local: a0, peer: b0, resolution: signingKey });
     const wire = uuidv7() as WireMessageId;
-    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: short, ordinal: 4, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
+    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: short, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
     const fromRefused = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: refused });
     const fromSound = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: sound });
     const fromSigningKey = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: atSigningKey });
@@ -539,8 +518,8 @@ describe("foldDecisions", () => {
     const root = resolved(scene, a0.didId, b0);
     const forged = resolved(scene, a0.didId, b0, { documentCid: b2.resolution.cid, keyAgreementMethodIds: authorizedMethodIds(b2.resolution.document, "keyAgreement") });
     const elsewhere = resolved(scene, a1.didId, b0);
-    const otherPair = receipt(scene, { local: a1, peer: b0, resolution: elsewhere, ordinal: 1 });
-    const conflicted = receipt(scene, { local: a0, peer: b0, resolution: forged, ordinal: 2 });
+    const otherPair = receipt(scene, { local: a1, peer: b0, resolution: elsewhere });
+    const conflicted = receipt(scene, { local: a0, peer: b0, resolution: forged });
     const wrongType = await rotation(scene, keys, { from: a0, peer: b0, to: a1, overrides: { sourceEventCid: root.cid as EventCid as EventReference<"message.in"> } });
     const wrongPair = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: otherPair });
     const conflictedSource = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: conflicted });
@@ -561,10 +540,10 @@ describe("foldDecisions", () => {
     const { scene, keys, a0, a1, b0, b1 } = await vaults();
     const created = scene.events.find((event) => event.type === "did.created" && (event.data as VaultData["did.created"]).didId === a0.didId)!;
     const root = resolved(scene, a0.didId, b0);
-    const fromB0 = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const fromB0 = receipt(scene, { local: a0, peer: b0, resolution: root });
     const signingName = didKeyName(a0.didId, "authentication");
     const atSigning = resolved(scene, a0.didId, b0, { localKeyName: signingName });
-    const atSigningKey = receipt(scene, { local: a0, peer: b0, resolution: atSigning, ordinal: 2, overrides: { localKeyName: signingName } });
+    const atSigningKey = receipt(scene, { local: a0, peer: b0, resolution: atSigning, overrides: { localKeyName: signingName } });
     scene.add("did.retired", { didId: a0.didId, because: "done" });
     const successorIsPeer = await rotation(scene, keys, { from: a0, peer: { did: a1.did } as Peer, to: a1 });
     const otherPeer = await rotation(scene, keys, { from: a0, peer: b1, to: a1, source: fromB0 });
@@ -596,7 +575,7 @@ describe("the channel evidence in the whole fold", () => {
   it("is fed the resolution and proof checks of the vault, or none", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
-    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: await proof(peerKeys, b0, b1) });
+    const carrier = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await proof(peerKeys, b0, b1) });
     const set = VaultEventSet.of(scene.events);
     const keyChecks = await checksOf(scene.events, keys);
     const checked = foldVault(set, { mediationKeys: keyChecks.mediations, didKeys: keyChecks.dids, ...(await evidenceChecks(scene.events)) });
@@ -605,6 +584,5 @@ describe("the channel evidence in the whole fold", () => {
     const unchecked = foldVault(set);
     expect(unchecked.channels.carriers.get(carrier.cid)!.proof).toEqual({ status: "pending-proof" });
     expect(unchecked.channels.sources.get(carrier.cid)!.standing).toEqual({ status: "incomplete", because: "the local entity's keys are not yet checked against the seed" });
-    expect(snapshot(unchecked.channels.receipts)).toBe(snapshot(checked.channels.receipts));
   });
 });

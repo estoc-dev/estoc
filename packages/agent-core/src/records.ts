@@ -15,7 +15,7 @@
  * open, and the procedure behind it checks again under the lock.
  */
 
-import { InvalidJson, parseStrict, type JsonObject } from "@estoc/event-store";
+import { InvalidJson, compareEvents, parseStrict, type JsonObject } from "@estoc/event-store";
 import {
   InvalidDidDocument,
   InvalidPlaintext,
@@ -25,9 +25,7 @@ import {
   channelKey,
   channelOf,
   compareChannels,
-  compareReceiptKeys,
   readStoredDocument,
-  receiptOrderKey,
   responseChannel,
   sameChannel,
   unfinishedWork,
@@ -81,7 +79,7 @@ export interface MessageHeaders {
 /** `missing` is content that is not here, is damaged, is too large to read or is no stored message document. */
 export type BodyRecord = { state: "available"; body: JsonObject; attachments: StoredAttachment[] } | { state: "erased" } | { state: "missing" };
 
-export type DiagnosticKind = "input" | "observations" | "contradicting" | "receipt-integrity" | "intent" | "outcome" | "effect" | "work" | "remote-error";
+export type DiagnosticKind = "input" | "observations" | "contradicting" | "intent" | "outcome" | "effect" | "work" | "remote-error";
 
 export interface Diagnostic {
   kind: DiagnosticKind;
@@ -156,7 +154,7 @@ export interface UnplacedOutput {
 }
 
 export interface Unplaced {
-  /** the observations whose pair is not known, in first-receipt order */
+  /** the observations whose pair is not known, in canonical event order */
   inputs: ObservationRecord[];
   outputs: UnplacedOutput[];
 }
@@ -174,7 +172,7 @@ export interface ChannelRecord {
   profileSubmitted: MessageId | null;
   /** the inputs an admission names an observation of, with the outputs whose intents disagree while every one of them names this pair */
   messages: MessageRecord[];
-  /** every observation of this pair, in first-receipt order, whether or not an input shows it */
+  /** every observation of this pair, in canonical event order, whether or not an input shows it */
   observations: ObservationRecord[];
 }
 
@@ -373,7 +371,7 @@ function canonicalOrNull(did: Did): Did | null {
 function observationRecords(fold: VaultFold, sources: readonly Source[]): ObservationRecord[] {
   return sources
     .slice()
-    .sort((a, b) => compareReceiptKeys(receiptOrderKey(a.event), receiptOrderKey(b.event)))
+    .sort((a, b) => compareEvents(a.event, b.event))
     .map(({ event, channel, standing }) => {
       const disposition = fold.dispositions.disposition(event.cid);
       return {
@@ -421,14 +419,6 @@ function document(context: Context, erased: boolean, bodyCid: Cid): Promise<Body
 const headersOf = (data: MessageIn | MessageOut): MessageHeaders => ({ type: data.msgType, thid: data.thid, pthid: data.pthid, createdTime: data.createdTime, expiresTime: data.expiresTime });
 
 const shownBy = (execution: Execution): Member => execution.firstWitness ?? execution.members.find((member) => member.admitted)!;
-
-const INTEGRITY = "one author gave the receipt's ordinal to another observation";
-
-function hasReceiptConflict(fold: VaultFold, outbound: Outbound): boolean {
-  if (outbound.intent.status !== "consistent" || outbound.intent.data.sourceEventCid === null) return false;
-  const source = fold.channels.sources.get(outbound.intent.data.sourceEventCid);
-  return source !== undefined && fold.channels.receipts.affected.has(source.event.data.messageId);
-}
 
 /**
  * Each peer's readable problem report, under the output its thread
@@ -488,8 +478,6 @@ async function inboundRecord(context: Context, execution: Execution, contactIds:
   if (execution.status.status !== "complete") diagnostics.push({ kind: "input", because: execution.status.because });
   if (execution.siblings.length > 0) diagnostics.push({ kind: "observations", because: `${execution.siblings.length} observations claiming this input are not authenticated` });
   if (execution.contradicting.length > 0) diagnostics.push({ kind: "contradicting", because: `${execution.contradicting.length} authenticated ${execution.contradicting.length === 1 ? "observation carries" : "observations carry"} another content than the one admitted` });
-  const integrity = fold.channels.receipts.affected.has(execution.messageId);
-  if (integrity) diagnostics.push({ kind: "receipt-integrity", because: INTEGRITY });
   const completes = context.completes.get(execution.messageId) ?? [];
   return {
     messageId: execution.messageId,
@@ -522,8 +510,6 @@ async function outboundRecord(context: Context, outbound: Outbound, channel: Cha
   const open = outbound.outcome.status === "queued" || outbound.outcome.status === "prepared";
   if (open && outbound.work.kind === "none") diagnostics.push({ kind: "work", because: outbound.work.because });
 
-  const receiptConflict = hasReceiptConflict(fold, outbound);
-  if (receiptConflict) diagnostics.push({ kind: "receipt-integrity", because: INTEGRITY });
   diagnostics.push(...reports);
   const rotationEventCid = intent?.rotationEventCid ?? null;
   return {

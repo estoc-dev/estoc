@@ -40,8 +40,6 @@ export type Did = string & { readonly __did: unique symbol };
 export type DidUrl = string & { readonly __didUrl: unique symbol };
 /** The derived idempotency key of one automatic effect. */
 export type EffectKey = string & { readonly __effectKey: unique symbol };
-/** An inbound observation's receipt ordinal as it is stored: canonical positive decimal. */
-export type ReceiptOrdinal = string & { readonly __receiptOrdinal: unique symbol };
 /** Unpadded base64url SHA-256 of a canonical projection or plaintext. */
 export type MessageHash = string & { readonly __messageHash: unique symbol };
 
@@ -111,7 +109,6 @@ export type ReceivedVia = { mediationId: MediationId | null; deliveryId: Deliver
 export type MessageIn = {
   messageId: MessageId;
   wireMessageId: WireMessageId;
-  receiptOrdinal: ReceiptOrdinal;
   intentHash: MessageHash;
   plaintextHash: MessageHash;
   localKeyName: KeyName;

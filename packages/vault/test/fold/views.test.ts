@@ -7,10 +7,10 @@ import { blocked, channel, intent, noObjects, proof, receipt, resolved, rotation
 
 const fold = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
 
-const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer, ordinal: number) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), ordinal });
+const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer) });
 
-const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer, ordinal: number) =>
-  receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), ordinal, fromPrior: await proof(peerKeys, predecessor, successor) });
+const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer) =>
+  receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), fromPrior: await proof(peerKeys, predecessor, successor) });
 
 const CONTACT = "019b7100-0000-7000-8000-000000000c01" as ContactId;
 const CONTACT2 = "019b7100-0000-7000-8000-000000000c02" as ContactId;
@@ -29,15 +29,15 @@ const viewSnapshot = (view: ContactView) => ({
 });
 
 describe("a channel view", () => {
-  it("lists the inputs in first-receipt order and the outbounds fixed to the channel, and puts a problem report beside the outbound its thread names when the carrier may answer it", async () => {
+  it("lists the inputs in canonical event order and the outbounds fixed to the channel, and puts a problem report beside the outbound its thread names when the carrier may answer it", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const later = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2 });
-    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const earlier = receipt(scene, { local: a0, peer: b0, resolution: root });
+    const later = receipt(scene, { local: a0, peer: b0, resolution: root });
     const out = intent(scene, a0, b0);
     const elsewhere = intent(scene, a1, b0);
-    const report = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 3, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: out.data.messageId } });
-    const reportOfElsewhere = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 4, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: elsewhere.data.messageId } });
+    const report = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: out.data.messageId } });
+    const reportOfElsewhere = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PROBLEM_REPORT_TYPE, pthid: elsewhere.data.messageId } });
     scene.add("message.erased", { messageId: reportOfElsewhere.data.messageId, dropCids: [reportOfElsewhere.data.bodyCid], because: "user" });
     const vault = await fold(scene, keys);
     const view = vault.views.channel(channel(a0, b0));
@@ -54,9 +54,9 @@ describe("a channel view", () => {
 
   it("closes the gate for a local DID that cannot send, a denied pair, conflicted continuity, a peer that has moved on, and a local DID a decision replaced here or still waits to", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
-    proofFreeReceipt(scene, a0, b0, 1);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
-    proofFreeReceipt(scene, a1, b0, 3);
+    proofFreeReceipt(scene, a0, b0);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    proofFreeReceipt(scene, a1, b0);
     blocked(scene, a1, b0);
     scene.add("did.retired", { didId: a0.didId, because: "done" });
     let vault = await fold(scene, keys);
@@ -67,19 +67,19 @@ describe("a channel view", () => {
     expect(vault.views.channel(channel(a1, b0)).send.status).toBe("closed");
 
     const { scene: fresh, keys: freshKeys, peerKeys: freshPeerKeys, a0: c0, b0: d0, b1: d1 } = await vaults();
-    proofFreeReceipt(fresh, c0, d0, 1);
-    await receiptCarryingProof(fresh, freshPeerKeys, c0, d0, d1, 2);
+    proofFreeReceipt(fresh, c0, d0);
+    await receiptCarryingProof(fresh, freshPeerKeys, c0, d0, d1);
     vault = await fold(fresh, freshKeys);
     const old = vault.views.channel(channel(c0, d0));
     expect(old).toMatchObject({ superseded: true, send: { status: "closed", because: "the peer has replaced its DID" }, head: channel(c0, d1) });
     expect(vault.views.channel(channel(c0, d1))).toMatchObject({ superseded: false, send: { status: "open" }, head: channel(c0, d1) });
 
     const { scene: ours, keys: ourKeys, a0: e0, a1: e1, a2: e2, b0: f0, b1: f1 } = await vaults();
-    proofFreeReceipt(ours, e0, f0, 1);
+    proofFreeReceipt(ours, e0, f0);
     await rotation(ours, ourKeys, { from: e0, peer: f0, to: e1 });
-    proofFreeReceipt(ours, e2, f0, 2);
+    proofFreeReceipt(ours, e2, f0);
     await rotation(ours, ourKeys, { from: e2, peer: f0, to: e1, overrides: { sourceEventCid: fakeEventCid() as never } });
-    proofFreeReceipt(ours, e0, f1, 3);
+    proofFreeReceipt(ours, e0, f1);
     vault = await fold(ours, ourKeys);
     expect(vault.views.channel(channel(e0, f0))).toMatchObject({ superseded: false, head: channel(e1, f0), send: { status: "closed", because: `the local DID is replaced here by ${e1.did}` } });
     expect(vault.views.channel(channel(e1, f0)).send).toEqual({ status: "open" });
@@ -92,11 +92,11 @@ describe("a channel view", () => {
 describe("a contact view", () => {
   it("derives related history from the selected channel over verified continuity, writes to the joined head, and keeps a preference for the predecessor pointing at the head", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
     const atHead = intent(scene, a1, b1);
-    const unrelated = proofFreeReceipt(scene, a2, b0, 3);
+    const unrelated = proofFreeReceipt(scene, a2, b0);
     contact(scene, CONTACT, [{ local: a0, peer: b0 }]);
     scene.add("contact.useDid", { contactId: CONTACT, didId: a0.didId, because: "user" });
     const vault = await fold(scene, keys);
@@ -118,9 +118,9 @@ describe("a contact view", () => {
 
   it("offers every distinct eligible head, defaults only when one is left after the preference, and follows the preference to no unrelated channel", async () => {
     const { scene, keys, a0, a1, a2, b0, b1 } = await vaults();
-    proofFreeReceipt(scene, a0, b0, 1);
-    proofFreeReceipt(scene, a1, b1, 2);
-    proofFreeReceipt(scene, a2, b0, 3);
+    proofFreeReceipt(scene, a0, b0);
+    proofFreeReceipt(scene, a1, b1);
+    proofFreeReceipt(scene, a2, b0);
     contact(scene, CONTACT, [
       { local: a0, peer: b0 },
       { local: a1, peer: b1 },
@@ -146,8 +146,8 @@ describe("a contact view", () => {
 
   it("drops a head that cannot send without falling back to the channel it replaced, and a channel a merged view already shows is shown once", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
+    const source = proofFreeReceipt(scene, a0, b0);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
     blocked(scene, a0, b1);
     contact(scene, CONTACT, [{ local: a0, peer: b0 }]);
     contact(scene, CONTACT2, [{ local: a0, peer: b0 }]);
@@ -167,8 +167,8 @@ describe("a contact view", () => {
 
   it("selects nothing for a deleted contact or one no event names, shows a selection no creation resolves with its origin missing, and applies the preferences of several contacts only when they agree", async () => {
     const { scene, keys, a0, a1, b0, b1 } = await vaults();
-    proofFreeReceipt(scene, a0, b0, 1);
-    proofFreeReceipt(scene, a1, b1, 2);
+    proofFreeReceipt(scene, a0, b0);
+    proofFreeReceipt(scene, a1, b1);
     contact(scene, CONTACT, [{ local: a0, peer: b0 }]);
     contact(scene, CONTACT2, [{ local: a1, peer: b1 }]);
     scene.add("contact.useDid", { contactId: CONTACT, didId: a0.didId, because: "user" });

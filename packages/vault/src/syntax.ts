@@ -56,7 +56,6 @@ const KEY_NAME = new RegExp(`^(?:did/${UUID_BODY.replace("V", "7")}/(?:authentic
 const COMPACT_JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 /** 32 bytes as unpadded base64url: 43 characters, the last one carrying two zero bits. */
 const SHA256_BASE64URL = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
-const RECEIPT_ORDINAL = /^[1-9][0-9]*$/;
 
 export const isDid = (value: unknown): value is string => typeof value === "string" && DID.test(value);
 export const isDidUrl = (value: unknown): value is string => typeof value === "string" && DID_URL.test(value);
@@ -73,5 +72,4 @@ export const isEntityId = (value: unknown): value is string => typeof value === 
 export const isKeyName = (value: unknown): value is string => typeof value === "string" && KEY_NAME.test(value);
 export const isCompactJwt = (value: unknown): value is string => typeof value === "string" && COMPACT_JWT.test(value);
 export const isMessageHash = (value: unknown): value is string => typeof value === "string" && SHA256_BASE64URL.test(value);
-export const isReceiptOrdinal = (value: unknown): value is string => typeof value === "string" && RECEIPT_ORDINAL.test(value);
 export const isEpochSeconds = (value: unknown): value is number => Number.isSafeInteger(value);

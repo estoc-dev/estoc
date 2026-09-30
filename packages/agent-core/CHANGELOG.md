@@ -2,6 +2,11 @@
 
 ## 0.20.0 — 2026-09-29
 
+- **A receipt allocates no ordinal** (behaviour change): the observation
+  is committed as it was authenticated, with no receipt ordinal and no
+  scan of the vault for the next one. `DiagnosticKind` has no
+  `receipt-integrity`: an author reusing an ordinal is nothing any
+  more. The observations a record lists are in canonical event order.
 - **A receipt-integrity conflict hides no manual step** (behaviour
   change): the records of an input whose author reused its receipt
   ordinal list the response it is owed with `completeResponse`, its

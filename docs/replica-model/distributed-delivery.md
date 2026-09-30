@@ -296,7 +296,7 @@ effects, and its network completion does not delay the next local step.
    material may require unopened wait; missing predecessor material cannot.
 2. Validate normalized wire fields, supported content and resource limits.
 3. Under the lock, commit/reuse exact resolution evidence, then commit content
-   and `message.in` with fixed channel and fresh receipt ordinal.
+   and `message.in` with fixed channel.
 4. Pickup-ACK process-durable receipt independently of channel policy/history.
 5. If `from_prior` is present, derive its immutable issuer document and verify
    this carrier's original JWT under [predecessor resolution](relationships.md#predecessor-resolution).
@@ -566,8 +566,7 @@ selection, and later discovery cannot change the saved `ack`.
 
 Validation of a saved pure ACK checks that its `ack` is exactly the carrier's
 wire ID, that the carrier requests its own receipt, and that the carrier's
-input has no independently admitted intent conflict. Receipt-ordinal reuse
-alone neither disqualifies a new ACK nor invalidates a saved ACK.
+input has no independently admitted intent conflict.
 The intent stands on the carrier's complete witness, admitted or not: a
 history rebuilt without the admission revokes no saved intent, while a
 new ACK is created only for an admitted carrier. Generic replies use
@@ -625,8 +624,7 @@ All redundant witness fields must come from one admitted complete source row.
 Same-channel attribution compares the two canonical endpoints directly and
 does not query a zero-step continuity path. An aggregate graph conflict alone
 does not erase that observation; source/proof, admitted-intent and
-target/package integrity still apply. Receipt-ordinal reuse alone does not
-invalidate an ACK witness. Cross-channel attribution requires the
+target/package integrity still apply. Cross-channel attribution requires the
 package's usable directed path under [channel authorization](channels.md#continuity-integration).
 An ignored old-peer carrier cannot acknowledge an outbound or change ACK timing.
 An admission recorded before supersession remains historical ACK evidence. Missing

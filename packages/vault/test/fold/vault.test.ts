@@ -22,7 +22,7 @@ describe("the whole fold", () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     scene.add("identity.label", { name: "me" });
-    const inbound = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1 });
+    const inbound = receipt(scene, { local: a0, peer: b0, resolution: root });
     const out = intent(scene, a0, b0);
     const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     scene.add("message.erased", { messageId: out.data.messageId, dropCids: [pkg.data.envelopeCid], because: "user" });

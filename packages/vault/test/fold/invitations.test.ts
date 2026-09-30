@@ -8,7 +8,7 @@ import { invitation, noObjects, receipt, resolved, vaults, type Local, type Peer
 const fold = (scene: Scene, keys: Keys | null, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
 
 /** A proof-free receipt from the peer at one of our DIDs, following the invitation. */
-const follower = (scene: Scene, local: Local, peer: Peer, oobId: string, ordinal: number) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), ordinal, overrides: { pthid: oobId } });
+const follower = (scene: Scene, local: Local, peer: Peer, oobId: string) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), overrides: { pthid: oobId } });
 
 const picture = (vault: VaultFold) => [...vault.invitations.invitations.values()].map(({ oobId, localDid, status }) => ({ oobId, localDid, status }));
 
@@ -20,9 +20,9 @@ describe("an invitation", () => {
     const disclosure = invitation(scene, a0);
     const again = invitation(scene, a0);
     scene.add("did.disclosed", { didId: a1.didId, as: "direct", oobId: null, goal: null });
-    follower(scene, a0, b0, disclosure.data.oobId!, 1);
-    follower(scene, a0, b1, disclosure.data.oobId!, 2);
-    follower(scene, a0, b0, disclosure.data.oobId!, 3);
+    follower(scene, a0, b0, disclosure.data.oobId!);
+    follower(scene, a0, b1, disclosure.data.oobId!);
+    follower(scene, a0, b0, disclosure.data.oobId!);
     const vault = await fold(scene, keys);
     expect(picture(vault)).toEqual([
       { oobId: disclosure.data.oobId, localDid: a0.did, status: { status: "available" } },
@@ -38,8 +38,8 @@ describe("an invitation", () => {
     invitation(scene, a0, first.data.oobId!);
     invitation(scene, a1, first.data.oobId!);
     const apart = invitation(scene, a0);
-    const fromB0 = follower(scene, a0, b0, first.data.oobId!, 1);
-    const fromB1 = follower(scene, a0, b1, first.data.oobId!, 2);
+    const fromB0 = follower(scene, a0, b0, first.data.oobId!);
+    const fromB1 = follower(scene, a0, b1, first.data.oobId!);
     const vault = await fold(scene, keys);
     const twice = { status: "unavailable", because: "the invitation's ID names more than one disclosure" };
     expect(picture(vault)).toEqual([
@@ -57,7 +57,7 @@ describe("an invitation", () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const retired = invitation(scene, a0);
     scene.add("did.retired", { didId: a0.didId, because: "done" });
-    follower(scene, a0, b0, retired.data.oobId!, 1);
+    follower(scene, a0, b0, retired.data.oobId!);
     const unknown = invitation(scene, { didId: "019b7000-0000-7000-8000-00000000ffff" as Local["didId"], did: a1.did, longFormDid: a1.longFormDid });
     const vault = await fold(scene, keys);
     expect(vault.invitations.invitations.get(retired.cid)).toMatchObject({ localDid: a0.did, status: { status: "unavailable", because: "the disclosed DID is retired" } });
