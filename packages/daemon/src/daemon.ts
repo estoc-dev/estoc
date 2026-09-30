@@ -864,10 +864,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         return mediationId;
       }),
 
-    createInvitation: (uses, goal) =>
+    createInvitation: (goal) =>
       act(async (agent, running) => {
         const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
-        const { invitation } = await agent.disclose(created.data.didId, { as: "oob", uses, goal: goal ?? null });
+        const { invitation } = await agent.disclose(created.data.didId, { as: "oob", goal: goal ?? null });
         if (invitation === null) throw new Error("the disclosure made no invitation");
         return { didId: created.data.didId, invitation };
       }),
@@ -883,10 +883,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         if (pending !== undefined) return pending;
         const minting = (async () => {
           const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
-          const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct" && data.uses === "many"));
+          const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct"));
           if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
           const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
-          const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct", uses: "many" });
+          const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct" });
           return { didId: created.data.didId, did: longFormDid };
         })().finally(() => handingOut.delete(running));
         handingOut.set(running, minting);

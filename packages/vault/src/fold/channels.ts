@@ -52,7 +52,7 @@ export interface ReceiptIntegrity {
   readonly nextReceiptOrdinal: bigint;
   /** each set of distinct observations one author gave the same ordinal */
   readonly conflicts: readonly (readonly VaultEvent<"message.in">[])[];
-  /** the logical messages those observations belong to: no new ACK target, no invitation candidate */
+  /** the logical messages those observations belong to: no new ACK target */
   readonly affected: ReadonlySet<MessageId>;
 }
 

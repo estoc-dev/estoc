@@ -267,7 +267,7 @@ describe("a local rotation", () => {
     const disclosed = await parties();
     const routeId = (await foldOf(disclosed.alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
     await createDid(disclosed.alice.runtime, disclosed.alice.keys, routeId, ALICE_OTHER);
-    for (const didId of [ALICE, ALICE_OTHER]) await disclose(null, disclosed.alice.runtime, disclosed.alice.keys, didId, { as: "direct", uses: "many" });
+    for (const didId of [ALICE, ALICE_OTHER]) await disclose(null, disclosed.alice.runtime, disclosed.alice.keys, didId, { as: "direct" });
     const { wire: theirs, options: policy, receive: written } = await rotating(disclosed.alice);
     const chat = await written(disclosed.bob, { type: BASIC_MESSAGE });
     await expect(privateAddress(disclosed.alice.runtime, disclosed.alice.keys, new LiveInput(chat), { ...policy, didId: ALICE_OTHER })).rejects.toThrow(new Unusable("DID", ALICE_OTHER, ["a rotation an input selects takes a fresh successor"]));
@@ -353,7 +353,7 @@ describe("a local rotation", () => {
 
   test("the private-address policy: the first live application input at a disclosed address selects a successor over that input and notifies on its thread; a later input reuses the decision; one at the undisclosed successor, a control input or an undisclosed address selects nothing", async () => {
     const { alice, bob } = await parties();
-    await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct", uses: "many" });
+    await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct" });
     const { wire, options, receive, live } = await rotating(alice);
     const wireId = crypto.randomUUID() as WireMessageId;
     const reacted = await live(bob, ping(wireId));
@@ -424,7 +424,7 @@ describe("a local rotation", () => {
 
   test("a selecting input whose peer has since replaced its DID permits no missing notification to be made, while the decision stands and is reused", async () => {
     const { alice, bob } = await parties();
-    await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct", uses: "many" });
+    await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct" });
     const { wire, options, receive } = await rotating(alice);
     const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);

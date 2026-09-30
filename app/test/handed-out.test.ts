@@ -23,7 +23,7 @@ const snapshot = (dids: LocalDid[]) => ({ dids }) as Snapshot;
 
 describe("the DID handed out, read from a snapshot", () => {
   it("is the live one disclosed directly for many uses, in its long form", () => {
-    expect(handedOutDid(snapshot([did(1), did(2, { disclosures: [{ as: "oob", uses: "one" }] }), did(3, { disclosures: [{ as: "direct", uses: "many" }] })]))).toBe("did:peer:4zD3:zLong3");
+    expect(handedOutDid(snapshot([did(1), did(2, { disclosures: [{ as: "oob" }] }), did(3, { disclosures: [{ as: "direct" }] })]))).toBe("did:peer:4zD3:zLong3");
   });
 
   it("is null before one is minted, and null with no snapshot at all", () => {
@@ -33,6 +33,6 @@ describe("the DID handed out, read from a snapshot", () => {
   });
 
   it("passes over one retired, however it was disclosed", () => {
-    expect(handedOutDid(snapshot([did(1, { live: false, retired: "rotated", disclosures: [{ as: "direct", uses: "many" }] })]))).toBeNull();
+    expect(handedOutDid(snapshot([did(1, { live: false, retired: "rotated", disclosures: [{ as: "direct" }] })]))).toBeNull();
   });
 });

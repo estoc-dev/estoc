@@ -173,9 +173,9 @@ describe("method inputs", () => {
   });
 
   it("let an invitation be created with or without a goal", () => {
-    expect(ok("createInvitation", "input", { uses: "one" })).toBe(true);
-    expect(ok("createInvitation", "input", { uses: "many", goal: "let's talk" })).toBe(true);
-    expect(ok("createInvitation", "input", { uses: "some" })).toBe(false);
+    expect(ok("createInvitation", "input", {})).toBe(true);
+    expect(ok("createInvitation", "input", { goal: "let's talk" })).toBe(true);
+    expect(ok("createInvitation", "input", { goal: 1 })).toBe(false);
   });
 
   it("take channel selections and block targets as channel ID lists", () => {

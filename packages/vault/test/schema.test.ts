@@ -44,7 +44,6 @@ const IN = "d2192dcf-cc5c-5f7d-b4f1-46972b7b04de";
 const WIRE = "019b2a70-f225-721c-835f-67175be0667e";
 // event CIDs as the schema tells them: raw CIDs, of nothing in particular
 const RESOLVED = cidOf("resolved") as string;
-const DISCLOSED = cidOf("disclosed") as string;
 const SOURCE_IN = cidOf("source_in") as string;
 const ROTATION = cidOf("rotation") as string;
 const OOB = "019b2a57-a947-7502-8fee-4d80d949dbcb";
@@ -114,9 +113,8 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG, boundRouteId: ROUTE } as Data<"did.created">, []],
   "route.configured": [{ routeId: ROUTE, kind: "mediated", mediationId: MEDIATION, endpoint: null } as Data<"route.configured">, []],
   "route.retired": [{ routeId: ROUTE, because: "replaced" } as Data<"route.retired">, []],
-  "did.disclosed": [{ didId: DID_ID, as: "oob", uses: "many", oobId: OOB, goal: "Write to Alice" } as Data<"did.disclosed">, []],
+  "did.disclosed": [{ didId: DID_ID, as: "oob", oobId: OOB, goal: "Write to Alice" } as Data<"did.disclosed">, []],
   "did.retired": [{ didId: DID_ID, because: "contact-deleted" } as Data<"did.retired">, []],
-  "invitation.consumed": [{ disclosureEventCid: DISCLOSED, sourceEventCid: SOURCE_IN } as Data<"invitation.consumed">, []],
   "did.rotationSelected": [{ fromDidId: DID_ID, peerDid: PEER, toDidId: DID_ID2, sourceEventCid: null, fromPrior: JWT } as Data<"did.rotationSelected">, []],
   "channel.blocked": [{ localDid: LOCAL, peerDid: PEER, includeSuccessors: true } as Data<"channel.blocked">, []],
   "contact.created": [{ contactId: CONTACT, because: "user" } as Data<"contact.created">, []],
@@ -208,7 +206,7 @@ const IN_DATA = ALL["message.in"][0] as MessageIn;
 describe("readVaultEvent", () => {
   it("knows exactly the version-4 types", () => {
     expect([...VAULT_EVENT_TYPES].sort()).toEqual(Object.keys(ALL).sort());
-    expect(VAULT_EVENT_TYPES).toHaveLength(29);
+    expect(VAULT_EVENT_TYPES).toHaveLength(28);
     expect(isVaultEventType("message.out")).toBe(true);
     expect(isVaultEventType("relationship.bound")).toBe(false);
     expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-4 event type/);
@@ -245,8 +243,6 @@ describe("identifiers in payloads", () => {
     rejects("contact.deleted", { contactId: CONTACT.toUpperCase() }, [], /UUIDv7/);
     rejects("contact.deleted", { contactId: IN }, [], /contactId must be a canonical UUIDv7/);
     rejects("mediation.selected", { mediationId: IN }, [], /UUIDv7/);
-    rejects("invitation.consumed", { disclosureEventCid: DISCLOSED, sourceEventCid: IN }, [], /sourceEventCid must be an event CID/);
-    rejects("invitation.consumed", { disclosureEventCid: DISCLOSED, sourceEventCid: SOURCE_IN.toUpperCase() }, [], /sourceEventCid must be an event CID/);
     rejects("delivery.acknowledged", { ...ALL["delivery.acknowledged"][0], ackMessageId: OUT }, [], /ackMessageId must be a canonical UUIDv5/);
   });
 
@@ -341,15 +337,13 @@ describe("rules between members", () => {
     rejects("route.configured", { routeId: ROUTE, kind: "relay", mediationId: MEDIATION, endpoint: null }, [], /one of "mediated", "direct"/);
   });
 
-  test("did.disclosed carries an oobId exactly for an oob disclosure, and a direct disclosure is for many uses", () => {
+  test("did.disclosed carries an oobId exactly for an oob disclosure", () => {
     const data = ALL["did.disclosed"][0] as Loose;
-    accepts("did.disclosed", { ...data, as: "direct", uses: "many", oobId: null, goal: null });
-    accepts("did.disclosed", { ...data, uses: "one" });
+    accepts("did.disclosed", { ...data, as: "direct", oobId: null, goal: null });
     rejects("did.disclosed", { ...data, oobId: null }, [], /oobId/);
     rejects("did.disclosed", { ...data, as: "direct" }, [], /oobId/);
-    rejects("did.disclosed", { ...data, as: "direct", uses: "one", oobId: null }, [], /direct disclosure is for many uses/);
-    rejects("did.disclosed", { ...data, as: "profile", uses: "many", oobId: null }, [], /one of "oob", "direct"/);
-    rejects("did.disclosed", { ...data, uses: "some" });
+    rejects("did.disclosed", { ...data, as: "profile", oobId: null }, [], /one of "oob", "direct"/);
+    rejects("did.disclosed", { ...data, uses: "one" });
   });
 
   test("a rotation moves to another DID entity, a merge names two contacts, a block names two DIDs", () => {

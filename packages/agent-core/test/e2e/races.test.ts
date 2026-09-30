@@ -18,13 +18,13 @@ afterEach(stopAll);
 const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 describe("first messages that race", () => {
-  test("two peers answer one one-use invitation: the first received consumes it, the other is an input all the same, and each peer is given a private successor of its own", { timeout: LONG }, async () => {
+  test("two peers answer one invitation: each is an input, the invitation stays open, and each peer is given a private successor of its own", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { liveDelivery: false });
     const bob = await run(mediator, 2, BOB);
     const carol = await run(mediator, 3, CAROL);
     const a0 = alice.party.did;
-    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob", uses: "one" });
+    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob" });
 
     for (const [peer, messageId] of [
       [bob, FROM_BOB],
@@ -36,14 +36,13 @@ describe("first messages that race", () => {
     // Both wait at the mediator, in the order it took them; the pickup that finds them may also find what the peers answer meanwhile.
     expect(await alice.agent.connect()).toMatchObject([{ unreachable: null, drained: { ended: "empty" } }]);
     await alice.agent.settled();
-    expect(alice.inbounds.slice(0, 2).map(({ received, after, address }) => [received.outcome === "received" && received.live, after!.consumed.length, address!.outcome])).toEqual([
-      [true, 1, "rotated"],
-      [true, 0, "rotated"],
+    expect(alice.inbounds.slice(0, 2).map(({ received, after, address }) => [received.outcome === "received" && received.live, after!.disposition.status, address!.outcome])).toEqual([
+      [true, "admitted", "rotated"],
+      [true, "admitted", "rotated"],
     ]);
 
     const ofAlice = await foldOf(alice);
-    expect((await alice.agent.records()).invitations()).toMatchObject([{ oobId: invitation!.id, uses: "one", state: { status: "consumed" }, consumer: bob.party.did }]);
-    expect(ofAlice.set.of("invitation.consumed")).toHaveLength(1);
+    expect((await alice.agent.records()).invitations()).toMatchObject([{ oobId: invitation!.id, state: { status: "available" } }]);
     expect([...ofAlice.inbound.executions.values()].filter((execution) => execution.kind === "application").map((execution) => [execution.channel.peerDid, execution.status.status])).toEqual([
       [bob.party.did, "complete"],
       [carol.party.did, "complete"],

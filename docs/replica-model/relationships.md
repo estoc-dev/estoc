@@ -93,7 +93,6 @@ Every instruction to append an event in this document means
 - **Communication address** — a supported canonical DID with retained keys
   and routing evidence; local DIDs are seed-derived numalgo-4 entities.
 - **Channel** — a fixed ordered pair of distinct canonical local and peer DIDs.
-- **Invitation consumption** — a durable decision assigning a one-use OOB disclosure to the peer authenticated by an exact source receipt.
 - **Continuity link** — a fold-derived, verified replacement of one endpoint in one channel context.
 - **Contact** — local names, preferences and direct channel selections for display.
 - **Application input** — authenticated input other than control input,
@@ -149,9 +148,9 @@ OOB, QR, directory, file, NFC or manual exchange discloses an ordinary address.
 Reusable discovery SHOULD use a public-contact address. Record the disclosed
 content as an OOB invitation or direct DID under [did.disclosed](vault-events.md#did-disclosed),
 independently of its publication medium. An OOB ID supplies `pthid`, never
-channel identity. One-use invitations are consumed automatically under
-[channels.md](channels.md#invitation-consumed); many-use invitations and direct
-disclosures have no exclusive consumer. Availability follows
+channel identity. An invitation is reusable: whoever holds it writes in a
+channel of their own, and no receipt takes it from the next under
+[channels.md](channels.md#invitations). Availability follows
 [the invitation fold](vault-events.md#invitation-fold).
 
 <a id="address-lifecycle"></a>
@@ -159,7 +158,7 @@ disclosures have no exclusive consumer. Availability follows
 ## 7. Address lifecycle
 
 `did.created`, `did.disclosed` and `did.retired` retain their local key/route
-semantics. Retirement blocks new sending, disclosure and invitation consumption. Exact
+semantics. Retirement blocks new sending and disclosure. Exact
 retained keys may receive while their routes remain eligible. Explicit route
 or mediation retirement stops transport; temporary outage remains recoverable.
 
@@ -256,15 +255,14 @@ material under section 10.1; it does not start a network resolution sequence.
 
 The [phase-1 adapter](channels.md#carried-proof-and-library-boundary) authenticates
 the current sender without verifying `from_prior`. Missing predecessor material,
-failed proof verification, invitation decisions or continuity history cannot
+failed proof verification or continuity history cannot
 defer receipt or pickup ACK. Failed envelope authentication supplies no
 authenticated observation: a recoverable prerequisite waits here, while a
 definitive rejection follows section 9.2's terminal pickup-ACK path.
 
 After durable `message.in`, each consumer waits only for its required evidence.
 These upper-layer waits do not withhold pickup ACK. Recovery uses saved sender
-evidence without restarting resolution; invitation recovery follows
-[its own rules](channels.md#invitation-consumed).
+evidence without restarting resolution.
 
 Wait state for missing local receive prerequisites is runtime scheduling state.
 Retry when its actual local receive prerequisite changes; unrelated evidence
@@ -283,7 +281,7 @@ Recipient classification begins before decryption once section 9.1 says local
 key state is authoritative. An exact local key-agreement method is eligible
 for receipt when its DID/key mapping is valid and conflict-free and its bound
 route has no terminal dependency. DID retirement does not remove a retained
-exact key from channel receipt eligibility; invitation use or display membership is not read. Missing
+exact key from channel receipt eligibility; invitation state or display membership is not read. Missing
 recoverable prerequisites defer under section 9.1. If no recipient `kid`
 identifies an eligible or recoverably pending method, the delivery is terminal
 wrong-recipient input: a mediated delivery MUST be pickup-ACKed and MUST create
@@ -329,9 +327,8 @@ A safely classified hard rejection received through Message Pickup:
 
 Direct transport has no pickup ACK. Malformed envelope crypto, wrong recipient,
 an unsupported sender method, an unknown sender short form without its long
-form and hard abuse/resource limits are examples of this gate. Supersession,
-invitation and channel
-policy are checked after receipt when consuming an invitation or starting new work.
+form and hard abuse/resource limits are examples of this gate. Supersession and channel
+policy are checked after receipt when starting new work.
 A malformed or invalid string-valued `from_prior` is post-receipt proof evidence,
 not malformed envelope crypto. It cannot change the authenticated sender used
 for ingress limits or supply predecessor authority.
@@ -378,7 +375,7 @@ A locally controlled communication DID MUST have its fixed key-agreement and
 authentication methods, seed-derived keys, validated numalgo-4 document and one
 immutable `boundRouteId` under [vault-events.md section 5.2](vault-events.md#did-identity-and-keys). That document must
 support authenticated messages and signing `from_prior`. Recipient lifecycle
-is role-independent under section 9; sending and new invitation consumption require a live DID.
+is role-independent under section 9; sending requires a live DID.
 
 Before the first channel package is submitted, its sender MUST durably retain:
 
@@ -568,7 +565,7 @@ a retained method-valid `peer.resolved` document matches it under section 10.1.
 A long form retained only in other event data does not qualify. Without the
 matching document, a proof that passes the checks not requiring it stays pending.
 A receiver compares predecessor DID spellings and authentication-method IDs
-under [vault-events.md section 6.4](vault-events.md#relationship-peertransitioned), using only the method's validated spelling
+under [vault-events.md section 6.3](vault-events.md#relationship-peertransitioned), using only the method's validated spelling
 equivalence and the exact verification document. Exact wire spellings remain retained.
 A successor may bind another route or mediation for privacy. Neither changing
 transport preference nor choosing another service changes an existing DID.
@@ -734,7 +731,7 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-6"></a> **RZ-6.** Validated Peer long/short spellings name one channel endpoint; shared keys, endpoints and labels do not alias distinct DIDs.
 
-- <a id="rz-7"></a> **RZ-7.** Opposite first sends use one local/peer pair in each vault and distinct sender/recipient message directions; unsolicited receipt neither consumes an invitation nor creates a contact.
+- <a id="rz-7"></a> **RZ-7.** Opposite first sends use one local/peer pair in each vault and distinct sender/recipient message directions; unsolicited receipt creates no contact.
 
 - <a id="rz-8"></a> **RZ-8.** Another independently authorized key in the same immutable document preserves sender/recipient/wire-ID identity without creating a contact.
 
@@ -758,11 +755,11 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-16"></a> **RZ-16.** A committed successor/local rotation decision survives crash with exact route, keys, JWT, iat and source; its link rebuilds and no notification dispatches automatically on reopen.
 
-- <a id="rz-17"></a> **RZ-17.** Missing optional private allocation does not prevent an ordinary public-address reply or a separately eligible invitation consumption.
+- <a id="rz-17"></a> **RZ-17.** Missing optional private allocation does not prevent an ordinary public-address reply.
 
 - <a id="rz-18"></a> **RZ-18.** Normal Trust Ping selects ping-response; response_requested false is still received and may get an independent Empty rotation notification.
 - <a id="rz-19"></a> **RZ-19.** Content-first Basic Message remains its own application message without a rendezvous wrapper.
-- <a id="rz-20"></a> **RZ-20.** A complete control source may supply authenticated ACK evidence, but creates no contact or recursive privacy notification. Invitation consumption remains a separate decision.
+- <a id="rz-20"></a> **RZ-20.** A complete control source may supply authenticated ACK evidence, but creates no contact or recursive privacy notification.
 
 - <a id="rz-21"></a> **RZ-21.** Generic pure ACK has no ACK request. ACK, Ping reply and privacy notification use independent intents; the latter two have empty ack arrays.
 - <a id="rz-22"></a> **RZ-22.** New successor messages carry frozen proof/long form until confirmation; committed packages remain exact after confirmation, including before their first send.
@@ -790,15 +787,13 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-33"></a> **RZ-33.** Verified peer supersession refuses new old-peer application admission and work through its local-only context, prohibits preparation/dispatch to that peer including manual retries, preserves raw receipts and prior admitted history/decisions, and leaves unrelated public-DID contexts unaffected.
 
-- <a id="rz-34"></a> **RZ-34.** A matching invitation.consumed assigns a one-use disclosure to its proof-free source's canonical peer; plain receipt, continuation and pthid alone do not.
 
-- <a id="rz-35"></a> **RZ-35.** Same-channel consumption is idempotent; unavailable invitations refuse another consumer and imported incompatible consumers conflict. Crash/erasure never reopen consumption.
 
 <a id="recipient-lifecycle-rz-36-rz-38"></a>
 
 ### Recipient lifecycle (RZ-36–RZ-38)
 
-- <a id="rz-36"></a> **RZ-36.** A retired local DID permits no new invitation consumption or sending, but retained keys may receive on eligible routes without continuity history.
+- <a id="rz-36"></a> **RZ-36.** A retired local DID permits no new sending or disclosure, but retained keys may receive on eligible routes without continuity history.
 
 - <a id="rz-37"></a> **RZ-37.** A terminal route or mediation rejects input; temporary missing key/route/recovery prerequisites defer without pickup ACK.
 - <a id="rz-38"></a> **RZ-38.** Wrong recipient DID or method fragment, authentication-purpose kid and unknown Peer short form are terminal before application state.
@@ -821,9 +816,9 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-48"></a> **RZ-48.** Expiry and bounded prerequisite retries are independent of incoming age and rotation iat; transport retries require manual action.
 
-- <a id="rz-49"></a> **RZ-49.** Contact channel selection is independent of invitation consumption; control-only channels need no invented contact.
+- <a id="rz-49"></a> **RZ-49.** Contact channel selection is independent of invitations; control-only channels need no invented contact.
 
-- <a id="rz-50"></a> **RZ-50.** Contact membership changes no invitation consumer, verification evidence, continuation, message identity or ACK authorization.
+- <a id="rz-50"></a> **RZ-50.** Contact membership changes no verification evidence, continuation, message identity or ACK authorization.
 
 - <a id="rz-51"></a> **RZ-51.** Deleting a contact changes display only; an explicit delete-and-block action writes channel denials without retiring shared resources.
 
@@ -836,11 +831,11 @@ roll back; explicit new communication is a new channel and new message.
 
 ### Receipt recovery, method boundaries and evidence fixtures (RZ-55–RZ-64)
 
-- <a id="rz-55"></a> **RZ-55.** Receipt precedes invitation consumption and other concrete source-derived work. Crash retains each committed prefix; only a complete consumption records a consumer, and no prefix dispatches automatically on reopen.
+- <a id="rz-55"></a> **RZ-55.** Receipt precedes concrete source-derived work. Crash retains each committed prefix, and no prefix dispatches automatically on reopen.
 
 - <a id="rz-56"></a> **RZ-56.** Confirmation in an unrelated channel does not permit short-form disclosure or proof omission; validated equivalent predecessor spellings verify against the exact retained method evidence.
 
-- <a id="rz-57"></a> **RZ-57.** The phase-1 adapter saves authenticated carriers with the unchanged proof while predecessor evidence is pending or the proof is invalid. Proof verification never delays pickup ACK. Definitive envelope/authentication failures are terminal pre-vault input; recoverable local receive prerequisites still wait. Restore validates local links, and proof-free input alone consumes no invitation.
+- <a id="rz-57"></a> **RZ-57.** The phase-1 adapter saves authenticated carriers with the unchanged proof while predecessor evidence is pending or the proof is invalid. Proof verification never delays pickup ACK. Definitive envelope/authentication failures are terminal pre-vault input; recoverable local receive prerequisites still wait. Restore validates local links.
 
 - <a id="rz-58"></a> **RZ-58.** Long/short Peer spellings retain the same canonical document CID and cannot create another document revision by resolver transformation.
 

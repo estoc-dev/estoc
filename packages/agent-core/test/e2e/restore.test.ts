@@ -86,7 +86,7 @@ describe("a vault restored from a snapshot", () => {
     const snapshot = await snapshotOf(alice);
 
     const later = await createDid(alice.runtime, alice.keys, await ensureRoute(alice.runtime, alice.keys, alice.party.mediationId), ALICE_LATER);
-    const { invitation } = await alice.agent.disclose(ALICE_LATER, { as: "oob", uses: "many" });
+    const { invitation } = await alice.agent.disclose(ALICE_LATER, { as: "oob" });
     const rotated = await bob.agent.manual.rotate({ localDidId: BOB, peerDid: a0 });
     const b1 = didOf(await foldOf(bob), rotated.successor);
     await until("alice has bob's notification", () => alice.inbounds.length === 2);
@@ -128,7 +128,7 @@ describe("a vault restored from a snapshot", () => {
     const bob = await run(mediator, 2, BOB);
     const a0 = alice.party.did;
     const b0 = bob.party.did;
-    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob", uses: "many" });
+    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob" });
     const snapshot = await snapshotOf(alice);
     let unheard = true;
     mediator.intercept = (msg, from) => (unheard && msg.type === MESSAGES_RECEIVED && from === alice.party.created.data.me.did ? mediator.reply(PROBLEM_REPORT, from, { code: "e.p.busy" }, msg.id) : undefined);

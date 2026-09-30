@@ -3,8 +3,7 @@
  * the event store for collection, export and import; the erasure of a
  * message and the closure that keeps an erasure complete when a later
  * event names roots the erase did not; the admissions the observations
- * are owed, recorded in order; the invitation consumptions the admitted
- * receipts are owed; the work an open finds unfinished, which it lists
+ * are owed, recorded in order; the work an open finds unfinished, which it lists
  * and never dispatches; the decisions a send, a reply and a rotation
  * take before they commit; the denial of channels and the deletion of
  * a contact. Each decision is a pure function of the fold, exported as
@@ -187,35 +186,6 @@ export function reconcileAdmissions(runtime: VaultRuntime, keys: Keys | null, op
   return runtime.locked(async (held) => (await admitReceipts(held, await scanVault(held, keys, options), options)).events);
 }
 
-// ---- invitation consumption --------------------------------------------
-
-/**
- * The consumption each available one-use invitation is owed: the
- * first candidate receipt, in first-receipt order, that may be
- * recorded now. A refused or invalid candidate is passed over; one
- * that waits for evidence, or is caught in a receipt-integrity
- * conflict, stops the walk and nothing behind it is taken, which the
- * invitation's status already says. An invitation with a consumer, a
- * record still pending or a conflict is owed nothing.
- */
-export function consumptionDrafts(fold: VaultFold): VaultDraft<"invitation.consumed">[] {
-  const drafts: VaultDraft<"invitation.consumed">[] = [];
-  for (const [disclosureEventCid, invitation] of fold.invitations.invitations) {
-    if (invitation.status.status !== "available") continue;
-    for (const { source, eligibility } of invitation.candidates) {
-      if (eligibility.status === "refused" || eligibility.status === "invalid") continue;
-      if (eligibility.status === "eligible") drafts.push(vaultDraft("invitation.consumed", { disclosureEventCid: disclosureEventCid as EventReference<"did.disclosed">, sourceEventCid: source.event.cid as EventReference<"message.in"> }));
-      break;
-    }
-  }
-  return drafts;
-}
-
-/** Record the consumptions the admitted receipts are owed, in one commit under the lock: what an open and every receipt run after the admissions, dispatching nothing. */
-export function consumeInvitations(runtime: VaultRuntime, keys: Keys | null, options: ScanOptions = {}): Promise<Event[]> {
-  return commitDecided(runtime, keys, options, consumptionDrafts);
-}
-
 // ---- automatic effects ---------------------------------------------------
 
 /** An operation's tuple over an input, the message ID it names and the intent already recorded under it, if any. */
@@ -293,8 +263,7 @@ export interface NotificationConflict {
  * the notifications verified decisions still permit; the decisions
  * whose notification intents disagree, listed as a diagnostic, since
  * no retry may select among them; the proofs that wait for issuer
- * material a repair or an import may bring; and the invitation
- * consumptions the runtime records on its own.
+ * material a repair or an import may bring.
  */
 export interface PendingWork {
   readonly outbounds: readonly Outbound[];
@@ -302,7 +271,6 @@ export interface PendingWork {
   readonly notifications: readonly MissingNotification[];
   readonly notificationConflicts: readonly NotificationConflict[];
   readonly proofs: readonly Carrier[];
-  readonly consumptions: readonly VaultDraft<"invitation.consumed">[];
 }
 
 export function unfinishedWork(fold: VaultFold): PendingWork {
@@ -313,7 +281,6 @@ export function unfinishedWork(fold: VaultFold): PendingWork {
     notifications,
     notificationConflicts: conflicts,
     proofs: [...fold.channels.carriers.values()].filter((carrier) => carrier.proof.status === "pending-proof"),
-    consumptions: consumptionDrafts(fold),
   };
 }
 

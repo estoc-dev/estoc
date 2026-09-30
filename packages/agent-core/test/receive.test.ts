@@ -410,7 +410,7 @@ describe("the gate before the vault", () => {
     expect((await receiver.localStateChanged()).map(({ key, outcome }) => [key, outcome])).toEqual([[deliveryKey(toOther), "received"]]);
     expect([calls, await opened()]).toEqual([[DID, OTHER], 2]);
 
-    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct", uses: "many" });
+    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct" });
     await copy.runtime.ingest(await eventsOf(alice.runtime, "did.disclosed"));
     failing = true;
     expect(await receiver.localStateChanged()).toMatchObject([{ key: deliveryKey(toAlice), outcome: "deferred", reason: "the receipt failed: the disk is full; the delivery is left where it came from" }]);
@@ -466,7 +466,7 @@ describe("the gate before the vault", () => {
     expect([calls, await opened(), receiver.waiting().length]).toEqual([1, 1, 1]);
     expect(await receiver.localStateChanged()).toEqual([]);
 
-    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct", uses: "many" });
+    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct" });
     await copy.runtime.ingest(await eventsOf(alice.runtime, "did.disclosed"));
     expect((await receiver.localStateChanged()).map(({ outcome }) => outcome)).toEqual(["deferred"]);
     expect([calls, await opened()]).toEqual([2, 2]);

@@ -327,10 +327,10 @@ export function invitationLink(record: InvitationRecord): string | null {
   return linkOf(invitationOf(record.localDid, record.oobId, null));
 }
 
-/** A link for one person: whoever opens it and writes first is the one it is for. */
+/** A link to hand out: whoever opens it writes to a DID minted for this link, each in a conversation of their own. */
 export async function createInvitation(): Promise<string> {
   const held = heldNow();
-  const { invitation } = await call((daemon) => daemon.createInvitation({ uses: "one" }));
+  const { invitation } = await call((daemon) => daemon.createInvitation({}));
   if (held()) state.links = { ...state.links, [invitation.id]: linkOf(invitation) };
   return invitation.id;
 }
@@ -426,9 +426,9 @@ export function dismissPendingInvitation(): void {
   state.pendingInvitation = null;
 }
 
-/** The DID this vault hands out to anyone, as the snapshot shows it: the live one disclosed directly for many uses, or null before one is minted. */
+/** The DID this vault hands out to anyone, as the snapshot shows it: the live one disclosed directly, or null before one is minted. */
 export function handedOutDid(snapshot: Snapshot | null): string | null {
-  const handedOut = snapshot?.dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct" && d.uses === "many"));
+  const handedOut = snapshot?.dids.find((did) => did.live && did.disclosures.some((d) => d.as === "direct"));
   return handedOut?.longFormDid ?? null;
 }
 

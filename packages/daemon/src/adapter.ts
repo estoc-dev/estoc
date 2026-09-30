@@ -165,8 +165,8 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
     }),
 
     setMediator: guarded(async ({ mediatorDid }) => ({ mediationId: spelled(await core.setMediator(didOf(mediatorDid))) })),
-    createInvitation: guarded(async ({ uses, goal }) => {
-      const { didId, invitation } = await core.createInvitation(uses, goal);
+    createInvitation: guarded(async ({ goal }) => {
+      const { didId, invitation } = await core.createInvitation(goal);
       return { didId: spelled(didId), invitation };
     }),
     acceptInvitation: guarded(

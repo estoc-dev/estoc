@@ -21,7 +21,7 @@ and after ingest.
 
 This document defines portable vault state. Socket state, pickup cursors,
 retry timers, caches and traces are local state and do not appear here.
-[channels.md](channels.md) owns channel identity, invitation consumption and
+[channels.md](channels.md) owns channel identity, invitations and
 operation eligibility; receipt precedes source-derived decisions and continuity work.
 
 <!-- reading-guide:start -->
@@ -41,7 +41,7 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 | Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](relationships.md#early-private-address-policy-and-notifications); [Rotate local address](#rotate-a-local-relationship-address) |
 | Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](#contact-fold) | [Delete contact](#delete-a-contact) |
 | Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events and witnesses](#inbound-message-events) | [Inbound execution](#inbound-message-and-execution-fold); [Outbound delivery](#outbound-message-and-delivery-fold) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
-| Invitations | [Disclosure](#disclosure) | [Invitation consumption](#invitation-fold) | [Discovery](relationships.md#out-of-band-discovery); [Receipt integrity](relationships.md#integrity-checks-and-durable-receipt) |
+| Invitations | [Disclosure](#disclosure) | [Invitation availability](#invitation-fold) | [Discovery](relationships.md#out-of-band-discovery); [Receipt integrity](relationships.md#integrity-checks-and-durable-receipt) |
 | Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held-root rules](#held-roots) | [Erase message](#erase-a-message) |
 
 <details>
@@ -174,7 +174,7 @@ replica, domain owner or process location.
 
 Changing a communication DID's keys or embedded service creates another
 `did:peer:4` entity. A local `did.rotationSelected` under
-[section 6.5](#relationship-localtransitioned) authorizes a successor channel
+[section 6.4](#relationship-localtransitioned) authorizes a successor channel
 for new intents; existing intents retain their channel and may become
 undispatchable. There is no local
 communication-key generation or key-generation selection. Store generations
@@ -276,9 +276,7 @@ it does not imply that every identifier has the same encoding or scope.
 
 For every payload `*EventCid`, `T` is the target event type fixed by the
 referencing schema. `sourceEventCid` is `EventReference<"message.in">` in
-`invitation.consumed`, `did.rotationSelected`, `message.admitted`
-and `message.out`;
-`disclosureEventCid` in `invitation.consumed` names `did.disclosed`;
+`did.rotationSelected`, `message.admitted` and `message.out`;
 `fromDidId` and `toDidId` in `did.rotationSelected` name local DID entities;
 `rotationEventCid` in
 `message.out` names `did.rotationSelected`. The referencing schema also owns
@@ -430,7 +428,7 @@ exact string.
 For an inbound observation it is the key that authenticated the message; for
 an outbound package it is the selected recipient key. A peer resolution records
 the key-agreement key used for receipt/preparation. Predecessor JWT checks use
-the immutable issuer document derived under [section 6.4](#relationship-peertransitioned) and its authentication
+the immutable issuer document derived under [section 6.3](#relationship-peertransitioned) and its authentication
 methods directly. Selection alone is not evidence
 of authenticated inbound traffic or remote receipt.
 
@@ -454,8 +452,6 @@ their explicit keys. Continuity links derive from exact proof evidence and local
 `message.in.presentedDid` preserves the wire spelling, and
 `peer.resolved.presentedDid` preserves the spelling used for resolution.
 First-disclosure validation and recovery use this retained evidence.
-Invitation consumption derives from its own exact disclosure/source references
-under [section 5.8](#invitation-fold).
 A verified link may justify a new channel without changing earlier message IDs.
 Equal key values under different DIDs do not supply channel authority or a
 contact assignment. Each observation retains its own key evidence, and each
@@ -485,7 +481,7 @@ channels or contact/application views.
 ### 4.3 Resolution observations
 
 Resolution observations retain exact cryptographic evidence. Peer continuity
-links follow the same rule in [section 6.4](#relationship-peertransitioned).
+links follow the same rule in [section 6.3](#relationship-peertransitioned).
 These facts remain distinct from contact assignments and local DID entities.
 
 <a id="111-peerresolved"></a>
@@ -538,7 +534,7 @@ peer key. `localKeyName` identifies the local communication key/context.
 Receipts and packages retain exact resolution references for the immutable
 peer document. The receipt's `peerResolutionEventCid` authenticates the current
 sender only; predecessor JWT verification derives its issuer document under
-[section 6.4](#relationship-peertransitioned) using the same canonical representation.
+[section 6.3](#relationship-peertransitioned) using the same canonical representation.
 The referenced resolution objects
 remain historical evidence; another document cannot replace any reference.
 If the event or object is temporarily missing, processing is deferred until
@@ -568,7 +564,7 @@ bytes and CID from `L`, even though `presentedDid` may now be `S`. New resolutio
 events may record another presented spelling, selected key or local `localKeyName`;
 they do not produce a second document for the same numalgo-4 DID. Import
 validates this representation against `L`; it never repairs evidence by rewriting
-the retained bytes or CID. Method-ID comparison follows [section 6.4](#relationship-peertransitioned).
+the retained bytes or CID. Method-ID comparison follows [section 6.3](#relationship-peertransitioned).
 
 Equivalent duplicate observations are harmless. Same document CID with
 incompatible contents is an integrity conflict; a different
@@ -808,7 +804,6 @@ does not erase retained messages.
   "data": {
     "didId": "019b2a54-05bd-74ef-b8ac-e8375cb776c2",
     "as": "oob",
-    "uses": "many",
     "oobId": "019b2a57-a947-7502-8fee-4d80d949dbcb",
     "goal": "Write to Alice"
   }
@@ -816,17 +811,18 @@ does not erase retained messages.
 ```
 
 `as` is `oob` for an OOB invitation or `direct` for a DID shared without one,
-regardless of audience or publication medium. `uses` is `one` or `many`;
-`direct` MUST use `many`. `oobId` is REQUIRED for `oob` and null otherwise;
+regardless of audience or publication medium. `oobId` is REQUIRED for `oob` and null otherwise;
 `goal` is nullable. `didId` names a local DID entity under
 [section 3.5](#identifier-and-reference-vocabulary), which retains its spellings.
-Any live communication DID may be disclosed. One-use consumption follows
-[the invitation fold](#invitation-fold).
+Any live communication DID may be disclosed. An invitation is reusable: whoever
+holds it writes to the disclosed DID in a channel of their own, and no receipt
+takes it from the next; [the invitation fold](#invitation-fold) says whether
+the DID still takes one.
 
 An `oobId` MUST identify one local disclosure. Republishing an invitation reuses
-that disclosure; a new invitation receives a new `oobId`. Distinct imported OOB
-disclosures with the same non-null `oobId` conflict, supplying no additional use
-and never reopening complete consumption.
+that disclosure; a new invitation receives a new `oobId`. Distinct disclosures
+with the same non-null `oobId` are an entity conflict, and republishing under
+that ID is refused.
 
 This permanently records disclosure. A mediated `boundRouteId` MUST have current
 verified recipient registration before disclosure. Reusable/public disclosure
@@ -849,15 +845,14 @@ First disclosure exposes the validated `did:peer:4` long form.
 }
 ```
 
-Retirement is terminal for new sending, disclosure and invitation consumption
-using this DID. Its mediated recipient registration leaves the desired set.
-It does not erase keys, documents, invitation consumptions, received messages or continuity evidence.
+Retirement is terminal for new sending and disclosure using this DID. Its mediated recipient registration leaves the desired set.
+It does not erase keys, documents, received messages or continuity evidence.
 
 A retained exact local key remains eligible for authenticated channel
 receipt while its bound route has no terminal dependency, including after DID
 retirement. This rule applies equally to publicly disclosed and privately
 allocated addresses. No renewed registration is required to drain retained
-deliveries. An invitation on a retired local DID cannot acquire a new consumer.
+deliveries. An invitation on a retired local DID is unavailable.
 [relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;
 [distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
 
@@ -975,30 +970,22 @@ cryptographic use.
 
 ### 5.8 Invitation fold
 
-The schema and consumption rules are owned by
-[channels.md](channels.md#invitation-consumed). Fold each one-use OOB disclosure
-from its `invitation.consumed` records and their exact source evidence. The
-consumer is the canonical peer DID within the disclosure's fixed local DID.
-Expose available, consumed by that peer, pending evidence, unavailable lifecycle
-or conflict as distinct states. Many-use invitations have no exclusive consumer
-and cannot be the target of `invitation.consumed`.
-
-Missing evidence for a possible consumption or earlier receipt candidate leaves
-availability pending. Incompatible complete consumers or duplicate OOB disclosure
-IDs make it conflicted and unavailable. Incomplete siblings cannot erase an
-established consumption, which never becomes available again.
-
-Validate positive evidence before aggregate availability under channels.md.
-Only a complete consumption record establishes the consumer; the active runtime
-appends missing records automatically, including on recovery. A pure fold never
-assigns a consumer or appends an event.
+Fold each OOB disclosure into one invitation: its `oobId`, its local DID and
+whether that DID still takes a first message under it. An invitation is
+available while the disclosed DID is live on a route that may deliver, and
+unavailable once the DID is retired or in conflict, its creation is missing,
+its route is retired, misconfigured or on a terminal mediation, or while the
+DID waits to be live. Receipts under the invitation are ordinary receipts
+under [section 6.1](#receipt-and-relationship-evidence): the fold records nothing
+of who used it, and nothing a peer sends under it takes it from the next.
+[channels.md](channels.md#invitations) owns the rule.
 
 <a id="12-relationships-and-address-changes"></a>
 <a id="relationships-and-address-changes"></a>
 
 ## 6. Channels, continuity and contact membership
 
-Channel identity, invitation consumption, continuity links, local denial and contact views
+Channel identity, invitations, continuity links, local denial and contact views
 are defined in [channels.md](channels.md).
 
 <a id="121-receipt-and-relationship-evidence"></a>
@@ -1008,19 +995,11 @@ are defined in [channels.md](channels.md).
 
 Channel receipt commits independently. Each source-derived operation rechecks
 its exact DID pair, evidence and applicable policy under one vault operation
-lock. Invitation consumption additionally checks its disclosure and availability.
+lock.
 Every event reference must
 name an already committed event; use returned CIDs, not an assumed same-batch
 CID. Release the vault lock before network calls. Per-message dispatch is
 separately serialized under [delivery](distributed-delivery.md#send-an-ordinary-message).
-
-<a id="122-relationshipbound"></a>
-<a id="relationship-bound"></a>
-
-### 6.2 Invitation consumption evidence
-
-The [consumption schema](channels.md#invitation-consumed) defines the exact
-disclosure/source references; [section 5.8](#invitation-fold) defines the view.
 
 <a id="123-relationshipcontactassigned"></a>
 <a id="relationship-contactassigned"></a>
@@ -1028,7 +1007,7 @@ disclosure/source references; [section 5.8](#invitation-fold) defines the view.
 <a id="contact-peerdidremoved"></a>
 <a id="contact-channelsset"></a>
 
-### 6.3 `contact.channelsSet`
+### 6.2 `contact.channelsSet`
 
 ```json
 {
@@ -1062,7 +1041,7 @@ Membership grants no protocol authority. Derived related history follows
 <a id="112-relationshippeertransitioned"></a>
 <a id="relationship-peertransitioned"></a>
 
-### 6.4 Peer proof evidence and continuity
+### 6.3 Peer proof evidence and continuity
 
 Derive the issuer document and verify each committed carrier's original
 `fromPrior` under [channels.md](channels.md#peer-proof-evidence). A long-form
@@ -1108,7 +1087,7 @@ channel context and verified proof.
 <a id="124-relationshiplocaltransitioned"></a>
 <a id="relationship-localtransitioned"></a>
 
-### 6.5 Local continuity decisions
+### 6.4 Local continuity decisions
 
 The [did.rotationSelected schema](channels.md#did-rotationselected) defines the
 fixed predecessor pair, successor, proof, nullable source and independent
@@ -1120,7 +1099,7 @@ become undispatchable under [dispatch authority](channels.md#fixed-outbound-chan
 <a id="144-relationship-fold-and-address-index"></a>
 <a id="relationship-fold-and-address-index"></a>
 
-### 6.6 Channel and continuity projections
+### 6.5 Channel and continuity projections
 
 Index exact ordered pairs by their canonical local and peer DID strings.
 Derive directed links, verified opposite-side joins, local-only supersession contexts and
@@ -1150,7 +1129,7 @@ See [relationships.md section 5.1](relationships.md#contact-ids).
 ### 7.2 Contact event schemas
 
 Direct channel selections use `contact.channelsSet` in
-[section 6.3](#contact-channelsset).
+[section 6.2](#contact-channelsset).
 
 <a id="contact-created"></a>
 
@@ -1172,7 +1151,7 @@ Direct channel selections use `contact.channelsSet` in
 Commit this event together with an initial non-empty `contact.channelsSet`.
 Selection may precede receipt, outbound intent or peer resolution. Imported
 creation without its membership remains valid with an empty selection until
-that membership arrives; later sets may be empty under [section 6.3](#contact-channelsset).
+that membership arrives; later sets may be empty under [section 6.2](#contact-channelsset).
 
 <a id="contact-petname"></a>
 
@@ -1252,7 +1231,7 @@ private allocation follows [the address policy](relationships.md#early-private-a
 This is a display-only grouping hint between `contactId` and `fromContactId`.
 A UI MAY group their views; each retains its ID, decisions and channel set.
 The hint MUST NOT affect attribution, DID selection, protocol identity or
-authority, invitation consumption, deletion or erasure.
+authority, deletion or erasure.
 
 <a id="contact-deleted"></a>
 
@@ -2003,8 +1982,7 @@ canonical author string. The minimum is one complete observation key, not
 independent minima of its components; it is undefined when no admitted complete
 observation qualifies. Raw unadmitted duplicates cannot change this minimum.
 Admission reconciliation orders candidate observations by each observation's
-own `receiptOrderKey`, as does invitation consumption among its candidate
-receipts. `firstReceiptKey` orders established logical messages for display;
+own `receiptOrderKey`. `firstReceiptKey` orders established logical messages for display;
 it is no admission prerequisite. A pure ACK names its carrier alone, so no
 target array is ordered by either key. In a linear single-writer history
 `receiptOrderKey` preserves first-receipt order, including across restore and
@@ -2115,7 +2093,7 @@ The consumer defines the candidate set and its required comparisons and
 validation. `ackMessageId` in [section 9.6](#delivery-acknowledged) restricts
 candidates to that observation message ID's group. Any complete matching
 duplicate can witness that claim. In contrast, `sourceEventCid` in a
-`did.rotationSelected`, `message.out`, `message.admitted` or `invitation.consumed`
+`did.rotationSelected`, `message.out` or `message.admitted`
 names one exact observation and cannot replace it with a duplicate. That source
 must supply its own complete sender authentication and immutable claims.
 If that source carries a JWT, it must independently verify under
@@ -2134,15 +2112,15 @@ witness. Aggregates use all qualifying witnesses; [section 9.7](#outbound-messag
 computes ACK receipt time across all qualifying admitted witnesses, including
 duplicates and distinct carriers.
 
-Admission is a prerequisite for producing a new source-derived rotation decision,
-invitation consumption or outbound intent, and for new address confirmation.
+Admission is a prerequisite for producing a new source-derived rotation decision
+or outbound intent, and for new address confirmation.
 Application projections of chat, profile values, received ACKs and Report Problem
 correlation also require effective admission of each exact contributing source;
 ACK timing and new ACK-target selection use only admitted witnesses.
 
-Validation of a committed `did.rotationSelected`, `invitation.consumed`,
+Validation of a committed `did.rotationSelected`,
 `message.out`, preparation or submission requires its own cryptographic and
-reference evidence, not source admission. Their derived links, consumers,
+reference evidence, not source admission. Their derived links,
 frozen intents/packages and submitted facts do not become pending or invalid
 merely because an admission is absent. A committed local decision still needs
 independent complete predecessor-confirming evidence, without an admission
@@ -2372,7 +2350,7 @@ list when no new objects are needed; `Vault.events` is read-only.
    Discard only unpublished staging and reconstruct held roots before GC.
 3. Recover the vault-wide receipt ordinal high-water mark and integrity conflicts.
 4. Rebuild channel receipts, verification statuses, derived links/joins, denials,
-   contact channel selections, application admissions, invitation consumers and source/intent/result projections from saved evidence.
+   contact channel selections, application admissions and source/intent/result projections from saved evidence.
 5. Enumerate incomplete references/content and pending/unconfirmed outbounds for
    local recovery and manual action. Reuse their exact intent, channel, proof,
    package and submission records. Never infer "not sent" from missing history.
@@ -2387,9 +2365,6 @@ list when no new objects are needed; `Vault.events` is read-only.
    never infer a past acceptance. No admission is created for an unadmitted
    superseded peer. Relevant evidence, rotation and denial commits repeat this
    pass during operation; no reopen or redelivery is required.
-   Automatically complete missing invitation consumption from admitted, retained,
-   non-erased sources under [channels.md](channels.md#invitation-consumed),
-   rechecking current policy and lifecycle after rebuilding erasure and denials.
 7. Start recipient reconciliation and pickup. Enable
    new user sends and manual actions only after normal runtime/evidence checks.
 
@@ -2442,7 +2417,7 @@ reduce linkability, but route choice does not establish channel authority.
 
 Create or select a live DID under [section 13.3](#create-a-communication-did),
 reconcile its bound route and verify recipient registration. Commit
-[did.disclosed](#did-disclosed), fixing its form and invitation use limit before
+[did.disclosed](#did-disclosed), fixing its form before
 exposing the long form through the chosen discovery transport.
 
 The address belongs to the vault, not the process displaying it. A runtime
@@ -2472,7 +2447,7 @@ are considered intentionally released.
 ### 13.6 Delete a contact
 
 Append `contact.deleted` for the exact contact ID. This hides the display contact
-without changing invitation consumption, messages or transport. A product operation
+without changing messages or transport. A product operation
 explicitly combining deletion, blocking or erasure additionally records concrete
 `channel.blocked` decisions and/or `message.erased` roots selected under the lock.
 Keep those decisions independent of future contact membership. Denial can include
@@ -2769,7 +2744,7 @@ derivation requires a new vault version.
     commits under the common rule and creates no ACK loop.
 - <a id="ve-22"></a> **VE-22.** Duplicate input creates no new response or dispatch action. A pending response needs explicit manual retry; submission permanently ends its work.
 
-- <a id="ve-23"></a> **VE-23.** Resolution and channel receipt commit before pickup ACK; missing or refused invitation consumption does not withhold it.
+- <a id="ve-23"></a> **VE-23.** Resolution and channel receipt commit before pickup ACK.
 
 - <a id="ve-24"></a> **VE-24.** Local receive prerequisites wait without pickup ACK; continuity waits after authenticated receipt. Retired exact keys may drain eligible routes independently of contacts.
 
@@ -2787,16 +2762,16 @@ derivation requires a new vault version.
 - <a id="ve-28"></a> **VE-28.** Public discovery uses a chosen communication address under disclosure
     policy. Private allocation is not a different DID schema or receive path.
     Local Peer discovery needs no DNS. Sharing a bare DID through a profile page,
-    directory or address exchange records `as: "direct"`, `uses: "many"` and
+    directory or address exchange records `as: "direct"` and
     `oobId: null`; sharing an OOB invitation through those surfaces records
     `as: "oob"` with its `oobId`.
-- <a id="ve-29"></a> **VE-29.** First and later inputs use common authentication/resource checks. Automatic invitation consumption requires its own source, disclosure, ordering and current eligibility checks regardless of control type or wire age.
+- <a id="ve-29"></a> **VE-29.** First and later inputs use common authentication/resource checks regardless of control type or wire age.
 
-- <a id="ve-30"></a> **VE-30.** Unknown application types and absent receipt requests do not prevent channel receipt. Automatic output needs complete source evidence and operation-specific policy checks; received ACK/error observations and application views use their own attribution evidence. None requires invitation consumption.
+- <a id="ve-30"></a> **VE-30.** Unknown application types and absent receipt requests do not prevent channel receipt. Automatic output needs complete source evidence and operation-specific policy checks; received ACK/error observations and application views use their own attribution evidence. None requires invitation state.
 
 - <a id="ve-31"></a> **VE-31.** The first message uses its ordinary application protocol with no custom
     rendezvous wrapper or wire contact ID.
-- <a id="ve-32"></a> **VE-32.** message.in records exact channel/authentication evidence and no separate inner-signature evidence. An inner signature does not replace authenticated encryption for channel authority. Automatic intents directly reference their source; application views derive from admitted retained messages in their fixed channels. Carried-proof eligibility derives from the source JWT, immutable issuer material and endpoints independently of invitation use.
+- <a id="ve-32"></a> **VE-32.** message.in records exact channel/authentication evidence and no separate inner-signature evidence. An inner signature does not replace authenticated encryption for channel authority. Automatic intents directly reference their source; application views derive from admitted retained messages in their fixed channels. Carried-proof eligibility derives from the source JWT, immutable issuer material and endpoints independently of invitations.
 
 - <a id="ve-33"></a> **VE-33.** Sending to a peer and receiving from it use the same local/peer pair within a vault. The other vault observes the reversed local/peer roles; message identity preserves sender/recipient direction.
 
@@ -2805,9 +2780,8 @@ derivation requires a new vault version.
 - <a id="ve-35"></a> **VE-35.** First channel receipt accepts absent or past wire expiry. Outbound expiry
     independently stops unsubmitted work at equality.
 
-- <a id="ve-36"></a> **VE-36.** Receipt survives crash before consumption/display work. Recovery rebuilds saved evidence and automatically completes missing eligible invitation consumption without redelivery, user action or automatic outgoing effects.
+- <a id="ve-36"></a> **VE-36.** Receipt survives crash before display work. Recovery rebuilds saved evidence without redelivery, user action or automatic outgoing effects.
 
-- <a id="ve-37"></a> **VE-37.** invitation.consumed contains exactly disclosureEventCid and sourceEventCid, with empty roots. Both references are non-null and already committed; the exact proof-free source supplies the consumer and matches the disclosed local DID and oobId.
 
 <a id="address-changes-and-default-responses-ve-38-ve-49"></a>
 
@@ -2815,7 +2789,7 @@ derivation requires a new vault version.
 
 - <a id="ve-38"></a> **VE-38.** Local `from_prior.iss` uses the predecessor's long form and its protected
     `kid` has that exact DID portion. Peer verification matches validated
-    predecessor spellings and method IDs under [section 6.4](#relationship-peertransitioned), without changing
+    predecessor spellings and method IDs under [section 6.3](#relationship-peertransitioned), without changing
     the immutable document or JWT bytes.
 - <a id="ve-39"></a> **VE-39.** A local producer's `from_prior.sub` equals plaintext `from` byte-for-byte; before confirmation
     both use the successor's Peer-DID long form.
@@ -2870,14 +2844,14 @@ derivation requires a new vault version.
 - <a id="ve-58"></a> **VE-58.** Commit and collection share the operation lock; GC computes current held roots
     under that lock and cannot delete a retained object or overlap acceptance
     and append within a commit.
-- <a id="ve-59"></a> **VE-59.** Committed receipt/content survives immediate restart before pickup ACK even with no invitation consumption or contact.
+- <a id="ve-59"></a> **VE-59.** Committed receipt/content survives immediate restart before pickup ACK even with no contact.
 
 - <a id="ve-60"></a> **VE-60.** ACK lookup validates the exact outbound fixed channel and a role-preserving path from its peer to a carrier with an admitted complete source witness; shared contact/wire ID alone is insufficient.
 
 - <a id="ve-61"></a> **VE-61.** Every committed inbound carries a durable phase-1 receipt ordinal. `firstReceiptKey`
     is taken over admitted complete observations only; clock rollback does not reverse receipt order in a
     linear history, and cross-author ties have deterministic recovery order.
-- <a id="ve-62"></a> **VE-62.** Invitation consumption is an independent local decision and grants no preparation, automatic output, rotation or ACK/error authority. Erasure retains its exact source/disclosure evidence without freezing later peer keys.
+- <a id="ve-62"></a> **VE-62.** Invitation availability is a projection of the disclosed DID's lifecycle and grants no preparation, automatic output, rotation or ACK/error authority.
 
 - <a id="ve-63"></a> **VE-63.** Within-channel authorized variants share one execution; another channel stays separate after graph discovery. Regrouping and retirement never rewrite existing IDs.
 
@@ -2912,7 +2886,6 @@ derivation requires a new vault version.
 
 ### Invitation, duplicate and recovery regressions (VE-73–VE-89)
 
-- <a id="ve-73"></a> **VE-73.** Only a complete invitation.consumed for a matching proof-free source consumes a local one-use OOB disclosure. Receipt alone consumes nothing; crash/erasure preserve the committed consumer.
 
 - <a id="ve-74"></a> **VE-74.** ACK membership uses fixed outbound channel/direction and exact package/path evidence; wire-ID equality alone cannot acknowledge it.
 
@@ -2933,13 +2906,9 @@ derivation requires a new vault version.
     Only affected logical messages are excluded from admission and from earning a new pure ACK.
 - <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never a committed intent.
 
-- <a id="ve-82"></a> **VE-82.** An available one-use invitation automatically records consumption for the first eligible retained receipt in receiptOrderKey order. Earlier pending evidence cannot be bypassed. Reopen/import may complete this local record but cannot replace a recorded consumer or dispatch output; receipt or matching pthid alone records no consumer.
 
-- <a id="ve-83"></a> **VE-83.** Same-consumer invitation reuse does not create another take. Imported
-    incompatible consumers leave it unavailable; event order chooses no winner.
-- <a id="ve-84"></a> **VE-84.** contact.merged and contact.channelsSet change display only; operation evidence, executions, ACK authorization, denials, invitation consumption and erasure facts remain unchanged.
+- <a id="ve-84"></a> **VE-84.** contact.merged and contact.channelsSet change display only; operation evidence, executions, ACK authorization, denials and erasure facts remain unchanged.
 
-- <a id="ve-85"></a> **VE-85.** Matching pthid alone, foreign recipients and proof-bearing continuation sources consume no invitation. A qualifying invitation.consumed names its exact one-use OOB disclosure and source; many-use and non-OOB disclosures cannot be consumed.
 
 - <a id="ve-86"></a> **VE-86.** Prepared state records a fixed package, not a transport invocation. Reopen/import of queued or prepared work grants no send; calls and retry diagnostics remain local. Manual retry uses exact bytes, and missing submission cannot establish prior nondelivery.
 
@@ -2949,7 +2918,7 @@ derivation requires a new vault version.
 - <a id="ve-88"></a> **VE-88.** A successor freezes its own route at DID creation. Crash before commit may
     choose again; afterward recovery reuses that exact document and route.
     Preference changes do not edit it.
-- <a id="ve-89"></a> **VE-89.** Retirement and receipt rechecks serialize. Retained eligible old keys can receive; new sending and invitation consumption obey lifecycle and old consumption survives.
+- <a id="ve-89"></a> **VE-89.** Retirement and receipt rechecks serialize. Retained eligible old keys can receive; new sending obeys lifecycle.
 
 <a id="transition-evidence-and-automatic-intent-ve-90-ve-100"></a>
 
@@ -2957,7 +2926,7 @@ derivation requires a new vault version.
 
 - <a id="ve-90"></a> **VE-90.** Peer proof verification appends no event. did.rotationSelected contains exactly fromDidId, peerDid, toDidId, nullable sourceEventCid and frozen fromPrior. Channel links derive from authenticated carriers, immutable issuer material and local decisions without stored link IDs.
 
-- <a id="ve-91"></a> **VE-91.** Erasure preserves invitation consumptions, exact source/disclosure skeletons, original source JWTs and local decisions. A long-form issuer remains derivable from the JWT; peer.resolved roots retain documents used by short-form issuers independently of message content. Missing required material defers verification; deleting all local verification caches changes no rebuild result.
+- <a id="ve-91"></a> **VE-91.** Erasure preserves exact source skeletons, original source JWTs and local decisions. A long-form issuer remains derivable from the JWT; peer.resolved roots retain documents used by short-form issuers independently of message content. Missing required material defers verification; deleting all local verification caches changes no rebuild result.
 
 - <a id="ve-92"></a> **VE-92.** Two automatic intents for the same `(executionId, effectType)`
     have one effect key and message ID. Different intent hashes conflict after any
@@ -2973,7 +2942,7 @@ derivation requires a new vault version.
 - <a id="ve-96"></a> **VE-96.** Pure ACK, Ping reply and rotation notification have distinct fixed effect types and may coexist for one input in every import order, including the two outputs with the same Empty message type. Conflicting intents for one `(executionId, effectType)` suppress that operation without suppressing the others; a source intent conflict suppresses all source-derived operations.
 - <a id="ve-97"></a> **VE-97.** A supported no-response error is shown only with an admitted complete source witness, exact channel/path and protocol thread correlation. It does not change submission or authorize replay; erasing its body removes that diagnostic.
 
-- <a id="ve-98"></a> **VE-98.** Publicly disclosed numalgo-4 DIDs authenticate invitation consumers under the same long/short-form validation as private DIDs; private allocation remains optional policy.
+- <a id="ve-98"></a> **VE-98.** Publicly disclosed numalgo-4 DIDs authenticate senders under the same long/short-form validation as private DIDs; private allocation remains optional policy.
 
 - <a id="ve-99"></a> **VE-99.** A direct input and an input at a rotated channel have different execution IDs even with equal wire IDs. Reopen or graph recovery never merges or repeats their saved effects.
 
@@ -2989,11 +2958,11 @@ derivation requires a new vault version.
 
 - <a id="ve-103"></a> **VE-103.** message.out requires immutable senderDidId and recipientDid; their canonical endpoints determine its channel. Different endpoint values conflict even if intentHash agrees; rotation never retargets it.
 
-- <a id="ve-104"></a> **VE-104.** Ordinary user sending and preparation need no first reply or invitation consumption. Their fixed intent and exact package evidence retain the channel through rotation, reply, submission, erasure and restore.
+- <a id="ve-104"></a> **VE-104.** Ordinary user sending and preparation need no first reply. Their fixed intent and exact package evidence retain the channel through rotation, reply, submission, erasure and restore.
 
 - <a id="ve-107"></a> **VE-107.** Channel selectors preserve local/peer roles and compare canonical DID strings; key encoding and display IDs cannot change the pair.
 
-- <a id="ve-109"></a> **VE-109.** Control type alone creates no invitation consumer, contact or privacy link. A control input with an admitted complete source witness may supply permitted ACK evidence without recursive notifications.
+- <a id="ve-109"></a> **VE-109.** Control type alone creates no contact or privacy link. A control input with an admitted complete source witness may supply permitted ACK evidence without recursive notifications.
 
 - <a id="ve-110"></a> **VE-110.** Retained old recipient keys can receive. No usable authorized sender means no automatic response intent; later recovery exposes manual work instead of sending or retargeting it.
 
@@ -3011,7 +2980,7 @@ derivation requires a new vault version.
 
 - <a id="ve-115"></a> **VE-115.** Local rotation never retargets queued, prepared or submitted messages. A replaced local sender cannot prepare or dispatch in that rotation context; unrelated contexts remain usable. A successor-channel send needs a new ID.
 
-- <a id="ve-116"></a> **VE-116.** Equivalent DID replacements are idempotent across validated long/short spelling; same-side branches, dependency cycles and contradictory identity evidence conflict. Invitation state cannot defer complete links, automatic output or preparation.
+- <a id="ve-116"></a> **VE-116.** Equivalent DID replacements are idempotent across validated long/short spelling; same-side branches, dependency cycles and contradictory identity evidence conflict.
 
 - <a id="ve-117"></a> **VE-117.** Verified role-preserving paths can authorize successor ACKs for fixed old outbounds; they do not merge source executions and display membership supplies no path.
 
@@ -3021,11 +2990,11 @@ derivation requires a new vault version.
 
 - <a id="ve-120"></a> **VE-120.** A complete receipt can witness a peer link before any handler runs. Restoring missing issuer material or endpoint evidence permits local validation without inventing a new global identity.
 
-- <a id="ve-121"></a> **VE-121.** Operation eligibility is computed from current policy and evidence. Concrete operation references must form a complete witness; missing exact references defer and contradictory identity/intent conflicts without moving effects or reopening invitations.
+- <a id="ve-121"></a> **VE-121.** Operation eligibility is computed from current policy and evidence. Concrete operation references must form a complete witness; missing exact references defer and contradictory identity/intent conflicts without moving effects.
 
 - <a id="ve-122"></a> **VE-122.** Complete opposite-side links from one exact predecessor pair justify their diagonal join in either import order; same-side competing successors remain conflicts.
 
-- <a id="ve-123"></a> **VE-123.** Direct contact channel selection is independent of invitation use, may be edited offline and grants no cryptographic authority.
+- <a id="ve-123"></a> **VE-123.** Direct contact channel selection is independent of invitations, may be edited offline and grants no cryptographic authority.
 
 - <a id="ve-124"></a> **VE-124.** A local privacy rotation decision names the exact eligible source selected while live. Repeated evidence preserves it; its link derives without a new event and recovery never dispatches a missing notification.
 
@@ -3037,7 +3006,7 @@ derivation requires a new vault version.
 
 - <a id="ve-126"></a> **VE-126.** Peer supersession refuses new old-peer admission and source-derived work throughout the verified local-only context, and prevents sending or retrying to that peer. Raw receipts and previously admitted history, decisions and submissions remain; unrelated public-DID channels are unaffected.
 
-- <a id="ve-127"></a> **VE-127.** Resolution and receipt commit in dependent steps before consumption or other source-derived work. Evidence and invitation decisions serialize under the lock; crash prefixes never authorize automatic recovery dispatch.
+- <a id="ve-127"></a> **VE-127.** Resolution and receipt commit in dependent steps before other source-derived work. Evidence decisions serialize under the lock; crash prefixes never authorize automatic recovery dispatch.
 
 - <a id="ve-128"></a> **VE-128.** Confirmation in an unrelated channel does not permit short-form disclosure. Exact predecessor verification evidence and validated DID spelling equivalence govern JWT method comparison.
 
@@ -3054,7 +3023,7 @@ derivation requires a new vault version.
 
 ### Application message views (VE-132–VE-137)
 
-- <a id="ve-132"></a> **VE-132.** Contacts aggregate explicitly selected channels and may display verified related history. Shared DIDs/keys do not transfer invitation consumption or permission to share information; presentation never changes source channel labels.
+- <a id="ve-132"></a> **VE-132.** Contacts aggregate explicitly selected channels and may display verified related history. Shared DIDs/keys do not transfer permission to share information; presentation never changes source channel labels.
 
 - <a id="ve-133"></a> **VE-133.** A displayed peer name requires a supported protocol's recognized name field, readable non-erased content, an admitted complete authenticated source witness and applicable display policy. It is a peer claim derived from the source channel, creates no contact and changes no petname; this schema records no independent name-claim event.
 
@@ -3082,7 +3051,7 @@ derivation requires a new vault version.
 
 ### Group waits and transition validity (VE-140–VE-142)
 
-- <a id="ve-140"></a> **VE-140.** A carrier with complete authentication and its own verified JWT can derive a peer link while an equivalent sibling lacks authentication evidence. That sibling cannot borrow authentication or a proof result. An invitation consumption with a missing exact disclosure/source still waits; sharing immutable issuer material does not assemble incomplete observations.
+- <a id="ve-140"></a> **VE-140.** A carrier with complete authentication and its own verified JWT can derive a peer link while an equivalent sibling lacks authentication evidence. That sibling cannot borrow authentication or a proof result. Sharing immutable issuer material does not assemble incomplete observations.
 
 - <a id="ve-141"></a> **VE-141.** An admitted complete predecessor observation remains a valid confirmation when another observation later appears at a successor channel. Those messages have distinct identities; missing successor evidence cannot erase the predecessor witness.
 
@@ -3100,7 +3069,7 @@ derivation requires a new vault version.
 
 - <a id="ve-146"></a> **VE-146.** Two contacts may select the same channel without a conflict or canonical contact election. Editing one set does not change the other; merging their views preserves each contact's decisions and shows each logical message once.
 
-- <a id="ve-147"></a> **VE-147.** A membership event neither creates a missing contact nor restores a tombstoned one. Contact deletion hides that contact even after later set events; channel receipt, messages, invitation consumption and explicit denials remain independently available.
+- <a id="ve-147"></a> **VE-147.** A membership event neither creates a missing contact nor restores a tombstoned one. Contact deletion hides that contact even after later set events; channel receipt, messages and explicit denials remain independently available.
 
 - <a id="ve-148"></a> **VE-148.** Contact creation records an initial non-empty contact.channelsSet of complete local/peer pairs in the same commit. Selection before receipt, intent, preparation or peer resolution is valid presentation state. Imported creation without its set and a later cleared set supply no contact send target; missing evidence grants no authentication or dispatch permission.
 

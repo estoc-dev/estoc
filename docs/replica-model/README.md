@@ -25,15 +25,15 @@ independent. Received proofs and local rotation decisions
 derive directed links between pairs. Receipt may precede continuity verification,
 whose status remains visible.
 
-Operations use their own evidence and policy. One-use OOB consumption is
-recorded automatically, including on recovery, and is independent of other
-operations; many-use invitations have no exclusive consumer. Contacts organize
+Operations use their own evidence and policy. An invitation is a reusable
+address: no receipt takes it from the next, and no event records who used it.
+Contacts organize
 selected channels with local names and preferences. Applications derive ordinary display
 data only from durably admitted message history under their protocol rules.
 Authenticated receipt and application admission are separate facts; ignored
 old-peer observations remain available as explicitly labelled diagnostics.
 Admission is required for new source-derived operations and application views.
-Existing rotation, consumption, outbound and submission records retain their
+Existing rotation, outbound and submission records retain their
 own validity without it. A saved operation cannot supply missing admission for
 its source; see [application admission](channels.md#application-admission).
 
@@ -89,7 +89,7 @@ and boundary cases. This app revision supports rotations only, not endings.
 
 Change the defining section and align its consumers. ES owns event envelopes,
 DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channels,
-invitation/rotation/denial events, the continuity adapter and dispatch authority.
+rotation/denial events, the continuity adapter and dispatch authority.
 The continuity package owns proof verification and graph semantics. VE owns contact selections, display payloads and the remaining
 domain payloads/folds; DD owns runtime ordering and message/effect identity;
 RZ owns DID resolution and address/display policy.
@@ -113,7 +113,7 @@ RZ owns DID resolution and address/display policy.
 | ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [VE ACK witness](vault-events.md#delivery-acknowledged) |
 | Complete witnesses | [VE witnesses](vault-events.md#complete-observation-witnesses) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
 | Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [gate](relationships.md#hard-pre-vault-gate) | [CH receipt](channels.md#receipt), [DD receipt](distributed-delivery.md#receive-a-message) |
-| Invitations | [CH consumption](channels.md#invitation-consumed), [VE invitation fold](vault-events.md#invitation-fold) | [VE disclosure](vault-events.md#did-disclosed) |
+| Invitations | [VE disclosure](vault-events.md#did-disclosed), [VE invitation fold](vault-events.md#invitation-fold) | [CH invitations](channels.md#invitations) |
 | Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](vault-events.md#delete-a-contact), [application views](vault-events.md#application-message-views) |
 | Submission/receipt state | [VE delivery fold](vault-events.md#outbound-message-and-delivery-fold) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |

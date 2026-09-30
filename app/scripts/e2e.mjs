@@ -222,20 +222,19 @@ try {
   if ((await bob.locator("[data-new-sheet] .qr svg, [data-no-qr]").count()) !== 1) {
     fail("the invitation should show as a QR code too, or say why it cannot");
   }
-  ok("Bob issued a single-use invitation link (with a QR where it fits one)");
+  ok("Bob issued an invitation link (with a QR where it fits one)");
   await acceptLink(alice, "Bob", bobLink);
   ok("Alice accepted it: Bob is a contact of hers");
 
   // On Bob's side nobody is named yet: the conversation opens under what
   // she calls herself, quoted as the claim it is, until he names it.
-  await bob.waitForSelector("[data-invitation-taken]", { timeout: 45000 });
   await bob.click("[data-new-sheet] [data-done]");
-  if ((await bob.locator("[data-new-sheet] [data-open-links]").count()) !== 0) {
-    fail("a taken link should no longer count as open");
+  if ((await bob.locator("[data-new-sheet] [data-open-links]").count()) !== 1) {
+    fail("the link should still count as open: whoever holds it may write");
   }
   await closeSheet(bob);
   await bob.waitForSelector(namelessRow("Alice"), { timeout: 45000 });
-  ok("Bob saw Alice arrive under the name she claims; the link is taken");
+  ok("Bob saw Alice arrive under the name she claims; the link stays open");
   await bob.click(namelessRow("Alice"));
   await bob.click("[data-chat] [data-details]");
   await bob.fill("[data-details-screen] [data-petname]", "Alice");

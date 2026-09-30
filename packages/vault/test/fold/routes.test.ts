@@ -105,7 +105,7 @@ describe("the DID fold", () => {
     scene.add("route.configured", { routeId: ROUTE2, kind: "direct", mediationId: null, endpoint: ENDPOINT });
     const created = await createdDid(scene, keys, DID_ID, ROUTE, MEDIATED);
     const direct = await createdDid(scene, keys, DID_ID2, ROUTE2, DIRECT);
-    const disclosure = scene.add("did.disclosed", { didId: DID_ID, as: "oob", uses: "one", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null });
+    const disclosure = scene.add("did.disclosed", { didId: DID_ID, as: "oob", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null });
     const routes = await checked(scene);
     const did = routes.dids.get(DID_ID)!;
     expect(did).toMatchObject({
@@ -279,8 +279,8 @@ describe("the DID fold", () => {
     mediatedRoute(scene, { me });
     const a = await createdDid(scene, keys, DID_ID, ROUTE, MEDIATED);
     const b = await createdDid(scene, keys, DID_ID2, ROUTE, MEDIATED);
-    const later = scene.add("did.disclosed", { didId: DID_ID, as: "oob", uses: "many", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null }, { at: "2026-09-14T00:00:00.000Z" });
-    const earlier = scene.add("did.disclosed", { didId: DID_ID, as: "direct", uses: "many", oobId: null, goal: "hi" }, { at: "2026-09-12T00:00:00.000Z" });
+    const later = scene.add("did.disclosed", { didId: DID_ID, as: "oob", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null }, { at: "2026-09-14T00:00:00.000Z" });
+    const earlier = scene.add("did.disclosed", { didId: DID_ID, as: "direct", oobId: null, goal: "hi" }, { at: "2026-09-12T00:00:00.000Z" });
     const routes = await checked(scene);
     expect(routes.dids.get(DID_ID)?.disclosures).toEqual([earlier, later]);
     expect(routes.desiredRecipients.map((recipient) => recipient.did)).toEqual([a.did, b.did].sort());

@@ -313,8 +313,7 @@ effects, and its network completion does not delay the next local step.
    see earlier decisions under the [ordered admission rule](channels.md#application-admission).
    For each consumer, validate the admitted source and its required target or
    protocol fields, then current operation policy. Commit its concrete intent
-   or local result with already committed references. Invitation consumption
-   also requires admission but stays independent of other consumers.
+   or local result with already committed references.
 7. Process explicit peer ACKs and ordinary local display views only from
    admitted sources. Unadmitted observations may appear as diagnostics.
    The sole active executor may independently create an eager ACK, a Ping reply
@@ -335,9 +334,8 @@ re-resolution or another receipt event. Recover missing bytes/references and
 recompute proofs from retained JWTs and immutable issuer material under
 [predecessor resolution](relationships.md#predecessor-resolution).
 The active runtime reconciles missing
-[admissions](channels.md#application-admission), then automatically completes
-missing [invitation consumption](channels.md#invitation-consumed). These passes
-also run on relevant evidence changes during normal operation; they do not wait
+[admissions](channels.md#application-admission). This pass
+also runs on relevant evidence changes during normal operation; it does not wait
 for a restart.
 
 Expose pending/unconfirmed messages for manual action under
@@ -884,7 +882,6 @@ delivery.acknowledged      exact authorized peer receipt observation
 message.in                 independent authenticated channel receipt
 message.admitted           durable application acceptance of one exact receipt
 did.rotationSelected       local successor and frozen proof selected before sending
-invitation.consumed        exact one-use disclosure and source-backed consumer
 channel.blocked            local channel/successor denial
 ```
 
@@ -911,9 +908,7 @@ are owned by [vault events](vault-events.md) and [channels](channels.md).
 - After receipt but before admission, no application effect is authorized.
   Recovery first folds the full graph, then may admit an eligible source now;
   an unadmitted superseded source stays ignored, even if received earlier.
-- After admission but before consumption, recovery automatically completes that
-  local record when its admitted retained source and current policy remain eligible.
-  Before a reply, recovery preserves local state and pending work without
+- Before a reply, recovery preserves local state and pending work without
   automatically sending ACKs, replies or notifications.
 - After erasure, no new content-derived effect is reconstructed.
 - Mediator expiry/outage may lose an already submitted message. This best-effort
@@ -1005,13 +1000,13 @@ or mediator-visible IDs.
 
 - <a id="dd-24"></a> **DD-24.** Equal wire IDs in different channels do not merge, even through verified links. Same-channel authorized variants share one execution.
 
-- <a id="dd-25"></a> **DD-25.** Missing source authentication, endpoint or required link evidence defers the affected automatic operation; invitation state alone does not. Later evidence validates only its channel-local execution and grants no recovery dispatch.
+- <a id="dd-25"></a> **DD-25.** Missing source authentication, endpoint or required link evidence defers the affected automatic operation. Later evidence validates only its channel-local execution and grants no recovery dispatch.
 
 - <a id="dd-26"></a> **DD-26.** Contradictory channel identity evidence or independently admitted conflicting intent suppress new effects; contact edits cannot resolve them and equivalent long/short DID spellings do not cause them.
 
-- <a id="dd-27"></a> **DD-27.** Control input with an admitted complete source witness may supply authorized ACK evidence. It creates no contacts or recursive privacy notifications, and its type alone consumes no invitation.
+- <a id="dd-27"></a> **DD-27.** Control input with an admitted complete source witness may supply authorized ACK evidence. It creates no contacts or recursive privacy notifications.
 
-- <a id="dd-28"></a> **DD-28.** Invalid carried proof prevents link/ACK effects and cannot supply a proof-free invitation source; independently authenticated receipt is retained. Failed envelope authentication creates no receipt and follows the gate's wait or terminal rules.
+- <a id="dd-28"></a> **DD-28.** Invalid carried proof prevents link/ACK effects; independently authenticated receipt is retained. Failed envelope authentication creates no receipt and follows the gate's wait or terminal rules.
 
 - <a id="dd-29"></a> **DD-29.** Duplicate explicit ACKs are harmless and affect only peer receipt
     information, never submission completion or envelope retention.
@@ -1089,7 +1084,7 @@ or mediator-visible IDs.
 
 - <a id="dd-54"></a> **DD-54.** Equal-intent observations at different local DIDs have different channels and execution IDs; later links never merge or replay them.
 
-- <a id="dd-55"></a> **DD-55.** A batch cannot authorize its response by proposing new source/endpoint/proof evidence in the same call; prerequisites commit first and links are derived. Invitation consumption is independent of the response.
+- <a id="dd-55"></a> **DD-55.** A batch cannot authorize its response by proposing new source/endpoint/proof evidence in the same call; prerequisites commit first and links are derived.
 
 - <a id="dd-56"></a> **DD-56.** Serialize each message dispatch, require its committed package and consume one live initial/manual action per transport call. Record observed acceptance afterward. Scanning saved events or restarting supplies no action, and one action cannot invoke transport twice.
 
@@ -1117,9 +1112,8 @@ or mediator-visible IDs.
 
 - <a id="dd-67"></a> **DD-67.** Superseded peer input remains receivable but creates no new automatic work. Existing intents and results remain historical and duplicates never dispatch old effects.
 
-- <a id="dd-68"></a> **DD-68.** Receipt precedes invitation.consumed and other concrete source-derived work. Only a complete consumption assigns an invitation consumer; all crash prefixes reopen without automatic replies.
 
-- <a id="dd-69"></a> **DD-69.** Missing required immutable issuer material or endpoint/rotation evidence keeps the affected continuity path pending after authenticated receipt and pickup ACK; invitation state does not. Saved authentication is reusable for its original receipt. Failed envelope authentication creates no receipt; recoverable local prerequisites wait and definitive rejection follows the terminal pickup-ACK path.
+- <a id="dd-69"></a> **DD-69.** Missing required immutable issuer material or endpoint/rotation evidence keeps the affected continuity path pending after authenticated receipt and pickup ACK. Saved authentication is reusable for its original receipt. Failed envelope authentication creates no receipt; recoverable local prerequisites wait and definitive rejection follows the terminal pickup-ACK path.
 
 ### Group waits and transition validity (DD-70–DD-71)
 

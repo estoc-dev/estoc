@@ -17,6 +17,13 @@
   on again; what was queued meanwhile is picked up by the connection
   that comes back. `AgentOptions.upkeep` sets the waits, `UPKEEP` is
   their default, and none of it runs with `liveDelivery` off.
+- **An invitation is a reusable address** (behaviour change):
+  `Disclosure` has no `uses`, and an invitation republished under its
+  `oobId` is held to the same DID and goal alone. `InvitationRecord`
+  has no `uses` or `consumer`, its `state` `available` or
+  `unavailable`. `Owed` and `AfterReceipt` have no `consumed`: the
+  pass after a receipt records admissions and acknowledgements alone.
+  Needs `@estoc/vault` without `invitation.consumed`.
 - **A pure ACK names its carrier alone** (behaviour change): the
   receipt an input requests of itself is given naming that input's
   wire ID and nothing else; an input whose `please_ack` names only

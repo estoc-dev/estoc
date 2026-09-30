@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { DaemonErrorCode } from "../errors.js";
 import { OUTCOMES, type Baseline, type CancelOutcome, type CompletionOutcome, type ContactReached, type DispatchOutcome, type MergeResult, type MethodInput, type MethodName, type MethodResult, type Outcome, type OutcomeTag, type RotateResult, type SendResult, type SendTarget } from "../methods.js";
-import { DISCLOSURE_USES, OOB_INVITATION, PLAIN_TYP, TRACE_LEVELS, type Invitation } from "../protocol.js";
+import { OOB_INVITATION, PLAIN_TYP, TRACE_LEVELS, type Invitation } from "../protocol.js";
 import { linesState } from "./lines.js";
 import { messageContent } from "./records.js";
 import { revisionMarker, state } from "./state.js";
@@ -86,7 +86,7 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   explainedRestore: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
 
   setMediator: { input: z.object({ mediatorDid: z.string() }), result: z.object({ mediationId }), errors: lifecycle, bytes: noBytes },
-  createInvitation: { input: z.object({ uses: z.enum(DISCLOSURE_USES), goal: z.string().optional() }), result: z.object({ didId, invitation }), errors: lifecycle, bytes: noBytes },
+  createInvitation: { input: z.object({ goal: z.string().optional() }), result: z.object({ didId, invitation }), errors: lifecycle, bytes: noBytes },
   acceptInvitation: { input: z.object({ invitation, petname }), result: contactReached, errors: dispatching, bytes: noBytes },
   addContactByDid: { input: z.object({ did: z.string(), petname }), result: contactReached, errors: dispatching, bytes: noBytes },
   publicDid: { input: empty, result: z.object({ didId, did: z.string() }), errors: lifecycle, bytes: noBytes },

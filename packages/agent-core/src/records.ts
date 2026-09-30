@@ -39,7 +39,6 @@ import {
   type ContactView,
   type Did,
   type DidId,
-  type DisclosureUses,
   type EpochSeconds,
   type EventCid,
   type Execution,
@@ -203,9 +202,7 @@ export interface InvitationRecord {
   oobId: string;
   didId: DidId;
   localDid: Did | null;
-  uses: DisclosureUses;
   state: InvitationStatus;
-  consumer: Did | null;
 }
 
 export interface OpenOutbound {
@@ -601,9 +598,7 @@ function invitationRecords(fold: VaultFold): InvitationRecord[] {
     oobId: invitation.oobId,
     didId: invitation.didId,
     localDid: invitation.localDid,
-    uses: invitation.disclosure.data.uses,
     state: invitation.status,
-    consumer: invitation.consumer,
   }));
 }
 

@@ -211,7 +211,7 @@ function forget() {
           <input v-if="readableAddress" class="field mono" readonly :value="readableAddress" aria-label="Your DID" data-public-did-text style="margin: 0 16px 12px; width: calc(100% - 32px)" @focus="selectAll" />
           <p v-if="addressNote" class="note" style="padding: 0 16px 12px" data-public-did-note>{{ addressNote }}</p>
         </div>
-        <p class="note">A link invites one person. Your DID is for anyone who pastes it: each one is answered from an address minted for them alone.</p>
+        <p class="note">A link is for whoever you hand it to, your DID for anyone who finds it: each one is answered from an address minted for them alone.</p>
       </div>
 
       <div class="section">

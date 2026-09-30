@@ -21,7 +21,7 @@ const { count: attention } = useAttention();
 
 const current = computed(() => keyOf(screen.value));
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
-const openLinks = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.uses === "one" && i.state.status === "available").length);
+const openLinks = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.state.status === "available").length);
 
 interface Row {
   conversation: Conversation;

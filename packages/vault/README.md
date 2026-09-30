@@ -157,26 +157,13 @@ channel's denial, a conflict in the continuity its proof needs, a
 contradiction of the intent its input admitted — `invalid` or in an
 `integrity-conflict`, for the runtime to walk when it records
 admissions, the fold recording none), the
-invitations (`fold/invitations.ts`: `foldInvitations` reads each
-one-use OOB disclosure with the consumption records that name it and
-the receipts that could consume it; a record is read on its own —
-its disclosure a one-use invitation, its source a proof-free complete
-witness at the disclosed DID under the invitation's `pthid` — and only
-a complete record names the consumer, the source's canonical peer DID;
-the invitation is `available`, `consumed`, `pending` while a record
-or a candidate ahead of every eligible one waits, `unavailable` while
-the disclosed DID is retired, in conflict or not yet created here, or
-its route is retired, misconfigured or on a terminal mediation, or in
-`conflict` when complete records disagree, any OOB disclosure repeats
-the ID, or the walk reaches a candidate caught in a receipt-integrity
-conflict before an eligible one; the `candidates` are the unerased
-proof-free followers in first-receipt order, each `eligible`,
-`deferred` for evidence or for the admission it is still owed,
-`refused` by the DID's lifecycle, by the channel's current denial,
-continuity conflict or supersession or by whatever refuses its
-admission, `invalid` by its own witness or by the intent conflict of
-the input it observes, or in `integrity-conflict`, for the runtime to
-walk when it records a consumption, the fold recording none), the
+invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
+disclosure as an address handed out, which whoever holds it writes to
+in a pair of their own, no receipt under it taking anything from the
+next; it is `available` while the disclosed DID is live on a route
+that may deliver, and `unavailable` while the DID is retired, in
+conflict, not yet created here or waiting to be live, or its route is
+retired, misconfigured or on a terminal mediation), the
 contacts (`fold/contacts.ts`: `foldContacts` is a table of latest-wins
 decisions under each contact ID — tombstone, petname, flags, local-DID
 preference, the whole channel selection replaced or cleared, merge
@@ -272,11 +259,7 @@ round the first eligible candidate of each input and the fold read
 again over the extended set before the next, so that a consistent
 duplicate is admitted after the first and a contradicting one refused
 against it, `admissionDrafts` being one round's decision and
-`admitReceipts` the pass under a lock already held;
-`consumeInvitations` records the consumption each available one-use
-invitation is owed, the first candidate receipt that may be recorded
-now, refused and invalid ones passed over and a waiting one stopping
-the walk, `consumptionDrafts` being the decision; `unfinishedWork`
+`admitReceipts` the pass under a lock already held; `unfinishedWork`
 lists what an open finds and dispatches nothing of — the outbounds
 still to prepare or dispatch, the pure ACKs and Ping replies
 established inputs may still be given, each a candidate the manual
@@ -285,8 +268,8 @@ under `responseChannel`, the carrier's own channel while its local DID
 sends there and otherwise the unique verified local successor head
 keeping the peer, the notifications verified decisions permit while
 their source, an application input, stays eligible, the decisions
-whose notification intents disagree, the proofs waiting for issuer
-material, and the consumptions; `automaticIntent` names an
+whose notification intents disagree, and the proofs waiting for
+issuer material; `automaticIntent` names an
 operation's tuple over an input, its message ID and the intent already
 under it; `decisionFor` is the decision a rotation away from a pair
 reuses, defers on or refuses over, from its verified peer-only

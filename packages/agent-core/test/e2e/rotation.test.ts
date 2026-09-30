@@ -44,7 +44,7 @@ describe("rotation between two agents", () => {
     const bob = await run(mediator, 2, BOB);
     const a0 = alice.party.did;
     const b0 = bob.party.did;
-    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob", uses: "one" });
+    const { invitation } = await alice.agent.disclose(ALICE, { as: "oob" });
 
     const first = await bob.agent.send({ channel: channelOf(b0, a0), recipientDid: invitation!.from }, { ...hello("hello"), pthid: invitation!.id }, { messageId: FIRST });
     expect(first.dispatched).toMatchObject({ outcome: "submitted" });

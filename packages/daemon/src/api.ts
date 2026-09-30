@@ -1,4 +1,4 @@
-import type { Channel, ContactId, Did, DidId, DisclosureUses, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
+import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, TraceLevel } from "@estoc/agent-core";
 import type { Hold } from "@estoc/daemon-api/contract";
 
@@ -81,12 +81,12 @@ export interface Daemon {
   /** An arrangement with `mediatorDid` created, selected and granted, and a route over it configured. */
   setMediator(mediatorDid: string): Promise<MediationId>;
   /** A fresh DID on the selected arrangement's route, disclosed as an out-of-band invitation. */
-  createInvitation(uses: DisclosureUses, goal?: string): Promise<CreatedInvitation>;
+  createInvitation(goal?: string): Promise<CreatedInvitation>;
   /** A fresh DID of ours toward the inviter, a contact that selects the pair, and a Ping under the invitation's ID. */
   acceptInvitation(invitation: Invitation, petname: string): Promise<SendResult & { contactId: ContactId }>;
   /** The same toward a DID handed over on its own, the Ping naming no invitation; a DID of this vault's is refused. */
   addContactByDid(did: string, petname: string): Promise<SendResult & { contactId: ContactId }>;
-  /** The DID this vault hands out to anyone, in its long form: the live one disclosed directly for many uses, minted on the selected arrangement's route and disclosed when there is none. */
+  /** The DID this vault hands out to anyone, in its long form: the live one disclosed directly, minted on the selected arrangement's route and disclosed when there is none. */
   publicDid(): Promise<{ didId: DidId; did: Did }>;
   createContact(petname: string, channels: Channel[]): Promise<ContactId>;
   renameContact(contactId: ContactId, petname: string): Promise<void>;

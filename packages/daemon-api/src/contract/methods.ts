@@ -7,7 +7,7 @@
 
 import type { ChannelId, ContactId, DidId, EventCid, ExecutionId, Hold, MediationId, MessageId } from "./ids.js";
 import type { LinesState } from "./lines.js";
-import type { DisclosureUses, Invitation, TraceLevel } from "./protocol.js";
+import type { Invitation, TraceLevel } from "./protocol.js";
 import type { MessageContent } from "./records.js";
 import type { RevisionMarker, State } from "./state.js";
 
@@ -132,7 +132,7 @@ export interface Methods {
   explainedRestore: Method<Empty, null>;
 
   setMediator: Method<{ mediatorDid: string }, { mediationId: MediationId }>;
-  createInvitation: Method<{ uses: DisclosureUses; goal?: string }, { didId: DidId; invitation: Invitation }>;
+  createInvitation: Method<{ goal?: string }, { didId: DidId; invitation: Invitation }>;
   acceptInvitation: Method<{ invitation: Invitation; petname: string }, ContactReached>;
   addContactByDid: Method<{ did: string; petname: string }, ContactReached>;
   publicDid: Method<Empty, { didId: DidId; did: string }>;

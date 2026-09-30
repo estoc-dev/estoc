@@ -14,6 +14,11 @@ view installs alone.
   Message bodies pass through with every key kept; display times are
   checked as instants, not spellings only; a channel is referred to by
   its ID and never taken apart.
+- An invitation is a reusable address: `createInvitation` takes
+  `{ goal? }` alone, a `LocalDidRecord` disclosure carries `as` alone,
+  an `InvitationRecord` has no `uses` or `consumer` and its `state` is
+  `available` or `unavailable`, and `DISCLOSURE_USES` and
+  `DisclosureUses` are gone.
 - `@estoc/daemon-api/views`: the pure helpers a view computes with,
   no daemon in reach: the snapshot indexed by ID with every
   conversation's channels, messages and observations assembled from

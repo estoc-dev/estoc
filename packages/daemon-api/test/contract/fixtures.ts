@@ -13,7 +13,7 @@ export const HEAD_CHANNEL = channelId(LOCAL, PEER_HEAD);
 
 export const mediation: MediationRecord = { mediationId: as("med-1"), mediatorDid: "did:web:mediator.example", selected: true, usable: true, retired: null, diagnostics: [] };
 
-export const localDid: LocalDidRecord = { didId: as("did-1"), did: LOCAL, longFormDid: `${LOCAL}:zLong`, live: true, retired: null, disclosures: [{ as: "oob", uses: "one" }], diagnostics: [] };
+export const localDid: LocalDidRecord = { didId: as("did-1"), did: LOCAL, longFormDid: `${LOCAL}:zLong`, live: true, retired: null, disclosures: [{ as: "oob" }], diagnostics: [] };
 
 export const contact: ContactRecord = { contactId: as("c-1"), origin: "user", flags: { muted: false }, preference: { didId: as("did-1"), channelIds: [HEAD_CHANNEL] } };
 
@@ -133,7 +133,7 @@ export const conversation: ConversationRecord = {
   diagnostics: [],
 };
 
-export const invitation: InvitationRecord = { disclosureEventCid: as("bafydisc"), oobId: "oob-1", didId: as("did-1"), localDid: LOCAL, uses: "one", state: { status: "consumed", consumer: PEER }, consumer: PEER };
+export const invitation: InvitationRecord = { disclosureEventCid: as("bafydisc"), oobId: "oob-1", didId: as("did-1"), localDid: LOCAL, state: { status: "available" } };
 
 export const pending: PendingWork = {
   pendingOutbounds: [{ messageId: as("m-out"), channelId: HEAD_CHANNEL, outcome: "prepared", because: null, entries: ["retry", "cancel"] }],
