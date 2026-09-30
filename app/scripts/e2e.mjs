@@ -21,7 +21,8 @@
  * URL's host).
  *
  * The window is a desktop one: the list stays beside the conversation,
- * and details open in a column of their own.
+ * and details open in a column of their own. The pages wear the look the
+ * system asks for, dark unless E2E_LOOK=light; the screenshots show it.
  */
 import { copyFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ import { chromium } from "playwright-core";
 
 const APP_URL = process.argv[2] ?? "http://localhost:4173";
 const E2E_MEDIATOR = process.env.E2E_MEDIATOR;
+const colorScheme = process.env.E2E_LOOK === "light" ? "light" : "dark";
 let MEDIATOR_LABEL = "localhost:8080";
 let MEDIATOR_URL = "http://localhost:8080";
 if (E2E_MEDIATOR === "estoc" || E2E_MEDIATOR === "web") {
@@ -197,8 +199,8 @@ async function dump(page, name) {
 const pages = {};
 const browser = await chromium.launch({ executablePath });
 try {
-  const aliceCtx = await browser.newContext();
-  const bobCtx = await browser.newContext();
+  const aliceCtx = await browser.newContext({ colorScheme });
+  const bobCtx = await browser.newContext({ colorScheme });
   const alice = await aliceCtx.newPage();
   const bob = await bobCtx.newPage();
   watch(alice, "alice");
@@ -274,7 +276,7 @@ try {
   // Carol opens a link of Bob's before she has an identity at all.
   const carolLink = await invite(bob);
   await closeSheet(bob);
-  const carolCtx = await browser.newContext();
+  const carolCtx = await browser.newContext({ colorScheme });
   const carol = await carolCtx.newPage();
   watch(carol, "carol");
   await createIdentity(carol, "Carol", null, carolLink);
@@ -417,7 +419,7 @@ try {
 
   // One receiver at a time: the original Alice goes away before the restore comes up.
   await aliceCtx.close();
-  const alice2Ctx = await browser.newContext();
+  const alice2Ctx = await browser.newContext({ colorScheme });
   const alice2 = await alice2Ctx.newPage();
   watch(alice2, "alice2");
   await alice2.goto(APP_URL);
@@ -515,7 +517,7 @@ try {
   const doraBackup = join(await mkdtemp(join(tmpdir(), "estoc-e2e-")), doraDownload.suggestedFilename());
   await copyFile(await doraDownload.path(), doraBackup);
   await bobCtx.close();
-  const doraCtx = await browser.newContext();
+  const doraCtx = await browser.newContext({ colorScheme });
   const dora = await doraCtx.newPage();
   watch(dora, "dora");
   await dora.goto(APP_URL);

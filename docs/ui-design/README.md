@@ -1,8 +1,8 @@
 # Estoc design language: copper and verdigris
 
-Estoc has one look, and it is dark. This document holds the rules. The values live in the variables at the top of `app/src/style.css`; when the two disagree, fix whichever is wrong until they match.
+Estoc has two looks, dark and light, and the dark one came first. This document holds the rules. The values live in the variables at the top of `app/src/style.css`; when the two disagree, fix whichever is wrong until they match.
 
-There is no light look for now. If one is made later, derive it from the relations below instead of brightening the swatches.
+The light look is derived from the relations below, not by brightening the dark swatches; its values come from the [light palette proposal](light/README.md), with the few it left open filled in here. It follows the system by default; either look can be chosen outright under You.
 
 ## In one line
 
@@ -14,34 +14,40 @@ Verdigris is what copper turns into as it weathers. That reading came after the 
 
 The relations between colours matter more than any single value. Change a colour only in a way that keeps all four true.
 
-1. **Surfaces share one hue and differ in lightness.** Ground, surface, raised and line sit at hue 198 to 200, with lightness 12, 16, 18 and 26. One layer up is one step lighter.
-2. **Bubbles lift off the ground without shouting.** Both washes have a contrast of about 1.4 against the ground.
-3. **The two bubbles weigh the same.** Their lightness is close (19 and 22), the text inside is the same ink, and its contrast is about 10 on both. Neither side of a conversation is louder.
+1. **Surfaces share one hue and differ in lightness.** Ground, surface, raised and line sit at hue 196 to 200. One layer up is one step lighter, in both looks: ground, surface and raised run 12, 16 and 18 dark and 94, 97 and 100 light. The chat ground is therefore the darkest layer of the light look too, a cool off-white rather than white, and cards sit in plain white on top of it. The line is not a layer but the hairline between layers; in both looks it sits a few steps from the surfaces toward the ink (26 dark, 86 light), which is what lets it read as a line on either.
+2. **Bubbles lift off the ground without shouting.** A wash sits about eight steps of lightness from the ground. In the dark look that is a contrast of about 1.4; in the light look the same step gives about 1.2, because contrast is compressed at the light end. The step is the rule, the contrast is what it comes to.
+3. **The two bubbles weigh the same.** Their lightness is close (19 and 22 dark, 86 and 86 light), the text inside is the same ink, and its contrast is about 10 on both. Neither side of a conversation is louder.
 4. **Warm colour is rationed.** The interface is cool. Warmth is kept for what you sent, for what is still waiting and for what has gone wrong.
+
+The two looks are not each other's negatives. Everything that is pale in the dark look (accent, alarm, attention) is deep in the light look, since it has to read as text on a light surface; it keeps a contrast of at least 4.5 on any surface it sits on, including the washes.
 
 ## Colour
 
-| Role | Variable | Value | Used for |
-| --- | --- | --- | --- |
-| Ground | `--ground` | `#172024` | chat background, inside the composer |
-| Surface | `--surface` | `#202b30` | top bar, list, settings, composer area |
-| Raised | `--raised` | `#263238` | grouped cards, form fields |
-| Line | `--line` | `#36464d` | between layers |
-| Strong line | `--line-strong` | `#4a5d65` | field outlines |
-| Ink | `--ink` | `#e9eeee` | primary text |
-| Soft ink | `--ink-soft` | `#aebcc2` | secondary text, times, notes |
-| Accent | `--accent` | `#9acbbb` | actions, avatar letters, unread counts, the live state |
-| On accent | `--on-accent` | `#202b30` | text and icons on an accent fill |
-| Verdigris wash | `--verdigris-wash` | `#253e36` | received messages, avatars |
-| Copper wash | `--copper-wash` | `#44352d` | sent messages |
-| Alarm | `--alarm` | `#f0ac95` | not sent, failed |
-| Attention | `--attention` | `#d9b872` | waiting, worth a look |
+| Role | Variable | Dark | Light | Used for |
+| --- | --- | --- | --- | --- |
+| Ground | `--ground` | `#172024` | `#edf2f4` | chat background, inside the composer |
+| Surface | `--surface` | `#202b30` | `#f7f9fa` | top bar, list, settings, composer area |
+| Raised | `--raised` | `#263238` | `#ffffff` | grouped cards, form fields |
+| Line | `--line` | `#36464d` | `#d3dfe3` | between layers |
+| Strong line | `--line-strong` | `#4a5d65` | `#b3c6cd` | field outlines |
+| Ink | `--ink` | `#e9eeee` | `#233238` | primary text |
+| Soft ink | `--ink-soft` | `#aebcc2` | `#495e65` | secondary text, times, notes |
+| Accent | `--accent` | `#9acbbb` | `#2d6a58` | actions, avatar letters, unread counts, the live state |
+| On accent | `--on-accent` | `#202b30` | `#ffffff` | text and icons on an accent fill |
+| Verdigris wash | `--verdigris-wash` | `#253e36` | `#d1e4db` | received messages, avatars |
+| Copper wash | `--copper-wash` | `#44352d` | `#e8d9cd` | sent messages |
+| Alarm | `--alarm` | `#f0ac95` | `#a54430` | not sent, failed |
+| Attention | `--attention` | `#d9b872` | `#795916` | waiting, worth a look |
+| Attention wash | `--attention-wash` | `#3a3226` | `#f2e8ce` | a bar that asks for a look |
+| Scrim | `--scrim` | `#00000099` | `#23323866` | behind a sheet or drawer |
+| Shadow | `--shadow` | `#00000088` | `#23323833` | under what sits over the screen |
 
 ## Rules
 
-- **One accent.** Pale verdigris is the single accent. It marks actions, identity, unread counts and the live state, so it does not by itself say that something can be pressed.
+- **One accent.** Verdigris, pale on dark and deep on light, is the single accent. It marks actions, identity, unread counts and the live state, so it does not by itself say that something can be pressed.
 - **Bubbles are washes.** A low-saturation fill with ink text and no outline.
-- **Depth without shadow.** Layers within a screen are told apart by a lightness step and a hairline. Shadow is for what sits over the screen: sheets, drawers, the update notice.
+- **Depth without shadow.** Layers within a screen are told apart by a lightness step and a hairline. Shadow is for what sits over the screen: sheets, drawers, the update notice. In the light look the steps between layers are small and the hairline is faint as well; what is raised reads as white against the off-white ground, and the strong line is kept for outlines that must be found, such as fields.
+- **One set of rules, two values each.** Every colour is one variable written with `light-dark()`, so a screen never picks its look; the root's `color-scheme` does. The QR code keeps a white ground in both looks, since it is read by a camera, not a person.
 - **Colour is one cue among several.** Sent and received are also told by side and by the tail of the bubble. Every status has words.
 
 ## Type

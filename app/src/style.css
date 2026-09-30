@@ -1,27 +1,27 @@
 /* Copper and verdigris on one cool ground. What you send is copper, what
    arrives is verdigris; side and tail shape say the same, so colour is
    one cue among several. Every surface shares the ground's hue and
-   differs in lightness alone. Pale verdigris is the one accent, for
-   actions, identity and the live state; warm colour is kept for what is
-   yours, what is waiting and what has gone wrong. */
+   differs in lightness alone. Verdigris is the one accent, for actions,
+   identity and the live state; warm colour is kept for what is yours,
+   what is waiting and what has gone wrong. */
 
 :root {
-  --ground: #172024;
-  --surface: #202b30;
-  --raised: #263238;
-  --line: #36464d;
-  --line-strong: #4a5d65;
-  --ink: #e9eeee;
-  --ink-soft: #aebcc2;
-  --accent: #9acbbb;
-  --on-accent: #202b30;
-  --verdigris-wash: #253e36;
-  --copper-wash: #44352d;
-  --alarm: #f0ac95;
-  --attention: #d9b872;
-  --attention-wash: #3a3226;
-  --scrim: #00000099;
-  --shadow: #00000088;
+  --ground: light-dark(#edf2f4, #172024);
+  --surface: light-dark(#f7f9fa, #202b30);
+  --raised: light-dark(#ffffff, #263238);
+  --line: light-dark(#d3dfe3, #36464d);
+  --line-strong: light-dark(#b3c6cd, #4a5d65);
+  --ink: light-dark(#233238, #e9eeee);
+  --ink-soft: light-dark(#495e65, #aebcc2);
+  --accent: light-dark(#2d6a58, #9acbbb);
+  --on-accent: light-dark(#ffffff, #202b30);
+  --verdigris-wash: light-dark(#d1e4db, #253e36);
+  --copper-wash: light-dark(#e8d9cd, #44352d);
+  --alarm: light-dark(#a54430, #f0ac95);
+  --attention: light-dark(#795916, #d9b872);
+  --attention-wash: light-dark(#f2e8ce, #3a3226);
+  --scrim: light-dark(#23323866, #00000099);
+  --shadow: light-dark(#23323833, #00000088);
 
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -32,6 +32,16 @@
   --gutter: 20px;
 
   color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -257,9 +267,23 @@ textarea.field {
 select.field {
   appearance: none;
   padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23aebcc2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image:
+    linear-gradient(45deg, transparent 38%, var(--ink-soft) 38% 62%, transparent 62%),
+    linear-gradient(135deg, transparent 38%, var(--ink-soft) 38% 62%, transparent 62%);
+  background-size: 7px 7px;
   background-repeat: no-repeat;
-  background-position: right 12px center;
+  background-position:
+    right 20px center,
+    right 14px center;
+}
+
+/* Forced colours drop gradient backgrounds, so the native arrow is
+   put back and drawn in the person's own colours. */
+@media (forced-colors: active) {
+  select.field {
+    appearance: auto;
+    background-image: none;
+  }
 }
 
 .file-btn {
