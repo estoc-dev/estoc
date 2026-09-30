@@ -668,5 +668,6 @@ function ackTargetOf(sourceEventCid: EventCid, evidence: ChannelEvidence, inboun
   if (member.witness.status !== "complete") return none(`the carrier is no complete witness: ${member.witness.because}`);
   const execution = inbound.ofSource(sourceEventCid)!;
   if (execution.status.status === "conflict") return none(`the carrier's input is in conflict: ${execution.status.because}`);
+  if (evidence.receipts.affected.has(data.messageId)) return none("the carrier's input is under a receipt conflict");
   return { status: "eligible", wireMessageId: data.wireMessageId };
 }

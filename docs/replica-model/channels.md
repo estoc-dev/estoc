@@ -770,8 +770,16 @@ The active runtime MUST reconcile missing admissions on open, restore, full
 import, durable receipt and recovery of required evidence.
 Under the operation lock, rebuild the full available graph and existing
 admissions first, then evaluate sources without
-effective admission in ascending `receiptOrderKey`. Integrity-conflicted keys
-grant no admission and need no event-order tie-break. Reapply the checks above
+effective admission in [canonical event order](event-store.md#canonical-order).
+The order decides only between eligible unadmitted observations of one input
+whose intents differ, and a live receipt never leaves such a pair behind: each
+receipt is admitted under the lock that committed it. The pair arises only
+when independently run copies merge, and there canonical order is what every
+reader of the same union derives; no physical receive order exists between
+them. A receipt-integrity conflict withholds no admission: the observations
+it touches are judged like any other, and the conflict remains a diagnostic
+and an ACK restriction under [vault-events.md](vault-events.md#message-in).
+Reapply the checks above
 to each candidate; missing evidence for one does not block unrelated candidates.
 Commit each new admission and refresh effective admissions and logical intent
 agreement before evaluating the next candidate. Two contradictory candidates
@@ -1060,7 +1068,7 @@ own model/proof tests alone does not establish application conformance.
 - <a id="ch-71"></a> **CH-71.** With two competing peer successors, otherwise valid proof-free input in its own channel may gain admission despite the model's conflicted observation status. A previously admitted same-channel ACK with complete source/target evidence remains attributable without path(c,c). A cross-channel ACK needing that conflicted path is not attributable, and no new send bypasses the conflict.
 - <a id="ch-72"></a> **CH-72.** The adapter accepts a valid long-form issuer with an equivalent short-form kid and a short-form subject matching the authenticated long-form sender, with original JWT bytes unchanged. It accepts absent typ and JWT/application/jwt case variants, and rejects exp, nbf, unsupported critical headers and unauthorized keys under the package profile.
 - <a id="ch-73"></a> **CH-73.** Without issuer material, document-independent malformed claims/profile headers remain invalid, including an unsupported alg or typ, a kid DID unequal to iss, equal canonical sub/iss, or canonical sub unequal to the authenticated sender. A well-formed unresolved issuer remains pending-proof. Successful inspection alone cannot establish profile validity. Evidence recovery verifies and binds the exact saved token without replaying the receive action.
-- <a id="ch-74"></a> **CH-74.** Two pending receipts with the same logical input and contradictory intent are reconciled in receiptOrderKey order. The second sees the first newly committed or transactionally staged admission and gains none. Crash or uncertain commit before publication authorizes no dependent ACK projection or effect; recovery reads committed admissions before proceeding.
+- <a id="ch-74"></a> **CH-74.** Two pending receipts with the same logical input and contradictory intent are reconciled in canonical event order. The second sees the first newly committed or transactionally staged admission and gains none. Crash or uncertain commit before publication authorizes no dependent ACK projection or effect; recovery reads committed admissions before proceeding.
 - <a id="ch-75"></a> **CH-75.** Concurrent direct deliveries with different transport keys share the pickup receipt/admission sequence. A later rotation receipt cannot commit ahead of an earlier delivery's admission decision through a separate lock. Network completion of pickup ACK or automatic output does not hold that sequence; separately imported evidence still applies before admission.
 - <a id="ch-76"></a> **CH-76.** Import a replacement after verification but before an operation commit. The captured revision cannot authorize the operation: revalidate and refold against the changed inventory. Dependency damage or repair invalidates affected verification/projection caches even without a new event. A fresh projection never revives withdrawn facts by unioning its old cache.
 - <a id="ch-77"></a> **CH-77.** Shared host policy gates user send, preparation, first dispatch and manual retry at both fixed endpoints. No daemon/app flag enables pre-rotation bypass. Preserve the intent, package, wire ID and actual in-flight/submitted outcome when a later rotation removes eligibility.

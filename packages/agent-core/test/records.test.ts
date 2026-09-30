@@ -351,7 +351,7 @@ describe("records", () => {
     expect(reportedProblem({ comment: 7 })).toBe("unknown");
   });
 
-  test("a receipt-integrity conflict admits neither observation it touches: each is listed refused, neither is shown as an input, and no reply is owed", async () => {
+  test("a receipt-integrity conflict withholds no admission: each observation it touches is admitted and shown as an input carrying the conflict as a diagnostic, and the reply the ping is owed takes no manual step", async () => {
     const { alice, bob } = await parties();
     const pair = { localDid: alice.did, peerDid: bob.did };
     const ping = await received(alice, bob, crypto.randomUUID(), { type: PING_TYPE, body: { response_requested: true }, created_time: CREATED }, alice, "1" as ReceiptOrdinal);
@@ -359,11 +359,13 @@ describe("records", () => {
 
     const records = await readRecords(alice.runtime, alice.keys);
     const record = await records.channel(pair);
-    expect(record.messages).toEqual([]);
-    expect(record.observations.map(({ sourceEventCid, standing, disposition }) => [sourceEventCid, standing, disposition])).toEqual(
-      [ping, chat].map((cid) => [cid, { status: "complete" }, { status: "refused", because: "one author gave the source's ordinal to another observation" }])
-    );
-    expect(records.pending().missingResponses).toEqual([]);
+    const integrity = { kind: "receipt-integrity", because: "one author gave the receipt's ordinal to another observation" };
+    expect(record.messages.map(({ direction, body, input, diagnostics }) => [direction, body, input, diagnostics])).toEqual([
+      ["in", { state: "available", body: { response_requested: true }, attachments: [] }, { status: "complete" }, [integrity]],
+      ["in", { state: "available", body: { content: "same ordinal" }, attachments: [] }, { status: "complete" }, [integrity]],
+    ]);
+    expect(record.observations.map(({ sourceEventCid, standing, disposition }) => [sourceEventCid, standing, disposition])).toEqual([ping, chat].map((cid) => [cid, { status: "complete" }, { status: "admitted" }]));
+    expect(records.pending().missingResponses.map(({ messageId, entries }) => [messageId, entries])).toEqual([[record.messages[0]!.messageId, []]]);
     await closeAll(alice, bob);
   });
 

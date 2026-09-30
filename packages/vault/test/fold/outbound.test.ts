@@ -482,7 +482,7 @@ describe("an outbound message", () => {
     receipt(scene, { local: a0, peer: b1, resolution: successorRoot, ordinal: 4, admitted: false, overrides: { intentHash: OTHER_HASH } });
     vault = await fold(scene, keys);
     expect(vault.channels.receipts.affected.has(source.data.messageId)).toBe(true);
-    expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
+    expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "none", because: "the carrier's input is under a receipt conflict" });
     expect(variant(scene, vault.checks, own, variants)).toMatchObject({ effect: { status: "conflict", because: "the source's input is under a receipt conflict" }, work: { kind: "none" } });
     expectSameOverEveryOrder(scene, vault.checks);
   });
@@ -766,7 +766,7 @@ describe("an outbound message", () => {
     expect(vault.outbound.ackTarget(silent.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
     expect(vault.outbound.ackTarget(unproven.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
     expect(vault.outbound.ackTarget(unadmitted.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
-    expect(vault.outbound.ackTarget(disputed.cid)).toEqual({ status: "none", because: "the carrier is not admitted" });
+    expect(vault.outbound.ackTarget(disputed.cid)).toEqual({ status: "none", because: "the carrier's input is under a receipt conflict" });
     expect(vault.outbound.ackTarget(fakeEventCid())).toEqual({ status: "none", because: "the carrier is not here" });
     expectOrderFree(scene.events, (set) => foldVault(set, vault.checks).outbound.ackTarget(carrier.cid));
   });

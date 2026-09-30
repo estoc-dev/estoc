@@ -1986,8 +1986,10 @@ Compare the tuples ascending, first by exact integer ordinal and then by the
 canonical author string. The minimum is one complete observation key, not
 independent minima of its components; it is undefined when no admitted complete
 observation qualifies. Raw unadmitted duplicates cannot change this minimum.
-Admission reconciliation orders candidate observations by each observation's
-own `receiptOrderKey`. `firstReceiptKey` orders established logical messages for display;
+Admission reconciliation orders candidate observations in
+[canonical event order](event-store.md#canonical-order) under
+[channels.md](channels.md#application-admission), never by either key.
+`firstReceiptKey` orders established logical messages for display;
 it is no admission prerequisite. A pure ACK names its carrier alone, so no
 target array is ordered by either key. In a linear single-writer history
 `receiptOrderKey` preserves first-receipt order, including across restore and
@@ -2004,8 +2006,10 @@ MUST NOT change a committed `message.out`.
 After `cid` deduplication, distinct events with the same `(author,
 receiptOrdinal)` are a receipt-integrity conflict. Affected logical messages
 are those observed by the conflicting events. Retain those events and
-surface the conflict; an affected input is admitted by nothing and earns no
-new pure ACK. Unaffected messages remain processable. Full import MUST
+surface the conflict; an affected input earns no new pure ACK, while
+admission judges its observations like any other, since a contradiction among
+them is already an intent conflict and a consistent duplicate harms nothing.
+Unaffected messages remain processable. Full import MUST
 NOT reject an event union merely for receipt-ordinal reuse or this projected
 conflict. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
 `ForkedAuthor` check detects unseen events under the current local author; it
@@ -2364,7 +2368,7 @@ list when no new objects are needed; `Vault.events` is read-only.
    This work may recover retained issuer material and recompute a previously
    pending proof, but appends no event for verification and grants no protocol
    dispatch or business effect.
-   Reconcile missing admissions in `receiptOrderKey` order under
+   Reconcile missing admissions in canonical event order under
    [channels.md](channels.md#application-admission), only after the full graph
    and current policy are known. Persist acceptance now for eligible sources,
    never infer a past acceptance. No admission is created for an unadmitted
@@ -2881,8 +2885,8 @@ derivation requires a new vault version.
 - <a id="ve-70"></a> **VE-70.** Shared envelope bytes remain held by another non-erased message even after
     one message/root relation is erased.
 - <a id="ve-71"></a> **VE-71.** Each new duplicate observation receives a fresh ordinal; exact re-ingest
-    does not. Admission reconciliation orders each candidate observation by its
-    own `receiptOrderKey`; a later observation changes no committed intent.
+    does not. Admission reconciliation orders candidate observations in canonical
+    event order, not by receipt key; a later observation changes no committed intent.
 - <a id="ve-72"></a> **VE-72.** Restore, restart and loss of local caches recover the ordinal high-water mark
     across all historical authors. Cross-author equal ordinals survive import
     and sort by author on a tie; allocation resumes above the union's maximum.
@@ -2908,7 +2912,7 @@ derivation requires a new vault version.
 
 - <a id="ve-80"></a> **VE-80.** Distinct events sharing a receipt `(author, ordinal)` pair remain history
     with a projected receipt-integrity conflict, not a full-import failure.
-    Only affected logical messages are excluded from admission and from earning a new pure ACK.
+    Only affected logical messages are excluded from earning a new pure ACK; admission is not withheld.
 - <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never a committed intent.
 
 
