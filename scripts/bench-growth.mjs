@@ -170,7 +170,6 @@ async function alone(what, folder) {
 const root = await mkdtemp(path.join(tmpdir(), "estoc-bench-"));
 const mediator = new FakeMediator(await deriveIdentity(await importSeed(new Uint8Array(32).fill(200)), "anchor"));
 
-/** What one source shows of the vault, snapshot by snapshot: how many so far, the last, and who waits for one. */
 const watching = (name) => ({ name, states: 0, last: null, waiting: new Set() });
 function saw(watch, snapshot) {
   const at = now();
@@ -308,7 +307,6 @@ function caughtUp(who, views) {
   );
 }
 
-/** Both daemons settled and every view of each caught up with it. */
 async function quiet(alice, bob, views) {
   await settled(alice, bob);
   await Promise.all([caughtUp(alice, views.sender), caughtUp(bob, views.receiver)]);
@@ -608,12 +606,14 @@ try {
       callToIntentCommitted: intentCommitted - began,
       intentCommittedToIntentPublished: intentPublished - intentCommitted,
       intentPublishedToIntentViewed: intentViewed - intentPublished,
+      intentCommittedToIntentViewed: intentViewed - intentCommitted,
       callToIntentViewed: intentViewed - began,
       callToAnswer: answered - began,
       callToTransportAnswered: transportAnswered - began,
       transportAnsweredToAcceptanceCommitted: acceptanceCommitted - transportAnswered,
       acceptanceCommittedToDeliveryPublished: deliveryPublished - acceptanceCommitted,
       deliveryPublishedToDeliveryViewed: deliveryViewed - deliveryPublished,
+      transportAnsweredToDeliveryViewed: deliveryViewed - transportAnswered,
       callToDeliveryViewed: deliveryViewed - began,
       callToReceiptPublished: receiptPublished - began,
       receiptPublishedToReceiptViewed: receiptViewed - receiptPublished,
@@ -655,7 +655,7 @@ try {
     const { outcome, because } = await alice.daemon.retry(messageId);
     if (outcome !== "submitted") throw new Error(`the retry was ${outcome}: ${because}`);
     const answered = now();
-    const { callToIntentCommitted: _intent, intentCommittedToIntentPublished: _published, intentPublishedToIntentViewed: _viewed, callToIntentViewed: _call, ...retried } = await spans(began, answered, messageId, staged);
+    const { callToIntentCommitted: _intent, intentCommittedToIntentPublished: _published, intentPublishedToIntentViewed: _viewed, intentCommittedToIntentViewed: _committed, callToIntentViewed: _call, ...retried } = await spans(began, answered, messageId, staged);
     return Object.fromEntries(Object.entries(retried).map(([name, ms]) => [name.replace(/^call/, "retry"), ms]));
   });
 

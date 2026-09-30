@@ -4,7 +4,6 @@ import { frozen, remembered } from "../src/remembered.js";
 
 class Refused extends Error {}
 
-/** The inputs worked out, in order; an input that starts with `!` is refused, one that starts with `?` fails for another reason. */
 function counted(limit?: number) {
   const worked: string[] = [];
   const compute = (input: string): string[] => {
