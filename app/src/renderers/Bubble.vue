@@ -3,6 +3,8 @@ import { computed, ref } from "vue";
 
 import { cancel, completeResponse, eraseMessage, retry, state } from "../core/store.js";
 import type { MessageRecord } from "../core/types.js";
+import Icon from "../ui/Icon.vue";
+import Sheet from "../ui/Sheet.vue";
 import { timeOf } from "../ui/util.js";
 import { shownAttachment } from "./attachments.js";
 
@@ -18,6 +20,11 @@ import { shownAttachment } from "./attachments.js";
  * do by hand when it did not; for one received, whether it is taken in,
  * what became of a continuity proof it brought, and the replies it may
  * still be given.
+ *
+ * What is rarely done to a message, erasing its content, is not on the
+ * bubble. It is behind a press-and-hold or a right click on the bubble,
+ * and on a hover button where there is a mouse, so that it neither
+ * crowds the line under every message nor gets pressed by accident.
  */
 const props = defineProps<{
   message: MessageRecord;
@@ -94,15 +101,64 @@ async function act(action: () => Promise<void>) {
   }
 }
 
+const erasable = computed(() => props.message.body.state === "available");
+const erasing = ref(false);
+
+function offerErase() {
+  if (erasable.value && !busy.value) erasing.value = true;
+}
+
 function erase() {
-  if (confirm("Erase this message's content from the vault? Every copy this vault is merged with erases it too. The other side keeps theirs.")) {
-    void act(() => eraseMessage(props.message.messageId));
+  erasing.value = false;
+  void act(() => eraseMessage(props.message.messageId));
+}
+
+// A press held this long on a touch screen opens the same sheet a right click does;
+// a finger that drifts further than this while held is scrolling, not pressing.
+const HOLD_MS = 500;
+const HOLD_SLACK_PX = 10;
+let hold: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
+
+function pressed(event: PointerEvent) {
+  if (event.pointerType === "mouse" || event.button !== 0) return;
+  released();
+  const timer = setTimeout(() => {
+    hold = null;
+    offerErase();
+  }, HOLD_MS);
+  hold = { timer, x: event.clientX, y: event.clientY };
+}
+
+function moved(event: PointerEvent) {
+  if (hold !== null && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > HOLD_SLACK_PX) released();
+}
+
+function released() {
+  if (hold !== null) {
+    clearTimeout(hold.timer);
+    hold = null;
   }
+}
+
+function contextMenu(event: MouseEvent) {
+  if (!erasable.value) return;
+  event.preventDefault();
+  offerErase();
 }
 </script>
 
 <template>
-  <div class="bubble" :class="[message.direction === 'out' ? 'sent' : 'received', { system }]" :data-message="message.messageId">
+  <div
+    class="bubble"
+    :class="[message.direction === 'out' ? 'sent' : 'received', { system }]"
+    :data-message="message.messageId"
+    @contextmenu="contextMenu"
+    @pointerdown="pressed"
+    @pointerup="released"
+    @pointercancel="released"
+    @pointermove="moved"
+    @pointerleave="released"
+  >
     <div class="bubble-body">
       <slot v-if="message.body.state === 'available'" />
       <span v-else class="gone">{{ message.body.state === "erased" ? "erased" : "the content is not here" }}</span>
@@ -136,9 +192,17 @@ function erase() {
       >
         reply: {{ response.effectType }}
       </button>
-      <button v-if="message.body.state === 'available'" type="button" class="link faint" :disabled="busy" @click="erase">erase</button>
+      <button v-if="erasable" type="button" class="icon-btn more" aria-label="More" :disabled="busy" data-more @click="offerErase">
+        <Icon name="more" :size="16" />
+      </button>
     </div>
     <p v-for="(diagnostic, i) in message.diagnostics" :key="i" class="diagnostic">{{ diagnostic.kind }}: {{ diagnostic.because }}</p>
     <p v-if="failure" class="diagnostic error">{{ failure }}</p>
+    <Sheet v-if="erasing" label="This message" @close="erasing = false">
+      <div class="sheet-title">Erase this message's content?</div>
+      <p class="note">Every copy this vault is merged with erases it too. The other side keeps theirs.</p>
+      <button class="btn-danger" type="button" data-erase @click="erase">Erase</button>
+      <button class="btn-quiet" type="button" @click="erasing = false">Cancel</button>
+    </Sheet>
   </div>
 </template>
