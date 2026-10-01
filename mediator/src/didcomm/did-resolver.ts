@@ -31,7 +31,31 @@ export interface ResolveResult {
   };
 }
 
+/**
+ * A did:peer carries its document or its keys in base58, and decoding that
+ * takes time that grows faster than its length: an identifier well under the
+ * envelope limit can hold the process for seconds. Whoever names one decides
+ * its size and need not be known here, so the size is judged before anything
+ * is decoded. The documents agents mint are a small fraction of this.
+ */
+export const MAX_PEER_DID_BYTES = 8192;
+
+export function isDecodable(peerDid: string): boolean {
+  return Buffer.byteLength(peerDid) <= MAX_PEER_DID_BYTES;
+}
+
 export async function resolveDID(did: string): Promise<ResolveResult> {
+  if ((isPeerDID2(did) || isPeerDID4(did)) && !isDecodable(did)) {
+    return {
+      didDocument: null,
+      didDocumentMetadata: {},
+      didResolutionMetadata: {
+        error: "invalidDid",
+        message: `A did:peer larger than ${MAX_PEER_DID_BYTES} bytes is not decoded`,
+      },
+    };
+  }
+
   if (isPeerDID2(did)) {
     return resolveDidPeer2(did);
   }

@@ -1,12 +1,25 @@
-import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import type { Hono } from "hono";
 import canonicalize from "canonicalize";
 import type { IMessage } from "@estoc/didcomm-node";
+import bs58 from "bs58";
+import { longToShort } from "@estoc/did-peer";
 
 import { CompactSign, importJWK, type JWK } from "jose";
 
 import { buildApp } from "../src/app.js";
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
+import { MAX_PEER_DID_BYTES, resolveDIDCommDoc } from "../src/didcomm/did-resolver.js";
 import type { LiveSink } from "../src/protocols/types.js";
 import { buildServer } from "../src/server.js";
 import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
@@ -17,6 +30,7 @@ import {
   forwardOf,
   memoryStore,
   packAnonymous,
+  peer4Agent,
   plaintext,
   sealRaw,
   sealed,
@@ -811,5 +825,115 @@ describe("out-of-band/2.0", () => {
     expect(did).toBe(mediator.did);
     expect(invitationUrl).toContain("_oob=");
     expect(maxMessageBytes).toBe(TEST_CONFIG.maxMessageBytes);
+  });
+});
+
+describe("a did:peer", () => {
+  const MEDIATE_REQUEST = "https://didcomm.org/coordinate-mediation/3.0/mediate-request";
+  let decode: MockInstance<typeof bs58.decode>;
+
+  beforeEach(() => {
+    decode = vi.spyOn(bs58, "decode");
+  });
+
+  afterEach(() => {
+    decode.mockRestore();
+  });
+
+  function decodings(longForm: string): number {
+    const document = longForm.slice(longForm.lastIndexOf(":") + 2);
+    return decode.mock.calls.filter(([encoded]) => encoded === document).length;
+  }
+
+  type Sender = Awaited<ReturnType<typeof peer4Agent>>;
+
+  function paddingAtLimit(sender: Sender): number {
+    let [within, over] = [0, 2 * MAX_PEER_DID_BYTES];
+    while (over - within > 1) {
+      const middle = Math.floor((within + over) / 2);
+      if (sender.unread(middle).longForm.length <= MAX_PEER_DID_BYTES) {
+        within = middle;
+      } else {
+        over = middle;
+      }
+    }
+    return within;
+  }
+
+  async function request(
+    { longForm, ctx }: ReturnType<Sender["unread"]>,
+    to: Hono = app
+  ): Promise<Response> {
+    return to.request("/", {
+      method: "POST",
+      headers: { "content-type": ENCRYPTED },
+      body: await ctx.packEncrypted(
+        plaintext(MEDIATE_REQUEST, {}, {
+          from: longForm,
+          to: [mediator.did],
+          return_route: "all",
+        }),
+        mediator.did
+      ),
+    });
+  }
+
+  it("at the size limit is decoded to open what it sealed", async () => {
+    const sender = await peer4Agent(null);
+    const largest = sender.unread(paddingAtLimit(sender));
+
+    const res = await request(largest);
+
+    expect(res.status).toBe(200);
+    expect((await largest.ctx.unpack(await res.text())).message.type).toBe(
+      "https://didcomm.org/coordinate-mediation/3.0/mediate-grant"
+    );
+    expect(decodings(largest.longForm)).toBeGreaterThan(0);
+  });
+
+  describe("over the size limit is refused undecoded", () => {
+    it("as the sender of an envelope, whatever the mediator offers", async () => {
+      const sender = await peer4Agent(null);
+      const smallest = sender.unread(paddingAtLimit(sender) + 1);
+      const closed = buildServer({
+        identity: mediator,
+        store: memoryStore(),
+        config: { ...TEST_CONFIG, openRegistration: false, replicaMediation: false },
+      }).app;
+      expect(smallest.longForm.length).toBeGreaterThan(MAX_PEER_DID_BYTES);
+
+      for (const offering of [app, closed]) {
+        const res = await request(smallest, offering);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ error: "Message could not be unpacked" });
+      }
+
+      expect(decodings(smallest.longForm)).toBe(0);
+    });
+
+    it("as the long form kept for a short one", async () => {
+      const sender = await peer4Agent(null);
+      const [within, over] = [sender.unread(100), sender.unread(MAX_PEER_DID_BYTES)];
+      const kept = new Map(
+        [within, over].map(({ longForm }) => [longToShort(longForm), longForm])
+      );
+      const ctx = new DIDCommContext(mediator.did, mediator.didDoc, mediator.secrets, {
+        resolutionMaterial: async (did) => kept.get(did) ?? null,
+      });
+
+      expect(await ctx.resolve(longToShort(within.longForm))).not.toBeNull();
+      expect(await ctx.resolve(longToShort(over.longForm))).toBeNull();
+
+      expect(decodings(within.longForm)).toBeGreaterThan(0);
+      expect(decodings(over.longForm)).toBe(0);
+    });
+
+    it("as a did:peer:2 with a key that long", async () => {
+      const key = `z${"2".repeat(MAX_PEER_DID_BYTES)}`;
+
+      expect(await resolveDIDCommDoc(`did:peer:2.V${key}`)).toBeNull();
+
+      expect(decode.mock.calls.filter(([encoded]) => key.includes(encoded))).toEqual([]);
+    });
   });
 });

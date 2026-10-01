@@ -25,7 +25,14 @@ import { QUERIES, queries } from "./discover-features.js";
 import { PING, ping } from "./trust-ping.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
 import { BLOB_DELETE, BLOB_PUT, blobDelete, blobPut } from "./blob-store.js";
-import { LIST, REGISTER, list, register } from "./replica-mediation.js";
+import {
+  LIST,
+  RECIPIENT_ADD,
+  REGISTER,
+  list,
+  recipientAdd,
+  register,
+} from "./replica-mediation.js";
 
 const HANDLERS: Record<string, Handler> = {
   [MEDIATE_REQUEST]: mediateRequest,
@@ -45,6 +52,7 @@ const HANDLERS: Record<string, Handler> = {
 const REPLICA_MEDIATION_HANDLERS: Record<string, Handler> = {
   [REGISTER]: register,
   [LIST]: list,
+  [RECIPIENT_ADD]: recipientAdd,
 };
 
 /**

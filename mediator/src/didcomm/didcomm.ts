@@ -5,7 +5,7 @@ import type {
   SecretsResolver,
   UnpackMetadata,
 } from "@estoc/didcomm-node";
-import { resolveDIDCommDoc } from "./did-resolver.js";
+import { isDecodable, resolveDIDCommDoc } from "./did-resolver.js";
 import { isShortForm, longToShort, resolveShortForm, toDIDCommDIDDoc } from "@estoc/did-peer";
 import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { OwnIdentity } from "../identity-core.js";
@@ -47,7 +47,7 @@ class ChainedResolver implements DIDResolver {
       return null;
     }
     const longForm = await this.resolutionMaterial(did);
-    if (longForm === null) {
+    if (longForm === null || !isDecodable(longForm)) {
       return null;
     }
     try {

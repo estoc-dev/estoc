@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { Hono } from "hono";
 import type { IMessage } from "@estoc/didcomm-node";
 import { CompactSign, importJWK } from "jose";
 import canonicalize from "canonicalize";
 import bs58 from "bs58";
-import { bytesToBase64url, longToShort } from "@estoc/did-peer";
+import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
 
 import { replicaPolicyFrom, type MediatorConfig } from "../src/config.js";
 import type { DIDCommContext } from "../src/didcomm/didcomm.js";
@@ -14,6 +14,7 @@ import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
 import type { SqliteStore } from "../src/store/sqlite.js";
 import {
   ENCRYPTED,
+  RECIPIENT_PROOF_TYP,
   TEST_CONFIG,
   agent,
   memoryStore,
@@ -29,6 +30,8 @@ const REGISTER = `${PROTOCOL}/register`;
 const REGISTERED = `${PROTOCOL}/registered`;
 const LIST = `${PROTOCOL}/list`;
 const REPLICAS = `${PROTOCOL}/replicas`;
+const RECIPIENT_ADD = `${PROTOCOL}/recipient-add`;
+const RECIPIENT_ADDED = `${PROTOCOL}/recipient-added`;
 const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
 const MEDIATE_REQUEST = "https://didcomm.org/coordinate-mediation/3.0/mediate-request";
 const MEDIATE_GRANT = "https://didcomm.org/coordinate-mediation/3.0/mediate-grant";
@@ -123,6 +126,13 @@ async function enrollment(
 async function mismatchedLongForm(short: string): Promise<string> {
   const other = (await peer4Agent(null)).longForm;
   return `${short}${other.slice(other.lastIndexOf(":"))}`;
+}
+
+const MAX_LONG_FORM_BYTES = 8192;
+
+/** A sound did:peer:4 whose document carries `padding` characters nothing reads. */
+function paddedAgent(service: string | null, padding: number): Promise<Peer4Agent> {
+  return peer4Agent(service, (document) => ({ ...document, padding: "x".repeat(padding) }));
 }
 
 async function register(grant: string, speaker: Speaker = firstContact(account)) {
@@ -352,6 +362,20 @@ describe("register", () => {
       ];
       await refused(named.grant);
       await refused(served.grant);
+    });
+
+    it("whose replica has a long form too large to decode", async () => {
+      const replica = await paddedAgent(mediator.did, 5600);
+      const { payload } = await enrollment();
+      expect(replica.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+
+      await refused(
+        await signedBy(account, {
+          ...payload,
+          replica_did: replica.did,
+          replica_long_form: replica.longForm,
+        })
+      );
     });
 
     it("with IDs that are not UUIDv7", async () => {
@@ -672,6 +696,536 @@ describe("list", () => {
     await register(first.grant);
 
     await expectProblem(await roster(known(first.replica)), "unknown-account");
+  });
+});
+
+interface Addition {
+  recipient: Peer4Agent;
+  payload: Record<string, string>;
+  proof: string;
+}
+
+async function addition(
+  of: Peer4Agent = account,
+  changes: Record<string, string> = {}
+): Promise<Addition> {
+  const recipient = await peer4Agent(mediator.did);
+  const payload = { account: of.did, aud: mediator.did, recipient: recipient.did, ...changes };
+  return { recipient, payload, proof: await proofBy(recipient, payload) };
+}
+
+function proofBy(signer: Peer4Agent, payload: unknown, header: Record<string, unknown> = {}) {
+  return signedBy(signer, payload, { typ: RECIPIENT_PROOF_TYP, ...header });
+}
+
+async function add(
+  { recipient, proof }: Pick<Addition, "recipient" | "proof">,
+  speaker: Speaker = known(account),
+  body: Record<string, unknown> = {}
+) {
+  return send(speaker, RECIPIENT_ADD, {
+    recipient_did: recipient.did,
+    resolution_material: recipient.longForm,
+    proof,
+    ...body,
+  });
+}
+
+describe("recipient-add", () => {
+  beforeEach(async () => {
+    await register((await enrollment()).grant);
+  });
+
+  it("binds a communication DID its controller signed over to the account", async () => {
+    const first = await addition();
+    const reply = await add(first);
+
+    expect(reply?.type).toBe(RECIPIENT_ADDED);
+    expect(reply?.body).toEqual({ recipient_did: first.recipient.did, status: "added" });
+    expect(await store.sharedRecipientMaterial(first.recipient.did)).toBe(first.recipient.longForm);
+  });
+
+  it("answers a repeat with no change, under a new request ID and the same proof", async () => {
+    const first = await addition();
+    await add(first);
+    const asked = { id: randomUUID() };
+
+    const reply = await send(
+      known(account),
+      RECIPIENT_ADD,
+      { recipient_did: first.recipient.did, resolution_material: null, proof: first.proof },
+      asked
+    );
+
+    expect(reply?.body).toEqual({ recipient_did: first.recipient.did, status: "no_change" });
+    expect(reply?.thid).toBe(asked.id);
+  });
+
+  it("takes the recipient, the account and the mediator in either spelling", async () => {
+    mediator = await mintIdentity(TEST_CONFIG.publicUrl, ["peer4"]);
+    app = serve();
+    account = await peer4Agent(null);
+    expect((await register((await enrollment()).grant))?.type).toBe(REGISTERED);
+    const recipient = await peer4Agent(mediator.did);
+    const proof = await proofBy(
+      recipient,
+      { account: account.longForm, aud: longToShort(mediator.did), recipient: recipient.longForm },
+      { kid: `${recipient.longForm}#key-1` }
+    );
+
+    const reply = await add({ recipient, proof }, known(account), {
+      recipient_did: recipient.longForm,
+    });
+
+    expect(reply?.body).toEqual({ recipient_did: recipient.did, status: "added" });
+  });
+
+  it("takes a recipient whose long form is large but within the limit", async () => {
+    const recipient = await paddedAgent(mediator.did, 5000);
+    const proof = await proofBy(recipient, {
+      account: account.did,
+      aud: mediator.did,
+      recipient: recipient.did,
+    });
+    expect(recipient.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES - 1024);
+    expect(recipient.longForm.length).toBeLessThanOrEqual(MAX_LONG_FORM_BYTES);
+
+    expect((await add({ recipient, proof }))?.body.status).toBe("added");
+  });
+
+  it("gives two adds racing for one recipient a single binding", async () => {
+    const first = await addition();
+
+    const replies = await Promise.all([add(first), add(first)]);
+
+    expect(replies.map((reply) => reply?.body.status).sort()).toEqual(["added", "no_change"]);
+  });
+
+  describe("refuses a recipient", () => {
+    async function refused(reply: IMessage | null, recipient: Peer4Agent) {
+      await expectProblem(reply, "invalid-recipient");
+      expect(await store.sharedRecipientMaterial(recipient.did)).toBeNull();
+    }
+
+    it("whose proof the account signed, or another DID did", async () => {
+      const { recipient, payload } = await addition();
+      const other = await peer4Agent(null);
+
+      await refused(await add({ recipient, proof: await proofBy(account, payload) }), recipient);
+      await refused(
+        await add({
+          recipient,
+          proof: await proofBy(account, payload, { kid: `${recipient.did}#key-1` }),
+        }),
+        recipient
+      );
+      await refused(await add({ recipient, proof: await proofBy(other, payload) }), recipient);
+      await refused(await add({ recipient, proof: "" }), recipient);
+    });
+
+    it("whose proof names another account, mediator or recipient", async () => {
+      const other = await peer4Agent(null);
+      await register((await enrollment(other)).grant, firstContact(other));
+      const elsewhere = await addition();
+
+      for (const changes of [
+        { account: other.did },
+        { aud: "did:web:elsewhere.test" },
+        { recipient: elsewhere.recipient.did },
+      ]) {
+        const { recipient, proof } = await addition(account, changes);
+        await refused(await add({ recipient, proof }), recipient);
+      }
+    });
+
+    it("whose proof was changed after signing, or is a replica grant", async () => {
+      const { recipient, payload, proof } = await addition();
+      const other = await peer4Agent(null);
+      const [header, , signature] = proof.split(".");
+      const altered = Buffer.from(canonicalize({ ...payload, account: other.did })!).toString(
+        "base64url"
+      );
+
+      await refused(await add({ recipient, proof: `${header}.${altered}.${signature}` }), recipient);
+      await refused(await add({ recipient, proof: await signedBy(recipient, payload) }), recipient);
+      await refused(
+        await add({ recipient, proof: await proofBy(recipient, { ...payload, iat: "1" }) }),
+        recipient
+      );
+    });
+
+    it("it has no resolution material for", async () => {
+      const first = await addition();
+      const other = await peer4Agent(null);
+
+      await refused(await add(first, known(account), { resolution_material: null }), first.recipient);
+      await refused(
+        await add(first, known(account), { resolution_material: other.longForm }),
+        first.recipient
+      );
+      await refused(
+        await add(first, known(account), {
+          resolution_material: await mismatchedLongForm(first.recipient.did),
+        }),
+        first.recipient
+      );
+    });
+
+    it("whose long form is too large to decode, however sound its proof", async () => {
+      const recipient = await paddedAgent(mediator.did, 5600);
+      const payload = { account: account.did, aud: mediator.did, recipient: recipient.did };
+      const proof = await proofBy(recipient, payload);
+      expect(recipient.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+
+      await refused(await add({ recipient, proof }), recipient);
+      await refused(
+        await add({ recipient, proof }, known(account), {
+          recipient_did: recipient.longForm,
+          resolution_material: null,
+        }),
+        recipient
+      );
+    });
+
+    it("that is not a did:peer:4", async () => {
+      const stranger = await agent("stranger");
+      const { recipient, proof } = await addition();
+
+      await expectProblem(
+        await add({ recipient, proof }, known(account), {
+          recipient_did: stranger.did,
+          resolution_material: null,
+        }),
+        "invalid-recipient"
+      );
+    });
+
+    it("it already holds, when the proof does not stand", async () => {
+      const first = await addition();
+      await add(first);
+
+      await expectProblem(
+        await add({ recipient: first.recipient, proof: await proofBy(account, first.payload) }),
+        "invalid-recipient"
+      );
+    });
+  });
+
+  it("refuses a body that is not exactly one recipient", async () => {
+    const first = await addition();
+    const second = await addition();
+    const { recipient_did, resolution_material, proof } = {
+      recipient_did: first.recipient.did,
+      resolution_material: first.recipient.longForm,
+      proof: first.proof,
+    };
+
+    for (const body of [
+      { recipient_did, proof },
+      { recipient_did, resolution_material, proof, action: "add" },
+      { recipient_did: [recipient_did, second.recipient.did], resolution_material, proof },
+      { recipient_did, resolution_material: 1, proof },
+      { recipient_did, resolution_material, proof: null },
+      {
+        recipients: [
+          { recipient_did, resolution_material, proof },
+          {
+            recipient_did: second.recipient.did,
+            resolution_material: second.recipient.longForm,
+            proof: second.proof,
+          },
+        ],
+      },
+    ]) {
+      await expectProblem(await send(known(account), RECIPIENT_ADD, body), "invalid-message");
+    }
+    expect(await store.sharedRecipientMaterial(first.recipient.did)).toBeNull();
+    expect(await store.sharedRecipientMaterial(second.recipient.did)).toBeNull();
+  });
+
+  it("needs an account that already exists, at the mediator it is bound to", async () => {
+    const stranger = await peer4Agent(null);
+    const unknown = await addition(stranger);
+    await expectProblem(await add(unknown, firstContact(stranger)), "unknown-account");
+    expect(await store.sharedRecipientMaterial(unknown.recipient.did)).toBeNull();
+
+    mediator = await mintIdentity(TEST_CONFIG.publicUrl, ["peer2", "peer4"]);
+    app = serve();
+    account = await peer4Agent(null);
+    expect((await register((await enrollment()).grant))?.type).toBe(REGISTERED);
+    const alias = mediator.aliases[0].did;
+    const underAlias = await addition(account, { aud: alias });
+    await expectProblem(
+      await send(
+        known(account),
+        RECIPIENT_ADD,
+        {
+          recipient_did: underAlias.recipient.did,
+          resolution_material: underAlias.recipient.longForm,
+          proof: underAlias.proof,
+        },
+        { to: [alias] }
+      ),
+      "unknown-account"
+    );
+    expect(await store.sharedRecipientMaterial(underAlias.recipient.did)).toBeNull();
+    expect((await add(await addition()))?.body.status).toBe("added");
+  });
+
+  describe("refuses a DID that is bound otherwise, without changing anything", () => {
+    it("another account's recipient", async () => {
+      const other = await peer4Agent(null);
+      await register((await enrollment(other)).grant, firstContact(other));
+      const first = await addition();
+      await add(first);
+
+      const claim = {
+        recipient: first.recipient,
+        proof: await proofBy(first.recipient, { ...first.payload, account: other.did }),
+      };
+      await expectProblem(await add(claim, known(other)), "identity-conflict");
+      expect((await add(first))?.body.status).toBe("no_change");
+    });
+
+    it("a replica, or an account, its own included", async () => {
+      const member = await enrollment();
+      await register(member.grant);
+      const other = await peer4Agent(null);
+      await register((await enrollment(other)).grant, firstContact(other));
+
+      for (const bound of [member.replica, account, other]) {
+        const proof = await proofBy(bound, {
+          account: account.did,
+          aud: mediator.did,
+          recipient: bound.did,
+        });
+        await expectProblem(await add({ recipient: bound, proof }), "identity-conflict");
+        expect(await store.sharedRecipientMaterial(bound.did)).toBeNull();
+      }
+    });
+
+    it("an ordinary account, or an ordinary account's recipient, under either spelling", async () => {
+      const holder = await agent("holder");
+      await send(holder, MEDIATE_REQUEST, {});
+      const [mediated, listedShort, listedLong] = [
+        await addition(),
+        await addition(),
+        await addition(),
+      ];
+      await send(firstContact(mediated.recipient), MEDIATE_REQUEST, {});
+      await send(holder, RECIPIENT_UPDATE, {
+        updates: [listedShort.recipient.did, listedLong.recipient.longForm].map((recipient_did) => ({
+          recipient_did,
+          action: "add",
+        })),
+      });
+
+      for (const bound of [mediated, listedShort, listedLong]) {
+        await expectProblem(await add(bound), "identity-conflict");
+        expect(await store.sharedRecipientMaterial(bound.recipient.did)).toBeNull();
+      }
+    });
+  });
+
+  it("keeps a recipient from every other binding", async () => {
+    const first = await addition();
+    await add(first);
+    const { recipient } = first;
+    const holder = await agent("holder");
+    await send(holder, MEDIATE_REQUEST, {});
+
+    expect((await send(firstContact(recipient), MEDIATE_REQUEST, {}))?.type).toBe(MEDIATE_DENY);
+    const update = await send(holder, RECIPIENT_UPDATE, {
+      updates: [recipient.did, recipient.longForm].map((recipient_did) => ({
+        recipient_did,
+        action: "add",
+      })),
+    });
+    expect((update?.body.updated as { result: string }[]).map(({ result }) => result)).toEqual([
+      "client_error",
+      "client_error",
+    ]);
+
+    const asReplica = await enrollment(account, {
+      replica_did: recipient.did,
+      replica_long_form: recipient.longForm,
+    });
+    await expectProblem(await register(asReplica.grant), "identity-conflict");
+
+    const other = await peer4Agent(null);
+    const underOther = await enrollment(other, {
+      replica_did: recipient.did,
+      replica_long_form: recipient.longForm,
+    });
+    await expectProblem(await register(underOther.grant, firstContact(other)), "identity-conflict");
+    await expectProblem(await roster(firstContact(other)), "unknown-account");
+
+    const asAccount = await enrollment(recipient);
+    await expectProblem(
+      await register(asAccount.grant, firstContact(recipient)),
+      "identity-conflict"
+    );
+    expect((await roster())?.body.entries).toHaveLength(1);
+  });
+
+  it("stops adding at the recipient limit and still answers the ones it has", async () => {
+    const added = [];
+    for (let i = 0; i < TEST_CONFIG.maxSharedRecipients; i++) {
+      added.push(await addition());
+      expect((await add(added[i]))?.body.status).toBe("added");
+    }
+
+    const over = await addition();
+    await expectProblem(await add(over), "quota");
+    expect(await store.sharedRecipientMaterial(over.recipient.did)).toBeNull();
+    expect((await add(added[0]))?.body.status).toBe("no_change");
+  });
+
+  it("is not answered by a control that would remove a recipient", async () => {
+    const first = await addition();
+    await add(first);
+
+    const reply = await send(known(account), `${PROTOCOL}/recipient-remove`, {
+      recipient_did: first.recipient.did,
+    });
+
+    expect(reply?.body.code).toBe("e.p.msg.unsupported");
+    expect((await add(first))?.body.status).toBe("no_change");
+  });
+});
+
+describe("a long form", () => {
+  let decode: MockInstance<typeof bs58.decode>;
+
+  beforeEach(async () => {
+    await register((await enrollment()).grant);
+    decode = vi.spyOn(bs58, "decode");
+  });
+
+  afterEach(() => {
+    decode.mockRestore();
+  });
+
+  /** A sound long form that nothing has decoded yet, the test included. */
+  function unread(padding: number): string {
+    return encodeLongForm({ nonce: randomUUID(), padding: "x".repeat(padding) });
+  }
+
+  function decodings(longForm: string): number {
+    const document = longForm.slice(longForm.lastIndexOf(":") + 2);
+    return decode.mock.calls.filter(([encoded]) => encoded === document).length;
+  }
+
+  async function oversized(): Promise<string> {
+    const longForm = unread(6200);
+    expect(longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+    return longForm;
+  }
+
+  it("within the limit is decoded to be checked", async () => {
+    const longForm = unread(100);
+    const { proof } = await addition();
+
+    await send(known(account), RECIPIENT_ADD, {
+      recipient_did: longToShort(longForm),
+      resolution_material: longForm,
+      proof,
+    });
+
+    expect(decodings(longForm)).toBeGreaterThan(0);
+  });
+
+  describe("over the limit is refused undecoded", () => {
+    it("as the recipient or its resolution material", async () => {
+      const [named, supplied] = [await oversized(), await oversized()];
+      const { proof } = await addition();
+
+      await expectProblem(
+        await send(known(account), RECIPIENT_ADD, {
+          recipient_did: named,
+          resolution_material: null,
+          proof,
+        }),
+        "invalid-recipient"
+      );
+      await expectProblem(
+        await send(known(account), RECIPIENT_ADD, {
+          recipient_did: longToShort(supplied),
+          resolution_material: supplied,
+          proof,
+        }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(named)).toBe(0);
+      expect(decodings(supplied)).toBe(0);
+    });
+
+    it.each(["account", "aud", "recipient"])("as the %s a recipient proof names", async (field) => {
+      const longForm = await oversized();
+      const { recipient, payload } = await addition();
+
+      await expectProblem(
+        await add({ recipient, proof: await proofBy(recipient, { ...payload, [field]: longForm }) }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
+
+    it("as the DID in a recipient proof's key ID", async () => {
+      const longForm = await oversized();
+      const { recipient, payload } = await addition();
+
+      await expectProblem(
+        await add({
+          recipient,
+          proof: await proofBy(recipient, payload, { kid: `${longForm}#key-1` }),
+        }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
+
+    it("as the replica or the mediator a grant names", async () => {
+      const [replica, named] = [await oversized(), await oversized()];
+      const { payload } = await enrollment();
+
+      await expectProblem(
+        await register(
+          await signedBy(account, {
+            ...payload,
+            replica_did: longToShort(replica),
+            replica_long_form: replica,
+          }),
+          known(account)
+        ),
+        "invalid-grant"
+      );
+      await expectProblem(
+        await register(await signedBy(account, { ...payload, mediator: named }), known(account)),
+        "invalid-grant"
+      );
+
+      expect(decodings(replica)).toBe(0);
+      expect(decodings(named)).toBe(0);
+    });
+
+    it("as the DID in a grant's key ID", async () => {
+      const longForm = await oversized();
+      const { payload } = await enrollment();
+
+      await expectProblem(
+        await register(
+          await signedBy(account, payload, { kid: `${longForm}#key-1` }),
+          known(account)
+        ),
+        "invalid-grant"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
   });
 });
 

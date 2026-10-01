@@ -153,6 +153,11 @@ export interface Peer4Agent {
   shortCtx: DIDCommContext;
   /** Seals with the long form's keys while writing `did` as the sender. */
   claiming(did: string): DIDCommContext;
+  /**
+   * The same keys under another long form, one that nothing has decoded yet:
+   * its document carries `padding` more characters that nobody reads.
+   */
+  unread(padding: number): { longForm: string; ctx: DIDCommContext };
   signingKey: JWK;
 }
 
@@ -173,7 +178,7 @@ export async function peer4Agent(
   const [agreement, signing] = (await mintSecrets()).map(
     (secret) => secret.privateKeyJwk as Record<string, unknown>
   );
-  const longForm = encodeLongForm(reshape({
+  const input = reshape({
     "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"],
     verificationMethod: [
       { id: "#key-1", type: "Multikey", publicKeyMultibase: multikey(signing) },
@@ -192,7 +197,8 @@ export async function peer4Agent(
             },
           ],
         }),
-  }));
+  });
+  const longForm = encodeLongForm(input);
   const did = longToShort(longForm);
   const secretsAs = (name: string): Secret[] => [
     { id: `${name}#key-1`, type: "JsonWebKey2020", privateKeyJwk: signing },
@@ -217,11 +223,24 @@ export async function peer4Agent(
         { ...toDIDCommDIDDoc(resolveLongForm(longForm)), id: claimed },
         secretsAs(longForm)
       ),
+    unread: (padding) => {
+      const padded = encodeLongForm({ ...input, padding: "x".repeat(padding) });
+      const doc = JSON.stringify(toDIDCommDIDDoc(resolveLongForm(longForm)));
+      return {
+        longForm: padded,
+        ctx: new DIDCommContext(
+          padded,
+          JSON.parse(doc.replaceAll(longForm, padded)),
+          secretsAs(padded)
+        ),
+      };
+    },
     signingKey: signing as JWK,
   };
 }
 
 export const GRANT_TYP = "estoc/replica-grant+jws";
+export const RECIPIENT_PROOF_TYP = "estoc/recipient-add+jws";
 
 /** A compact JWS over `payload` in its RFC 8785 form, as `signer`'s authentication key. */
 export async function signedBy(

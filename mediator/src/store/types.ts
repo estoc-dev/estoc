@@ -83,6 +83,25 @@ export interface RosterPage {
   entries: RosterEntry[];
 }
 
+/** A communication DID a replica-mediation account asks to receive mail for. */
+export interface SharedRecipient {
+  accountDid: string;
+  /** The mediator DID the request addressed; the account must be bound to it. */
+  mediator: string;
+  /** A did:peer:4 in its short form, and the long form that resolves it. */
+  recipientDid: string;
+  recipientLongForm: string;
+  maxRecipients: number;
+}
+
+/**
+ * `no_change`: the account already held the recipient, whatever its limit is
+ * now. `unknown`: no such account is bound to that mediator. `conflict`: the
+ * DID is bound otherwise, under either protocol. `full`: the account is at
+ * its recipient limit. Only `added` wrote anything.
+ */
+export type ShareOutcome = "added" | "no_change" | "unknown" | "conflict" | "full";
+
 export interface RecipientPage {
   recipients: string[];
   /** Entries remaining after this page. */
@@ -122,8 +141,8 @@ export interface MediationStore {
   initIdentity(secretsJson: string): Promise<string>;
 
   /**
-   * Grants `did` an ordinary account unless it is a replica-mediation
-   * account or replica; whether it holds an ordinary account afterwards.
+   * Grants `did` an ordinary account unless replica mediation has bound it;
+   * whether it holds an ordinary account afterwards.
    */
   grantMediation(did: string): Promise<boolean>;
   revokeMediation(did: string): Promise<void>;
@@ -140,9 +159,10 @@ export interface MediationStore {
   ownerOf(recipientDid: string): Promise<string | null>;
 
   /*
-   * replica-mediation/1.0. An account and its replicas are append-only, and
-   * their DIDs are kept apart from ordinary accounts and recipients in both
-   * directions: neither kind of binding can be made over the other.
+   * replica-mediation/1.0. An account, its replicas and its shared
+   * recipients are append-only, and their DIDs are kept apart from ordinary
+   * accounts and recipients in both directions: neither kind of binding can
+   * be made over the other.
    */
   registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
   /** Whether `did` is a replica-mediation account. */
@@ -161,6 +181,10 @@ export interface MediationStore {
   ): Promise<RosterPage | null>;
   /** The long form of a replica-mediation account or replica DID, if `did` is one. */
   resolutionMaterial(did: string): Promise<string | null>;
+  /** Binds a recipient to its account, once and for the account's lifetime. */
+  addSharedRecipient(recipient: SharedRecipient): Promise<ShareOutcome>;
+  /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
+  sharedRecipientMaterial(did: string): Promise<string | null>;
 
   /** Queues `packed` under its key, once: the first bytes a key is given are the ones it keeps. */
   storeMessage(ownerDid: string, key: PackageKey, packed: string): Promise<StoreOutcome>;

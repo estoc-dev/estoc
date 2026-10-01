@@ -139,6 +139,14 @@ Anonymous (anoncrypt) envelopes may only carry `forward` — the outer envelope
 of a forward is anonymous by design. Everything that grants or writes state
 requires an authcrypt envelope, and the proven sender DID *is* the account.
 
+A did:peer larger than 8192 UTF-8 bytes is not resolved, in either method and
+for every protocol, whatever registration allows: decoding one costs time that
+grows faster than its length, and it would be paid before the sender is known.
+The size is judged before anything is decoded, and equally for a long form the
+mediator kept and reads back for a short one. An envelope that needs such a
+DID to be opened fails like any other that cannot be unpacked: a **400** over
+HTTP, dropped on a socket.
+
 ### What a forward must be
 
 A forward is queued whole or not at all, and the HTTP status of the call says
@@ -189,10 +197,10 @@ Over a WebSocket there is no status: a refused forward is dropped.
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
-| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts and replica enrollment so far; no mail is routed to replicas yet) |
+| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment and shared recipients so far; no mail is routed to replicas yet) |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
-| `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Disclosed to replica-mediation accounts; not enforced yet |
+| `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
 | `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Disclosed to replica-mediation accounts; not enforced yet |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |

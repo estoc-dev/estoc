@@ -38,6 +38,7 @@
     "did-resolver": "^4.1.0",
     "hono": "^4.13.1",
     "jose": "^6.2.12",
+    "multiformats": "^14.0.5",
     "web-did-resolver": "^2.0.27"
   },
   "devDependencies": {
