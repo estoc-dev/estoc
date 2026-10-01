@@ -103,8 +103,10 @@ in a vault client, adopt the relevant contracts in
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
 - Reconcile local replica registration before recipient adds on startup,
-  reconnection, periodic checks and suspected remote-state loss. Replay the saved
-  grant under the existing account and replica identities; exact repeats preserve
+  reconnection, periodic checks and suspected remote-state loss. Each client
+  replays only its own saved grant, even when it knows other members' grants.
+  Routine periodic checks keep established pickup running; startup, reconnection
+  and missing-state recovery wait for verified registration. Exact repeats preserve
   surviving delivery/ACK state and do not backfill old mail. Every account control
   request carries its sender's long form, and recipient replays carry their
   resolution material, so recovery can authenticate after resolver-state loss.
@@ -124,6 +126,9 @@ in a vault client, adopt the relevant contracts in
   recipient key, independently of the pickup wrapper or plaintext audience.
   A successfully unpacked private message with no supported consuming protocol
   is terminally rejected and pickup-ACKed with only a bounded local diagnostic.
+  An envelope naming only the local replica's retained key-agreement methods
+  takes the same rejection path on unpacking or verification failure, without
+  waiting for history or sender resolution material.
   The current milestone supports no inter-replica payload protocol; it produces
   no portable receipt, application effect or sync receipt for such private mail.
 - Replace phase-1 desired-set removal for the new profile with append-only
