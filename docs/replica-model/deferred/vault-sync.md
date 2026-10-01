@@ -1,1681 +1,771 @@
 # vault-sync/1.0
 
-> Deferred design notes only; the [phase-1 contract](../README.md) takes
-> precedence. These candidates require redesign and integration before any
-> implementation; they reserve no current schema, code or API.
+> Deferred candidate; not implemented, outside the current replica-mediation
+> scope and not part of the [phase-1 contract](../README.md). The detailed rules
+> below describe one peer-message design, not a selected synchronization
+> interface. Revisit the [deferred sync work](README.md#deferred-vault-sync)
+> before adoption, including the choice between event/object transfer and
+> encrypted portable SQLite snapshots over blob-store.
 
-Application acceptance and rotation knowledge must follow
-[durable admission](../channels.md#application-admission). Fan-out or union
-alone cannot make disconnected executors observe a rotation simultaneously.
-Before enabling multiple active executors, this extension must specify their
-admission/dispatch coordination and offline availability tradeoff. Historical
-admissions remain facts after merge; raw delivery is not application acceptance,
-and canonical event order cannot serve as a global rotation cutoff.
+[Replica mediation](replica-mediation.md) can be implemented and tested as an
+independent transport milestone. It requires none of this draft's `hello`,
+inventory, transfer or receipt messages. Until a sync design is adopted,
+initial history uses existing portable recovery/import; missing history remains
+pending rather than being inferred complete from successful registration.
 
-<!-- suite-navigation:start -->
-[Suite guide](../README.md) · Deferred extension · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)
-<!-- suite-navigation:end -->
+[Suite guide](../README.md) · [Identity](replica-mediation.md#identity-model) ·
+[Messages](#messages) · [Durability](#durability-and-acknowledgments) ·
+[Conformance](#required-conformance-cases)
 
-Status: **deferred draft** — future encrypted synchronization of an Estoc
-vault through an untrusted sync store using immutable objects between explicit
-account resets. It is outside Estoc phase 1.
+The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** and
+**MAY** are interpreted as in BCP 14 when written in capitals.
 
-This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
-**SHOULD**, **SHOULD NOT**, and **MAY** as described in BCP 14 when they
-appear in all capitals.
-
-[event-store.md](../event-store.md) defines events and local stores. [dasl-objects.md](../dasl-objects.md) defines
-portable object identity and verification. This protocol encrypts and moves
-those exact bytes; it does not redefine either layer.
-
-> **Phase-1 boundary.** The first implementation recovers and transfers a
-> vault through portable SQLite and independently backed-up seed/recovery
-> material. No phase-1 operation may silently depend on this protocol.
-
-<!-- reading-guide:start -->
 <a id="reading-guide"></a>
 
-**Reading guide**
+## Reading guide
 
-| Task | Read together |
+| Task | Sections |
 | --- | --- |
-| Understand the deferred extension | [Purpose](#what-it-is-for) → [Dependencies](#roles-and-dependencies) → [Keys](#shared-account-and-keys) |
-| Implement object transfer | [Encrypted objects](#sync-objects) → [Server storage](#server-storage-semantics) → [Upload](#offering-and-uploading-objects) → [Changes](#incremental-changes) → [Inventory](#full-inventory) → [Download](#downloading-objects) |
-| Implement recovery | [Reset](#remote-account-reset) → [Client algorithm](#client-synchronization-algorithm) → [Bootstrap](#bootstrap-and-recovery) |
-
-<details>
-<summary>Contents</summary>
-
-- [1. What it is for](#what-it-is-for)
-- [2. Roles and dependencies](#roles-and-dependencies)
-- [3. Shared account and keys](#shared-account-and-keys)
-- [4. Sync objects](#sync-objects)
-- [5. Server storage semantics](#server-storage-semantics)
-- [6. hello](#hello)
-- [7. hello-result](#hello-result)
-- [8. Offering and uploading objects](#offering-and-uploading-objects)
-- [9. Incremental changes](#incremental-changes)
-- [10. Full inventory](#full-inventory)
-- [11. Downloading objects](#downloading-objects)
-- [12. Remote account reset](#remote-account-reset)
-- [13. Client synchronization algorithm](#client-synchronization-algorithm)
-- [14. Bootstrap and recovery](#bootstrap-and-recovery)
-- [15. Quota and availability](#quota-and-availability)
-- [16. Privacy and security](#privacy-and-security)
-- [17. Problem reports](#problem-reports)
-- [18. Required conformance cases](#required-conformance-cases)
-
-</details>
-<!-- reading-guide:end -->
+| Understand the boundary | [Purpose](#what-it-is-for), [identities and authorization](#roles-and-dependencies) |
+| Transfer current work | [Messages](#messages), [incremental publication](#publishing-local-objects) |
+| Repair or add a device | [Inventory](#full-inventory), [application](#applying-remote-objects), [bootstrap](#bootstrap-and-recovery) |
+| Handle crashes and erasure | [Durability](#durability-and-acknowledgments), [retention](#retention-and-erasure), [failure](#quota-and-availability) |
 
 <a id="what-it-is-for"></a>
 
-## 1. What it is for
+## 1. Purpose and boundary
 
-Full Estoc replicas write while disconnected and later converge by set
-union. The sync store is an anti-entropy meeting point and encrypted backup
-mirror: it keeps opaque immutable objects, tells clients which opaque object IDs
-exist, and serves their ciphertext. It never receives vault event JSON,
-DASL CIDs, message bodies, event types or contact data in plaintext.
+Full replicas of one vault exchange immutable events and the raw objects their
+merged state retains. Each replica has its own local database, event author and
+DID. A replica sends an encrypted sync message to another replica DID through
+their selected mediator; the destination picks it up, verifies it and imports
+its contents. This works while the two devices are connected at different
+times, within the mediator's retention and retry limits.
 
-The protocol synchronizes:
+The mediator routes opaque messages. It does not implement event inventory,
+object lookup, event merge, sync cursors or a remote reset operation. Those
+requests are answered by replicas. Mailbox acceptance is not a sync receipt,
+and a mailbox with finite retention is not a permanent backup.
 
-- the immutable vault configuration needed for bootstrap;
-- vault events, including channel, continuity, contact and route state;
-- extension-store events; and
-- content-addressed DASL objects referenced by those events, including exact
-  resolved peer DID document snapshots.
+[Replica mediation](replica-mediation.md#protocol-boundary) owns membership,
+shared incoming-mail fan-out and pickup. This protocol owns transfer, peer
+reconciliation and acknowledgement of imported vault data. It uses the same
+mediator without another account-wide sync key, custom encrypted-container
+format, upload-ticket API or server-side vault event index.
 
-It does not synchronize SQLite pages or runtime control, sockets, pickup
-acknowledgments, process locks, fold caches, traces, local options or other local
-state. Correctness-critical state must be an event or referenced object,
-not an unsynchronized local table.
+### 1.1 Synchronized data
 
-Within one `store_id`, version 1.0 is append-only. It has no selective
-per-object retraction, compaction or distributed garbage collection. A
-portable `message.erased` event synchronizes like any other event and changes
-what conforming clients expose, but it does not remove older ciphertext from
-the sync store. Section 12 defines the only version-1.0 physical purge: an
-authenticated reset of the entire remote account object set.
+The first profile synchronizes the main vault event store, preserving every
+validated event's canonical envelope, CID and historical author, together with
+currently held DASL objects. Domain data includes receipt/admission history,
+outbound records, contacts, communication routes, rotation evidence, replica
+membership and erasure facts. Unknown main-store event types follow the event
+store and vault's existing preservation/retention rules; their names alone do
+not authorize application execution.
+
+It does not copy SQLite pages, local `replica_id`, store generation, seed
+wrapper, passphrase, private keys, local options, traces, caches, connections,
+pickup delivery IDs or synchronization progress. The vault anchor and supported
+format identify the peer data; they do not overwrite destination metadata.
+Separate extension stores require a later negotiated profile and MUST NOT be
+silently opened or treated as the main vault.
+
+A thin client without the seed is not a full replica or a sync peer. Initial
+seed transfer and backup recovery remain separate from event synchronization.
+
+### 1.2 Meaning of convergence
+
+Event merge is set union by verified CID, not replay of user commands. Copies
+of one event deduplicate; independently authored observations of the same
+external message may be different events. CID deduplication alone cannot
+resolve conflicting domain decisions.
+
+Given eventual delivery and compatible domain rules, replicas holding the same
+events and required objects must derive the same portable state. Neither wall
+clock order, inventory order nor network receipt order establishes causality or
+a globally current view. Pulling before dispatch is not a lock on another
+replica's rotation. The [multi-replica domain revision](README.md#adoption-work)
+is required before claiming application convergence or concurrent automatic
+execution.
 
 <a id="roles-and-dependencies"></a>
 
-## 2. Roles and dependencies
+## 2. Identities, authorization and transport
 
-- **Sync client** — an unlocked full replica. It may run in a local
-  application or on a server holding the same vault seed.
-- **Sync store** — an untrusted server that authenticates one shared vault
-  account, stores immutable ciphertext and provides inventory.
+The [identity model and signed replica grant](replica-mediation.md#replica-authorization)
+are shared with replica mediation. No second sync identity or independently
+maintained membership registry exists. A client uses its own replica DID as
+sender and one authorized active peer's replica DID as recipient.
+The selected account must have the verified replica-mediation profile intent;
+an ordinary Coordinate Mediation account or grant cannot authorize this exchange.
 
-A remote thin client that does not hold the seed is not a sync client. The
-sync protocol does not establish a preferred or authoritative host.
+All sync messages MUST be authcrypted end to end between those DIDs using
+DIDComm Messaging 2.1. If routed, the outer Routing 2.0 `forward.body.next`
+is the destination replica DID. These are private deliveries, never the
+shared communication-address fan-out path. The mediator can decrypt its routing
+layer and pickup controls but cannot open the sync payload.
 
-Control messages are DIDComm Messaging 2.1 messages in the family:
+Every plaintext sync body contains `vault_anchor` equal to the local immutable
+vault anchor. Authentication also verifies that the sender matches a valid
+replica grant under the already-known selected mediation arrangement. A wrong
+anchor, invalid or conflicting binding, or wrong authenticated sender is
+rejected before staging vault data. Verified Peer long/short forms are normalized
+before identity comparison. A request cannot introduce a new trusted vault or
+mediation account by asserting it in its own body.
 
-```text
-https://estoc.dev/vault-sync/1.0
-```
+`hello` is the only message accepted from a not-yet-known replica DID. It
+carries the signed grant and long-form resolution material through that grant.
+To decrypt a first `hello`, resolve its sender's long-form DID key identifier
+locally, as for the account sender in
+[replica registration](replica-mediation.md#replica-lifecycle),
+then verify the grant inside. The encrypted grant cannot be its own decryption
+prerequisite. A reply to a pending `hello` is accepted only from its expected
+peer and must pass the same binding checks.
+The receiver independently verifies the known-account signature, document,
+seed-derived replica keys and absence of conflicting local bindings. A
+successful grant check permits synchronization while the peer's genuine `replica.created` event is
+being fetched; it does not synthesize that event or trust the mediator's list.
 
-They MUST be authcrypted from the vault's sync account DID to the sync
-store DID. Encrypted containers move over scoped HTTP URLs carried inside
-those authcrypted control messages. Those URLs MUST use HTTPS, except
-that an implementation MAY allow HTTP for an explicitly configured
-loopback development endpoint.
+A known peer has durable local operational state containing its verified grant
+and document, vault/mediation binding, supported vault version and latest
+negotiated peer limits. This state is scoped to the local and peer replica DIDs;
+it is not tied to a socket or copied into another incarnation. A normal restart
+recovers it and does not make the peer unknown. Every message still checks
+authentication, the vault binding and current local identity-conflict state;
+persisted verification never overrides a conflicting binding.
 
-A deployment MAY serve sync and mediation from the same process and DID,
-but mailbox and sync data MUST use separate storage tables, quotas,
-retention rules, key derivation domains and APIs.
+Replica retirement belongs to
+[deferred administration](replica-mediation.md#deferred-administration).
+This initial profile has no retirement notification or terminal-receipt exception.
+All accepted batches and receipts use the ordinary authorization and durability
+rules. Being offline or absent from a mediator snapshot does not revoke a
+locally verified peer binding.
 
-In this document, **sync object** means one server record containing an
-encrypted root, event or DASL-object frame. **DASL object** means the portable
-content-addressed object defined by [dasl-objects.md](../dasl-objects.md). The two terms are not
-interchangeable.
+<a id="messages"></a>
 
-<a id="shared-account-and-keys"></a>
+## 3. Message family
 
-## 3. Shared account and keys
+Message types have prefix `https://estoc.dev/vault-sync/1.0/`.
+DIDComm `id`, `type`, authenticated `from` and a single-recipient `to` are
+required. Responses use `thid` equal to the request message ID; responses to
+batched transfers also name their stable batch ID. These control IDs are not
+portable event identities.
 
-Every full replica derives the same sync account and object keys from the
-vault seed. There is exactly one `@estoc/keystore` v3 asymmetric key name:
+| Suffix | Direction and purpose |
+| --- | --- |
+| `hello` / `hello-result` | Authenticate the replica binding and agree on format/limits |
+| `inventory` / `inventory-result` | Enumerate a fixed snapshot of event CIDs, in pages |
+| `want` | Request missing events or ranges of a needed raw object |
+| `events` | Push or answer with an exact batch of complete events |
+| `objects` | Deliver one requested range of a raw object |
+| `stored` | Confirm that an entire event batch has been durably applied |
+| `unavailable` | Explicitly report requested data that this peer cannot supply |
 
-```text
-sync/account
-```
+All bodies and attachments are inside the encrypted sync envelope. For this
+profile the body schemas are closed; unrecognized fields or message types are
+an explicit unsupported/invalid response, not an alternate interpretation.
+Examples below show plaintext before DIDComm encryption. Strings containing
+`...` are explanatory placeholders, not valid DID/CID test vectors.
 
-`sync/account` is represented as the DIDComm-capable `did:key` produced by
-the normal keystore-v3 named-key derivation. Its authenticated sender DID
-names the server-side sync account. Control of this key authenticates a
-caller, but does not by itself grant service admission.
+### 3.1 `hello` / `hello-result`
 
-`K_index` and `K_data` are not keystore key names and MUST NOT be obtained by
-calling the named asymmetric-key derivation with `sync/index` or `sync/data`.
-They are the following two 32-byte symmetric keys, derived only by the
-explicit HKDF-SHA-256 profile below:
-
-```text
-K_index = HKDF-SHA-256(
-  IKM = vault seed,
-  salt = SHA-256("estoc/vault-sync/1.0"),
-  info = "index",
-  L = 32
-)
-
-K_data = HKDF-SHA-256(
-  IKM = vault seed,
-  salt = SHA-256("estoc/vault-sync/1.0"),
-  info = "data",
-  L = 32
-)
-```
-
-The literal UTF-8 strings and no terminating NUL are used in the HKDF
-inputs above. These fixed symmetric keys are not represented as event entities.
-
-The sync protocol has no replica registry and carries no replica ID.
-Possession of the shared sync-account key authorizes the account. Each
-client keeps its own cursors and diagnostics locally; the sync store does
-not need to know which writable incarnation issued a request.
-
-<a id="sync-objects"></a>
-
-## 4. Sync objects
-
-A server stores only:
-
-```text
-opaque object ID
-encrypted-container byte length
-encrypted-container sha2-256 multihash
-opaque encrypted-container bytes
-account-local insertion sequence
-server timestamps
-```
-
-It MUST NOT be told the plaintext object kind, event CID, extension ID or DASL
-CID. The fixed encrypted-container framing reveals a protocol version and
-approximately the same length information already revealed by ciphertext
-size; it does not reveal the plaintext frame header.
-
-<a id="plaintext-frame"></a>
-
-### 4.1 Plaintext frame
-
-Before encryption, every sync object is one binary frame:
-
-```text
-offset  length  value
-0       8       ASCII "ESTOCS1\n"
-8       4       unsigned big-endian header length N
-12      N       UTF-8 RFC 8785 canonical JSON header
-12+N    rest    payload bytes
-```
-
-`N` MUST be at most 65536. Unknown header fields are rejected in version 1.0.
-The header is fully contained in the first encrypted plaintext segment.
-
-<a id="root-object"></a>
-
-#### Root object
-
-Header:
-
-```json
-{ "kind": "root", "version": 1 }
-```
-
-Payload is RFC 8785 canonical UTF-8 of the immutable vault configuration:
+`hello` carries:
 
 ```json
 {
-  "format": "estoc",
-  "version": 3,
-  "identity": {
-    "anchor": {
-      "key": "anchor",
-      "did": "did:key:z6Mk..."
-    }
+  "vault_anchor": "did:key:z...anchor",
+  "grant": "<compact replica-grant JWS>",
+  "vault_version": 4,
+  "limits": {
+    "max_events_per_batch": 128,
+    "max_inventory_page": 256,
+    "max_plaintext_bytes": 262144,
+    "max_object_chunk_bytes": 131072
   }
 }
 ```
 
-The root object allows a replica holding the seed and sync-store locator to
-reconstruct immutable SQLite vault metadata: `version` maps to
-`vault_meta.vault_version`, and `identity.anchor.did` maps to `vault_meta.anchor`.
-The root's logical `format = "estoc"` and fixed anchor key name are validated;
-they are independent of the database's `format = "estoc-sqlite"` marker and
-local schema version. This logical root payload does not change with database
-page layout. It does not contain `seedJwe`; a new local vault wraps the supplied
-seed under its own passphrase and derives named keys on demand.
-
-<a id="event-object"></a>
-
-#### Event object
-
-Header:
-
-```json
-{
-  "kind": "event",
-  "store": "vault",
-  "cid": "bafkreifn5yxi7nkftsn46b6x26grda57ict7md2xuvfbsgkiahe2e7vnq4"
-}
-```
-
-`store` is either `vault` or `extension:<uuidv7>`. Payload is the exact RFC
-8785 canonical UTF-8 five-field event envelope, without its derived CID.
-
-The client MUST validate the event envelope and the header's canonical raw CID,
-and verify that the exact payload hashes to that CID before ingest. The local
-API record combines this envelope with the verified CID.
-
-<a id="dasl-object"></a>
-
-#### DASL object
-
-Header:
-
-```json
-{
-  "kind": "object",
-  "cid": "bafkreifn5yxi7nkftsn46b6x26grda57ict7md2xuvfbsgkiahe2e7vnq4"
-}
-```
-
-Payload is the exact complete portable object bytes defined by
-[dasl-objects.md](../dasl-objects.md). The CID MUST be canonical. The client MUST call the local
-object verifier before acceptance. It requires a raw CID and verifies SHA-256
-over all payload bytes; non-raw CIDs are rejected.
-
-DASL objects are account-wide and MAY satisfy roots from the main vault or any
-extension store. On download, one verified payload may be accepted into every
-local `ObjectStore` whose held-root fold requires that CID; a backend MAY share
-physical bytes internally. Sync transport segmentation never creates another
-portable CID.
-
-<a id="opaque-object-ids"></a>
-
-### 4.2 Opaque object IDs
-
-Object IDs are unpadded base64url encodings of 32-byte HMAC-SHA-256 values:
-
-```text
-root:
-  HMAC(K_index, UTF8("root\0"))
-
-event:
-  HMAC(K_index,
-       UTF8("event\0" + store + "\0") || binary_event_cid)
-
-DASL object:
-  HMAC(K_index, UTF8("object\0") || binary_dasl_cid)
-```
-
-Each `\0` is one zero byte. `store` is encoded as UTF-8 exactly as serialized in
-the frame header. `binary_event_cid` and `binary_dasl_cid` are the exact 36-byte
-decoded raw DASL CIDs, not their string forms.
-
-An event CID commits to its canonical envelope; an object CID commits to its
-object payload. Different event envelopes have distinct identities under the
-hash profile and equal envelopes share one sync object within their store.
-
-The server treats object IDs as opaque strings and MUST enforce canonical
-unpadded base64url.
-
-<a id="segmented-encrypted-container"></a>
-
-### 4.3 Segmented encrypted container
-
-Every plaintext frame, including a large DASL object, is encrypted as one
-version-1 segmented container. The server stores that complete container as
-one immutable object.
-
-Constants:
-
-```text
-SEGMENT_PLAINTEXT_BYTES = 1048576
-GCM_TAG_BYTES            = 16
-```
-
-Container header:
-
-```text
-offset  length  value
-0       8       ASCII "ESTOCE1\n"
-8       8       unsigned big-endian plaintext-frame length L
-16      32      random object salt
-48      rest    encrypted segment records in index order
-```
-
-`L` MUST be positive and within the client's and server's negotiated resource
-limits. The number of segments is:
-
-```text
-segment_count = ceil(L / SEGMENT_PLAINTEXT_BYTES)
-```
-
-For segment index `i`, starting at zero:
-
-```text
-segment_plaintext_length =
-  min(SEGMENT_PLAINTEXT_BYTES,
-      L - i * SEGMENT_PLAINTEXT_BYTES)
-
-segment_record_length = segment_plaintext_length + GCM_TAG_BYTES
-```
-
-There is no per-record length prefix; a reader derives every boundary from the
-container header. Truncation, extra bytes, missing segments or reordered
-segments are errors.
-
-The 32-byte per-container key is:
-
-```text
-K_object = HKDF-SHA-256(
-  IKM  = K_data,
-  salt = object_salt,
-  info = UTF8("estoc/vault-sync/1.0/segments\0") || raw_32_byte_object_id,
-  L    = 32
-)
-```
-
-The object salt MUST be generated by a cryptographically secure random source
-for each independent encryption attempt. It is not a nonce and need not be
-secret.
-
-For segment `i`:
-
-```text
-nonce = 0x00000000 || uint64be(i)
-
-associated_data =
-  UTF8("estoc/vault-sync/1.0/segment\0")
-  || raw_32_byte_object_id
-  || SHA256(the exact 48-byte container header)
-  || uint64be(i)
-  || uint32be(segment_plaintext_length)
-
-record = AES-256-GCM(
-  key = K_object,
-  nonce = nonce,
-  plaintext = this plaintext-frame segment,
-  associated_data = associated_data,
-  tag_length = 16
-)
-```
-
-Because every container uses an independently derived `K_object`, the fixed
-index nonce is unique within that key. Segment authentication binds the opaque
-object ID, full container header, order, index and expected plaintext length.
-
-The server descriptor's ciphertext multihash is SHA-256 over the complete
-48-byte header plus every segment record. `byte_count` is the exact length of
-that complete encrypted container.
-
-A client accepting a downloaded container MUST:
-
-1. enforce the announced total byte count;
-2. verify the complete ciphertext multihash when the full container is read;
-3. validate the header and segment count;
-4. derive `K_object` from the expected opaque ID;
-5. authenticate every segment before releasing that segment to the plaintext
-   frame parser;
-6. reject truncation, reordering, extra bytes or any failed tag;
-7. validate the plaintext frame and its semantic payload; and
-8. recompute the opaque object ID before local acceptance.
-
-For a DASL object frame, the client streams the payload into
-`ObjectStore.putObject(expectedCid, source)`. The local store MUST expose no
-accepted object until the complete DASL hash and codec checks succeed.
-
-<a id="prefix-classification"></a>
-
-### 4.4 Prefix classification
-
-A download endpoint MUST support byte ranges over the encrypted container.
-The client derives the plaintext-frame length `L` from the descriptor's
-`byte_count` before making a range request. Let:
-
-```text
-S = 1048576
-B = descriptor.byte_count
-T = B - 48
-
-segment_count = ceil(T / (S + 16))
-L = T - 16 * segment_count
-```
-
-All arithmetic in this inversion MUST use exact integers and MUST reject
-underflow, overflow or a `byte_count` that cannot be represented exactly.
-
-This is the unique inverse of:
-
-```text
-B = 48 + L + 16 * ceil(L / S)
-```
-
-for a valid positive integer `L`, because the right-hand side is strictly
-increasing. The client MUST require:
-
-```text
-segment_count >= 1
-(segment_count - 1) * S < L <= segment_count * S
-B == 48 + L + 16 * ceil(L / S)
-```
-
-A descriptor for which these checks fail is an integrity failure.
-
-Let:
-
-```text
-p0 = min(S, L)
-```
-
-The client then requests the single inclusive range:
-
-```text
-bytes=0-(63+p0)
-```
-
-The response has exactly `48 + p0 + 16` bytes. The client parses the 48-byte
-container header, requires the header's `L` to equal the value derived from
-`byte_count`, derives `K_object`, and authenticates segment zero. Any mismatch
-between the descriptor, header, response length or authenticated segment is an
-integrity failure.
-
-After authenticating segment zero, the client can parse the bounded
-plaintext-frame header. This reveals the plaintext kind and, for a DASL object,
-its CID to the authorized client without downloading a potentially large
-payload.
-
-Prefix classification is an optimization, not acceptance:
-
-- the client MUST authenticate segment zero before trusting the frame header;
-- a root or event object is not accepted until its complete container and
-  payload are verified;
-- a DASL object is fetched completely only when policy requires its exact CID;
-  and
-- advancing a durable remote cursor still requires either complete local
-  application or a durable pending descriptor sufficient to resume.
-
-<a id="server-storage-semantics"></a>
-
-## 5. Server storage semantics
-
-Objects are immutable and put-if-absent.
-
-- The first complete valid upload for an absent object ID creates it and
-  assigns the next account-local sequence.
-- An existing object ID is never overwritten, renewed or assigned a new
-  sequence.
-- A later client may have independently encrypted the same plaintext and
-  therefore possess different ciphertext bytes. The existing server
-  object wins; the client verifies it by downloading and opening it when
-  needed.
-- An incomplete or hash-mismatched upload creates no object.
-- Sequence values are unsigned decimal strings in JSON to avoid integer
-  precision loss. They increase monotonically per account and are never
-  reused.
-
-The store MUST make a committed object visible atomically to `changes`,
-`inventory` and `want`.
-
-Before committing an upload, the server MUST validate the public container
-framing without attempting decryption:
-
-1. the first eight bytes equal `ESTOCE1\n`;
-2. `L` is positive and does not exceed `max_plaintext_frame_bytes`;
-3. the exact expected encrypted length is
-   `48 + L + 16 * ceil(L / 1048576)`;
-4. the expected length equals both the offered `byte_count` and HTTP
-   `Content-Length`;
-5. the complete upload does not exceed `max_ciphertext_bytes`; and
-6. the complete ciphertext multihash equals the offered `hash`.
-
-Failure creates no object and consumes no insertion sequence. These checks
-reveal only the framing version and exact plaintext-frame length already
-acknowledged by section 4; the server still cannot determine the frame kind or
-DASL CID.
-
-<a id="hello"></a>
-
-## 6. `hello`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/hello
-```
-
-```json
-{
-  "id": "019b1b70-d29e-7a6f-b0a2-734173aa706a",
-  "type": "https://estoc.dev/vault-sync/1.0/hello",
-  "from": "did:key:z6LS...sync-account",
-  "to": ["did:web:sync.example"],
-  "body": {}
-}
-```
-
-The request creates no vault object. For an already admitted account, an
-empty body is sufficient. For an absent account, the request MUST satisfy
-section 6.1 before the server may create any account row.
-
-<a id="admission-and-lazy-account-creation"></a>
-
-### 6.1 Admission and lazy account creation
-
-Successful DIDComm authcrypt proves control of the sync-account key; it does
-not prove entitlement to consume storage. A sync store MUST NOT implement open
-registration by creating an account solely because a syntactically valid
-`hello` arrives from a new DID.
-
-For an absent account, a deployment MUST use at least one of these admission
-methods and MUST document or advertise the methods it accepts:
-
-- **provisioned** — the exact sync-account DID was provisioned out of band;
-- **capability** — `hello.body.admission` carries an opaque, single-use,
-  account-bound capability issued by the sync-store operator; or
-- **mediation-grant** — a co-operated sync store accepts an active mediation
-  grant plus proof that the grant's mediation account authorizes this sync
-  account.
-
-A capability form is:
-
-```json
-{
-  "admission": {
-    "method": "capability",
-    "token": "g3Q...opaque-single-use-capability"
-  }
-}
-```
-
-The token format and issuance ceremony are deployment-specific, but the
-server MUST bind it to the authenticated sync-account DID and its own service
-DID, enforce an expiry and single use, and never log the token.
-
-A mediation-grant form is:
-
-```json
-{
-  "admission": {
-    "method": "mediation-grant",
-    "mediation_account": "did:peer:4zQm...mediation-account",
-    "grant_id": "019b1b6f-36c5-7f27-95ea-f94042e88298",
-    "proof": "eyJhbGciOiJFZERTQSIsImtpZCI6Ii4uLiJ9.eyJzeW5jX2FjY291bnQiOiIuLi4ifQ.signature"
-  }
-}
-```
-
-The compact JWS protected header is exactly:
-
-```json
-{
-  "alg": "EdDSA",
-  "kid": "<mediation-account authentication method>",
-  "typ": "estoc/vault-sync-admission+jws"
-}
-```
-
-and its RFC 8785 canonical payload is exactly:
-
-```json
-{
-  "aud": "did:web:sync.example",
-  "expires_time": 1788443400,
-  "grant_id": "019b1b6f-36c5-7f27-95ea-f94042e88298",
-  "mediation_account": "did:peer:4zQm...mediation-account",
-  "request_id": "019b1b70-d29e-7a6f-b0a2-734173aa706a",
-  "sync_account": "did:key:z6LS...sync-account"
-}
-```
-
-The server verifies the signature, exact request and account bindings, a
-currently active local mediation grant, and an expiry no more than five
-minutes in the future. The admission proof does not make the mediation
-account a sync encryption key.
-
-Account creation, quota reservation and single-use capability consumption
-MUST be one transaction. Failure creates no empty account. An existing,
-non-disabled account does not need to resupply admission on later `hello`
-requests.
-
-<a id="hello-result"></a>
-
-## 7. `hello-result`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/hello-result
-```
-
-```json
-{
-  "id": "019b1b71-2728-7f7f-8399-462768242e0e",
-  "thid": "019b1b70-d29e-7a6f-b0a2-734173aa706a",
-  "type": "https://estoc.dev/vault-sync/1.0/hello-result",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "state": "ready",
-    "sequence": "1842",
-    "limits": {
-      "max_plaintext_frame_bytes": 1073741824,
-      "max_ciphertext_bytes": 1073758256,
-      "max_offer_objects": 256,
-      "max_want_objects": 256,
-      "max_page_objects": 512,
-      "max_account_bytes": 107374182400,
-      "upload_ttl_seconds": 900,
-      "download_ttl_seconds": 900
-    }
-  }
-}
-```
-
-`store_id` is a stable random UUID identifying this account's current
-server-side object set. `state` is `ready` or `rebuilding`. Normal offer,
-changes, inventory and want operations require `ready`. A destructive reset
-MUST produce a new `store_id` and enters `rebuilding` until section 12's
-baseline is committed. A client whose cached `store_id` differs MUST discard
-its remote sequence cursor and execute the pull-before-push reset recovery
-algorithm in section 13.
-
-`max_plaintext_frame_bytes` bounds `L` in the public encrypted-container
-header. `max_ciphertext_bytes` bounds the complete container and MUST be at
-least `48 + L + 16 * ceil(L / 1048576)` for every accepted `L`. A service MAY
-advertise smaller limits than the example; clients MUST fail explicitly rather
-than split one portable DASL object into visible chunk objects.
-
-<a id="offering-and-uploading-objects"></a>
-
-## 8. Offering and uploading objects
-
-<a id="offer"></a>
-
-### 8.1 `offer`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/offer
-```
-
-```json
-{
-  "id": "019b1b72-f8f9-7b1d-b2a6-9a71344fba15",
-  "type": "https://estoc.dev/vault-sync/1.0/offer",
-  "body": {
-    "expected_store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "objects": [
-      {
-        "id": "bXkvh0Q0lE5VZmqPlYI2dlIgweaUa3YMVNXFEDEw1aM",
-        "hash": "bciq...ciphertext-multihash",
-        "byte_count": 948
-      }
-    ]
-  },
-  "return_route": "all"
-}
-```
-
-`expected_store_id` is REQUIRED on every offer and MUST equal the current
-`hello-result.store_id`. The list contains no duplicate object ID and does not
-exceed the advertised limit. `hash` is a sha2-256 multihash in multibase
-base32 lower. `byte_count` counts encrypted bytes, including the 48-byte
-container header and every encrypted segment record.
-
-The server compares `expected_store_id` before checking object existence or
-issuing an upload URL. A mismatch fails the complete offer with
-`e.estoc.vault-sync.store-reset`; it MUST NOT allocate a ticket. While the
-account is `rebuilding`, only the reset owner may offer objects, and the body
-MUST also contain:
-
-```json
-{
-  "rebuild": {
-    "reset_id": "019b1b7d-2bb6-76b5-ac2e-ac91ffb597ae",
-    "token": "k3Q...opaque-rebuild-capability"
-  }
-}
-```
-
-The capability is bound to the authenticated account, current `store_id` and
-`reset_id`. It MUST NOT be logged, accepted after commit/supersession, or used
-for another account. All ordinary clients receive `store-rebuilding` instead
-of upload tickets while this state is active.
-
-<a id="offer-result"></a>
-
-### 8.2 `offer-result`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/offer-result
-```
-
-```json
-{
-  "id": "019b1b73-16f5-7ab1-bde1-865ffad3a51c",
-  "thid": "019b1b72-f8f9-7b1d-b2a6-9a71344fba15",
-  "type": "https://estoc.dev/vault-sync/1.0/offer-result",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "existing": [
-      {
-        "id": "QhE...",
-        "hash": "bciq...stored-ciphertext-hash",
-        "byte_count": 811,
-        "sequence": "1837"
-      }
-    ],
-    "uploads": [
-      {
-        "id": "bXkvh0Q0lE5VZmqPlYI2dlIgweaUa3YMVNXFEDEw1aM",
-        "put": "https://sync.example/sync-upload/random-token",
-        "expires_time": 1788444300
-      }
-    ],
-    "rejected": []
-  }
-}
-```
-
-`body.store_id` MUST equal the request's accepted `expected_store_id`.
-Each offered ID appears exactly once in `existing`, `uploads` or `rejected`.
-
-An `existing` descriptor reports the server's stored ciphertext, which
-may differ from the offering client's independently generated
-ciphertext. The client MUST NOT attempt to overwrite it. Before treating
-the object as a verified remote backup, the client MUST have previously
-verified that exact stored ciphertext hash or MUST fetch, decrypt and
-recompute the object ID. The same rule applies after an HTTP 204 upload
-race when the winning stored hash differs from the offered hash.
-
-An upload URL is single-use, unguessable, time-limited and bound to the
-authenticated account, the exact `expected_store_id`, object ID, offered hash
-and byte count. The client performs an HTTP `PUT` of exactly the ciphertext
-bytes:
-
-- no request compression or transfer transformation;
-- `Content-Encoding` absent or exactly `identity`;
-- exact `Content-Length`;
-- no redirect following;
-- `Content-Type: application/octet-stream`.
-
-At HTTP `PUT` commit the server rechecks that the ticket's bound
-`expected_store_id` is still current and that the account is in the state for
-which the ticket was issued. A reset, superseding reset or baseline commit that
-changes the epoch invalidates the ticket even when the URL has not expired.
-Epoch mismatch returns a generic failed upload and commits no object; the
-client re-enters `hello` and pull-before-push.
-
-After epoch validation, the server validates the version-1 public framing and
-exact length formula in section 5, then streams through the advertised byte
-limit and sha2-256 hash. Only a complete framing, length and hash match is
-committed.
-Successful first creation returns HTTP 201. If another upload committed the
-same object ID first, the server returns HTTP 204 and leaves the existing
-object unchanged.
-
-Upload transport status is not itself a sync cursor. A client confirms
-visibility with `changes`, `inventory`, `want`, or a later `offer`.
-
-<a id="incremental-changes"></a>
-
-## 9. Incremental changes
-
-<a id="changes"></a>
-
-### 9.1 `changes`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/changes
-```
-
-```json
-{
-  "id": "019b1b76-6518-7c78-a88a-ea26891ff8ed",
-  "type": "https://estoc.dev/vault-sync/1.0/changes",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "after": "1800",
-    "limit": 256
-  },
-  "return_route": "all"
-}
-```
-
-`after` is exclusive. A new client uses `"0"`. The server rejects a
-mismatching `store_id` so the client cannot silently apply a cursor from
-a reset store.
-
-<a id="changes-result"></a>
-
-### 9.2 `changes-result`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/changes-result
-```
-
-```json
-{
-  "id": "019b1b76-7aef-7ea5-9645-08f9792b7fb6",
-  "thid": "019b1b76-6518-7c78-a88a-ea26891ff8ed",
-  "type": "https://estoc.dev/vault-sync/1.0/changes-result",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "through": "1842",
-    "more": false,
-    "objects": [
-      {
-        "sequence": "1801",
-        "id": "QhE...",
-        "hash": "bciq...",
-        "byte_count": 811
-      }
-    ]
-  }
-}
-```
-
-Objects are ordered by numeric sequence. `through` is the greatest
-sequence examined in this page and equals `after` when no later object
-exists. A client advances its local cursor only after every returned
-descriptor through that value is either fully applied or durably written
-to a local pending-download set. Losing an in-memory download queue MUST
-not make advancing the cursor lose an object. A client MAY refetch an
-object; object acceptance is idempotent.
-
-`changes` is an optimization, not the sole correctness mechanism. A
-client MUST also implement full inventory.
+`hello-result` has the same fields with the responder's own grant and limits.
+The vault version must match the receiving profile. Each positive integer limit
+is a receiver's bound; a sender uses the smaller local/peer bound and accounts
+for encoded attachment and DIDComm/routing overhead when fitting the mediator's
+wire limit. A failed size check changes no synchronization progress.
+
+Crossed `hello` messages are independent exchanges. A receiver MUST answer each
+valid `hello` with `hello-result`, including while its own `hello` to that peer
+is pending. Only a verified `hello-result` whose `thid` matches the local pending
+request completes that request; the incoming `hello` does not stand in for it.
+Process inbound requests and replies without waiting for the local exchange
+to complete. Use the limits in the most recently received valid `hello` or
+matching `hello-result` from that peer; unsolicited or obsolete results do not
+replace negotiated state.
+
+Persist the pending request ID and expected peer binding before sending
+`hello`. Durably record a verified peer's grant, document, version and limits
+before sending its `hello-result`, or before treating a matching result as
+completing the local exchange. Recover those records after a normal restart;
+pending exchanges remain retryable and completed exchanges remain usable.
+
+The example values are illustrative. Before adoption, the owning event profile
+must define a canonical event byte ceiling and the corresponding plaintext and
+mediator wire floors in the [adoption work](README.md#adoption-work). A peer or
+transport whose bounds cannot carry a maximum-sized event plus the complete
+single-event batch and transport overhead fails negotiation explicitly; it
+cannot claim support and leave otherwise valid events permanently unsendable.
+
+The limits govern each message/page; implementations also enforce bounded
+staging and concurrency as specified below. Reopening a connection reuses the
+durable verified peer state; a new `hello` is not required solely because a
+connection or runtime restarted. A fresh incarnation establishes its own
+exchange instead of inheriting another incarnation's negotiation.
 
 <a id="full-inventory"></a>
 
-## 10. Full inventory
+### 3.2 `inventory` / `inventory-result`
 
-<a id="inventory"></a>
-
-### 10.1 `inventory`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/inventory
-```
+A new request has `vault_anchor`, `inventory_id: null`, `cursor: null` and a
+positive `limit`. The responder captures its accepted event CID set at one
+local cut. It assigns a fresh opaque `inventory_id`, sorts CIDs by canonical
+CID text and returns a page:
 
 ```json
 {
-  "id": "019b1b78-6751-7a5c-a998-f6a60f352f1c",
-  "type": "https://estoc.dev/vault-sync/1.0/inventory",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "through": null,
-    "after_id": null,
-    "limit": 512
-  },
-  "return_route": "all"
+  "vault_anchor": "did:key:z...anchor",
+  "inventory_id": "019b2b00-0000-7000-8000-000000000001",
+  "event_cids": ["bafk...event"],
+  "next_cursor": null
 }
 ```
 
-`store_id` is REQUIRED and is obtained from `hello-result`. `after_id`
-is exclusive and is `null` for the first page. `through` is `null` on the
-first page and MUST equal the snapshot sequence returned by that page on
-every continuation request.
+A continuation request carries that inventory ID and the previous
+`next_cursor`. The responder binds the session to the authenticated requester,
+vault and frozen cut. Pages contain every CID from that cut exactly once; a
+concurrent append cannot move an entry between pages or get silently skipped.
+The last page has `next_cursor: null`; an empty inventory is one empty final
+page. Ordering has no domain meaning.
 
-<a id="inventory-result"></a>
+The receiver durably records both each page's entries and the next cursor
+before acknowledging its delivery. Repeated pages are idempotent. A missing or
+expired snapshot returns `inventory-expired`, including after a source restart
+that lost session state. The receiver starts a fresh inventory and retains any
+already verified events; it never treats an interrupted listing as complete.
 
-### 10.2 `inventory-result`
+An inventory includes all accepted main-store event CIDs, including events
+whose objects were released. It is not filtered by event timestamp, current
+author or a UI view. Absence of a local event in the peer's inventory does not
+delete it. Object availability is discovered after evaluating the event union.
 
-Message type:
+The event store's local `ChangeToken` stays local. A peer inventory token is
+not that token, not portable history and not a global sequence. Changes after
+the captured cut are sent by incremental publication or a subsequent inventory.
 
-```text
-https://estoc.dev/vault-sync/1.0/inventory-result
-```
+### 3.3 `want`
+
+The body has `vault_anchor`, `event_cids` and `objects`, with at least one entry
+and no duplicates. Each object request is `{ "cid": <raw CID>, "offset": <n>,
+"max_bytes": <n> }`. Offsets are nonnegative safe integers; byte limits are
+positive and bounded by negotiation. The total number of event and object
+entries is at most the negotiated `max_events_per_batch`; object requests also
+obey the negotiated chunk size. A zero-length object is requested at
+offset zero and may be answered with an empty attachment.
+
+Event requests are answered by one or more `events` messages; object requests
+by `objects` messages. Unknown or unavailable items get an explicit
+`unavailable` response. Each response is correlated to the request. Requests
+are bounded by the negotiated event/page and chunk limits; sending a large
+list is not permission to allocate unbounded memory or response work.
+
+Requests and replies both travel through private replica mailboxes. A replica
+MUST continue handling peer requests while awaiting its own replies or batch
+receipts; waiting for mutual completion would deadlock two offline-capable peers.
+
+### 3.4 `events`
+
+An event batch may be unsolicited incremental publication or a `want` response:
 
 ```json
 {
-  "id": "019b1b78-85e5-7ec8-85c8-b44cd169ee83",
-  "thid": "019b1b78-6751-7a5c-a998-f6a60f352f1c",
-  "type": "https://estoc.dev/vault-sync/1.0/inventory-result",
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "through": "1842",
-    "complete": false,
-    "next_after_id": "QhE...",
-    "objects": [
-      {
-        "id": "A0F...",
-        "hash": "bciq...",
-        "byte_count": 1220,
-        "sequence": "1811"
+  "vault_anchor": "did:key:z...anchor",
+  "batch_id": "019b2b00-0000-7000-8000-000000000002",
+  "events": [
+    {
+      "cid": "bafk...event",
+      "at": "2026-10-01T00:00:00.000Z",
+      "author": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
+      "type": "replica.label",
+      "roots": [],
+      "data": {
+        "replicaId": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
+        "name": "Phone"
       }
-    ]
-  }
+    }
+  ]
 }
 ```
 
-On the first page, the server captures the account's current sequence as
-`through`. Every page in that inventory snapshot contains only objects
-whose insertion sequence is less than or equal to `through`. The server
-MUST reject a continuation whose `store_id` or `through` differs from the
-first page.
+`batch_id` is a fresh UUIDv7 for this sender's immutable nonempty event batch.
+Events are unique and sorted by CID for a stable batch representation. Each
+complete event is validated using the event store's canonical-envelope and CID
+rules. The receiver never substitutes its own author/time or hashes just `data`.
+The CID still names the five-field canonical envelope, excluding `cid` itself.
 
-Pages are ordered by Unicode code-point order of canonical object IDs.
-`next_after_id` is the last returned ID when `complete` is false and is
-`null` when complete. This fixed snapshot prevents a concurrently inserted
-object whose ID sorts before the current page from being skipped. Objects
-inserted after `through` are obtained later through `changes` or another
-inventory.
+A receiver keys batch progress by `(sender replica DID, batch_id)`. Reusing it
+with different canonical event contents is an error, even if both event sets
+would separately be valid. Repeating the same contents resumes staging or
+repeats the existing `stored` receipt. Batch identity is independent of the
+DIDComm wire message ID, so expiry/repackaging need not create a new logical
+batch. Retries of one already-packed wire message keep its exact bytes and
+routing ID; repackaging uses a fresh wire ID.
 
-After the complete snapshot is durably applied or represented in a local
-pending-download set, the client MAY set its incremental remote cursor to
-`through`.
+Receipt of this message stages data for the [application algorithm](#applying-remote-objects).
+A batch is a transfer/receipt identity, not a required database transaction
+size. Its events may be combined with other batches or split across bounded
+atomic imports, each with its required objects; staging alone is never visible
+accepted history.
 
-A client MUST run full inventory when:
+### 3.5 `objects`
 
-- it has no cursor;
-- `store_id` changed;
-- the server rejects or cannot satisfy its cursor;
-- local sync metadata was lost; or
-- the user requests verification.
+The body has `vault_anchor`, `cid`, `total_bytes`, `offset` and `attachment_id`.
+The message carries exactly one DIDComm attachment with that ID and
+`data.base64` containing the requested byte range, encoded as unpadded
+base64url. This first profile uses inline encrypted chunks, not public links
+or a separate blob-storage protocol.
 
-A periodic full inventory is RECOMMENDED to detect local bookkeeping
-bugs, but its cadence is an implementation policy.
+`cid` is the canonical raw DASL CID of the entire object. Sizes/offsets are
+safe integers, within negotiated/local bounds; the range lies within the total
+and answers an outstanding request from this authenticated source. A chunk is
+nonempty except for the canonical empty-object transfer at offset/total zero.
+Transport chunks have no portable IDs and are not independent DASL objects.
 
-<a id="downloading-objects"></a>
+The receiver durably stages ranges under the peer, CID and total length.
+Repeated or overlapping bytes must agree exactly. A conflicting total or
+range fails that source transfer; it is not silently overwritten. Out-of-order
+ranges are allowed. Only complete coverage followed by verification of the
+whole raw CID produces an accepted object. A partial or hash-failing object
+is never published to the vault.
 
-## 11. Downloading objects
+After interruption, missing ranges can be requested again. An object may be
+retried with another authorized source, with each source's staging isolated;
+whole-object CID verification still decides acceptance. A receiver does not
+accept unsolicited object storage just because a peer knows its DID.
 
-<a id="want"></a>
+### 3.6 `stored`
 
-### 11.1 `want`
+The body has `vault_anchor` and `batch_id`. Authentication identifies the peer
+that stored the batch; `thid` names the answered `events` message as a correlation
+hint. The sender MUST match progress by `(authenticated peer DID, batch_id)`
+within this vault. An unknown or old `thid`, including after repackaging, is
+not grounds to reject an otherwise valid receipt for that known immutable
+batch and intended peer. An unknown batch or wrong peer never advances progress.
+This receipt means every event in that exact batch is durably in the receiver's
+accepted event set, and the required held objects were present at each event's
+atomic import boundary. All batch CIDs must be accepted before issuing it,
+even when several imports were needed. Objects released by validated retention
+rules need not be present. Partial success MUST NOT produce `stored`.
 
-Message type:
+The sender accepts the receipt only for a known immutable batch and that
+intended peer. It durably records progress before pickup-ACKing the receipt.
+`stored` itself is not acknowledged by another sync receipt; ordinary pickup
+ACK plus retrying the original batch recovers a lost response without an
+ACK-of-ACK loop.
 
-```text
-https://estoc.dev/vault-sync/1.0/want
-```
+This is evidence of that peer's state at a past boundary, not a promise that
+it will keep every object forever, execute the events, or retain a backup after
+its own storage loss. A later reconciliation may establish missing data again.
 
-```json
-{
-  "id": "019b1b7a-ae56-7d5a-8e3d-d26ec7a145cb",
-  "type": "https://estoc.dev/vault-sync/1.0/want",
-  "body": {
-    "ids": ["A0F...", "QhE..."]
-  },
-  "return_route": "all"
-}
-```
+### 3.7 `unavailable`
 
-The list has no duplicates and does not exceed the advertised limit.
+The body has `vault_anchor`, `events` and `objects`. An event entry is
+`{ "cid": <event CID>, "reason": <reason> }`; an object entry additionally
+has `offset` equal to the unanswered requested range's start. Reasons are
+`unknown`, `not-held`, `missing-bytes`, `damaged` and `limit`.
+The arrays partition only the unsupplied requested items; successfully
+supplied items are handled by their ordinary responses. An implementation
+keeps unresolved request progress until every item is answered, retried or
+explicitly abandoned locally.
 
-<a id="objects"></a>
-
-### 11.2 `objects`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/objects
-```
-
-```json
-{
-  "id": "019b1b7a-cd2c-7f2a-96b9-fc09645372f9",
-  "thid": "019b1b7a-ae56-7d5a-8e3d-d26ec7a145cb",
-  "type": "https://estoc.dev/vault-sync/1.0/objects",
-  "body": {
-    "objects": [
-      {
-        "id": "A0F...",
-        "hash": "bciq...",
-        "byte_count": 1220,
-        "get": "https://sync.example/sync-object/random-token",
-        "expires_time": 1788445200
-      }
-    ],
-    "missing": ["QhE..."]
-  }
-}
-```
-
-A download URL is unguessable, time-limited, account-bound and valid only
-for HTTP `GET` and byte-range `GET`. Clients MUST NOT follow redirects. The
-endpoint MUST advertise and implement `Accept-Ranges: bytes`, return standard
-206 responses for satisfiable ranges, and bind every range to the same exact
-immutable encrypted container. It MUST return
-`Content-Type: application/octet-stream` and MUST apply no content coding or
-transfer transformation; `Content-Encoding` is absent or exactly `identity`.
-A client SHOULD send `Accept-Encoding: identity`.
-
-A client derives `L` from the descriptor's `byte_count` under section 4.4,
-calculates `p0 = min(1048576, L)`, and may obtain the single exact inclusive
-range `bytes=0-(63+p0)` to authenticate and classify the plaintext frame. The
-`Content-Range`, response length, 48-byte header and any strong entity
-validator MUST identify the advertised immutable container. The header's `L`
-MUST equal the value derived from `byte_count`. A full acceptance MUST still
-obtain the complete container, enforce `byte_count` and verify `hash`. The
-client MUST abandon a response that is short, overlong, transformed,
-range-inconsistent or hash-invalid.
-
-The HTTP URL reveals no logical object ID in its path.
-
-<a id="remote-account-reset"></a>
-
-## 12. Remote account reset
-
-Version 1.0 deliberately has no selective `retract` message. Logical erasure
-is expressed by portable vault events. A physical remote purge is an
-all-object reset followed by construction of a new trusted baseline. The
-baseline protocol exists to prevent a stale replica from immediately
-re-uploading erased content bytes into an empty account.
-
-<a id="preconditions"></a>
-
-### 12.1 Preconditions
-
-Before requesting reset, the initiating full replica MUST:
-
-1. fully reconcile the current `ready` store or explicitly obtain user
-   confirmation that remote-only objects will be abandoned;
-2. ingest all locally available events and run the erasure-closure procedure
-   in [vault-events.md](../vault-events.md);
-3. compute the current held-root set from the converged fold; and
-4. be able to supply the immutable root object, every accepted event object
-   and every currently held object it intends to preserve.
-
-Reset is not a selective event retraction. Another trusted full replica may
-later republish immutable event objects that it still has. It MUST NOT
-republish DASL objects released by the converged erasure fold.
-
-<a id="reset"></a>
-
-### 12.2 `reset`
-
-Message type:
-
-```text
-https://estoc.dev/vault-sync/1.0/reset
-```
-
-```json
-{
-  "id": "019b1b7d-368c-75b6-8724-1598205178d4",
-  "type": "https://estoc.dev/vault-sync/1.0/reset",
-  "from": "did:key:z6LS...sync-account",
-  "to": ["did:web:sync.example"],
-  "body": {
-    "store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "reset_id": "019b1b7d-2bb6-76b5-ac2e-ac91ffb597ae",
-    "confirm": "delete-all-remote-objects"
-  }
-}
-```
-
-The request MUST be authcrypted by the admitted sync account. `store_id` MUST
-be current, `reset_id` is a fresh canonical UUIDv7, and `confirm` is the exact
-literal above. A stale precondition deletes nothing.
-
-On first acceptance the server atomically:
-
-1. invalidates every object, inventory snapshot and transfer ticket in the old
-   object set;
-2. creates a fresh `store_id` with sequence zero and state `rebuilding`;
-3. records the accepted `reset_id`; and
-4. returns a short-lived rebuild capability to the reset owner.
-
-The result is:
-
-```json
-{
-  "id": "019b1b7d-4cfa-7771-ab86-d9c3fe1c9a04",
-  "thid": "019b1b7d-368c-75b6-8724-1598205178d4",
-  "type": "https://estoc.dev/vault-sync/1.0/reset-result",
-  "body": {
-    "reset_id": "019b1b7d-2bb6-76b5-ac2e-ac91ffb597ae",
-    "old_store_id": "019b1b70-f42e-7d19-87a0-16a165264762",
-    "store_id": "019b1b7d-4bcc-7807-a609-8004542c76a4",
-    "state": "rebuilding",
-    "sequence": "0",
-    "rebuild_token": "k3Q...opaque-rebuild-capability"
-  }
-}
-```
-
-Repeating the same authenticated reset request is idempotent and returns the
-same rebuild epoch plus a currently usable capability. A new reset may
-supersede an abandoned rebuild only by naming its current rebuilding
-`store_id` and a new `reset_id`; that operation invalidates the previous
-capability and partial baseline.
-
-<a id="building-and-committing-the-baseline"></a>
-
-### 12.3 Building and committing the baseline
-
-While rebuilding, the reset owner uploads, in this order:
-
-1. the immutable root object;
-2. every locally accepted event object, including `message.erased` and any
-   newly generated erasure-closure events; and
-3. only DASL objects that are roots held by the current post-erasure fold.
-
-It MUST NOT offer a DASL object merely because bytes remain in a local object store.
-The event set is append-only; the held-root fold, not byte presence, determines
-whether content is republished.
-
-After all uploads are visible, the owner computes:
-
-```text
-baseline_ids = all opaque object IDs in the rebuilding object set,
-               sorted by UTF-8 byte order
-baseline_hash = base64url(SHA-256(UTF8(RFC8785(baseline_ids))))
-```
-
-and sends:
-
-```text
-https://estoc.dev/vault-sync/1.0/reset-commit
-```
-
-```json
-{
-  "id": "019b1b7e-ff9f-7d4d-9b3e-5280d9680a7c",
-  "type": "https://estoc.dev/vault-sync/1.0/reset-commit",
-  "from": "did:key:z6LS...sync-account",
-  "to": ["did:web:sync.example"],
-  "body": {
-    "store_id": "019b1b7d-4bcc-7807-a609-8004542c76a4",
-    "reset_id": "019b1b7d-2bb6-76b5-ac2e-ac91ffb597ae",
-    "rebuild_token": "k3Q...opaque-rebuild-capability",
-    "root_id": "QhE...opaque-root-id",
-    "object_count": 1841,
-    "baseline_hash": "V0F...base64url-sha256"
-  }
-}
-```
-
-The server verifies the capability, current state, presence of `root_id`,
-object count and hash over its exact current set. It then atomically changes
-state to `ready` and invalidates the capability. It returns:
-
-```json
-{
-  "id": "019b1b7f-1815-719e-aabb-69e064bc80f5",
-  "thid": "019b1b7e-ff9f-7d4d-9b3e-5280d9680a7c",
-  "type": "https://estoc.dev/vault-sync/1.0/reset-committed",
-  "body": {
-    "store_id": "019b1b7d-4bcc-7807-a609-8004542c76a4",
-    "reset_id": "019b1b7d-2bb6-76b5-ac2e-ac91ffb597ae",
-    "state": "ready",
-    "sequence": "1841",
-    "baseline_hash": "V0F...base64url-sha256"
-  }
-}
-```
-
-Until this commit, non-owner clients MUST NOT download a partial baseline or
-publish their local set. They receive `store-rebuilding` and retry later.
-Services MUST disclose how long invalidated ciphertext may remain in offline
-backups or disaster-recovery media.
+`not-held` reports the source's retention decision; it is not an erasure event
+or proof that the receiver may delete its own data. No unavailable response
+advances a batch to `stored` or silently skips an inventory entry. The client
+can obtain additional history or try another peer/backup.
 
 <a id="client-synchronization-algorithm"></a>
-
-## 13. Client synchronization algorithm
-
 <a id="publishing-local-objects"></a>
 
-### 13.1 Publishing local objects
+## 4. Incremental publication and reconciliation
 
-During ordinary `ready` operation a client first obtains the current
-`store_id` from `hello`; every following `offer` carries it as
-`expected_store_id`. A reset between `hello`, `offer`, ticket issuance and PUT
-commit is therefore fenced at both protocol boundaries.
+Every durable event commit can wake a sync worker. The worker reads accepted
+local additions using `changes()` and retains durable per-peer batch/retry
+progress. The wake-up signal is advisory: after restart, rescan from durable
+progress or perform inventory reconciliation. A commit followed by a crash
+before notification must not strand an event.
 
-The client publishes in this order:
+Persist the immutable batch and its progress before sending it. A local change
+cursor may advance only after the corresponding work is durably discoverable
+for retry; it is not proof of peer storage. Only the intended peer's `stored`
+receipt completes that batch's replication attempt. A mediator 2xx and a
+pickup ACK are separate boundaries.
 
-1. ingest and fold all newly learned remote events before offering local
-   objects;
-2. generate and publish any erasure-closure events required by that union;
-3. publish the immutable root object if it is absent;
-4. for each new event that currently retains DASL objects, publish those
-   exact objects first, but only when their CIDs are in the **current held-root
-   set**; and
-5. publish the event object after its currently held referenced DASL objects
-   are available remotely.
+Events learned by ingest may be relayed to another peer, including historical
+events authored by other incarnations. Track which CIDs a peer has
+advertised/acknowledged to avoid echoing everything indefinitely.
+Transport/control messages, inventory
+pages and progress updates MUST NOT be appended as ordinary `message.in`,
+`message.out`, admission or delivery events. A duplicate CID causes no new
+portable event merely to record its arrival.
 
-Objects-before-event preserves availability for normal messages, while the
-held-root test preserves erasure safety. An object not currently held MUST NOT
-be offered even when its bytes remain locally available. An event with no held
-objects, including an erasure or closure event, may be offered immediately.
+Reconcile newly learned membership as part of worker discovery. Creating a
+batch for a new peer first verifies its grant and rejects conflicting local
+bindings. A mediator's `identity-conflict` response suspends only operational
+sends to the affected incarnation and exposes a diagnostic. It does not change
+portable membership. Recover the binding evidence from verified local history,
+an authorized peer or backup. Operational suspension does not erase pending
+CIDs or count them as stored. If later authenticated reconciliation shows a
+matching grant and there is no local identity conflict, sending may resume.
 
-The local event store's `changes()` only discovers what this local store gained
-efficiently. A local `ChangeToken` is never sent to the sync store and is
-meaningless on another replica.
+At startup, reconnection, a new peer, lost progress or uncertain remote state,
+run a full inventory comparison. While active, repeat reconciliation at a
+bounded implementation-defined interval; otherwise a silently expired queue
+item could remain missing forever. Each direction compares independently:
+A listing B does not tell B everything A holds. Retry uses bounded backoff,
+quota-aware batching and fresh wire envelopes when a previous one has expired.
 
-A client that observes a different `store_id` MUST enter **pull-before-push**:
-
-1. stop all offers and invalidate the old remote cursor;
-2. wait while `hello-result.state == "rebuilding"`;
-3. when ready, obtain and download a full inventory baseline;
-4. decrypt, validate and ingest all root/event objects before offering any
-   local object;
-5. run erasure closure against the union and recompute held roots;
-6. publish newly required closure events first, then missing immutable events,
-   then only currently held DASL objects; and
-7. resume incremental changes only after that publication pass.
-
-This ordering prevents a stale replica that missed `message.erased` from
-re-uploading released content bytes after reset. It does not make reset a
-selective event tombstone: immutable event objects retained by a trusted full
-replica may reappear.
+An acknowledged batch may be discarded from the retry queue, since its events
+remain in the local event store and inventory can rediscover a later need.
+A peer's restored/empty store invalidates assumptions of permanent completion;
+the sender serves requested known events even if an older receipt says that
+peer once held them. No local timestamp is a safe lower bound for missing
+historical events.
 
 <a id="applying-remote-objects"></a>
 
-### 13.2 Applying remote objects
+## 5. Applying remote data
 
-A server descriptor is opaque until an authorized client authenticates the
-container prefix. For every previously unknown descriptor, the client:
+Network handling first verifies authorization and shape, then durably stages
+valid event batches outside the visible vault. Staging is operational state,
+not accepted event history. It may be reconstructed by retransmission; a
+retained uncompleted batch must remain discoverable across a normal restart.
 
-1. derives the unique positive `L` from the descriptor's `byte_count` using
-   section 4.4 and rejects an invalid inverse;
-2. derives `p0 = min(1048576, L)` and requests the single exact inclusive
-   segment-zero range `bytes=0-(63+p0)`;
-3. parses the 48-byte container header and requires its `L` to equal the
-   descriptor-derived value;
-4. derives `K_object` and authenticates segment zero using the descriptor's
-   opaque object ID;
-5. parses the complete plaintext-frame header, which MUST fit in segment zero;
-6. validates the closed header schema; and
-7. recomputes the expected opaque object ID from the authenticated header.
+For a full reconciliation or initial catch-up:
 
-An ID mismatch is an integrity failure. Prefix classification does not accept
-the root, event or DASL object and does not replace verification of the full
-container when the object is needed.
+1. Obtain the complete fixed event inventory and stage every missing event
+   from it. Several batches may be in flight; servicing requests and staging
+   later batches MUST NOT wait for earlier batches' `stored` receipts.
+2. Plan against current accepted events and the complete learned cut. Follow
+   the vault's domain validation, retained-root and erasure-closure rules;
+   preserve existing references and historical admissions.
+3. Choose a bounded subset of staged events for the next atomic import. It
+   may cross batch boundaries or contain only part of a batch. When learned
+   erasure/release facts change its retention requirements, import the required
+   evidence first or include it in that subset. Do not omit known release
+   evidence merely to fetch or publish obsolete bytes.
+4. Let `targetBeforeImport` be the current accepted event set and `union` be
+   that set plus the chosen subset. Compute the import byte requirement:
 
-During ordinary incremental synchronization:
+   ```text
+   requiredRoots =
+       roots retained by newly accepted subset events in union
+       ∪ (heldRoots(union) − heldRoots(targetBeforeImport))
+   ```
 
-- root and event frames are downloaded completely, verified and applied;
-- a DASL-object descriptor may be kept as a durable pending descriptor after
-  authenticated prefix classification;
-- the complete DASL object is downloaded only when its CID belongs to the
-  current held-root set; and
-- after every newly ingested event batch, the client recomputes held roots and
-  schedules any newly required object IDs.
+   Every required root needs verified staged bytes or sound accepted target
+   bytes. Fetch missing/damaged required objects and any available repairs for
+   other union-held objects. Assemble and verify them outside the database
+   transaction; network I/O MUST NOT hold the writer lock or a write transaction.
+5. Under the writer lock, re-plan the chosen subset against current accepted
+   events, all learned release evidence, membership bindings/conflicts and
+   object health. Recompute both held-root folds and `requiredRoots`. If prerequisites changed,
+   release the lock and obtain missing data or discard newly released staging.
+6. Atomically publish that subset and its required object additions or repairs
+   using the vault's import boundary. Apply the existing sound-target reuse
+   rules; a failed check publishes none of this chosen import. Previously
+   completed independent imports remain accepted.
+7. Reconcile/invalidate folds and views, and emit `stored` only for batches whose
+   entire event set has now passed these imports. Repeat with other subsets;
+   the inventory cut is complete only when all its events have been accepted
+   and its required object work has completed. Missing work remains explicitly
+   incomplete. Imported history does not mint a live input, send a pending
+   message or regenerate an old reply.
 
-For a reset baseline or a lost-cursor full reconciliation, the client MUST:
+The receiver chooses subset bounds from its local import resource budget,
+including event and required-object work. These bounds are independent of
+`max_events_per_batch`, which limits wire messages, not database transactions.
 
-1. prefix-classify every descriptor in the fixed inventory snapshot;
-2. completely verify and accept the immutable root;
-3. completely verify, validate and ingest every event object in its named
-   event store, independently of server sequence;
-4. fold the complete learned event union and append equivalent
-   erasure-closure events for newly discovered roots of already erased logical
-   messages;
-5. recompute the held-root set;
-6. for each held CID, derive its opaque object ID, require a matching
-   authenticated descriptor, download the complete container, verify the exact
-   DASL object and call `ObjectStore.putObject`; and
-7. advance the remote cursor only after all required durable local writes or
-   durable pending-download records are complete.
+During this full reconciliation, learn the event cut before scheduling its
+object downloads or replaying old local object-transfer work. This lets the
+known erasure facts participate in the plan. New commits after that cut remain
+eligible for a later pass; this is not a global snapshot or completeness proof.
 
-A classified DASL object whose CID is not held MAY be skipped without reading
-its remaining ciphertext. The client MUST NOT expose it, retain it merely
-because another object mentions its CID, or call `putObject`. The authenticated
-classification record is sufficient to mark that descriptor as processed for
-this inventory snapshot.
+Missing event references alone do not block event-set union. Their affected
+projections and effects remain incomplete until the exact evidence arrives;
+no placeholder or rewritten reference is created. Missing required bytes block
+only candidate subsets whose prospective union requires them, including roots
+newly held by existing target events. Other independently valid subsets MUST
+remain eligible for import. A partly applied batch remains visibly incomplete
+in durable progress, retaining its unapplied events in staging and receiving
+no `stored` receipt until complete.
 
-Events may arrive in any order. Server sequence is a delivery cursor, not
-vault meaning. Absence of released object bytes is not `not fetched`.
+Incremental publication uses the same subset and byte checks without obtaining
+an entire new inventory. Combine events where domain or release evidence is
+needed, and request/reconcile missing history. An independently applicable
+erasure subset is not blocked merely because another is awaiting
+content. Invalid data is surfaced explicitly without holding unrelated work
+indefinitely or silently marking the inventory complete.
 
-An unknown extension store is not opened merely because an opaque object
-exists. After classification, the client applies the vault's extension
-lifecycle policy before writing an extension event or fetching any object held
-only by that extension.
+The current [portable import boundary](../event-store.md#import-into-an-existing-vault)
+and [object merge rules](../vault-events.md#object-merge) require complete atomic
+publication of each import. This protocol proposes several such operations,
+not visible sub-transactions of one import: accepted subsets are valid partial
+history with their required objects, while network staging remains invisible.
+The [adoption work](README.md#adoption-work) must define this staged-input
+integration without weakening complete portable SQLite source validation.
+Raw `EventStore.ingest` alone is not the application integration.
 
-<a id="missing-dasl-objects"></a>
+Repairing an object already held by accepted local events may publish verified
+bytes with no new events, using the same lock/retention/publication checks.
+Its local request completes on durable repair; it needs no invented event or
+`stored` batch receipt. If a pending event batch depends on that repair, the
+batch is acknowledged only after its full application checks also pass.
 
-### 13.3 Missing DASL objects
+An unseen incoming event under the target's own author is `ForkedAuthor`, not
+a reason to change that event's author or accept it partially. Preserve pending
+material and surface recovery through a fresh local incarnation and enrollment
+before retrying. Existing historical events and peer identities remain distinct.
 
-A client may learn of an event before every referenced object is locally
-present because another uploader crashed or account quota prevented an object
-upload. For each currently held CID it computes the expected opaque object ID
-and looks for that ID in `changes`, inventory or `want`.
+<a id="durability-and-acknowledgments"></a>
 
-If the expected object is absent, the client MUST retain the event, surface or
-record `not fetched`, and retry discovery. It MUST distinguish temporary
-absence from logical vault erasure. It MUST NOT fabricate a DASL CID from a
-server descriptor or accept bytes without `ObjectStore.putObject` verification.
+## 6. Durability and acknowledgments
 
-<a id="event-conflicts"></a>
+| Boundary | What it establishes |
+| --- | --- |
+| Sender's local commit | Local durable event/object state |
+| Mediator accepts the encrypted forward | Bounded queued transport, not destination import |
+| Destination pickup ACK | That delivery need not remain in the queue |
+| Destination `stored` | Every event in that exact batch passed an atomic import with its required objects |
+| Domain peer ACK | Application-protocol receipt, independent of synchronization |
 
-### 13.4 Event integrity and domain conflicts
+A receiver may pickup-ACK a valid sync message after either durable application
+or durable staging of the complete message and the work needed to continue it.
+It MUST NOT send `stored` while the batch is only staged. For an object chunk,
+ACK requires durable range staging; for an inventory page, durable page/progress;
+for a `stored` receipt, durable sender-side progress. If local capacity or a
+write failure prevents persistence, leave the delivery unacknowledged.
 
-A decrypted envelope that does not hash to its declared CID is invalid input
-and MUST NOT be ingested. Equal verified envelopes deduplicate by CID;
-different valid envelopes remain separate events even if their domain facts
-conflict. Domain folds expose those conflicts without selecting an arrival-order
-winner. CID verification does not authenticate who supplied the history.
+Malformed or unauthorized traffic may be terminally rejected and pickup-ACKed
+without imported events, with a bounded local diagnostic. Temporary missing
+peer/history/key prerequisites are deferred, not misclassified as permanent
+rejection. Valid but incompatible data produces an explicit failure response;
+it is never represented as successful storage.
+
+A crash after import but before sending `stored` is recovered by reexamining
+the accepted CIDs/required objects when the batch is retried. A crash after
+staging and pickup ACK resumes local work; if operational state was deliberately
+reset, source retries and inventory comparisons recover it. Neither side
+requires a distributed transaction with the mediator.
+
+Sync progress belongs to durable local operational storage with an explicit
+rebuild path. It is not a disposable cache whose loss may silently advance a
+cursor. Clearing it forces reconciliation instead of assuming peers are current.
+Resetting batch or inventory progress preserves the durable peer authorization
+and negotiation records. Portable restore instead creates a fresh incarnation
+and performs enrollment with new peer exchanges.
+
+<a id="retention-and-erasure"></a>
+
+## 7. Retention and erasure
+
+Send all immutable events, including erasure and closure events. Send raw object
+bytes only when the current source fold still holds that object. Recheck this
+before every object response/retry; cancel queued local chunks containing
+newly released data. Ciphertext already accepted by the mediator may remain
+until its normal ACK/expiry; this protocol does not promise instant deletion
+from remote queues or previously authorized peers.
+
+The receiver computes held roots from the prospective union, not from the
+source's claim that a CID is needed. It repeats the check under the writer lock
+before object publication and collection. Incoming obsolete objects do not
+revive erased message content. An object retained by another valid relation
+may still be required; erasure of one relation is not global CID deletion.
+
+Unheld partial transfers are discarded. A held object whose bytes no peer can
+supply remains visibly unavailable; neither a successful inventory nor a
+`not-held` response turns missing content into an intentional erasure.
+Raw CIDs, event roots and metadata are inside end-to-end encrypted messages;
+they are not mediator storage keys.
 
 <a id="bootstrap-and-recovery"></a>
 
-## 14. Bootstrap and recovery
+## 8. Bootstrap and recovery
 
-Recovered domain events are historical data, not a dispatch queue. Bootstrap,
-import and replica change do not send pending outbounds or regenerate old
-automatic replies/ACKs/notifications for sending. Show pending work for manual
-action under [the dispatch contract](../channels.md#fixed-outbound-channel),
-preserving each intent's fixed channel and committed package. Missing submission
-in a snapshot never proves that a call did not occur.
-This does not stop automatic retry of sync transfers or mailbox pickup.
+The first replica of a new arrangement records a fresh replica-mediation account
+intent and replica grant in its existing vault, then uses the account DID to
+register directly with the mediator. That transaction creates the account and
+its first replica without Coordinate Mediation. It needs no peer to initialize
+the account; synchronization starts when another authorized replica joins.
 
-A new local replica needs:
+Enrollment of another device starts from an authorized portable encrypted
+SQLite backup/restore containing the seed, vault anchor, selected
+replica-mediation arrangement and an initial event cut. A backup containing only
+ordinary mediation must first obtain the new arrangement's verified account
+intent through authorized bootstrap, or explicitly create a new arrangement;
+it cannot convert or reuse the ordinary account as replica authority.
+The destination retains its own seed wrapper/passphrase according to the
+restore procedure and obtains a fresh
+replica ID, replica DID and store generation. Ordinary sync never transmits
+another replica's wrapper or runtime control rows.
 
-- the vault seed;
-- the sync-store DID/endpoint locator; and
-- a local passphrase or platform mechanism under which to wrap the seed.
+Enrollment proceeds as follows:
 
-A normal portable SQLite restore obtains candidate locators from
-`sync.configured` events after opening the validated snapshot. A bootstrap that
-starts with only the seed must obtain the first locator from an external trusted
-source.
+1. Verify the restored anchor against the unlocked seed and select the known
+   replica-mediation arrangement. Build the new replica document and
+   account-signed grant; durably record the proposed membership.
+2. Send `register` from the account DID, naming the new replica in its grant.
+   Verify the response's account, mediation, replica and routing bindings.
+   The replica DID then picks up its private inbox and shared-mail deliveries;
+   only shared packages first accepted after registration are eligible for that
+   replica. The new device can queue/stage this mail while catching up, but
+   receiving it does not replace the required history synchronization.
+3. Discover peers through the mediator list and known portable membership.
+   Exclude conflicting identities, verify each remaining grant locally, and
+   establish `hello` with usable peers.
+4. Reconcile complete event inventories and required objects, including
+   membership and erasure facts learned since the backup. Add newly learned
+   communication recipients under the registration rules below; do not register
+   peers on their behalf. CIDs already restored are ordinary duplicates.
+5. Continue incremental sync and drain shared mail queued since registration
+   once its required history and domain prerequisites are available. Keep
+   historical catch-up/import separate from live application execution. The
+   domain revision defines when the new runtime may enable automatic effects.
 
-It derives the sync account and object keys, fetches the fixed root object
-ID, verifies the immutable configuration, inventories every opaque object,
-downloads and validates events and currently held DASL objects, builds a fresh
-SQLite runtime, and finally mints a new local `replica_id` and private
-`store_generation`. Database control, positions and chunk IDs are reconstructed
-locally. This protocol does not restore another runtime's physical layout or
-provide an opaque-file extension mechanism.
+Local replica registration and pending recipient adds follow
+[replica-mediation reconciliation](replica-mediation.md#append-only-reconciliation).
+Successful local confirmations are not replayed to repair mediator state;
+that operational recovery is outside the initial mediation profile.
 
-Absence of the root object means the server account cannot bootstrap a
-vault. An existing local vault may publish it. A root object whose anchor
-does not match the anchor derived from the supplied seed is fatal.
+Registering before peer inventory allows mail arriving during catch-up to
+remain queued. Mail accepted before registration is never backfilled by the
+mediator, even if its ciphertext has not expired. Earlier history must come
+from a peer or backup that holds it. Fixed inventory cuts plus subsequent
+incremental/full passes cover available events created during enrollment.
+No step requires all replicas to be online simultaneously, but progress requires
+an authorized data source to become available within a sequence of successful
+transfers. Queued new mail is not evidence that history catch-up is complete.
 
-A sync store is not the sole sovereign representation. A normal Estoc
-portable SQLite snapshot remains a complete independently recoverable format.
-
-A full replica bootstrapped on a server has no special sync identity. It uses
-the same account and anti-entropy as any other full replica. DID-document
-publication is not synchronized vault state or a recovery procedure.
-
-<a id="portable-sync-store-events"></a>
-
-### 14.1 Portable sync-store events
-
-These portable events are part of this deferred profile and are not required
-by phase 1.
-
-<a id="sync-configured"></a>
-
-#### `sync.configured`
-
-```json
-{
-  "type": "sync.configured",
-  "roots": [],
-  "data": {
-    "syncId": "019b2a5d-4cd0-7d87-a464-f0614c310870",
-    "storeDid": "did:web:sync.example"
-  }
-}
-```
-
-This intent adds one sync-service locator to portable vault
-state. `syncId` is a UUIDv7. `storeDid` MUST identify a DIDComm-capable sync
-store; its current endpoint is resolved at runtime and may be cached only
-in local runtime state.
-
-The same configuration ID with a different store DID is an integrity
-conflict. Configuring the same store DID under more than one ID is
-allowed but SHOULD be surfaced as redundant configuration.
-
-<a id="sync-selected"></a>
-
-#### `sync.selected`
-
-```json
-{
-  "type": "sync.selected",
-  "roots": [],
-  "data": {
-    "syncId": "019b2a5d-4cd0-7d87-a464-f0614c310870"
-  }
-}
-```
-
-The latest event by canonical order selects the preferred sync store for
-normal publication and bootstrap guidance. Selection does not remove
-another configured store; a runtime MAY mirror to every usable store.
-
-<a id="sync-retired"></a>
-
-#### `sync.retired`
-
-```json
-{
-  "type": "sync.retired",
-  "roots": [],
-  "data": {
-    "syncId": "019b2a5d-4cd0-7d87-a464-f0614c310870",
-    "because": "replaced"
-  }
-}
-```
-
-Retirement is terminal for the configuration ID. Replicas stop new
-upload, download and inventory work against it after learning the event.
-Retirement does not imply remote ciphertext deletion. The explicit
-account-reset operation is defined in section 12.
-
-A portable SQLite snapshot therefore carries its sync-service locator in events.
-A bootstrap that starts with only the seed still needs one locator from an
-external trusted source to find the first sync store.
-
-<a id="sync-store-fold"></a>
-
-### 14.2 Sync-store fold
-
-The fold groups events by configuration ID, rejects conflicting
-`sync.configured` values and treats any `sync.retired` as terminal.
-
-<a id="configure-a-sync-store"></a>
-
-### 14.3 Configure a sync store
-
-1. append `sync.configured` with a new configuration ID and the sync-store DID;
-2. to make it the preferred store, append `sync.selected` for that ID.
+A seed and an empty mediator cannot reconstruct deleted history. If every
+history-holding replica and backup is lost, this protocol provides no recovery
+archive. A new device with no responding peer reports pending synchronization;
+it does not infer an empty, complete vault.
 
 <a id="quota-and-availability"></a>
 
-## 15. Quota and availability
+## 9. Limits, failure and privacy
 
-The server MAY cap:
+Implementations bound active inventory sessions, page size, event batches,
+object/chunk sizes, pending requests, retry queues and total staging bytes.
+When a limit prevents safe progress, report the blocking item/state and keep
+it unsatisfied. Do not skip it, advance past it, truncate the transfer or split
+one logical raw object into independently stored chunk objects.
 
-- encrypted-container size;
-- account ciphertext bytes;
-- objects per account;
-- request batch sizes; and
-- upload/download ticket lifetime.
+Sync problem reports use prefix `e.estoc.vault-sync.` with suffixes
+`invalid-message`, `unauthorized-peer`, `wrong-vault`, `unsupported-version`,
+`inventory-expired`, `batch-conflict`, `invalid-event`, `invalid-object`,
+`incomplete-history`, `quota` and `message-too-large`. Problem reports reference
+the original request; any involved batch remains pending/failed, never stored.
+Responses disclose no vault data to an unauthenticated or unauthorized sender.
+`unauthorized-peer` reports a failed binding/authorization check or known local
+identity conflict, not a lost connection or normal restart. Recovered peer
+state remains subject to the checks in §2.
 
-Quota refusal creates no partial object. Because version 1.0 has no
-selective remote garbage collection, clients MUST surface approaching quota
-and allow the user to export, move to another sync store, or invoke the formal
-whole-account reset in section 12 deliberately. A UI MUST describe reset as a
-remote-mirror purge, not as selective message erasure.
+The authenticated sync worker is scheduled independently of user-message
+outbounds and application effects. Its protocol retries do not authorize
+retries of an ordinary application message. Long-offline peers, expired
+mailboxes, mediator outages and identity conflicts are surfaced independently
+of whether a user's local commit succeeded.
 
-If a whole-resource DASL object exceeds a selected store's advertised frame or
-container limit, the client MUST NOT split it into portable chunk objects. It
-marks that sync target incomplete for the referencing event, withholds normal
-objects-before-event publication to that target, and surfaces the specific
-unsynchronized root. Another sync store or an explicit future large-object
-profile is required.
-
-A local write never waits for sync availability. Sync failures change
-replication lag, not local commit success or mailbox pickup.
-
-<a id="privacy-and-security"></a>
-
-## 16. Privacy and security
-
-The sync store can observe:
-
-- the sync account DID;
-- opaque object IDs;
-- ciphertext hashes and sizes;
-- object creation and download times;
-- requested byte ranges and whether a client fetched only a prefix or the
-  complete encrypted container;
-- account totals; and
-- network metadata.
-
-It MUST NOT receive plaintext object kinds, event CIDs, object CIDs, event types,
-message bodies, contacts, key names or extension IDs.
-
-Opaque IDs are deterministic within one vault and therefore reveal
-repeat occurrence and object count to that store. They are unlinkable
-across vault seeds under the HMAC assumption.
-
-A malicious store may omit, reorder, replay or corrupt ciphertext. AEAD,
-content checks, object-ID recomputation, full inventory and event-store
-conflict reporting detect corruption and replay but cannot force the
-store to remain available.
-
-All full replicas share `K_index`, `K_data` and the sync-account key. A
-malicious full replica can read, add or withhold vault data and is outside
-version 1.0's threat model.
-
-<a id="problem-reports"></a>
-
-## 17. Problem reports
-
-Authenticated control errors use Problem Report 2.0:
-
-| code | meaning |
-|---|---|
-| `e.estoc.vault-sync.invalid-request` | malformed body, ID, hash or limit |
-| `e.estoc.vault-sync.admission-required` | absent account needs an accepted admission method |
-| `e.estoc.vault-sync.admission-invalid` | admission proof, capability, grant, binding or expiry failed |
-| `e.estoc.vault-sync.admission-denied` | operator policy refuses account creation |
-| `e.estoc.vault-sync.account-disabled` | admitted account is administratively disabled |
-| `e.estoc.vault-sync.store-reset` | supplied `store_id` is no longer current; client must pull before push |
-| `e.estoc.vault-sync.store-rebuilding` | a reset baseline is not committed; non-owner operations must wait |
-| `e.estoc.vault-sync.reset-not-owner` | rebuild capability is absent, invalid or bound to another reset epoch |
-| `e.estoc.vault-sync.reset-baseline` | root, object count or baseline hash does not match the rebuilding set |
-| `e.estoc.vault-sync.reset-confirmation` | reset ID, expected store ID or literal confirmation is invalid |
-| `e.estoc.vault-sync.object-too-large` | plaintext frame or encrypted container exceeds the account limit |
-| `e.estoc.vault-sync.container` | public container magic, length formula or segment framing is invalid |
-| `e.estoc.vault-sync.quota` | account cannot accept another object |
-| `e.estoc.vault-sync.upload-expired` | upload ticket is no longer valid |
-| `e.estoc.vault-sync.hash-mismatch` | uploaded ciphertext failed hash or length |
-| `e.estoc.vault-sync.too-many-objects` | request exceeds a batch limit |
-| `e.estoc.vault-sync.unsupported-version` | frame or protocol version unsupported |
-
-HTTP upload and download endpoints return generic transport errors and
-MUST NOT disclose another account's object existence.
+The shared mediator can correlate registered replicas, endpoints, sizes and
+timing. End-to-end encryption protects contents; this profile does not promise
+traffic anonymity. Sender protection is an independent feature. No bespoke
+cryptography, deterministic JWE randomness or server decryption is needed for
+replication; exact event identity is preserved inside ordinary randomized
+authcrypted envelopes.
 
 <a id="required-conformance-cases"></a>
 
-## 18. Required conformance cases
+## 10. Required conformance scenarios
 
+These are proposed requirements; application-effect convergence requires the
+separate domain revision as well as transport tests.
 
-<a id="object-offers-and-encrypted-containers-vs-1-vs-7"></a>
-
-### Object offers and encrypted containers (VS-1–VS-7)
-
-1. <a id="vs-1"></a> Two replicas independently encrypt and offer the same logical object with
-   different random salts; exactly one immutable server object remains and
-   both clients can decrypt and verify the stored winner.
-2. <a id="vs-2"></a> Every offer carries `expected_store_id`; a delayed pre-reset offer is
-   rejected before ticket allocation, and a reset after ticket issuance causes
-   the PUT commit to fail without creating an object.
-3. <a id="vs-3"></a> Re-offering an existing ID allocates no overwrite upload; incomplete,
-   oversized, malformed-framing or hash-mismatched uploads create no object or
-   insertion sequence.
-4. <a id="vs-4"></a> The server rejects a container whose magic, `L`, segment-derived total
-   length, offered `byte_count` or HTTP `Content-Length` disagree.
-5. <a id="vs-5"></a> Modifying, deleting, duplicating, truncating or reordering any encrypted
-   segment causes authentication or framing failure before semantic
-   acceptance.
-6. <a id="vs-6"></a> One-shot and streaming encryption of the same plaintext frame may produce
-   different ciphertext but decrypt to the exact same frame and opaque ID.
-7. <a id="vs-7"></a> A client derives the unique `L` from descriptor `byte_count`, fetches the
-   single exact range `bytes=0-(63+p0)`, requires the 48-byte header's `L` to
-   match, and authenticates segment zero before trusting a frame header;
-   transformed, malformed or inconsistent responses are rejected, and prefix
-   classification alone never accepts a root, event or DASL object.
-
-<a id="reconciliation-and-download-verification-vs-8-vs-13"></a>
-
-### Reconciliation and download verification (VS-8–VS-13)
-
-8. <a id="vs-8"></a> `changes` and a fixed-through paged inventory cannot permanently skip a
-   committed object.
-9. <a id="vs-9"></a> Losing all local cursor state and running inventory discovers the same
-   ready object set.
-10. <a id="vs-10"></a> Download framing, ciphertext hash, every AEAD tag, frame validation,
-   semantic validation and opaque-ID recomputation all precede local
-   acceptance.
-11. <a id="vs-11"></a> Exact DASL object bytes are verified against their CID and codec profile
-    before `ObjectStore.putObject` commits them.
-12. <a id="vs-12"></a> A large whole-resource raw object is uploaded, range-classified,
-    downloaded, decrypted and verified with bounded memory and without any
-    portable chunk CID.
-13. <a id="vs-13"></a> Event sets converge by verified CID after exchange; exact
-    canonical duplicates occur once, CID/bytes mismatches are rejected, and
-    distinct events with conflicting domain facts remain available to the fold.
-
-<a id="bootstrap-admission-and-privacy-vs-14-vs-17"></a>
-
-### Bootstrap, admission and privacy (VS-14–VS-17)
-
-14. <a id="vs-14"></a> A fresh full replica with seed and locator reconstructs root, events and
-    held objects, then mints new local replica and store-generation IDs.
-15. <a id="vs-15"></a> No sync message or server row exposes replica ID, event type, DASL CID,
-    contact or application plaintext. Public framing reveals only version and
-    exact frame length.
-16. <a id="vs-16"></a> A previously unseen sync account without accepted admission creates no
-    account, object or quota reservation.
-17. <a id="vs-17"></a> `sync/account` is the sole named asymmetric key; `K_index` and `K_data`
-    match only the explicit HKDF profile.
-
-<a id="reset-and-erased-content-recovery-vs-18-vs-27"></a>
-
-### Reset and erased-content recovery (VS-18–VS-27)
-
-18. <a id="vs-18"></a> Version 1.0 exposes no selective retract and documents reset as a whole
-    remote-mirror purge, not logical message erasure.
-19. <a id="vs-19"></a> Reset with stale precondition or malformed confirmation deletes nothing.
-20. <a id="vs-20"></a> Successful reset rotates `store_id`, invalidates old objects and tickets,
-    and enters `rebuilding`; ordinary clients cannot offer, inventory or
-    download a partial baseline.
-21. <a id="vs-21"></a> Only a valid reset-owner capability may upload during rebuilding.
-22. <a id="vs-22"></a> `reset-commit` verifies root presence, exact object count and RFC
-    8785-derived baseline hash before atomically entering `ready`.
-23. <a id="vs-23"></a> Repeating one accepted `reset_id` is idempotent; a fresh reset against the
-    rebuilding store can supersede an abandoned rebuild and invalidates its
-    capability.
-24. <a id="vs-24"></a> The reset owner publishes every accepted event, including erase and
-    closure events, but only DASL objects in its current held-root set.
-25. <a id="vs-25"></a> A stale replica observing changed `store_id` performs full
-    pull-before-push, ingests baseline events, applies erasure closure and
-    recomputes held roots before offering anything.
-26. <a id="vs-26"></a> A stale replica that still physically stores erased bytes does not offer
-    those DASL objects after baseline reconciliation.
-27. <a id="vs-27"></a> A late immutable event may reappear after reset, but any newly learned
-    root of an already erased logical message receives closure before its
-    content object can be offered.
-
-<a id="object-references-and-local-availability-vs-28-vs-29"></a>
-
-### Object references and local availability (VS-28–VS-29)
-
-28. <a id="vs-28"></a> A CID embedded in object content never causes sync fetch or publication
-    unless that CID is also in the current held-root set.
-29. <a id="vs-29"></a> Sync unavailability never blocks local event commit, send intent or
-    mailbox pickup.
+1. Peers with the same anchor and verified grants exchange data. A forged
+   discovery entry, wrong seed/account/anchor, mismatched sender or conflicting
+   identity cannot obtain plaintext vault data.
+2. Reordered and repeated identical events preserve exact CIDs/authors and
+   add no extra portable events. Reusing a batch ID for different contents fails.
+3. A local commit followed by a crash before worker notification is eventually
+   discovered and sent; a mediator acceptance without `stored` does not complete it.
+4. Drop a sync envelope or `stored` receipt, expire it in a mailbox, restart
+   either peer and reset local progress: retry/reconciliation still finds the
+   missing data without producing an ACK-of-ACK or portable sync-event loop.
+5. Append during a paged inventory; the frozen cut has no gaps/duplicates and
+   later work discovers the new CID. Lose/expire the inventory session and retry
+   from a fresh cut without deleting local-only events.
+6. Two peers request each other's history simultaneously; both continue serving
+   requests before their own outbound batches are acknowledged.
+7. Deliver an object in reordered/repeated chunks, interrupt and resume it,
+   supply conflicting overlapping bytes and a bad final digest. Only a complete
+   verified object can become visible in the vault.
+8. Deliver dependent event batches before their objects and prerequisite events.
+   Stage and combine them, then atomically publish events plus required objects;
+   a publication failure exposes none of that import and sends no `stored`.
+9. Import succeeds and the response is lost; retry sends the receipt without
+   rewriting events or dispatching historical messages/effects.
+10. A stale peer offers content erased by the learned union. Full reconciliation
+    learns the event cut first, and current retention prevents publishing the
+    released relation's bytes; independently retained objects remain available.
+11. A source no longer holds requested bytes; explicit unavailability leaves
+    progress incomplete and permits another peer or backup to repair it.
+12. Restore a new device while other replicas append and external mail arrives.
+    Its author is fresh; only packages first accepted after its registration
+    create shared deliveries for it. New mail can remain queued while vault
+    sync obtains available earlier history. That queue does not replace catch-up
+    or authorize effects; the current profile never silently enables multiple
+    executors.
+13. A maximum legal event fits a single-event batch at the negotiated plaintext
+    and mediator wire floors. Smaller limits fail negotiation. Oversized legacy
+    events need the adoption policy; no event is truncated or given a new CID.
+    Object/queue/staging limits keep blocked work visibly unsatisfied without
+    falsely acknowledging it as stored.
+14. Repair missing bytes for an already accepted held root without any new event;
+    only the verified repair becomes visible, and no synthetic sync event is made.
+15. An unseen current-author event refuses the import with no partial publication;
+    recovery creates a new incarnation instead of rewriting incoming authors.
+16. No source/target cursor, wrapper, local option, trace, device key or operational
+    receipt is imported as another replica's runtime state.
+17. One batch contains independent events and an event requiring unavailable
+    bytes. Import the independent subset; retain the rest as incomplete without
+    `stored`. Unimported event references defer projections, not event union.
+    Apply learned release evidence before or with affected subsets, and check
+    roots newly held by existing target events at each atomic boundary.
+18. Cross `hello` requests while both peers wait for their own result. Each sends
+    the other's correlated `hello-result`; neither treats `hello` as that result
+    nor blocks inbound handling on its own exchange.
+19. Repackage an immutable batch under a fresh wire ID and discard the old ID.
+    A delayed valid `stored` still advances only the matching peer/batch progress;
+    the same batch ID from another peer or an unknown batch advances nothing.
+20. A mediator identity-conflict response suspends operational sends without
+    changing portable membership or completing a batch. Missing discovery rows
+    and offline peers do not remove verified membership; authenticated binding
+    reconciliation can resume suspended work once the conflict is resolved.
+21. Restart a receiver after a completed `hello` exchange, then deliver an
+    existing batch without another `hello`. It recovers the verified binding
+    and limits and completes the batch without human intervention. Resetting
+    batch/inventory progress preserves that peer state; a newly learned local
+    identity conflict still prevents traffic under that binding. A crash during
+    `hello` leaves either a retryable pending exchange or durable verified state, never a
+    successful reply whose peer state existed only in memory.
+22. Initialize an account without Coordinate Mediation, then restore and enroll
+    a second replica using that verified account intent. Account registration
+    and replica pickup use their respective DIDs. Ordinary account evidence
+    cannot substitute for the replica-mediation intent or transfer old mail.
+    Synchronizing retired communication DIDs preserves their recipient bindings
+    without authorizing new application work through those DIDs.
