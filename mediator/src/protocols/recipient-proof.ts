@@ -11,7 +11,19 @@ import { canonicalDid, provenDid, signedPayload } from "./replica-grant.js";
 
 export const RECIPIENT_PROOF_TYP = "estoc/recipient-add+jws";
 
-const PROOF_FIELDS = ["account", "aud", "recipient"];
+/**
+ * What the recipient signs: a compact JWS shaped like a replica grant's, with
+ * its own `typ` and a `kid` naming one of the recipient's authentication
+ * keys. Each DID may be spelled in either form of a did:peer:4.
+ */
+export interface RecipientProofPayload {
+  account: string;
+  /** The mediator DID the request is addressed to. */
+  aud: string;
+  recipient: string;
+}
+
+const PROOF_FIELDS: (keyof RecipientProofPayload)[] = ["account", "aud", "recipient"];
 
 export interface RecipientProof {
   /** Both in their short form when they are did:peer:4, however the proof spelled them. */

@@ -29,6 +29,12 @@ import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js"
  * recipients are append-only. These accounts share
  * nothing with coordinate-mediation's: a DID is one kind or the other, and
  * neither protocol's controls reach the other's state.
+ *
+ * A control is a request the account DID authcrypts to one mediator DID, with
+ * a body of exactly the members its type lists below. Its answer is the
+ * matching reply or a problem-report, sealed to the account, with the
+ * request's `id` as `thid`. Every DID in a body that is a did:peer:4 is
+ * answered in its short form.
  */
 
 export const REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/register`;
@@ -38,14 +44,91 @@ export const REPLICAS = `${REPLICA_MEDIATION_PROTOCOL}/replicas`;
 export const RECIPIENT_ADD = `${REPLICA_MEDIATION_PROTOCOL}/recipient-add`;
 export const RECIPIENT_ADDED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-added`;
 
+/** Enrolls the replica a grant names; the first one creates the account with it. */
+export interface RegisterBody {
+  /** The compact JWS `verifyReplicaGrant` accepts, signed by the sending account. */
+  grant: string;
+}
+
+/** Also the answer to an exact repeat, which changes nothing and keeps the first time. */
+export interface RegisteredBody {
+  account: string;
+  mediation_id: string;
+  /** The mediator DID the request addressed: where senders forward the account's mail. */
+  routing_did: string;
+  replica_id: string;
+  replica_did: string;
+  state: "active";
+  /** Seconds since the epoch, as are all times here. */
+  registered_time: number;
+  limits: Limits;
+}
+
+/** What the mediator holds the account to, as configured when the reply was written. */
+export interface Limits {
+  /** How long unclaimed mail waits; a forward's own `expires_time` can only shorten it. */
+  message_retention_seconds: number;
+  max_message_bytes: number;
+  max_active_replicas: number;
+  /** The largest `limit` a `list` may ask for. */
+  max_membership_page: number;
+  max_shared_recipients: number;
+  /** Envelope bytes and envelopes waiting at once; one shared by several replicas counts once. */
+  max_retained_bytes: number;
+  max_retained_messages: number;
+  max_deliveries_per_request: number;
+}
+
+/** Asks for the account's replicas, in the order they enrolled. */
+export interface ListBody {
+  /** Null to begin, then the `next_cursor` of the page before. */
+  cursor: string | null;
+  /** From 1 to `max_membership_page`. */
+  limit: number;
+}
+
+export interface ReplicasBody {
+  entries: { grant: string; state: "active"; registered_time: number }[];
+  /**
+   * Null on the last page. The pages of one listing are the replicas enrolled
+   * when it began; a cursor is the account's alone and never expires.
+   */
+  next_cursor: string | null;
+}
+
+/** Routes one communication DID's mail to the account, for good. */
+export interface RecipientAddBody {
+  /** A did:peer:4, in either form. */
+  recipient_did: string;
+  /** Its long form; null once the mediator keeps one from an earlier add. */
+  resolution_material: string | null;
+  /** The compact JWS `verifyRecipientProof` accepts, signed by the recipient DID. */
+  proof: string;
+}
+
+export interface RecipientAddedBody {
+  recipient_did: string;
+  /** `no_change`: the account already held it. */
+  status: "added" | "no_change";
+}
+
+/** How a control is refused: a problem-report with code `e.estoc.replica-mediation.<this>`. */
 type Problem =
+  /** Not authcrypt by the DID it names to exactly one mediator DID, or not exactly the control's body. */
   | "invalid-message"
+  /** The grant does not verify, or is for another account, mediator or sender. */
   | "invalid-grant"
+  /** The recipient does not resolve, or its proof does not verify for this account and mediator. */
   | "invalid-recipient"
+  /** The account does not exist and this mediator creates none. */
   | "account-refused"
+  /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
+  /** A DID or ID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
+  /** Pickup asked by the account DID: only its replicas hold queues. */
   | "replica-required"
+  /** The account is at its replica or recipient limit. */
   | "quota";
 
 export function replicaProblem(problem: Problem): Reply {
@@ -55,7 +138,7 @@ export function replicaProblem(problem: Problem): Reply {
   };
 }
 
-export function replicaLimits(policy: MediatorPolicy): Record<string, number> {
+export function replicaLimits(policy: MediatorPolicy): Limits {
   return {
     message_retention_seconds: policy.messageTtlSeconds,
     max_message_bytes: policy.maxMessageBytes,
@@ -68,14 +151,15 @@ export function replicaLimits(policy: MediatorPolicy): Record<string, number> {
   };
 }
 
-interface Control {
+interface Control<Body> {
   /** The authenticated account DID, in its short form when it is a did:peer:4. */
   account: string;
   /** The one mediator DID the request named and was sealed to, as it spelled it. */
   addressed: string;
   /** That DID in its short form when it is a did:peer:4. */
   mediator: string;
-  body: Record<string, unknown>;
+  /** Exactly the control's members; what each holds is still unchecked. */
+  body: Record<keyof Body, unknown>;
 }
 
 /**
@@ -83,11 +167,11 @@ interface Control {
  * names, to exactly one of this mediator's DIDs, with a body of exactly
  * `fields`. Null when it is not that.
  */
-function controlOf(
+function controlOf<Body>(
   incoming: Unpacked,
   { ctx, sender }: HandlerContext,
-  fields: string[]
-): Control | null {
+  fields: (keyof Body & string)[]
+): Control<Body> | null {
   const { message, addressedTo } = incoming;
   if (
     sender === null ||
@@ -110,7 +194,7 @@ function controlOf(
     account: canonicalDid(sender),
     addressed: addressedTo,
     mediator: canonicalDid(addressedTo),
-    body: message.body,
+    body: message.body as Record<keyof Body, unknown>,
   };
 }
 
@@ -122,7 +206,7 @@ export async function register(
   if (sender === null) {
     return null;
   }
-  const control = controlOf(incoming, context, ["grant"]);
+  const control = controlOf<RegisterBody>(incoming, context, ["grant"]);
   if (control === null) {
     return replicaProblem("invalid-message");
   }
@@ -180,7 +264,7 @@ export async function register(
           state: "active",
           registered_time: registration.registeredTime,
           limits: replicaLimits(config),
-        },
+        } satisfies RegisteredBody,
       };
   }
 }
@@ -231,7 +315,7 @@ export async function list(incoming: Unpacked, context: HandlerContext): Promise
   if (sender === null) {
     return null;
   }
-  const control = controlOf(incoming, context, ["cursor", "limit"]);
+  const control = controlOf<ListBody>(incoming, context, ["cursor", "limit"]);
   if (control === null) {
     return replicaProblem("invalid-message");
   }
@@ -273,7 +357,7 @@ export async function list(incoming: Unpacked, context: HandlerContext): Promise
       })),
       next_cursor:
         last < through ? writeCursor({ account: control.account, through, after: last }) : null,
-    },
+    } satisfies ReplicasBody,
   };
 }
 
@@ -307,7 +391,11 @@ export async function recipientAdd(
   if (sender === null) {
     return null;
   }
-  const control = controlOf(incoming, context, ["proof", "recipient_did", "resolution_material"]);
+  const control = controlOf<RecipientAddBody>(incoming, context, [
+    "proof",
+    "recipient_did",
+    "resolution_material",
+  ]);
   if (control === null) {
     return replicaProblem("invalid-message");
   }
@@ -352,6 +440,9 @@ export async function recipientAdd(
       return replicaProblem("quota");
     case "added":
     case "no_change":
-      return { type: RECIPIENT_ADDED, body: { recipient_did: recipient.did, status: outcome } };
+      return {
+        type: RECIPIENT_ADDED,
+        body: { recipient_did: recipient.did, status: outcome } satisfies RecipientAddedBody,
+      };
   }
 }
