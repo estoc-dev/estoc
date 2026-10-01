@@ -847,7 +847,6 @@ describe("a did:peer", () => {
 
   type Sender = Awaited<ReturnType<typeof peer4Agent>>;
 
-  /** The most padding that keeps one of `sender`'s long forms within the limit. */
   function paddingAtLimit(sender: Sender): number {
     let [within, over] = [0, 2 * MAX_PEER_DID_BYTES];
     while (over - within > 1) {

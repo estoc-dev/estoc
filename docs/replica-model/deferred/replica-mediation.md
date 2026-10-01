@@ -233,10 +233,11 @@ or replica binding, including when that binding already exists. The general
 envelope-size limit applies independently.
 
 The mediator applies the same size to every Peer DID it resolves, for every
-protocol and before unpacking: an envelope whose authenticated sender is a Peer
-DID larger than 8192 UTF-8 bytes, or a short form whose retained long form is,
-fails to unpack and reaches no handler. An account whose long form exceeds the
-bound therefore cannot register under either spelling.
+protocol, during envelope unpacking and before decoding the DID: an envelope
+whose authenticated sender is a Peer DID larger than 8192 UTF-8 bytes, or a
+short form whose retained long form is, fails to unpack and reaches no handler.
+An account whose long form exceeds the bound therefore cannot register under
+either spelling.
 
 Its payload is RFC 8785 canonical JSON with exactly these fields:
 

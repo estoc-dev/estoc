@@ -32,11 +32,11 @@ export interface ResolveResult {
 }
 
 /**
- * A did:peer carries its document in base58, and decoding that takes time
- * that grows faster than its length: an identifier well under the envelope
- * limit can hold the process for seconds. Whoever names one decides its size
- * and need not be known here, so the size is judged before anything is
- * decoded. The documents agents mint are a small fraction of this.
+ * A did:peer carries its document or its keys in base58, and decoding that
+ * takes time that grows faster than its length: an identifier well under the
+ * envelope limit can hold the process for seconds. Whoever names one decides
+ * its size and need not be known here, so the size is judged before anything
+ * is decoded. The documents agents mint are a small fraction of this.
  */
 export const MAX_PEER_DID_BYTES = 8192;
 
