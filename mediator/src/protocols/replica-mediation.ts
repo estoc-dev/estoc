@@ -1,4 +1,11 @@
-import { isPeerDID4 } from "@estoc/did-peer";
+import {
+  isLongForm,
+  isPeerDID4,
+  isShortForm,
+  longToShort,
+  resolveDIDCommDoc,
+} from "@estoc/did-peer";
+import type { DIDDoc } from "@estoc/did-peer";
 
 import type { MediatorPolicy } from "../config.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
@@ -7,6 +14,7 @@ import { isMediatorOwnDid } from "./coordinate-mediation.js";
 import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
+import { verifyRecipientProof } from "./recipient-proof.js";
 import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
@@ -14,7 +22,9 @@ import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js"
  *
  * An account here is a vault's standalone mediation arrangement: the account
  * DID manages it and never picks up mail, and each replica it enrolls is a
- * DID of its own that will. Enrollment is append-only. These accounts share
+ * DID of its own that will. The communication DIDs it receives mail for are
+ * added one at a time, each by its own controller's proof. Enrollment and
+ * recipients are append-only. These accounts share
  * nothing with coordinate-mediation's: a DID is one kind or the other, and
  * neither protocol's controls reach the other's state.
  */
@@ -23,10 +33,13 @@ export const REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/register`;
 export const REGISTERED = `${REPLICA_MEDIATION_PROTOCOL}/registered`;
 export const LIST = `${REPLICA_MEDIATION_PROTOCOL}/list`;
 export const REPLICAS = `${REPLICA_MEDIATION_PROTOCOL}/replicas`;
+export const RECIPIENT_ADD = `${REPLICA_MEDIATION_PROTOCOL}/recipient-add`;
+export const RECIPIENT_ADDED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-added`;
 
 type Problem =
   | "invalid-message"
   | "invalid-grant"
+  | "invalid-recipient"
   | "account-refused"
   | "unknown-account"
   | "identity-conflict"
@@ -262,4 +275,83 @@ export async function list(incoming: Unpacked, context: HandlerContext): Promise
         last < through ? writeCursor({ account: control.account, through, after: last }) : null,
     },
   };
+}
+
+/**
+ * The document of the did:peer:4 a request names as its recipient, under its
+ * short form; null unless the long form supplied, or the one kept from an
+ * earlier add when none is, is that DID's own.
+ */
+async function recipientOf(
+  named: string,
+  supplied: string | null,
+  { store }: HandlerContext
+): Promise<{ did: string; longForm: string; doc: DIDDoc } | null> {
+  const did = provenDid(named);
+  if (did === null || !isShortForm(did)) {
+    return null;
+  }
+  const longForm = supplied ?? (await store.sharedRecipientMaterial(did));
+  if (longForm === null || !isLongForm(longForm) || longToShort(longForm) !== did) {
+    return null;
+  }
+  const doc = await resolveDIDCommDoc(longForm);
+  return doc === null ? null : { did, longForm, doc };
+}
+
+export async function recipientAdd(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  const { ctx, store, config, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf(incoming, context, ["proof", "recipient_did", "resolution_material"]);
+  if (control === null) {
+    return replicaProblem("invalid-message");
+  }
+  const { recipient_did: named, resolution_material: supplied, proof } = control.body;
+  if (
+    typeof named !== "string" ||
+    typeof proof !== "string" ||
+    (supplied !== null && typeof supplied !== "string")
+  ) {
+    return replicaProblem("invalid-message");
+  }
+
+  // The proof is checked on every request, also for a binding already held.
+  const recipient = await recipientOf(named, supplied, context);
+  const proven = recipient === null ? null : await verifyRecipientProof(proof, recipient.doc);
+  if (
+    recipient === null ||
+    proven === null ||
+    proven.account !== control.account ||
+    proven.mediator !== control.mediator
+  ) {
+    return replicaProblem("invalid-recipient");
+  }
+  if (isMediatorOwnDid(recipient.did, ctx.dids)) {
+    return replicaProblem("identity-conflict");
+  }
+
+  const outcome = await store.addSharedRecipient({
+    accountDid: control.account,
+    mediator: control.mediator,
+    recipientDid: recipient.did,
+    recipientLongForm: recipient.longForm,
+    maxRecipients: config.maxSharedRecipients,
+  });
+
+  switch (outcome) {
+    case "unknown":
+      return replicaProblem("unknown-account");
+    case "conflict":
+      return replicaProblem("identity-conflict");
+    case "full":
+      return replicaProblem("quota");
+    case "added":
+    case "no_change":
+      return { type: RECIPIENT_ADDED, body: { recipient_did: recipient.did, status: outcome } };
+  }
 }

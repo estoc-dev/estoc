@@ -25,6 +25,8 @@ import type {
   RegisterOutcome,
   ReplicaRegistration,
   RosterPage,
+  SharedRecipient,
+  ShareOutcome,
   StoredMessage,
   StoreOutcome,
   UploadGrant,
@@ -122,6 +124,13 @@ const SCHEMA = [
      UNIQUE (account_did, replica_id),
      UNIQUE (account_did, ordinal)
    )`,
+  `CREATE TABLE IF NOT EXISTS replica_recipients (
+     recipient_did TEXT PRIMARY KEY,
+     account_did   TEXT NOT NULL REFERENCES replica_accounts(did),
+     long_form     TEXT NOT NULL,
+     created_at    INTEGER NOT NULL
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_recipients_account ON replica_recipients(account_did)",
   `CREATE TABLE IF NOT EXISTS identity (
      id         INTEGER PRIMARY KEY CHECK (id = 1),
      secrets    TEXT NOT NULL,
@@ -151,9 +160,11 @@ function spellings(did: string, longForm?: string): [string, string] {
 const NOT_ORDINARY =
   "NOT EXISTS (SELECT 1 FROM accounts WHERE did IN (?, ?)) " +
   "AND NOT EXISTS (SELECT 1 FROM keylist WHERE recipient_did IN (?, ?))";
+const NOT_SHARED_RECIPIENT =
+  "NOT EXISTS (SELECT 1 FROM replica_recipients WHERE recipient_did IN (?, ?))";
 const NOT_REPLICA_MEDIATION =
   "NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did IN (?, ?)) " +
-  "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?))";
+  `AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?)) AND ${NOT_SHARED_RECIPIENT}`;
 
 export class SqlStore implements MediationStore {
   private ttlMs: number;
@@ -271,7 +282,7 @@ export class SqlStore implements MediationStore {
         sql:
           "INSERT OR IGNORE INTO accounts (did, created_at) " +
           `SELECT ?, ? WHERE ${NOT_REPLICA_MEDIATION}`,
-        params: [did, Date.now(), ...names, ...names],
+        params: [did, Date.now(), ...names, ...names, ...names],
       },
       { sql: "SELECT 1 AS one FROM accounts WHERE did = ?", params: [did] },
     ]);
@@ -306,7 +317,7 @@ export class SqlStore implements MediationStore {
           "INSERT INTO keylist (recipient_did, owner_did, created_at) " +
           `SELECT ?, ?, ? WHERE ${NOT_REPLICA_MEDIATION} ` +
           "ON CONFLICT (recipient_did) DO NOTHING",
-        params: [recipientDid, ownerDid, Date.now(), ...names, ...names],
+        params: [recipientDid, ownerDid, Date.now(), ...names, ...names, ...names],
       },
       owner,
     ]);
@@ -397,6 +408,7 @@ export class SqlStore implements MediationStore {
           `SELECT ?, ?, ?, ?, ? WHERE ? = 1 AND ? > 0 AND ${NOT_ORDINARY} AND ${NOT_ORDINARY} ` +
           `AND ${replicaIsNoAccount} ` +
           "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?)) " +
+          `AND ${NOT_SHARED_RECIPIENT} ` +
           "ON CONFLICT (did) DO NOTHING",
         params: [
           accountDid,
@@ -413,6 +425,8 @@ export class SqlStore implements MediationStore {
           replicaDid,
           accountDid,
           replicaDid,
+          accountDid,
+          replicaDid,
         ],
       },
       {
@@ -422,7 +436,8 @@ export class SqlStore implements MediationStore {
           `SELECT ?, ?, ?, ${size} + 1, ?, ?, ? ` +
           "WHERE EXISTS (SELECT 1 FROM replica_accounts " +
           "WHERE did = ? AND mediation_id = ? AND mediator = ?) " +
-          `AND ${NOT_ORDINARY} AND ${replicaIsNoAccount} AND ${size} < ? ` +
+          `AND ${NOT_ORDINARY} AND ${replicaIsNoAccount} AND ${NOT_SHARED_RECIPIENT} ` +
+          `AND ${size} < ? ` +
           "ON CONFLICT DO NOTHING",
         params: [
           replicaDid,
@@ -437,6 +452,8 @@ export class SqlStore implements MediationStore {
           mediator,
           ...replica,
           ...replica,
+          replicaDid,
+          replicaDid,
           replicaDid,
           accountDid,
           maxReplicas,
@@ -522,6 +539,80 @@ export class SqlStore implements MediationStore {
       "SELECT long_form FROM replica_accounts WHERE did = ? " +
         "UNION ALL SELECT long_form FROM replicas WHERE replica_did = ?",
       [did, did]
+    );
+    return row?.long_form ?? null;
+  }
+
+  /*
+   * One transaction, so two accounts racing for a DID cannot both bind it and
+   * a refused add leaves nothing behind. The recipient's owner before and
+   * after the insert tells an addition from a binding that was already there.
+   */
+  async addSharedRecipient({
+    accountDid,
+    mediator,
+    recipientDid,
+    recipientLongForm,
+    maxRecipients,
+  }: SharedRecipient): Promise<ShareOutcome> {
+    const names = spellings(recipientDid, recipientLongForm);
+    const elsewhere = [...names, ...names, ...names, ...names];
+    const unbound =
+      `${NOT_ORDINARY} AND NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did IN (?, ?)) ` +
+      "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?))";
+    const owner = {
+      sql: "SELECT account_did FROM replica_recipients WHERE recipient_did = ?",
+      params: [recipientDid],
+    };
+
+    const [account, before, , after, free] = await this.batch([
+      {
+        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
+        params: [accountDid, mediator],
+      },
+      owner,
+      {
+        sql:
+          "INSERT INTO replica_recipients (recipient_did, account_did, long_form, created_at) " +
+          "SELECT ?, ?, ?, ? " +
+          "WHERE EXISTS (SELECT 1 FROM replica_accounts WHERE did = ? AND mediator = ?) " +
+          `AND ${unbound} ` +
+          "AND (SELECT COUNT(*) FROM replica_recipients WHERE account_did = ?) < ? " +
+          "ON CONFLICT (recipient_did) DO NOTHING",
+        params: [
+          recipientDid,
+          accountDid,
+          recipientLongForm,
+          Date.now(),
+          accountDid,
+          mediator,
+          ...elsewhere,
+          accountDid,
+          maxRecipients,
+        ],
+      },
+      owner,
+      { sql: `SELECT (${unbound}) AS free`, params: elsewhere },
+    ]);
+
+    if (account.rows.length === 0) {
+      return "unknown";
+    }
+    const ownerIn = (result: SqlResult) =>
+      (result.rows as { account_did: string }[])[0]?.account_did ?? null;
+    if (ownerIn(after) === accountDid) {
+      return ownerIn(before) === accountDid ? "no_change" : "added";
+    }
+    if (ownerIn(after) !== null) {
+      return "conflict";
+    }
+    return (free.rows as { free: number }[])[0].free === 1 ? "full" : "conflict";
+  }
+
+  async sharedRecipientMaterial(did: string): Promise<string | null> {
+    const row = await this.first<{ long_form: string }>(
+      "SELECT long_form FROM replica_recipients WHERE recipient_did = ?",
+      [did]
     );
     return row?.long_form ?? null;
   }

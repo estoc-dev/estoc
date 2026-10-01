@@ -20,12 +20,12 @@ import type { DIDDoc, VerificationMethod } from "@estoc/did-peer";
 
 export const GRANT_TYP = "estoc/replica-grant+jws";
 
-/** Several times what a did:peer:4 long form and a signature come to. */
-const MAX_GRANT_CHARS = 16 * 1024;
+/** Several times what the did:peer:4 long forms a payload names and a signature come to. */
+const MAX_JWS_CHARS = 16 * 1024;
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const PAYLOAD_FIELDS = [
+const GRANT_FIELDS = [
   "account",
   "mediation_id",
   "mediator",
@@ -156,11 +156,12 @@ function authenticationKey(doc: DIDDoc, kid: string): Record<string, unknown> | 
 }
 
 /**
- * The payload as its exact fields, or null: a grant is RFC 8785 text, so the
- * bytes that were signed are the only spelling of what they say. A byte-order
- * mark is kept in the text, where it fails like any other stray byte.
+ * The payload as exactly `fields`, or null: what is signed is RFC 8785 text,
+ * so the bytes that were signed are the only spelling of what they say. A
+ * byte-order mark is kept in the text, where it fails like any other stray
+ * byte.
  */
-function payloadOf(bytes: Uint8Array): Record<string, string> | null {
+function payloadOf(bytes: Uint8Array, fields: string[]): Record<string, string> | null {
   let text: string;
   let parsed: unknown;
   try {
@@ -172,16 +173,52 @@ function payloadOf(bytes: Uint8Array): Record<string, string> | null {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return null;
   }
-  const names = Object.keys(parsed).sort();
   if (
-    names.length !== PAYLOAD_FIELDS.length ||
-    names.some((name, i) => name !== PAYLOAD_FIELDS[i]) ||
+    Object.keys(parsed).sort().join() !== [...fields].sort().join() ||
     Object.values(parsed).some((value) => typeof value !== "string") ||
     canonicalize(parsed) !== text
   ) {
     return null;
   }
   return parsed as Record<string, string>;
+}
+
+/**
+ * The payload of `jws`, a compact JWS of type `typ` that one of `signerDoc`'s
+ * own authentication keys signed over exactly `fields`; null otherwise. The
+ * strings it holds are still only what the signer wrote.
+ */
+export async function signedPayload(
+  jws: unknown,
+  typ: string,
+  fields: string[],
+  signerDoc: DIDDoc
+): Promise<Record<string, string> | null> {
+  if (typeof jws !== "string" || jws.length > MAX_JWS_CHARS) {
+    return null;
+  }
+  try {
+    const header = decodeProtectedHeader(jws);
+    const names = Object.keys(header).sort();
+    if (
+      names.join() !== "alg,kid,typ" ||
+      header.alg !== "EdDSA" ||
+      header.typ !== typ ||
+      typeof header.kid !== "string"
+    ) {
+      return null;
+    }
+    const jwk = authenticationKey(signerDoc, header.kid);
+    if (jwk === null) {
+      return null;
+    }
+    const verified = await compactVerify(jws, await importJWK(jwk, "EdDSA"), {
+      algorithms: ["EdDSA"],
+    });
+    return payloadOf(verified.payload, fields);
+  } catch {
+    return null;
+  }
 }
 
 function servedBy(doc: DIDDoc, mediator: string): boolean {
@@ -204,33 +241,7 @@ export async function verifyReplicaGrant(
   jws: unknown,
   accountDoc: DIDDoc
 ): Promise<ReplicaGrant | null> {
-  if (typeof jws !== "string" || jws.length > MAX_GRANT_CHARS) {
-    return null;
-  }
-
-  let payload: Record<string, string> | null;
-  try {
-    const header = decodeProtectedHeader(jws);
-    const names = Object.keys(header).sort();
-    if (
-      names.join() !== "alg,kid,typ" ||
-      header.alg !== "EdDSA" ||
-      header.typ !== GRANT_TYP ||
-      typeof header.kid !== "string"
-    ) {
-      return null;
-    }
-    const jwk = authenticationKey(accountDoc, header.kid);
-    if (jwk === null) {
-      return null;
-    }
-    const verified = await compactVerify(jws, await importJWK(jwk, "EdDSA"), {
-      algorithms: ["EdDSA"],
-    });
-    payload = payloadOf(verified.payload);
-  } catch {
-    return null;
-  }
+  const payload = await signedPayload(jws, GRANT_TYP, GRANT_FIELDS, accountDoc);
   if (payload === null) {
     return null;
   }

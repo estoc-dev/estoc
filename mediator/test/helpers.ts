@@ -222,6 +222,7 @@ export async function peer4Agent(
 }
 
 export const GRANT_TYP = "estoc/replica-grant+jws";
+export const RECIPIENT_PROOF_TYP = "estoc/recipient-add+jws";
 
 /** A compact JWS over `payload` in its RFC 8785 form, as `signer`'s authentication key. */
 export async function signedBy(
