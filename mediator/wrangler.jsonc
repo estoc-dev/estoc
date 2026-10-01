@@ -1,9 +1,8 @@
 // Cloudflare Workers deployment of the mediator.
 //
-// Deploying by hand, from this directory after `pnpm install`:
+// Deploying, from this directory after `pnpm install`:
 //   1. pnpm exec wrangler d1 create mediator   → paste database_id below
 //   2. pnpm run deploy
-// (The "Deploy to Cloudflare" button does both for you, including the id.)
 //
 // There is nothing else: no secrets and no URL to configure. The mediator
 // mints its keys into D1 on first contact and answers every host that routes
@@ -44,8 +43,8 @@
   "observability": { "enabled": true },
   // This deployment's own settings, deployed with `wrangler deploy --env
   // prod` — the same worker and database, just the extra vars. Kept in an
-  // environment because the one-click deploy must not ship someone else's
-  // abuse inbox. Bindings aren't inherited into environments, so the D1 and
+  // environment because a copy deployed on another account must not ship
+  // someone else's abuse inbox. Bindings aren't inherited into environments, so the D1 and
   // DO blocks are repeated here verbatim — keep them in sync.
   "env": {
     "prod": {
@@ -67,7 +66,7 @@
       ],
       // blob-store/1.0: encrypted packages agents put here for contacts to
       // download. Optional — without the binding the mediator keeps no
-      // blobs — so it is not in the one-click deploy;
+      // blobs — so it is not in the default deployment;
       // `wrangler r2 bucket create didcomm-mediator-blobs` before deploying.
       "r2_buckets": [
         { "binding": "BLOBS", "bucket_name": "didcomm-mediator-blobs" }

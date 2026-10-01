@@ -1,3 +1,8 @@
+# Fixed, so the volume below is the same one wherever this file is run from:
+# the default project name is the directory's, and a renamed directory would
+# start the mediator on an empty volume with fresh keys.
+name: didcomm-mediator
+
 services:
   mediator:
     build:

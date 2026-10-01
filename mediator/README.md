@@ -1,8 +1,6 @@
 # didcomm-mediator
 
-A DIDComm v2 mediator anyone can run with one command — or one click:
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/estoc-net/estoc/tree/main/mediator)
+A DIDComm v2 mediator anyone can run.
 
 TypeScript, standard protocols over plain HTTP/WebSocket transport, no
 accounts to create and no vendor SDK to adopt — authentication is the
@@ -20,12 +18,13 @@ those keys, so **keep the database, keep the mediator**.
 
 ## Quick start (Cloudflare Workers)
 
-Click the button above — it clones the [estoc workspace](../README.md) this
-directory is part of into your GitHub account, provisions the D1 database
-and Durable Object, and deploys. Or by hand, from this directory after
-`pnpm install` at the workspace root:
+The mediator is built from the [estoc workspace](../README.md) it is part
+of, so deploy from a clone of the whole repository:
 
 ```sh
+git clone https://github.com/estoc-net/estoc && cd estoc
+pnpm install
+cd mediator
 pnpm exec wrangler d1 create mediator    # paste database_id into wrangler.jsonc
 pnpm run deploy
 pnpm run smoke https://your-worker.example.workers.dev
@@ -44,7 +43,7 @@ any running mediator, whichever target it is.
 ## Quick start (Docker)
 
 ```sh
-# in this directory; the image is built from the workspace root
+git clone https://github.com/estoc-net/estoc && cd estoc/mediator
 MEDIATOR_PUBLIC_URL=https://mediator.example.com docker compose up -d
 curl -s https://mediator.example.com/
 ```
@@ -58,6 +57,15 @@ anywhere. Either way the DID is derived from the keys *and* the URL, so
 changing the URL renames the mediator (the keys stay). Keep the
 `mediator-data` volume and the URL, keep the DID; delete the volume and the
 next start mints fresh keys.
+
+The image is built from the workspace root, and the Compose project is named
+`didcomm-mediator` wherever the file sits. A deployment started from the
+former `didcomm-mediator` repository with default settings therefore keeps
+its volume (`didcomm-mediator_mediator-data`), and with it its keys,
+accounts and queued messages: stop it there (`docker compose down`, which
+leaves volumes alone), then `docker compose up -d --build` here. One started
+under another project name (`-p <name>` or `COMPOSE_PROJECT_NAME`) keeps
+that name here the same way: `docker compose -p <name> up -d --build`.
 
 TLS is out of scope: put any reverse proxy (Caddy, nginx) in front and point
 `MEDIATOR_PUBLIC_URL` at the public HTTPS address. The proxy must also pass
@@ -197,6 +205,7 @@ Over a WebSocket there is no status: a refused forward is dropped.
 ```sh
 pnpm install                             # at the workspace root
 pnpm --filter @estoc/did-peer run build  # the one workspace library it imports
+cd mediator
 MEDIATOR_PUBLIC_URL=http://localhost:8080 pnpm run dev:node
 pnpm test
 pnpm run typecheck

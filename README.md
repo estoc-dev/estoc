@@ -15,7 +15,7 @@ through, in one pnpm workspace:
 | `packages/post/` | [`@estoc/post`](https://www.npmjs.com/package/@estoc/post) | the post/1.0 format for folder-objects: recognise, validate, read, and the reference renderer |
 | `packages/daemon-api/` | `@estoc/daemon-api` | the contract between a daemon and its views, the one package a view installs: the published state and records, the method table and error codes with a schema for each, the client, the wire, and the pure helpers a view computes with |
 | `packages/daemon/` | `@estoc/daemon` | the daemon: agent + vault behind the API; a browser-worker host (the app) and a Node host (`estoc-daemon`, a SQLite vault in a folder on disk, the app served on the same origin) |
-| `mediator/` | `@estoc/mediator` | a DIDComm v2 mediator anyone can run — Cloudflare Workers or Node + Docker, with its own one-click deploy; [mediator.estoc.dev](https://mediator.estoc.dev) is one. Not published: it is deployed from this tree |
+| `mediator/` | `@estoc/mediator` | a DIDComm v2 mediator anyone can run — Cloudflare Workers or Node + Docker; [mediator.estoc.dev](https://mediator.estoc.dev) is one. Not published: it is deployed from this tree |
 | `packages/cli/` | [`@estoc/cli`](https://www.npmjs.com/package/@estoc/cli) | `estoc` — vaults on disk, `estoc object hash\|sign\|verify`, `estoc serve` |
 
 Inside the workspace every `@estoc/*` dependency is `workspace:^`: the app
