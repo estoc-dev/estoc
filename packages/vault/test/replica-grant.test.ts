@@ -1,6 +1,7 @@
 import { canonicalText } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";
 import { base64urlnopad } from "@scure/base";
+import { encodeLongForm } from "@estoc/did-peer";
 import { CompactSign, decodeProtectedHeader, importJWK } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -8,6 +9,8 @@ import {
   IdentityMismatch,
   InvalidReplicaGrant,
   Keys,
+  MAX_GRANT_JWS_CHARS,
+  MAX_GRANT_LONG_FORM_BYTES,
   REPLICA_GRANT_TYP,
   didcommServiceUris,
   mintDid,
@@ -49,7 +52,6 @@ beforeAll(async () => {
   mediation = { mediationId: MEDIATION, mediatorDid: MEDIATOR, me: { did: (await mintMediationDid(keys, MEDIATION)).longFormDid } };
 });
 
-/** A grant whose payload is `payload`, signed by `key` under `kid`. */
 async function signed(payload: Record<string, string>, key: LocalKey, kid: string): Promise<string> {
   return new CompactSign(encoder.encode(canonicalText(payload))).setProtectedHeader({ alg: "EdDSA", typ: REPLICA_GRANT_TYP, kid }).sign(await importJWK(key.privateJwk(), "EdDSA"));
 }
@@ -88,12 +90,43 @@ describe("signReplicaGrant", () => {
       kid: `${account.presentedDid}#key-1`,
     });
     expect(await signReplicaGrant(keys, mediation, REPLICA)).toBe(jws);
-    await expect(verifyReplicaGrant(keys, jws)).resolves.toEqual(readReplicaGrant(jws));
+    await expect(verifyReplicaGrant(keys, jws, mediation.me.did)).resolves.toEqual(readReplicaGrant(jws));
   });
 
   it("refuses an arrangement whose recorded account is not the seed's", async () => {
     const other = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
     await expect(signReplicaGrant(keys, { ...mediation, me: { did: other } }, REPLICA)).rejects.toThrow(IdentityMismatch);
+  });
+});
+
+describe("readReplicaGrant", () => {
+  it("refuses a payload that is not I-JSON as a grant, like any other misspelling", async () => {
+    const [header, body] = (await signReplicaGrant(keys, mediation, REPLICA)).split(".") as [string, string];
+    const text = new TextDecoder().decode(base64urlnopad.decode(body));
+    for (const escape of ["\\ud800", "\\uffff"]) {
+      const lone = `${header}.${base64urlnopad.encode(encoder.encode(text.replace(MEDIATOR, `did:web:${escape}`)))}.c2ln`;
+      expect(() => readReplicaGrant(lone)).toThrow(InvalidReplicaGrant);
+    }
+  });
+
+  it("refuses a grant longer than the mediator reads, which the signer never returns", async () => {
+    const { authentication, keyAgreement } = await keys.mediationKeys(MEDIATION);
+    const method = (id: string, publicKey: LocalKey) => ({ id, type: "Multikey", publicKeyMultibase: publicKey.publicKey });
+    const mediatorOf = (padding: number) =>
+      encodeLongForm({
+        "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"],
+        verificationMethod: [method("#key-1", authentication), method("#key-2", keyAgreement)],
+        authentication: ["#key-1"],
+        keyAgreement: ["#key-2"],
+        description: "x".repeat(padding),
+      }) as Did;
+    const fits = await signReplicaGrant(keys, { ...mediation, mediatorDid: mediatorOf(1000) }, REPLICA);
+    expect(fits.length).toBeLessThanOrEqual(MAX_GRANT_JWS_CHARS);
+    const large = mediatorOf(3100);
+    expect(encoder.encode(large).length).toBeLessThanOrEqual(MAX_GRANT_LONG_FORM_BYTES);
+    await expect(signReplicaGrant(keys, { ...mediation, mediatorDid: large }, REPLICA)).rejects.toThrow(/at most 16384 characters/);
+    const [header, , signature] = fits.split(".") as [string, string, string];
+    expect(() => readReplicaGrant(`${header}.${"A".repeat(MAX_GRANT_JWS_CHARS)}.${signature}`)).toThrow(/at most 16384 characters/);
   });
 });
 
@@ -103,7 +136,7 @@ describe("verifyReplicaGrant", () => {
     const account = peerResolution(mediation.me.did);
     const short = await signed(payloadOf(jws), (await keys.mediationKeys(MEDIATION)).authentication, `${account.did}#key-1`);
     expect(short).not.toBe(jws);
-    const grant = await verifyReplicaGrant(keys, short);
+    const grant = await verifyReplicaGrant(keys, short, mediation.me.did);
     expect(sameBinding(grant, readReplicaGrant(jws))).toBe(true);
     expect(sameBinding(grant, readReplicaGrant(await signReplicaGrant(keys, mediation, REPLICA2)))).toBe(false);
   });
@@ -112,12 +145,38 @@ describe("verifyReplicaGrant", () => {
     const jws = await signReplicaGrant(keys, mediation, REPLICA);
     const payload = payloadOf(jws);
     const kid = decodeProtectedHeader(jws).kid as string;
-    await expect(verifyReplicaGrant(await open(new Uint8Array(32).fill(8)), jws)).rejects.toThrow(InvalidReplicaGrant);
-    await expect(verifyReplicaGrant(keys, await signed(payload, (await keys.mediationKeys(MEDIATION2)).authentication, kid))).rejects.toThrow(InvalidReplicaGrant);
-    await expect(verifyReplicaGrant(keys, await signed(payload, (await keys.didKeys(DID_ID)).authentication, kid))).rejects.toThrow(InvalidReplicaGrant);
+    await expect(verifyReplicaGrant(await open(new Uint8Array(32).fill(8)), jws, mediation.me.did)).rejects.toThrow(IdentityMismatch);
+    await expect(verifyReplicaGrant(keys, await signed(payload, (await keys.mediationKeys(MEDIATION2)).authentication, kid), mediation.me.did)).rejects.toThrow(InvalidReplicaGrant);
+    await expect(verifyReplicaGrant(keys, await signed(payload, (await keys.didKeys(DID_ID)).authentication, kid), mediation.me.did)).rejects.toThrow(InvalidReplicaGrant);
     const [header, , signature] = jws.split(".");
     const altered = `${header}.${base64urlnopad.encode(encoder.encode(canonicalText({ ...payload, mediator: "did:web:other.example" })))}.${signature}`;
-    await expect(verifyReplicaGrant(keys, altered)).rejects.toThrow(InvalidReplicaGrant);
+    await expect(verifyReplicaGrant(keys, altered, mediation.me.did)).rejects.toThrow(InvalidReplicaGrant);
+  });
+
+  it("holds kid to a method the account's recorded document authorizes for authentication, under either spelling of the account", async () => {
+    const jws = await signReplicaGrant(keys, mediation, REPLICA);
+    const payload = payloadOf(jws);
+    const account = peerResolution(mediation.me.did);
+    const key = (await keys.mediationKeys(MEDIATION)).authentication;
+    for (const kid of [`${account.did}#does-not-exist`, `${account.did}#key-2`, `${account.presentedDid}#key-2`]) {
+      await expect(verifyReplicaGrant(keys, await signed(payload, key, kid), mediation.me.did)).rejects.toThrow(IdentityMismatch);
+    }
+    await expect(verifyReplicaGrant(keys, await signed(payload, key, `${account.did}:z2Abc#key-1`), mediation.me.did)).rejects.toThrow(InvalidReplicaGrant);
+    await expect(verifyReplicaGrant(keys, jws, (await mintMediationDid(keys, MEDIATION2)).longFormDid)).rejects.toThrow(IdentityMismatch);
+
+    const { authentication, keyAgreement } = await keys.mediationKeys(MEDIATION);
+    const method = (id: string, publicKey: LocalKey) => ({ id, type: "Multikey", publicKeyMultibase: publicKey.publicKey });
+    const custom = encodeLongForm({
+      "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"],
+      verificationMethod: [method("#signing", authentication), method("#agreement", keyAgreement)],
+      authentication: ["#signing"],
+      keyAgreement: ["#agreement"],
+    }) as Did;
+    const own = await signReplicaGrant(keys, { ...mediation, me: { did: custom } }, REPLICA);
+    expect(decodeProtectedHeader(own).kid).toBe(`${custom}#signing`);
+    await expect(verifyReplicaGrant(keys, own, custom)).resolves.toEqual(readReplicaGrant(own));
+    await expect(verifyReplicaGrant(keys, await signed(payloadOf(own), key, `${peerResolution(custom).did}#signing`), custom)).resolves.toMatchObject({ replicaId: REPLICA });
+    await expect(verifyReplicaGrant(keys, await signed(payloadOf(own), key, `${custom}#key-1`), custom)).rejects.toThrow(IdentityMismatch);
   });
 
   it("refuses a replica the seed does not derive for that ID, or one that sends elsewhere than the grant's mediator", async () => {
@@ -126,9 +185,9 @@ describe("verifyReplicaGrant", () => {
     const payload = payloadOf(jws);
     const kid = decodeProtectedHeader(jws).kid as string;
     const other = await mintReplicaDid(keys, REPLICA2, MEDIATOR);
-    await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: other.did, replica_long_form: other.longFormDid }, account, kid))).rejects.toThrow(IdentityMismatch);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: other.did, replica_long_form: other.longFormDid }, account, kid), mediation.me.did)).rejects.toThrow(IdentityMismatch);
     const communication = await mintDid(keys, DID_ID, { kind: "mediated", routingDid: MEDIATOR });
-    await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: communication.did, replica_long_form: communication.longFormDid }, account, kid))).rejects.toThrow(IdentityMismatch);
-    await expect(verifyReplicaGrant(keys, await signed({ ...payload, mediator: "did:web:other.example" }, account, kid))).rejects.toThrow(/not the grant's mediator/);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: communication.did, replica_long_form: communication.longFormDid }, account, kid), mediation.me.did)).rejects.toThrow(IdentityMismatch);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payload, mediator: "did:web:other.example" }, account, kid), mediation.me.did)).rejects.toThrow(/not the grant's mediator/);
   });
 });

@@ -8,11 +8,12 @@
  * authentication method of the account, over the RFC 8785 text of
  * exactly the six members of `GrantPayload`.
  *
- * Reading a grant checks its spelling only. The signature, and that
- * the replica it names is this seed's, are `verifyReplicaGrant`'s.
+ * Reading a grant checks its spelling only. The signature, that `kid`
+ * is a method the account authorizes, and that the replica it names is
+ * this seed's, are `verifyReplicaGrant`'s.
  */
 
-import { canonicalText, isJsonObject } from "@estoc/event-store";
+import { InvalidJson, canonicalText, isJsonObject } from "@estoc/event-store";
 import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 import { base64urlnopad } from "@scure/base";
 
@@ -23,6 +24,9 @@ import { isCompactJwt, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } 
 import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
 
 export const REPLICA_GRANT_TYP = "estoc/replica-grant+jws";
+
+/** The longest compact JWS a grant may be, in characters: the mediator refuses a longer one unread. */
+export const MAX_GRANT_JWS_CHARS = 16 * 1024;
 
 /** The largest did:peer:4 long form a grant may carry, in UTF-8 bytes: the mediator refuses a larger one before decoding it. */
 export const MAX_GRANT_LONG_FORM_BYTES = 8192;
@@ -65,13 +69,21 @@ function payloadOf(jws: string): GrantPayload {
   if (!isJsonObject(parsed)) return refuse("the payload is a JSON object");
   if (Object.keys(parsed).sort().join() !== GRANT_MEMBERS.join()) return refuse(`the payload has exactly ${GRANT_MEMBERS.join(", ")}`);
   if (Object.values(parsed).some((value) => typeof value !== "string")) return refuse("every payload member is a string");
-  if (canonicalText(parsed) !== text) return refuse("the payload is its own RFC 8785 text");
+  let canonical: string;
+  try {
+    canonical = canonicalText(parsed);
+  } catch (err) {
+    if (err instanceof InvalidJson) return refuse(`the payload is I-JSON: ${err.message}`);
+    throw err;
+  }
+  if (canonical !== text) return refuse("the payload is its own RFC 8785 text");
   return parsed as GrantPayload;
 }
 
 /** The grant a compact JWS spells, or `InvalidReplicaGrant`. Nothing is decoded beyond the JWS itself and no signature is checked. */
 export function readReplicaGrant(jws: string): ReplicaGrant {
   if (!isCompactJwt(jws)) refuse("a grant is a compact JWS");
+  if (jws.length > MAX_GRANT_JWS_CHARS) refuse(`a grant is at most ${MAX_GRANT_JWS_CHARS} characters`);
   let header: Record<string, unknown>;
   try {
     header = decodeProtectedHeader(jws);
@@ -142,19 +154,30 @@ export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation,
 }
 
 /**
- * A grant against the seed: the signature is the account key's that
- * the seed derives for the grant's arrangement, and the replica's
- * document carries the keys the seed derives for the replica's ID and
- * sends to the grant's mediator alone. `InvalidReplicaGrant`,
- * `IdentityMismatch` or `InvalidDidDocument` otherwise. Whether the
- * account and the mediator are the arrangement's own is for whoever
- * holds its creation.
+ * A grant against the seed and the account its arrangement's creation
+ * records, by that record's long form: the grant's account is that
+ * one, `kid` names, under either spelling of the account, a method its
+ * document authorizes for authentication and that carries the account
+ * key the seed derives for the grant's arrangement, the signature is
+ * that key's, and the replica's document carries the keys the seed
+ * derives for the replica's ID and sends to the grant's mediator
+ * alone. `InvalidReplicaGrant`, `IdentityMismatch` or
+ * `InvalidDidDocument` otherwise. Whether the mediator is the
+ * arrangement's own is for whoever holds its creation.
  */
-export async function verifyReplicaGrant(keys: Keys, jws: string): Promise<ReplicaGrant> {
+export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Did): Promise<ReplicaGrant> {
   const grant = readReplicaGrant(jws);
-  const account = (await keys.mediationKeys(grant.mediationId)).authentication;
+  const account = peerResolution(accountDid);
+  if (account.did !== grant.account) throw new IdentityMismatch(`the grant's account is ${grant.account}, not ${account.did}`);
+  const [signer, fragment] = splitDidUrl(grant.kid);
+  if (signer !== account.did && signer !== account.presentedDid) throw new InvalidReplicaGrant("kid spells the account as its short form or its recorded long form");
+  const methodId = `${account.presentedDid}${fragment}` as DidUrl;
+  const key = (await keys.mediationKeys(grant.mediationId)).authentication;
+  if (!authorizedMethodIds(account.document, "authentication").includes(methodId) || methodPublicKey(account.document, methodId) !== key.publicKey) {
+    throw new IdentityMismatch(`kid names no authentication method of the account carrying the key the seed derives for mediation ${grant.mediationId}`);
+  }
   try {
-    await compactVerify(jws, await importJWK(publicJwk(account), "EdDSA"), { algorithms: ["EdDSA"] });
+    await compactVerify(jws, await importJWK(publicJwk(key), "EdDSA"), { algorithms: ["EdDSA"] });
   } catch {
     throw new InvalidReplicaGrant(`the signature is not that of the account key the seed derives for mediation ${grant.mediationId}`);
   }

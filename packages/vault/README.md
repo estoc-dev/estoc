@@ -75,15 +75,18 @@ grant (`replica-grant.ts`: `signReplicaGrant` signs, with the account key
 of a replica-mediation arrangement, the compact JWS that binds one replica
 ID and DID to the account, the arrangement and its mediator, which is what
 the mediator enrolls the replica on and what `replica.created` records;
-`readReplicaGrant` reads a grant's spelling and `verifyReplicaGrant` holds
-its signature and its replica against the seed), and the first
+`readReplicaGrant` reads a grant's spelling, its length limits included,
+and `verifyReplicaGrant` holds its `kid`, its signature and its replica
+against the seed and the account document the arrangement's creation
+records), and the first
 folds (`fold/`: `VaultEventSet` reads every event once against its
 schema and hands a type's events out in canonical order and a typed
 reference's target as present, missing or mismatched; `foldAuthors` and
 `foldLabel`; `foldMediations`, each arrangement's consistent creation,
 one grant, retirement and conflicts, its `profile` and the preferred one;
 `foldReplicas`, each replica's one binding and whether it is a member of
-its replica-mediation arrangement;
+its replica-mediation arrangement, read from the arrangement's creation
+(`mediationCreations`) whatever its routing grants say;
 `foldRoutes`, each route's usability and terminal dependency, each local
 DID entity's consistent record, own document, route target, disclosures,
 retirement, faults and liveness, the key-name and spelling reverse maps,

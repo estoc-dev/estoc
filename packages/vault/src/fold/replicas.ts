@@ -2,8 +2,11 @@
  * The replicas of each replica-mediation arrangement: for each replica
  * ID, the one binding its grants agree on, and whether that binding is
  * the arrangement's and the seed's. A replica is a member of its
- * arrangement by the grant alone; that its mediator has enrolled it is
- * the runtime's to know, not the vault's. Whether a grant was signed
+ * arrangement by the grant and the arrangement's creation alone; that
+ * its mediator has enrolled it is the runtime's to know, not the
+ * vault's, and whether the arrangement can carry mail, which its
+ * routing grant and retirement decide, is the mediation fold's and
+ * leaves membership as it is. Whether a grant was signed
  * by the arrangement's account key and names the replica the seed
  * derives needs the seed, so that check runs beside the fold and its
  * verdict is handed in; until it is, the replica is pending.
@@ -14,7 +17,7 @@ import type { Keys } from "../identity.js";
 import { canonicalDidOf } from "../peer-document.js";
 import { readReplicaGrant, sameBinding, verifyReplicaGrant, type ReplicaGrant } from "../replica-grant.js";
 import type { Did, MediationId, ReplicaId } from "../types.js";
-import type { IdentityCheck, KeyCheck, MediationFold } from "./mediation.js";
+import { mediationCreations, type IdentityCheck, type KeyCheck } from "./mediation.js";
 import { groupBy, type VaultEventSet } from "./set.js";
 
 /**
@@ -56,7 +59,8 @@ function accountOf(did: Did): Did | null {
   }
 }
 
-export function foldReplicas(set: VaultEventSet, mediations: MediationFold, options: ReplicaFoldOptions = {}): ReplicaFold {
+export function foldReplicas(set: VaultEventSet, options: ReplicaFoldOptions = {}): ReplicaFold {
+  const creations = mediationCreations(set);
   const created = groupBy(set.of("replica.created"), (event) => event.data.replicaId);
   const replicas = new Map<ReplicaId, Replica>();
   for (const replicaId of [...created.keys()].sort()) {
@@ -68,14 +72,15 @@ export function foldReplicas(set: VaultEventSet, mediations: MediationFold, opti
     if (read.some((grant) => !sameBinding(grant, binding))) {
       faults.push("grants disagree");
     } else {
-      const mediation = mediations.mediations.get(binding.mediationId);
-      if (mediation === undefined || mediation.status === "conflict" || mediation.me === null) {
-        if (mediation?.status === "conflict") faults.push(`mediation ${binding.mediationId} is in conflict`);
-        else waiting = true;
+      const creation = creations.get(binding.mediationId);
+      if (creation === undefined) {
+        waiting = true;
+      } else if (creation === null) {
+        faults.push(`the creations of mediation ${binding.mediationId} disagree`);
       } else {
-        if (mediation.profile === null) faults.push(`mediation ${binding.mediationId} is no replica-mediation arrangement`);
-        else if (accountOf(mediation.me.did) !== binding.account) faults.push("the grant's account is not the arrangement's");
-        if (mediation.mediatorDid !== binding.mediator) faults.push("the grant's mediator is not the arrangement's");
+        if (creation.profile === undefined) faults.push(`mediation ${binding.mediationId} is no replica-mediation arrangement`);
+        else if (accountOf(creation.me.did) !== binding.account) faults.push("the grant's account is not the arrangement's");
+        if (creation.mediatorDid !== binding.mediator) faults.push("the grant's mediator is not the arrangement's");
       }
     }
     const identity: IdentityCheck = options.grantChecks?.get(replicaId) ?? "unchecked";
@@ -97,13 +102,18 @@ export function foldReplicas(set: VaultEventSet, mediations: MediationFold, opti
   return { replicas, members };
 }
 
-/** Each replica whose grants agree checked against the seed: did the arrangement's account key sign every one, and is the replica they name the one the seed derives? */
-export async function verifyReplicaGrants(keys: Keys, fold: ReplicaFold): Promise<Map<ReplicaId, KeyCheck>> {
+/**
+ * Each replica whose grants agree and whose arrangement has one creation, checked against the seed: did the
+ * account that creation records sign every grant, and is the replica they name the one the seed derives?
+ */
+export async function verifyReplicaGrants(keys: Keys, set: VaultEventSet): Promise<Map<ReplicaId, KeyCheck>> {
+  const creations = mediationCreations(set);
   const checks = new Map<ReplicaId, KeyCheck>();
-  for (const replica of fold.replicas.values()) {
-    if (replica.grants.length === 0) continue;
+  for (const replica of foldReplicas(set).replicas.values()) {
+    const creation = replica.mediationId === null ? null : creations.get(replica.mediationId);
+    if (creation === null || creation === undefined) continue;
     try {
-      for (const grant of replica.grants) await verifyReplicaGrant(keys, grant);
+      for (const grant of replica.grants) await verifyReplicaGrant(keys, grant, creation.me.did);
       checks.set(replica.replicaId, "verified");
     } catch (err) {
       if (!(err instanceof InvalidReplicaGrant || err instanceof IdentityMismatch || err instanceof InvalidDidDocument)) throw err;

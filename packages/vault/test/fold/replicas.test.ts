@@ -1,6 +1,8 @@
+import { base64urlnopad } from "@scure/base";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
+  InvalidPayload,
   Keys,
   foldMediations,
   foldReplicas,
@@ -45,10 +47,8 @@ async function enrolled(scene: Scene, mediation: GrantingMediation, replicaId: R
 
 /** The fold with the seed's verdicts folded in. */
 async function checked(scene: Scene, seed = keys): Promise<(set: VaultEventSet) => ReturnType<typeof foldReplicas>> {
-  const mediationKeys = await verifyMediationKeys(seed, foldMediations(scene.set()));
-  const mediations = (set: VaultEventSet) => foldMediations(set, { keyChecks: mediationKeys });
-  const grantChecks = await verifyReplicaGrants(seed, foldReplicas(scene.set(), mediations(scene.set())));
-  return (set) => foldReplicas(set, mediations(set), { grantChecks });
+  const grantChecks = await verifyReplicaGrants(seed, scene.set());
+  return (set) => foldReplicas(set, { grantChecks });
 }
 
 describe("the mediation fold", () => {
@@ -79,10 +79,10 @@ describe("the replica fold", () => {
   it("makes a replica a member of its arrangement by its grant and the seed's verdict, before any grant from the mediator, and pending before either", async () => {
     const scene = new Scene();
     const created = await enrolled(scene, account, REPLICA);
-    expect(foldReplicas(scene.set(), foldMediations(scene.set())).replicas.get(REPLICA)).toMatchObject({ status: "pending", mediationId: MEDIATION, identity: "unchecked", faults: [] });
-    expect((await checked(scene))(scene.set()).replicas.get(REPLICA)).toMatchObject({ status: "pending", identity: "verified", faults: [] });
+    expect(foldReplicas(scene.set()).replicas.get(REPLICA)).toMatchObject({ status: "pending", mediationId: MEDIATION, identity: "unchecked", faults: [] });
+    expect((await checked(scene))(scene.set()).replicas.get(REPLICA)).toMatchObject({ status: "pending", identity: "unchecked", faults: [] });
     arrangement(scene, account);
-    const unchecked = foldReplicas(scene.set(), foldMediations(scene.set()));
+    const unchecked = foldReplicas(scene.set());
     expect(unchecked.replicas.get(REPLICA)).toMatchObject({ status: "pending", identity: "unchecked" });
     expect(unchecked.members(MEDIATION)).toEqual([]);
     const fold = (await checked(scene))(scene.set());
@@ -119,7 +119,7 @@ describe("the replica fold", () => {
     expectOrderFree(scene.events, await checked(scene));
   });
 
-  it("refuses a binding that is not its arrangement's: an ordinary arrangement, another mediator, an arrangement in conflict", async () => {
+  it("refuses a binding that is not its arrangement's: an ordinary arrangement, another mediator, an arrangement whose creations disagree", async () => {
     const ordinary = new Scene();
     arrangement(ordinary, account, false);
     await enrolled(ordinary, account, REPLICA);
@@ -134,7 +134,40 @@ describe("the replica fold", () => {
     arrangement(conflicted, account);
     arrangement(conflicted, { ...account, mediatorDid: "did:web:other.example" as Did });
     await enrolled(conflicted, account, REPLICA);
-    expect((await checked(conflicted))(conflicted.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: [`mediation ${MEDIATION} is in conflict`] });
+    expect((await checked(conflicted))(conflicted.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: [`the creations of mediation ${MEDIATION} disagree`] });
+  });
+
+  it("keeps a member whatever the mediator's routing grants say, while the arrangement they contradict carries no mail", async () => {
+    const members = async (grants: readonly Did[]) => {
+      const scene = new Scene();
+      arrangement(scene, account);
+      await enrolled(scene, account, REPLICA);
+      for (const routingDid of grants) scene.add("mediation.granted", { mediationId: MEDIATION, routingDid });
+      expectOrderFree(scene.events, await checked(scene));
+      const keyChecks = await verifyMediationKeys(keys, foldMediations(scene.set()));
+      return {
+        replica: (await checked(scene))(scene.set()).replicas.get(REPLICA)?.status,
+        mediation: foldMediations(scene.set(), { keyChecks }).mediations.get(MEDIATION)?.status,
+      };
+    };
+    expect(await members([])).toEqual({ replica: "member", mediation: "pending" });
+    expect(await members([MEDIATOR])).toEqual({ replica: "member", mediation: "usable" });
+    expect(await members([ROUTING_DID])).toEqual({ replica: "member", mediation: "conflict" });
+    expect(await members([MEDIATOR, ROUTING_DID])).toEqual({ replica: "member", mediation: "conflict" });
+  });
+
+  it("sets aside a grant whose payload is not I-JSON as an invalid event, and folds the events around it", async () => {
+    const scene = new Scene();
+    arrangement(scene, account);
+    const [header, body] = (await signReplicaGrant(keys, account, REPLICA2)).split(".") as [string, string];
+    const text = new TextDecoder().decode(base64urlnopad.decode(body)).replace(MEDIATOR, "did:web:\\ud800");
+    const bad = scene.foreign("replica.created", { replicaId: REPLICA2, mediationId: MEDIATION, grant: `${header}.${base64urlnopad.encode(new TextEncoder().encode(text))}.c2ln` });
+    await enrolled(scene, account, REPLICA);
+    const set = scene.set();
+    expect(set.invalid.map((invalid) => [invalid.event, invalid.error.constructor])).toEqual([[bad, InvalidPayload]]);
+    const fold = (await checked(scene))(set);
+    expect(fold.members(MEDIATION).map((replica) => replica.replicaId)).toEqual([REPLICA]);
+    expect(fold.replicas.has(REPLICA2)).toBe(false);
   });
 
   it("refuses a grant another seed signed, and leaves a retired arrangement's replicas its members", async () => {

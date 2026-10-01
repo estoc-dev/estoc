@@ -741,9 +741,13 @@ string members:
 | `replica_did` | the short form of the replica's DID, never the account |
 | `replica_long_form` | the long form of `replica_did` |
 
-Every DID a grant carries is at most 8192 UTF-8 bytes. `replicaId` and
+The whole compact JWS is at most 16384 characters, its two separators
+included: a mediator refuses a longer one unread. Every DID a grant carries is
+also at most 8192 UTF-8 bytes, which alone does not keep the JWS within its
+limit. A signer returns no grant over either limit. `replicaId` and
 `mediationId` MUST equal the grant's. A payload whose grant is not spelled this
-way is invalid; whether its signature and its replica hold is the
+way, a payload that is not I-JSON included, is invalid; whether its `kid`, its
+signature and its replica hold is the
 [fold's](#mediation-fold).
 
 <a id="did-identity-and-keys"></a>
@@ -976,15 +980,21 @@ one binding is a member of its arrangement when all of these hold:
   profile;
 - the grant's `account` is the short form of that creation's `me.did` and its
   `mediator` equals `mediatorDid`;
-- the grant's signature verifies under the authentication key the seed derives
-  for `mediation/<mediationId>/me`; and
+- the grant's `kid` spells the account as its short form or as exactly the
+  long form that creation records, and its fragment names a method which that
+  long form's document authorizes for authentication and which carries the
+  authentication key the seed derives for `mediation/<mediationId>/me`;
+- the grant's signature verifies under that key; and
 - the replica's document carries the keys the seed derives for
   `replica/<replicaId>/me` and names that mediator as its only DIDComm service.
 
 A missing creation or an unavailable seed leaves the replica pending; a failed
-condition makes it a conflict. Membership needs no `mediation.granted`, is not
+condition, disagreeing creations included, makes it a conflict. Membership is
+read from the creation and the grant alone: it needs no `mediation.granted`, is
+not changed by a missing, contradicting or disallowed routing grant, is not
 ended by the arrangement's retirement, and says nothing of what the mediator
-holds. A writer enrolls only the member whose replica ID is its own.
+holds. Whether the arrangement can carry mail remains the mediation fold's: a
+member of a conflicted or retired arrangement receives nothing through it. A writer enrolls only the member whose replica ID is its own.
 
 <a id="143-route-did-and-key-fold"></a>
 
@@ -3160,6 +3170,6 @@ derivation requires a new vault version.
 
 - <a id="ve-159"></a> **VE-159.** replica/<replicaId>/me derives a replica's DID with its mediator as the only DIDComm service: the same replica ID and mediator give the same DID, another mediator or replica ID another DID. No payload field accepts a replica key name.
 
-- <a id="ve-160"></a> **VE-160.** replica.created has exactly replicaId, mediationId and grant, with empty roots. The grant's protected header is exactly alg EdDSA, the grant typ and a kid naming a method of the account; its payload is its own RFC 8785 text of exactly the six string members, with UUIDv7 IDs equal to the event's, a short-form account, a replica DID other than the account and that DID's long form, and no DID over 8192 bytes. Anything else is an invalid payload.
+- <a id="ve-160"></a> **VE-160.** replica.created has exactly replicaId, mediationId and grant, with empty roots. The grant's protected header is exactly alg EdDSA, the grant typ and a kid naming a method of the account; its payload is its own RFC 8785 text of exactly the six string members, with UUIDv7 IDs equal to the event's, a short-form account, a replica DID other than the account and that DID's long form, no DID over 8192 bytes and no more than 16384 characters in all. Anything else, a payload that is not I-JSON included, is an invalid payload and leaves the events around it readable.
 
-- <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted nor retirement changes membership.
+- <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.

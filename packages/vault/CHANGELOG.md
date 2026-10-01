@@ -13,7 +13,11 @@
   (`VaultChecks.replicaGrants`). `replicaKeyName`, `Keys.replicaKeys`,
   `mintReplicaDid` and `checkReplicaKeys` derive a replica's own DID;
   `signReplicaGrant`, `readReplicaGrant`, `verifyReplicaGrant` and
-  `sameBinding` are the grant. Nothing enrolls or picks up yet: this is
+  `sameBinding` are the grant, which is at most `MAX_GRANT_JWS_CHARS`
+  long and whose `kid` must name an authentication method of the account
+  document the arrangement's creation records. Membership is read from
+  that creation (`mediationCreations`) and does not follow the
+  arrangement's routing grants or retirement. Nothing enrolls or picks up yet: this is
   the vault's side of the contract only. A reader older than this
   version refuses a `mediation.created` carrying `profile` and keeps a
   `replica.created` unapplied.

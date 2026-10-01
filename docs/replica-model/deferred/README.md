@@ -104,8 +104,8 @@ in a vault client, adopt the relevant contracts in
   Untagged records remain ordinary mediation and cannot authorize replica
   membership.
 - Implement independent account state and authorization for replica mediation.
-  Account-authenticated registration creates the account and first replica
-  atomically without a prior mediation grant. Ordinary accounts, their recipient
+  Account-authenticated `account-register` creates the account without a prior
+  mediation grant, and `replica-add` then enrolls each replica on its grant. Ordinary accounts, their recipient
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
 - Each client registers only its own saved grant and durably records the verified

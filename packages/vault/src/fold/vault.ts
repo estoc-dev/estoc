@@ -91,7 +91,7 @@ export function foldVault(set: VaultEventSet, checks: VaultChecks = {}, options:
     label: foldLabel(set),
     authors: foldAuthors(set),
     mediations,
-    replicas: foldReplicas(set, mediations, { grantChecks: all.replicaGrants }),
+    replicas: foldReplicas(set, { grantChecks: all.replicaGrants }),
     routes,
     channels,
     continuity,
@@ -138,7 +138,7 @@ export function objectReader(objects: VaultObjects, maxBytes = MAX_READ_BYTES): 
 export async function checkVault(set: VaultEventSet, keys: Keys | null, readObject: ReadObject): Promise<Required<VaultChecks>> {
   const mediationKeys = keys === null ? new Map<MediationId, KeyCheck>() : await verifyMediationKeys(keys, foldMediations(set));
   const mediations = foldMediations(set, { keyChecks: mediationKeys });
-  const replicaGrants = keys === null ? new Map<ReplicaId, KeyCheck>() : await verifyReplicaGrants(keys, foldReplicas(set, mediations));
+  const replicaGrants = keys === null ? new Map<ReplicaId, KeyCheck>() : await verifyReplicaGrants(keys, set);
   const didKeys = keys === null ? new Map<DidId, KeyCheck>() : await verifyDidKeys(keys, foldRoutes(set, mediations));
   const resolutionChecks = await verifyResolutions(set, readObject);
   return { mediationKeys, replicaGrants, didKeys, resolutionChecks, proofChecks: await verifyProofs(set, resolutionChecks, readObject) };

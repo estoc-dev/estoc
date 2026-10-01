@@ -14,7 +14,7 @@
 import { IdentityMismatch, InvalidDidDocument } from "../errors.js";
 import { checkMediationKeys, type Keys } from "../identity.js";
 import { peerResolution } from "../peer-document.js";
-import type { Did, KeyName, MediationId, MediationProfile } from "../types.js";
+import type { Did, KeyName, MediationId, MediationProfile, VaultData } from "../types.js";
 import { groupBy, latest, samePayload, type VaultEventSet } from "./set.js";
 
 /** Whether a recorded entity's document carries the keys the seed derives for it. */
@@ -59,9 +59,19 @@ export interface MediationFold {
 
 export type MediationFoldOptions = { keyChecks?: ReadonlyMap<MediationId, KeyCheck> };
 
+/** Each created arrangement's creation, null where the recorded creations disagree. */
+export function mediationCreations(set: VaultEventSet): Map<MediationId, VaultData["mediation.created"] | null> {
+  const creations = new Map<MediationId, VaultData["mediation.created"] | null>();
+  for (const [mediationId, events] of groupBy(set.of("mediation.created"), (event) => event.data.mediationId)) {
+    const creation = events[0]!.data;
+    creations.set(mediationId, events.every((event) => samePayload(event.data, creation)) ? creation : null);
+  }
+  return creations;
+}
+
 export function foldMediations(set: VaultEventSet, options: MediationFoldOptions = {}): MediationFold {
   const ids = new Set<MediationId>();
-  const created = groupBy(set.of("mediation.created"), (event) => event.data.mediationId);
+  const created = mediationCreations(set);
   const granted = groupBy(set.of("mediation.granted"), (event) => event.data.mediationId);
   const retired = groupBy(set.of("mediation.retired"), (event) => event.data.mediationId);
   for (const group of [created, granted, retired]) for (const id of group.keys()) ids.add(id);
@@ -70,9 +80,8 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
   const mediations = new Map<MediationId, Mediation>();
   for (const mediationId of [...ids].sort()) {
     const faults: string[] = [];
-    const creations = created.get(mediationId) ?? [];
-    const creation = creations[0]?.data ?? null;
-    if (creation !== null && creations.some((event) => !samePayload(event.data, creation))) faults.push("creations disagree");
+    const creation = created.get(mediationId) ?? null;
+    if (created.has(mediationId) && creation === null) faults.push("creations disagree");
     const routingDids = new Set((granted.get(mediationId) ?? []).map((event) => event.data.routingDid));
     if (routingDids.size > 1) faults.push(`grants disagree: ${[...routingDids].sort().join(", ")}`);
     const profile = creation?.profile ?? null;
