@@ -454,10 +454,6 @@ describe("message.in", () => {
     did: null,
   };
 
-  it("reads past a receipt ordinal an older writer stored, whatever it holds", () => {
-    for (const receiptOrdinal of ["42", "", 42, null]) accepts("message.in", { ...IN_DATA, receiptOrdinal }, [BODY, PHOTO]);
-  });
-
   it("keeps normalized headers, the original proof string, the byte count and where it arrived", () => {
     accepts("message.in", { ...IN_DATA, pleaseAck: null, ack: [OUT, OUT], headers: { lang: "en" }, fromPrior: JWT, thid: "t", pthid: OOB }, [BODY, PHOTO]);
     accepts("message.in", { ...IN_DATA, fromPrior: "not a jwt at all" }, [BODY, PHOTO]);

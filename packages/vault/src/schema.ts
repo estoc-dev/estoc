@@ -127,15 +127,6 @@ const shape =
     return out as Of<S>;
   };
 
-/** A member older writers stored and no reader uses any more: ignored during payload validation, whatever it holds. The event itself is returned as stored, so its CID stays valid. */
-const retired =
-  <T>(member: string, check: Check<T>): Check<T> =>
-  (value, at) => {
-    if (!isJsonObject(value) || !Object.hasOwn(value, member)) return check(value, at);
-    const { [member]: _, ...rest } = value;
-    return check(rest, at);
-  };
-
 const checked =
   <T>(check: Check<T>, rules: (data: T) => void): Check<T> =>
   (value, at) => {
@@ -234,28 +225,25 @@ const messageOut = checked(
 ) as Check<VaultData["message.out"]>;
 
 const messageIn = checked(
-  retired(
-    "receiptOrdinal",
-    shape({
-      messageId: derived<MessageId>(),
-      wireMessageId: nonEmpty as Check<WireMessageId>,
-      intentHash: hash,
-      plaintextHash: hash,
-      localKeyName: keyName,
-      msgType: nonEmpty,
-      peerResolutionEventCid: nullable(ref<"peer.resolved">()),
-      presentedDid: nullable(peerDid),
-      did: nullable(channelDid),
-      thid: nullable(nonEmpty),
-      pthid: nullable(nonEmpty),
-      ...timing,
-      fromPrior: nullable(text),
-      bodyCid: cid,
-      attachmentCids: arrayOf(cid, { distinct: true }),
-      bytes: count,
-      receivedVia: shape({ mediationId: nullable(idMembers.mediationId), deliveryId: nullable(nonEmpty) }),
-    })
-  ),
+  shape({
+    messageId: derived<MessageId>(),
+    wireMessageId: nonEmpty as Check<WireMessageId>,
+    intentHash: hash,
+    plaintextHash: hash,
+    localKeyName: keyName,
+    msgType: nonEmpty,
+    peerResolutionEventCid: nullable(ref<"peer.resolved">()),
+    presentedDid: nullable(peerDid),
+    did: nullable(channelDid),
+    thid: nullable(nonEmpty),
+    pthid: nullable(nonEmpty),
+    ...timing,
+    fromPrior: nullable(text),
+    bodyCid: cid,
+    attachmentCids: arrayOf(cid, { distinct: true }),
+    bytes: count,
+    receivedVia: shape({ mediationId: nullable(idMembers.mediationId), deliveryId: nullable(nonEmpty) }),
+  }),
   (data) => {
     expiryAfterCreation(data);
     const anonymous = data.peerResolutionEventCid === null;

@@ -123,9 +123,10 @@ reusable address, no event records who used it, and `invitation.consumed` and
 the `uses` member of `did.disclosed` are gone from the schema. Their IDs are
 not reused; VE-62 and CH-53 cover what remains of invitations.
 VE-72 and VE-80 are withdrawn with receipt ordinals: an observation is
-ordered by its event alone, `message.in` carries no `receiptOrdinal`, and a
-reader passes over the member older writers stored. Their IDs are not
-reused; VE-61, VE-71 and VE-81 cover the order of observations.
+ordered by its event alone and `message.in` carries no `receiptOrdinal`; an
+observation stored with the member is an invalid payload under the closed
+schema. Their IDs are not reused; VE-61, VE-71 and VE-81 cover the order of
+observations.
 Endings are unsupported in phase 1: CH-78 covers diagnostics, not a
 relationship-ended state. Adopting endings needs a separate application-policy,
 event and UI revision; none of the stages below enables them implicitly.

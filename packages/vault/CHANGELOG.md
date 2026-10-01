@@ -5,16 +5,18 @@
 - **Receipt ordinals are gone** (behaviour change): `message.in` carries
   no `receiptOrdinal`, and `ReceiptOrdinal`, `ReceiptKey`,
   `ReceiptIntegrity`, `receiptOrderKey`, `compareReceiptKeys`,
-  `foldReceipts` and `ChannelEvidence.receipts` are gone with it. A
-  reader passes over the member older writers stored, so a vault
-  written before this version reads as it did. The observations of an
-  input — an execution's `members` and `siblings`, the anonymous and
-  unplaced observations, the witnesses that acknowledge an outbound —
-  are in canonical event order (`at`, then event CID), and the inputs
-  of a channel view in the canonical order of their first witnesses;
-  `Execution.firstReceiptKey` is gone, `firstWitness` being the first
-  admitted complete member in that order. A receipt no longer scans
-  every observation for a high-water mark before it commits.
+  `foldReceipts` and `ChannelEvidence.receipts` are gone with it. An
+  observation an older writer stored with the member is an invalid
+  payload, so a vault written before this version is not read as it was:
+  its observations are kept as events and dropped from the fold. The
+  observations of an input — an execution's `members` and `siblings`,
+  the anonymous and unplaced observations, the witnesses that
+  acknowledge an outbound — are in canonical event order (`at`, then
+  event CID), and the inputs of a channel view in the canonical order of
+  their first witnesses; `Execution.firstReceiptKey` is gone,
+  `firstWitness` being the first admitted complete member in that order.
+  A receipt no longer scans every observation for a high-water mark
+  before it commits.
 - **Admission walks canonical event order** (behaviour change): the
   `candidates` of `foldDispositions`, and so the rounds of
   `admissionDrafts` and `admitReceipts`, are in canonical event order
