@@ -47,7 +47,7 @@ export interface ReplicaRegistration {
   accountDid: string;
   accountLongForm: string;
   mediationId: string;
-  /** The mediator DID the account is bound to, a did:peer:4 in its short form. */
+  /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
   replicaId: string;
   replicaDid: string;
@@ -61,10 +61,11 @@ export interface ReplicaRegistration {
 /**
  * `registered` also answers an exact repeat, with the time of the first.
  * `refused`: the account is absent and may not be created. `conflict`: an ID
- * or DID is already bound otherwise, here or under ordinary mediation, or the
- * account is bound to another mediation ID or mediator DID.
- * `full`: the account is at its replica limit. Only `registered` wrote
- * anything, and it wrote the account and the replica together or neither.
+ * or DID is already bound otherwise, here or under ordinary mediation, to a
+ * removed replica included, or the account is bound to another mediation ID
+ * or mediator DID. `full`: the account is at its limit of replicas not
+ * removed. Only `registered` wrote anything, and it wrote the account and the
+ * replica together or neither.
  */
 export type RegisterOutcome =
   | { outcome: "registered"; registeredTime: number }
@@ -75,13 +76,24 @@ export interface RosterEntry {
   ordinal: number;
   grant: string;
   registeredTime: number;
+  /** Null while the replica is active. */
+  removedTime: number | null;
 }
 
 export interface RosterPage {
-  /** How many replicas the account holds now. */
+  /** How many replicas the account has enrolled, the removed ones included. */
   size: number;
   entries: RosterEntry[];
 }
+
+/**
+ * `removed` also answers a repeat, with the time of the first. `unknown`: no
+ * such account is bound to that mediator. `not-enrolled`: the account never
+ * enrolled a replica under that ID.
+ */
+export type RemoveOutcome =
+  | { outcome: "removed"; removedTime: number }
+  | { outcome: "unknown" | "not-enrolled" };
 
 /** A communication DID a replica-mediation account asks to receive mail for. */
 export interface SharedRecipient {
@@ -120,7 +132,7 @@ export interface ReplicaDelivery {
 
 /**
  * `repeated` and `conflict` as for an ordinary queue. `unknown`: the key's
- * recipient is neither a shared recipient nor a replica. `full`: the account
+ * recipient is neither a shared recipient nor an active replica. `full`: the account
  * is at its message or byte limit. `lapsed`: the deadline has already passed.
  * Only `stored` put a package in, and it put in every delivery of it too.
  */
@@ -201,19 +213,27 @@ export interface MediationStore {
   ownerOf(recipientDid: string): Promise<string | null>;
 
   /*
-   * replica-mediation/1.0. An account, its replicas and its shared
-   * recipients are append-only, and their DIDs are kept apart from ordinary
-   * accounts and recipients in both directions: neither kind of binding can
-   * be made over the other. Its mail is kept per account and handed out per
-   * replica, apart from the ordinary queues.
+   * replica-mediation/1.0. An account and the replicas it enrolled are kept
+   * for good, a removed replica as removed, and their DIDs and its shared
+   * recipients' are kept apart from ordinary accounts and recipients in both
+   * directions: neither kind of binding can be made over the other. Its mail
+   * is kept per account and handed out per replica, apart from the ordinary
+   * queues.
    */
   registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
+  /**
+   * Ends a replica's enrollment and drops what waited for it alone: its
+   * deliveries, and the mail forwarded to the replica itself. Its ID and DID
+   * stay bound, so neither is ever enrolled again.
+   */
+  removeReplica(accountDid: string, mediator: string, replicaId: string): Promise<RemoveOutcome>;
   isReplicaAccount(did: string): Promise<boolean>;
-  isReplica(did: string): Promise<boolean>;
+  /** Null for a DID no account enrolled as a replica. */
+  replicaState(did: string): Promise<"active" | "removed" | null>;
   /**
    * The account's replicas with an ordinal after `after` and up to `through`
-   * (its current size when null), oldest first; null without such an account
-   * bound to `mediator`.
+   * (its current size when null), oldest first, the removed ones in their
+   * place; null without such an account bound to `mediator`.
    */
   replicaRoster(
     accountDid: string,
@@ -224,15 +244,33 @@ export interface MediationStore {
   ): Promise<RosterPage | null>;
   /** The long form of a replica-mediation account or replica DID, if `did` is one. */
   resolutionMaterial(did: string): Promise<string | null>;
-  /** Binds a recipient to its account, once and for the account's lifetime. */
   addSharedRecipient(recipient: SharedRecipient): Promise<ShareOutcome>;
+  /**
+   * Unbinds a recipient from its account and forgets its long form; mail
+   * already kept for it still waits. `no_change`: the account did not hold
+   * it. `unknown`: no such account is bound to that mediator.
+   */
+  removeSharedRecipient(
+    accountDid: string,
+    mediator: string,
+    recipientDid: string
+  ): Promise<"removed" | "no_change" | "unknown">;
+  /** The account's recipients, oldest first; null without such an account bound to `mediator`. */
+  listSharedRecipients(
+    accountDid: string,
+    mediator: string,
+    offset: number,
+    limit: number
+  ): Promise<RecipientPage | null>;
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
   /**
-   * Keeps `packed` once for the account `key.next` belongs to and queues a
-   * delivery of it: for each replica the account holds at that moment when
-   * the recipient is shared, for that replica alone when it is one. A replica
-   * enrolled later gets none, and neither does anyone from a repeat.
+   * Keeps `packed` once for the account `key.next` routes to at that moment
+   * and queues a delivery of it: for each active replica the account holds
+   * when the recipient is shared, for that replica alone when it is one. A
+   * replica enrolled later gets none, and neither does anyone from a repeat.
+   * The key is that account's: what another account kept under it while the
+   * recipient was its own is neither a repeat nor a conflict.
    */
   fanOut(key: PackageKey, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
   /**
@@ -244,7 +282,8 @@ export interface MediationStore {
   /**
    * Ends the named deliveries that are this replica's and ignores every other
    * id. Mail forwarded to the replica itself goes with its delivery; a shared
-   * package stays, for the other replicas and so a repeat is still known.
+   * package stays, for the other replicas and so a repeat is still known,
+   * whatever its recipient DID has been bound as since.
    */
   acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void>;
 

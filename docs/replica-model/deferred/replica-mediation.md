@@ -7,6 +7,14 @@
 > deferred and is not a dependency. Candidate events and key names below are
 > not phase-1 API.
 
+> The mediator side is implemented in `mediator/`. Its wire contract is the
+> [mediator README](../../../mediator/README.md#replica-mediation), which
+> takes precedence wherever this document differs from it. It differs at
+> least here: membership and recipients are not append-only. A replica can be
+> removed (`remove`), and recipients are added and removed by
+> `recipient-update`, which replaces `recipient-add`, and listed by
+> `recipient-query`.
+
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
 [Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)
 

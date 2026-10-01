@@ -38,13 +38,17 @@ const REGISTER = `${PROTOCOL}/register`;
 const REGISTERED = `${PROTOCOL}/registered`;
 const LIST = `${PROTOCOL}/list`;
 const REPLICAS = `${PROTOCOL}/replicas`;
-const RECIPIENT_ADD = `${PROTOCOL}/recipient-add`;
-const RECIPIENT_ADDED = `${PROTOCOL}/recipient-added`;
+const REMOVE = `${PROTOCOL}/remove`;
+const REMOVED = `${PROTOCOL}/removed`;
+const RECIPIENT_UPDATE = `${PROTOCOL}/recipient-update`;
+const RECIPIENT_UPDATED = `${PROTOCOL}/recipient-updated`;
+const RECIPIENT_QUERY = `${PROTOCOL}/recipient-query`;
+const RECIPIENTS = `${PROTOCOL}/recipients`;
 const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
 const MEDIATE_REQUEST = "https://didcomm.org/coordinate-mediation/3.0/mediate-request";
 const MEDIATE_GRANT = "https://didcomm.org/coordinate-mediation/3.0/mediate-grant";
 const MEDIATE_DENY = "https://didcomm.org/coordinate-mediation/3.0/mediate-deny";
-const RECIPIENT_UPDATE = "https://didcomm.org/coordinate-mediation/3.0/recipient-update";
+const KEYLIST_UPDATE = "https://didcomm.org/coordinate-mediation/3.0/recipient-update";
 
 const problem = (suffix: string) => `e.estoc.replica-mediation.${suffix}`;
 
@@ -176,6 +180,7 @@ describe("register", () => {
         max_active_replicas: TEST_CONFIG.maxActiveReplicas,
         max_membership_page: TEST_CONFIG.maxMembershipPage,
         max_shared_recipients: TEST_CONFIG.maxSharedRecipients,
+        max_recipient_updates: 16,
         max_retained_bytes: TEST_CONFIG.maxRetainedBytes,
         max_retained_messages: TEST_CONFIG.maxMessagesPerAccount,
         max_deliveries_per_request: 10,
@@ -208,8 +213,18 @@ describe("register", () => {
     expect(reply?.type).toBe(REGISTERED);
     expect(reply?.body.replica_did).toBe(second.replica.did);
     expect((await roster())?.body.entries).toEqual([
-      { grant: first.grant, state: "active", registered_time: expect.any(Number) },
-      { grant: second.grant, state: "active", registered_time: expect.any(Number) },
+      {
+        grant: first.grant,
+        state: "active",
+        registered_time: expect.any(Number),
+        removed_time: null,
+      },
+      {
+        grant: second.grant,
+        state: "active",
+        registered_time: expect.any(Number),
+        removed_time: null,
+      },
     ]);
   });
 
@@ -530,7 +545,7 @@ describe("register", () => {
       const holder = await agent("holder");
       const bound = await enrollment();
       await send(holder, MEDIATE_REQUEST, {});
-      await send(holder, RECIPIENT_UPDATE, {
+      await send(holder, KEYLIST_UPDATE, {
         updates: [{ recipient_did: bound.replica.did, action: "add" }],
       });
 
@@ -726,30 +741,73 @@ function proofBy(signer: Peer4Agent, payload: unknown, header: Record<string, un
   return signedBy(signer, payload, { typ: RECIPIENT_PROOF_TYP, ...header });
 }
 
-async function add(
+function adding(
   { recipient, proof }: Pick<Addition, "recipient" | "proof">,
-  speaker: Speaker = known(account),
-  body: Record<string, unknown> = {}
-) {
-  return send(speaker, RECIPIENT_ADD, {
+  changes: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
     recipient_did: recipient.did,
+    action: "add",
     resolution_material: recipient.longForm,
     proof,
-    ...body,
-  });
+    ...changes,
+  };
 }
 
-describe("recipient-add", () => {
+const removing = (recipient: Peer4Agent): Record<string, unknown> => ({
+  recipient_did: recipient.did,
+  action: "remove",
+});
+
+async function update(updates: unknown, speaker: Speaker = known(account)) {
+  return send(speaker, RECIPIENT_UPDATE, { updates });
+}
+
+async function add(
+  added: Pick<Addition, "recipient" | "proof">,
+  speaker: Speaker = known(account),
+  changes: Record<string, unknown> = {}
+) {
+  return update([adding(added, changes)], speaker);
+}
+
+interface Updated {
+  recipient_did: string;
+  action: string;
+  result: string;
+  problem?: string;
+}
+
+const updated = (reply: IMessage | null) => (reply?.body.updated ?? []) as Updated[];
+const result = (reply: IMessage | null) => updated(reply)[0]?.result;
+
+function expectRefusedUpdate(reply: IMessage | null, suffix: string) {
+  expect(reply?.type).toBe(RECIPIENT_UPDATED);
+  expect(updated(reply)).toEqual([
+    expect.objectContaining({ result: "client_error", problem: problem(suffix) }),
+  ]);
+}
+
+async function recipients(speaker: Speaker = known(account), limit = 2, offset = 0) {
+  return send(speaker, RECIPIENT_QUERY, { paginate: { limit, offset } });
+}
+
+describe("recipient-update", () => {
+  let enrolled: Enrollment[];
+
   beforeEach(async () => {
-    await register((await enrollment()).grant);
+    enrolled = [await enrollment()];
+    await register(enrolled[0].grant);
   });
 
   it("binds a communication DID its controller signed over to the account", async () => {
     const first = await addition();
     const reply = await add(first);
 
-    expect(reply?.type).toBe(RECIPIENT_ADDED);
-    expect(reply?.body).toEqual({ recipient_did: first.recipient.did, status: "added" });
+    expect(reply?.type).toBe(RECIPIENT_UPDATED);
+    expect(reply?.body).toEqual({
+      updated: [{ recipient_did: first.recipient.did, action: "add", result: "success" }],
+    });
     expect(await store.sharedRecipientMaterial(first.recipient.did)).toBe(first.recipient.longForm);
   });
 
@@ -760,12 +818,14 @@ describe("recipient-add", () => {
 
     const reply = await send(
       known(account),
-      RECIPIENT_ADD,
-      { recipient_did: first.recipient.did, resolution_material: null, proof: first.proof },
+      RECIPIENT_UPDATE,
+      { updates: [adding(first, { resolution_material: null })] },
       asked
     );
 
-    expect(reply?.body).toEqual({ recipient_did: first.recipient.did, status: "no_change" });
+    expect(updated(reply)).toEqual([
+      { recipient_did: first.recipient.did, action: "add", result: "no_change" },
+    ]);
     expect(reply?.thid).toBe(asked.id);
   });
 
@@ -785,7 +845,9 @@ describe("recipient-add", () => {
       recipient_did: recipient.longForm,
     });
 
-    expect(reply?.body).toEqual({ recipient_did: recipient.did, status: "added" });
+    expect(updated(reply)).toEqual([
+      { recipient_did: recipient.did, action: "add", result: "success" },
+    ]);
   });
 
   it("takes a recipient whose long form is large but within the limit", async () => {
@@ -798,7 +860,7 @@ describe("recipient-add", () => {
     expect(recipient.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES - 1024);
     expect(recipient.longForm.length).toBeLessThanOrEqual(MAX_LONG_FORM_BYTES);
 
-    expect((await add({ recipient, proof }))?.body.status).toBe("added");
+    expect(result(await add({ recipient, proof }))).toBe("success");
   });
 
   it("gives two adds racing for one recipient a single binding", async () => {
@@ -806,12 +868,12 @@ describe("recipient-add", () => {
 
     const replies = await Promise.all([add(first), add(first)]);
 
-    expect(replies.map((reply) => reply?.body.status).sort()).toEqual(["added", "no_change"]);
+    expect(replies.map(result).sort()).toEqual(["no_change", "success"]);
   });
 
   describe("refuses a recipient", () => {
     async function refused(reply: IMessage | null, recipient: Peer4Agent) {
-      await expectProblem(reply, "invalid-recipient");
+      expectRefusedUpdate(reply, "invalid-recipient");
       expect(await store.sharedRecipientMaterial(recipient.did)).toBeNull();
     }
 
@@ -899,7 +961,7 @@ describe("recipient-add", () => {
       const stranger = await agent("stranger");
       const { recipient, proof } = await addition();
 
-      await expectProblem(
+      expectRefusedUpdate(
         await add({ recipient, proof }, known(account), {
           recipient_did: stranger.did,
           resolution_material: null,
@@ -912,43 +974,80 @@ describe("recipient-add", () => {
       const first = await addition();
       await add(first);
 
-      await expectProblem(
+      expectRefusedUpdate(
         await add({ recipient: first.recipient, proof: await proofBy(account, first.payload) }),
         "invalid-recipient"
       );
     });
   });
 
-  it("refuses a body that is not exactly one recipient", async () => {
+  it("refuses the whole request when an update is not exactly an addition or a removal", async () => {
     const first = await addition();
-    const second = await addition();
-    const { recipient_did, resolution_material, proof } = {
-      recipient_did: first.recipient.did,
-      resolution_material: first.recipient.longForm,
-      proof: first.proof,
+    const sound = adding(first);
+    const { action: _, ...unnamed } = sound;
+    const { resolution_material: __, ...unresolved } = sound;
+
+    for (const updates of [
+      [],
+      sound,
+      [sound, unnamed],
+      [sound, unresolved],
+      [sound, { ...sound, action: "replace" }],
+      [sound, { ...sound, resolution_material: 1 }],
+      [sound, { ...sound, proof: null }],
+      [sound, { ...sound, recipient_did: [first.recipient.did] }],
+      [sound, { ...removing(first.recipient), proof: first.proof }],
+      [sound, { ...removing(first.recipient), recipient_did: 1 }],
+      [sound, null],
+    ]) {
+      await expectProblem(await update(updates), "invalid-message");
+    }
+    await expectProblem(
+      await send(known(account), RECIPIENT_UPDATE, { updates: [sound], paginate: null }),
+      "invalid-message"
+    );
+    expect(await store.sharedRecipientMaterial(first.recipient.did)).toBeNull();
+  });
+
+  it("takes no more updates in one request than it says it will", async () => {
+    const first = await addition();
+    const { limits } = (await register((await enrollment()).grant))!.body as {
+      limits: { max_recipient_updates: number };
     };
 
-    for (const body of [
-      { recipient_did, proof },
-      { recipient_did, resolution_material, proof, action: "add" },
-      { recipient_did: [recipient_did, second.recipient.did], resolution_material, proof },
-      { recipient_did, resolution_material: 1, proof },
-      { recipient_did, resolution_material, proof: null },
-      {
-        recipients: [
-          { recipient_did, resolution_material, proof },
-          {
-            recipient_did: second.recipient.did,
-            resolution_material: second.recipient.longForm,
-            proof: second.proof,
-          },
-        ],
-      },
-    ]) {
-      await expectProblem(await send(known(account), RECIPIENT_ADD, body), "invalid-message");
-    }
+    const full = Array.from({ length: limits.max_recipient_updates }, () => removing(first.recipient));
+    expect(updated(await update(full))).toHaveLength(limits.max_recipient_updates);
+    await expectProblem(await update([...full, adding(first)]), "invalid-message");
     expect(await store.sharedRecipientMaterial(first.recipient.did)).toBeNull();
-    expect(await store.sharedRecipientMaterial(second.recipient.did)).toBeNull();
+  });
+
+  it("answers each update in its place, a refused one undoing none of the others", async () => {
+    const [first, second, third] = [await addition(), await addition(), await addition()];
+    await add(first);
+    const forged = { recipient: second.recipient, proof: await proofBy(account, second.payload) };
+
+    const reply = await update([
+      adding(third),
+      adding(forged),
+      removing(first.recipient),
+      removing(second.recipient),
+      adding(third, { resolution_material: null }),
+    ]);
+
+    expect(reply?.body).toEqual({
+      updated: [
+        { recipient_did: third.recipient.did, action: "add", result: "success" },
+        {
+          recipient_did: second.recipient.did,
+          action: "add",
+          result: "client_error",
+          problem: problem("invalid-recipient"),
+        },
+        { recipient_did: first.recipient.did, action: "remove", result: "success" },
+        { recipient_did: second.recipient.did, action: "remove", result: "no_change" },
+        { recipient_did: third.recipient.did, action: "add", result: "no_change" },
+      ],
+    });
   });
 
   it("needs an account that already exists, at the mediator it is bound to", async () => {
@@ -966,18 +1065,14 @@ describe("recipient-add", () => {
     await expectProblem(
       await send(
         known(account),
-        RECIPIENT_ADD,
-        {
-          recipient_did: underAlias.recipient.did,
-          resolution_material: underAlias.recipient.longForm,
-          proof: underAlias.proof,
-        },
+        RECIPIENT_UPDATE,
+        { updates: [adding(underAlias), removing(underAlias.recipient)] },
         { to: [alias] }
       ),
       "unknown-account"
     );
     expect(await store.sharedRecipientMaterial(underAlias.recipient.did)).toBeNull();
-    expect((await add(await addition()))?.body.status).toBe("added");
+    expect(result(await add(await addition()))).toBe("success");
   });
 
   describe("refuses a DID that is bound otherwise, without changing anything", () => {
@@ -991,8 +1086,8 @@ describe("recipient-add", () => {
         recipient: first.recipient,
         proof: await proofBy(first.recipient, { ...first.payload, account: other.did }),
       };
-      await expectProblem(await add(claim, known(other)), "identity-conflict");
-      expect((await add(first))?.body.status).toBe("no_change");
+      expectRefusedUpdate(await add(claim, known(other)), "identity-conflict");
+      expect(result(await add(first))).toBe("no_change");
     });
 
     it("a replica, or an account, its own included", async () => {
@@ -1007,7 +1102,7 @@ describe("recipient-add", () => {
           aud: mediator.did,
           recipient: bound.did,
         });
-        await expectProblem(await add({ recipient: bound, proof }), "identity-conflict");
+        expectRefusedUpdate(await add({ recipient: bound, proof }), "identity-conflict");
         expect(await store.sharedRecipientMaterial(bound.did)).toBeNull();
       }
     });
@@ -1021,7 +1116,7 @@ describe("recipient-add", () => {
         await addition(),
       ];
       await send(firstContact(mediated.recipient), MEDIATE_REQUEST, {});
-      await send(holder, RECIPIENT_UPDATE, {
+      await send(holder, KEYLIST_UPDATE, {
         updates: [listedShort.recipient.did, listedLong.recipient.longForm].map((recipient_did) => ({
           recipient_did,
           action: "add",
@@ -1029,7 +1124,7 @@ describe("recipient-add", () => {
       });
 
       for (const bound of [mediated, listedShort, listedLong]) {
-        await expectProblem(await add(bound), "identity-conflict");
+        expectRefusedUpdate(await add(bound), "identity-conflict");
         expect(await store.sharedRecipientMaterial(bound.recipient.did)).toBeNull();
       }
     });
@@ -1043,7 +1138,7 @@ describe("recipient-add", () => {
     await send(holder, MEDIATE_REQUEST, {});
 
     expect((await send(firstContact(recipient), MEDIATE_REQUEST, {}))?.type).toBe(MEDIATE_DENY);
-    const update = await send(holder, RECIPIENT_UPDATE, {
+    const update = await send(holder, KEYLIST_UPDATE, {
       updates: [recipient.did, recipient.longForm].map((recipient_did) => ({
         recipient_did,
         action: "add",
@@ -1080,25 +1175,220 @@ describe("recipient-add", () => {
     const added = [];
     for (let i = 0; i < TEST_CONFIG.maxSharedRecipients; i++) {
       added.push(await addition());
-      expect((await add(added[i]))?.body.status).toBe("added");
+      expect(result(await add(added[i]))).toBe("success");
     }
 
     const over = await addition();
-    await expectProblem(await add(over), "quota");
+    expectRefusedUpdate(await add(over), "quota");
     expect(await store.sharedRecipientMaterial(over.recipient.did)).toBeNull();
-    expect((await add(added[0]))?.body.status).toBe("no_change");
+    expect(result(await add(added[0]))).toBe("no_change");
   });
 
-  it("is not answered by a control that would remove a recipient", async () => {
-    const first = await addition();
-    await add(first);
+  describe("removing a recipient", () => {
+    let first: Addition;
 
-    const reply = await send(known(account), `${PROTOCOL}/recipient-remove`, {
-      recipient_did: first.recipient.did,
+    beforeEach(async () => {
+      first = await addition();
+      await add(first);
     });
 
-    expect(reply?.body.code).toBe("e.p.msg.unsupported");
-    expect((await add(first))?.body.status).toBe("no_change");
+    it("unbinds it, in either spelling, and forgets its long form", async () => {
+      const reply = await update([
+        { recipient_did: first.recipient.longForm, action: "remove" },
+      ]);
+
+      expect(reply?.type).toBe(RECIPIENT_UPDATED);
+      expect(reply?.body).toEqual({
+        updated: [{ recipient_did: first.recipient.did, action: "remove", result: "success" }],
+      });
+      expect(await store.sharedRecipientMaterial(first.recipient.did)).toBeNull();
+      expect((await post(forwardOf(first.recipient.did, await envelope(first.recipient)))).status).toBe(
+        422
+      );
+    });
+
+    it("answers a repeat, or a DID the account never held, with no change", async () => {
+      const stranger = await agent("stranger");
+      await update([removing(first.recipient)]);
+
+      const reply = await update([
+        removing(first.recipient),
+        { recipient_did: stranger.did, action: "remove" },
+      ]);
+
+      expect(updated(reply).map((answer) => answer.result)).toEqual(["no_change", "no_change"]);
+    });
+
+    it("leaves another account's recipient where it is", async () => {
+      const other = await peer4Agent(null);
+      await register((await enrollment(other)).grant, firstContact(other));
+
+      expect(result(await update([removing(first.recipient)], known(other)))).toBe("no_change");
+      expect(result(await add(first))).toBe("no_change");
+    });
+
+    it("makes room under the recipient limit", async () => {
+      const added = [first];
+      while (added.length < TEST_CONFIG.maxSharedRecipients) {
+        added.push(await addition());
+        await add(added.at(-1)!);
+      }
+      const over = await addition();
+      expectRefusedUpdate(await add(over), "quota");
+
+      await update([removing(first.recipient)]);
+
+      expect(result(await add(over))).toBe("success");
+    });
+
+    it("needs its proof and its long form again to be added back", async () => {
+      await update([removing(first.recipient)]);
+
+      expectRefusedUpdate(
+        await add(first, known(account), { resolution_material: null }),
+        "invalid-recipient"
+      );
+      expect(result(await add(first))).toBe("success");
+    });
+
+    it("frees it for another account its controller signs it over to, and for ordinary mediation", async () => {
+      const other = await peer4Agent(null);
+      await register((await enrollment(other)).grant, firstContact(other));
+      const second = await addition();
+      await add(second);
+      await update([removing(first.recipient), removing(second.recipient)]);
+
+      const moved = {
+        recipient: first.recipient,
+        proof: await proofBy(first.recipient, { ...first.payload, account: other.did }),
+      };
+      expect(result(await add(moved, known(other)))).toBe("success");
+      expectRefusedUpdate(await add(first), "identity-conflict");
+      expect((await send(firstContact(second.recipient), MEDIATE_REQUEST, {}))?.type).toBe(
+        MEDIATE_GRANT
+      );
+    });
+
+    it("keeps the mail already queued for it, which each replica still picks up", async () => {
+      const [replica] = enrolled;
+      const inner = await envelope(first.recipient);
+      await post(forwardOf(first.recipient.did, inner));
+
+      await update([removing(first.recipient)]);
+
+      const reply = await send(known(replica.replica), `${PICKUP}/delivery-request`, { limit: 10 });
+      expect((reply?.attachments as Attached[]).map(carried)).toEqual([inner]);
+    });
+
+    it("refuses a repeat of that mail while the DID is bound nowhere", async () => {
+      const forward = forwardOf(first.recipient.did, await envelope(first.recipient));
+      await post(forward);
+
+      await update([removing(first.recipient)]);
+
+      expect((await post(forward)).status).toBe(422);
+      expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
+    });
+
+    it("keeps for its next account a forward the former one kept, as a package of its own", async () => {
+      const other = await peer4Agent(null);
+      const theirs = await enrollment(other);
+      await register(theirs.grant, firstContact(other));
+      const forward = forwardOf(first.recipient.did, await envelope(first.recipient));
+      await post(forward);
+      await update([removing(first.recipient)]);
+      const moved = {
+        recipient: first.recipient,
+        proof: await proofBy(first.recipient, { ...first.payload, account: other.did }),
+      };
+      await add(moved, known(other));
+
+      expect((await post(forward)).status).toBe(202);
+      expect((await post(forward)).status).toBe(202);
+      const changed = forwardOf(first.recipient.did, await envelope(first.recipient), {
+        id: forward.id,
+      });
+      expect((await post(changed)).status).toBe(422);
+
+      expect(await store.deliveryCount(theirs.replica.did)).toBe(1);
+      expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
+    });
+  });
+});
+
+describe("recipient-query", () => {
+  let added: Addition[];
+
+  beforeEach(async () => {
+    await register((await enrollment()).grant);
+    added = [await addition(), await addition(), await addition()];
+    for (const one of added) {
+      await add(one);
+    }
+  });
+
+  const listed = (reply: IMessage | null) =>
+    (reply?.body.dids as { recipient_did: string }[]).map((entry) => entry.recipient_did);
+
+  it("pages the account's recipients, oldest first, by their short forms", async () => {
+    const first = await recipients(known(account), 2, 0);
+    const second = await recipients(known(account), 2, 2);
+
+    expect(first?.type).toBe(RECIPIENTS);
+    expect(first?.body).toEqual({
+      dids: added.slice(0, 2).map(({ recipient }) => ({ recipient_did: recipient.did })),
+      pagination: { count: 2, offset: 0, remaining: 1 },
+    });
+    expect(second?.body).toEqual({
+      dids: [{ recipient_did: added[2].recipient.did }],
+      pagination: { count: 1, offset: 2, remaining: 0 },
+    });
+  });
+
+  it("answers an offset past the end with an empty page", async () => {
+    expect((await recipients(known(account), 2, 7))?.body).toEqual({
+      dids: [],
+      pagination: { count: 0, offset: 7, remaining: 0 },
+    });
+  });
+
+  it("no longer lists a removed recipient", async () => {
+    await update([removing(added[1].recipient)]);
+
+    expect(listed(await recipients())).toEqual([added[0].recipient.did, added[2].recipient.did]);
+  });
+
+  it("lists nothing of another account", async () => {
+    const other = await peer4Agent(null);
+    await register((await enrollment(other)).grant, firstContact(other));
+
+    expect(listed(await recipients(known(other)))).toEqual([]);
+  });
+
+  it("refuses a body that is not exactly a page to ask for", async () => {
+    for (const body of [
+      {},
+      { paginate: null },
+      { paginate: { limit: 2 } },
+      { paginate: { limit: 2, offset: 0, cursor: null } },
+      { paginate: { limit: 0, offset: 0 } },
+      { paginate: { limit: TEST_CONFIG.maxMembershipPage + 1, offset: 0 } },
+      { paginate: { limit: 1.5, offset: 0 } },
+      { paginate: { limit: 2, offset: -1 } },
+      { paginate: { limit: 2, offset: "0" } },
+      { paginate: { limit: 2, offset: 0 }, recipient_did: added[0].recipient.did },
+    ]) {
+      await expectProblem(await send(known(account), RECIPIENT_QUERY, body), "invalid-message");
+    }
+  });
+
+  it("needs an account, and discloses nothing of one to its replica", async () => {
+    const stranger = await peer4Agent(null);
+    const member = await enrollment();
+    await register(member.grant);
+
+    await expectProblem(await recipients(firstContact(stranger)), "unknown-account");
+    await expectProblem(await recipients(known(member.replica)), "unknown-account");
   });
 });
 
@@ -1134,11 +1424,14 @@ describe("a long form", () => {
     const longForm = unread(100);
     const { proof } = await addition();
 
-    await send(known(account), RECIPIENT_ADD, {
-      recipient_did: longToShort(longForm),
-      resolution_material: longForm,
-      proof,
-    });
+    await update([
+      {
+        recipient_did: longToShort(longForm),
+        action: "add",
+        resolution_material: longForm,
+        proof,
+      },
+    ]);
 
     expect(decodings(longForm)).toBeGreaterThan(0);
   });
@@ -1148,20 +1441,21 @@ describe("a long form", () => {
       const [named, supplied] = [await oversized(), await oversized()];
       const { proof } = await addition();
 
-      await expectProblem(
-        await send(known(account), RECIPIENT_ADD, {
-          recipient_did: named,
-          resolution_material: null,
-          proof,
-        }),
+      expectRefusedUpdate(
+        await update([
+          { recipient_did: named, action: "add", resolution_material: null, proof },
+        ]),
         "invalid-recipient"
       );
-      await expectProblem(
-        await send(known(account), RECIPIENT_ADD, {
-          recipient_did: longToShort(supplied),
-          resolution_material: supplied,
-          proof,
-        }),
+      expectRefusedUpdate(
+        await update([
+          {
+            recipient_did: longToShort(supplied),
+            action: "add",
+            resolution_material: supplied,
+            proof,
+          },
+        ]),
         "invalid-recipient"
       );
 
@@ -1173,7 +1467,7 @@ describe("a long form", () => {
       const longForm = await oversized();
       const { recipient, payload } = await addition();
 
-      await expectProblem(
+      expectRefusedUpdate(
         await add({ recipient, proof: await proofBy(recipient, { ...payload, [field]: longForm }) }),
         "invalid-recipient"
       );
@@ -1185,7 +1479,7 @@ describe("a long form", () => {
       const longForm = await oversized();
       const { recipient, payload } = await addition();
 
-      await expectProblem(
+      expectRefusedUpdate(
         await add({
           recipient,
           proof: await proofBy(recipient, payload, { kid: `${longForm}#key-1` }),
@@ -1905,6 +2199,267 @@ describe("live delivery to a replica", () => {
   });
 });
 
+describe("remove", () => {
+  let first: Enrollment;
+  let second: Enrollment;
+  let shared: Peer4Agent;
+
+  beforeEach(async () => {
+    first = await enrollment();
+    second = await enrollment();
+    await register(first.grant);
+    await register(second.grant);
+    const added = await addition();
+    await add(added);
+    shared = added.recipient;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const remove = (replica: Enrollment, speaker: Speaker = known(account)) =>
+    send(speaker, REMOVE, { replica_id: replica.replicaId });
+
+  const waiting = (replica: Enrollment) => store.deliveriesFor(replica.replica.did, 100);
+
+  const states = async () =>
+    ((await roster(known(account), 2))?.body.entries as { state: string }[]).map(
+      (entry) => entry.state
+    );
+
+  it("ends a replica's enrollment, and answers a repeat with the time of the first", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Math.floor(Date.now() / 1000);
+
+    const reply = await remove(first);
+    vi.setSystemTime((now + 60) * 1000);
+    const again = await remove(first);
+
+    expect(reply?.type).toBe(REMOVED);
+    expect(reply?.body).toEqual({
+      replica_id: first.replicaId,
+      state: "removed",
+      removed_time: now,
+    });
+    expect(again?.body).toEqual(reply?.body);
+  });
+
+  it("keeps the replica in the roster, in its place and as removed", async () => {
+    const removed = await remove(first);
+
+    const listed = await roster(known(account), 2);
+
+    expect(listed?.body.entries).toEqual([
+      {
+        grant: first.grant,
+        state: "removed",
+        registered_time: expect.any(Number),
+        removed_time: removed?.body.removed_time,
+      },
+      {
+        grant: second.grant,
+        state: "active",
+        registered_time: expect.any(Number),
+        removed_time: null,
+      },
+    ]);
+  });
+
+  it("never enrolls the replica's ID or its DID again", async () => {
+    await remove(first);
+    const sameDid = await enrollment(account, {
+      replica_did: first.replica.did,
+      replica_long_form: first.replica.longForm,
+    });
+    const sameId = await enrollment(account, { replica_id: first.replicaId });
+    const other = await peer4Agent(null);
+    const elsewhere = await enrollment(other, {
+      replica_did: first.replica.did,
+      replica_long_form: first.replica.longForm,
+    });
+
+    await expectProblem(await register(first.grant), "identity-conflict");
+    await expectProblem(await register(sameDid.grant), "identity-conflict");
+    await expectProblem(await register(sameId.grant), "identity-conflict");
+    await expectProblem(await register(elsewhere.grant, firstContact(other)), "identity-conflict");
+    expect(await states()).toEqual(["removed", "active"]);
+  });
+
+  it("makes room under the replica limit", async () => {
+    await register((await enrollment()).grant);
+    const over = await enrollment();
+    await expectProblem(await register(over.grant), "quota");
+
+    await remove(first);
+
+    expect((await register(over.grant))?.type).toBe(REGISTERED);
+  });
+
+  it("drops what waited for the replica, its own mail with the room it took, and leaves the others theirs", async () => {
+    await post(forwardOf(shared.did, await envelope(shared)));
+    for (let i = 1; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(first.replica.did, await envelope(first.replica)));
+    }
+    const refused = forwardOf(shared.did, await envelope(shared));
+    expect((await post(refused)).status).toBe(422);
+
+    await remove(first);
+
+    expect(await waiting(first)).toEqual([]);
+    expect(await waiting(second)).toHaveLength(1);
+    expect((await post(refused)).status).toBe(202);
+    expect(await waiting(second)).toHaveLength(2);
+  });
+
+  it("queues nothing more for the replica, shared or its own", async () => {
+    await remove(first);
+
+    expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
+    expect((await post(forwardOf(first.replica.did, await envelope(first.replica)))).status).toBe(
+      422
+    );
+
+    expect(await waiting(first)).toEqual([]);
+    expect(await waiting(second)).toHaveLength(1);
+  });
+
+  it("tells the removed replica so when it asks for pickup, in either spelling", async () => {
+    await remove(first);
+
+    for (const speaker of [known(first.replica), firstContact(first.replica)]) {
+      for (const [type, body] of [
+        ["status-request", {}],
+        ["delivery-request", { limit: 10 }],
+        ["messages-received", { message_id_list: [] }],
+      ] as const) {
+        await expectProblem(await send(speaker, `${PICKUP}/${type}`, body), "replica-removed");
+      }
+    }
+  });
+
+  it("says nothing to a removed replica that only signed its request", async () => {
+    await remove(first);
+    const request = plaintext(
+      `${PICKUP}/status-request`,
+      {},
+      { from: first.replica.did, to: [mediator.did], return_route: "all" }
+    );
+
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": SIGNED },
+      body: await packSigned(first.replica, request),
+    });
+
+    expect(await res.text()).toBe("");
+  });
+
+  it("keeps the account when its last replica goes, with mail still taken and none delivered", async () => {
+    await remove(first);
+    await remove(second);
+    const late = await enrollment();
+
+    expect(await states()).toEqual(["removed", "removed"]);
+    expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
+    expect((await register(late.grant, known(account)))?.type).toBe(REGISTERED);
+    expect(await waiting(late)).toEqual([]);
+  });
+
+  describe("of a replica whose DID was a shared recipient before", () => {
+    let forward: IMessage;
+
+    beforeEach(async () => {
+      forward = forwardOf(shared.did, await envelope(shared));
+      await post(forward);
+      await update([removing(shared)]);
+    });
+
+    const enrollFormer = async (owner: Peer4Agent): Promise<Enrollment> => {
+      const former = await enrollment(owner, {
+        replica_did: shared.did,
+        replica_long_form: shared.longForm,
+      });
+      const speaker = owner === account ? known(owner) : firstContact(owner);
+      expect((await register(former.grant, speaker))?.type).toBe(REGISTERED);
+      return former;
+    };
+
+    it("leaves the mail kept for the recipient to the replicas it waits for, whichever account enrolled it", async () => {
+      const other = await peer4Agent(null);
+      await remove(await enrollFormer(account));
+
+      expect(await store.replicaState(shared.did)).toBe("removed");
+      expect(await waiting(first)).toHaveLength(1);
+      expect(await waiting(second)).toHaveLength(1);
+
+      const elsewhere = await addition();
+      await add(elsewhere);
+      await post(forwardOf(elsewhere.recipient.did, await envelope(elsewhere.recipient)));
+      await update([removing(elsewhere.recipient)]);
+      const theirs = await enrollment(other, {
+        replica_did: elsewhere.recipient.did,
+        replica_long_form: elsewhere.recipient.longForm,
+      });
+      await register(theirs.grant, firstContact(other));
+
+      const reply = await remove(theirs, known(other));
+
+      expect(reply?.type).toBe(REMOVED);
+      expect(await waiting(first)).toHaveLength(2);
+    });
+
+    it("keeps that mail a known repeat after every replica acknowledged, the former recipient included", async () => {
+      await enrollFormer(account);
+      for (const replica of [first, second]) {
+        await send(known(replica.replica), `${PICKUP}/messages-received`, {
+          message_id_list: (await waiting(replica)).map((message) => message.id),
+        });
+      }
+      await send(firstContact(shared), `${PICKUP}/messages-received`, { message_id_list: [] });
+
+      expect((await post(forward)).status).toBe(202);
+
+      expect(await store.deliveryCount(shared.did)).toBe(0);
+      expect(await waiting(first)).toEqual([]);
+    });
+  });
+
+  it("refuses an ID the account never enrolled, another account's included", async () => {
+    const other = await peer4Agent(null);
+    const theirs = await enrollment(other);
+    await register(theirs.grant, firstContact(other));
+
+    await expectProblem(await remove(theirs), "unknown-replica");
+    await expectProblem(
+      await send(known(account), REMOVE, { replica_id: uuidv7() }),
+      "unknown-replica"
+    );
+    expect(await store.replicaState(theirs.replica.did)).toBe("active");
+  });
+
+  it("refuses a body that is not exactly a replica ID", async () => {
+    for (const body of [
+      {},
+      { replica_id: 1 },
+      { replica_id: first.replicaId, replica_did: first.replica.did },
+      { replica_did: first.replica.did },
+    ]) {
+      await expectProblem(await send(known(account), REMOVE, body), "invalid-message");
+    }
+    expect(await states()).toEqual(["active", "active"]);
+  });
+
+  it("is the account's alone to ask for", async () => {
+    const stranger = await peer4Agent(null);
+
+    await expectProblem(await remove(first, firstContact(stranger)), "unknown-account");
+    await expectProblem(await remove(first, known(first.replica)), "unknown-account");
+    await expectProblem(await remove(second, known(first.replica)), "unknown-account");
+    expect(await states()).toEqual(["active", "active"]);
+  });
+});
+
 describe("a replica-mediation account beside ordinary mediation", () => {
   it("is never granted ordinary mediation, under either spelling", async () => {
     const first = await enrollment();
@@ -1922,7 +2477,7 @@ describe("a replica-mediation account beside ordinary mediation", () => {
     const holder = await agent("holder");
     await send(holder, MEDIATE_REQUEST, {});
 
-    const reply = await send(holder, RECIPIENT_UPDATE, {
+    const reply = await send(holder, KEYLIST_UPDATE, {
       updates: [account.did, account.longForm, first.replica.did, first.replica.longForm].map(
         (recipient_did) => ({ recipient_did, action: "add" })
       ),

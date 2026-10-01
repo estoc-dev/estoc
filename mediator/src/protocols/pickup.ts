@@ -57,10 +57,11 @@ const ANOTHERS_CONNECTION: Reply = {
 };
 
 /**
- * The sender's queue; a refusal on a connection another DID holds, and for a
+ * The sender's queue; a refusal on a connection another DID holds, for a
  * replica-mediation account, which manages its replicas and holds no queue
- * of its own; null for anyone else, and for a replica that proved itself by
- * signature alone: its queue opens to the key that mail is sealed to.
+ * of its own, and for a replica its account removed; null for anyone else,
+ * and for a replica that proved itself by signature alone: its queue opens
+ * to the key that mail is sealed to.
  */
 async function inboxOf(
   incoming: Unpacked,
@@ -76,9 +77,13 @@ async function inboxOf(
   if (await store.isReplicaAccount(did)) {
     return replicaProblem("replica-required");
   }
-  if (await store.isReplica(did)) {
+  const replica = await store.replicaState(did);
+  if (replica !== null) {
     if (!isAuthcrypted(incoming)) {
       return null;
+    }
+    if (replica === "removed") {
+      return replicaProblem("replica-removed");
     }
     return {
       count: (recipientDid) => store.deliveryCount(did, forwardedTo(recipientDid)),
