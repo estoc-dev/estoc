@@ -139,6 +139,14 @@ Anonymous (anoncrypt) envelopes may only carry `forward` — the outer envelope
 of a forward is anonymous by design. Everything that grants or writes state
 requires an authcrypt envelope, and the proven sender DID *is* the account.
 
+A did:peer larger than 8192 UTF-8 bytes is not resolved, in either method and
+for every protocol, whatever registration allows: decoding one costs time that
+grows faster than its length, and it would be paid before the sender is known.
+The size is judged before anything is decoded, and equally for a long form the
+mediator kept and reads back for a short one. An envelope that needs such a
+DID to be opened fails like any other that cannot be unpacked: a **400** over
+HTTP, dropped on a socket.
+
 ### What a forward must be
 
 A forward is queued whole or not at all, and the HTTP status of the call says

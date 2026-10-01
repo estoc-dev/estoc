@@ -9,13 +9,14 @@ import type { DIDDoc } from "@estoc/did-peer";
 
 import type { MediatorPolicy } from "../config.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
+import { isDecodable } from "../didcomm/did-resolver.js";
 import type { HandlerContext, Reply } from "./types.js";
 import { isMediatorOwnDid } from "./coordinate-mediation.js";
 import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
 import { verifyRecipientProof } from "./recipient-proof.js";
-import { canonicalDid, isDecodable, provenDid, verifyReplicaGrant } from "./replica-grant.js";
+import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
  * replica-mediation/1.0 — https://estoc.dev/replica-mediation/1.0

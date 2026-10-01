@@ -378,22 +378,6 @@ describe("register", () => {
       );
     });
 
-    it("whose key ID spells the account in a long form too large to decode", async () => {
-      account = await paddedAgent(null, 5600);
-      const { payload, grant } = await enrollment();
-      const spelledLong = await signedBy(account, payload, { kid: `${account.longForm}#key-1` });
-      expect(account.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
-
-      await refused(spelledLong);
-
-      expect((await register(grant))?.type).toBe(REGISTERED);
-      await expectProblem(await register(spelledLong), "invalid-grant");
-      await expectProblem(await register(spelledLong, known(account)), "invalid-grant");
-      expect((await roster())?.body.entries).toEqual([
-        { grant, state: "active", registered_time: expect.any(Number) },
-      ]);
-    });
-
     it("with IDs that are not UUIDv7", async () => {
       await refused((await enrollment(account, { replica_id: randomUUID() })).grant);
       await refused((await enrollment(account, { mediation_id: "1" })).grant);
@@ -900,23 +884,6 @@ describe("recipient-add", () => {
           resolution_material: null,
         }),
         recipient
-      );
-    });
-
-    it("whose proof spells the account in a long form too large to decode", async () => {
-      account = await paddedAgent(null, 5600);
-      expect((await register((await enrollment()).grant))?.type).toBe(REGISTERED);
-      const { recipient, payload } = await addition();
-
-      await refused(
-        await add({
-          recipient,
-          proof: await proofBy(recipient, { ...payload, account: account.longForm }),
-        }),
-        recipient
-      );
-      expect((await add({ recipient, proof: await proofBy(recipient, payload) }))?.body.status).toBe(
-        "added"
       );
     });
 

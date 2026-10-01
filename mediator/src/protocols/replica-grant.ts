@@ -11,6 +11,8 @@ import {
 } from "@estoc/did-peer";
 import type { DIDDoc, VerificationMethod } from "@estoc/did-peer";
 
+import { isDecodable } from "../didcomm/did-resolver.js";
+
 /**
  * The grant a replica-mediation account signs for one replica: a lifetime
  * binding of that replica's ID and DID to the account, its mediation ID and
@@ -51,17 +53,6 @@ export interface ReplicaGrant {
  */
 export function canonicalDid(did: string): string {
   return isLongForm(did) ? longToShort(did) : did;
-}
-
-/**
- * Decoding a did:peer:4 long form takes time that grows faster than its
- * length, and it has to be decoded before anything it claims can be checked.
- * The documents vaults mint are a small fraction of this.
- */
-export const MAX_LONG_FORM_BYTES = 8192;
-
-export function isDecodable(longForm: string): boolean {
-  return Buffer.byteLength(longForm) <= MAX_LONG_FORM_BYTES;
 }
 
 /**
