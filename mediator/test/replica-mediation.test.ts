@@ -14,6 +14,7 @@ import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
 import type { SqliteStore } from "../src/store/sqlite.js";
 import {
   ENCRYPTED,
+  forwardOf,
   RECIPIENT_PROOF_TYP,
   TEST_CONFIG,
   agent,
@@ -1226,6 +1227,232 @@ describe("a long form", () => {
 
       expect(decodings(longForm)).toBe(0);
     });
+  });
+});
+
+describe("a forward", () => {
+  let first: Enrollment;
+  let second: Enrollment;
+  let shared: Peer4Agent;
+
+  beforeEach(async () => {
+    first = await enrollment();
+    second = await enrollment();
+    await register(first.grant);
+    await register(second.grant);
+    const added = await addition();
+    await add(added);
+    shared = added.recipient;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** An envelope sealed to `to`, which nobody here can open. */
+  async function envelope(to: Peer4Agent, content = "hello"): Promise<Record<string, unknown>> {
+    return JSON.parse(
+      await packAnonymous(plaintext("https://example.test/note", { content }), to.longForm)
+    );
+  }
+
+  async function post(forward: IMessage, to: Hono = app): Promise<Response> {
+    return to.request("/", {
+      method: "POST",
+      headers: { "content-type": ENCRYPTED },
+      body: await packAnonymous(forward, mediator.did),
+    });
+  }
+
+  const waiting = (replica: Enrollment) => store.deliveriesFor(replica.replica.did, 100);
+
+  it("to a shared recipient waits once for each replica, under a delivery ID of its own", async () => {
+    const inner = await envelope(shared);
+
+    expect((await post(forwardOf(shared.did, inner))).status).toBe(202);
+
+    const [forFirst] = await waiting(first);
+    const [forSecond] = await waiting(second);
+    expect(forFirst.packed).toBe(canonicalize(inner));
+    expect(forSecond.packed).toBe(forFirst.packed);
+    expect(forFirst.id).toMatch(/^[0-9a-f]{32}$/);
+    expect(forSecond.id).toMatch(/^[0-9a-f]{32}$/);
+    expect(forSecond.id).not.toBe(forFirst.id);
+  });
+
+  it("reaches no replica enrolled after it, however often it is repeated", async () => {
+    const forward = forwardOf(shared.did, await envelope(shared));
+    await post(forward);
+    const before = await waiting(first);
+    const late = await enrollment();
+    await register(late.grant);
+
+    expect((await post(forward)).status).toBe(202);
+
+    expect(await waiting(late)).toEqual([]);
+    expect(await waiting(first)).toEqual(before);
+    expect(await waiting(second)).toHaveLength(1);
+
+    await post(forwardOf(shared.did, await envelope(shared, "later")));
+    expect(await waiting(late)).toHaveLength(1);
+  });
+
+  it("keeps the first bytes its recipient and ID were given", async () => {
+    const forward = forwardOf(shared.did, await envelope(shared));
+    await post(forward);
+
+    const other = forwardOf(shared.did, await envelope(shared, "something else"), {
+      id: forward.id,
+    });
+
+    expect((await post(other)).status).toBe(422);
+    expect(await waiting(first)).toHaveLength(1);
+  });
+
+  it("names its recipient in either spelling", async () => {
+    const forward = forwardOf(shared.longForm, await envelope(shared));
+
+    expect((await post(forward)).status).toBe(202);
+    expect((await post({ ...forward, body: { next: shared.did } })).status).toBe(202);
+
+    expect(await waiting(first)).toHaveLength(1);
+  });
+
+  it("to a replica waits for that replica alone", async () => {
+    const inner = await envelope(second.replica);
+
+    expect((await post(forwardOf(second.replica.did, inner))).status).toBe(202);
+    const late = await enrollment();
+    await register(late.grant);
+
+    expect((await waiting(second)).map((delivery) => delivery.packed)).toEqual([
+      canonicalize(inner),
+    ]);
+    expect(await waiting(first)).toEqual([]);
+    expect(await waiting(late)).toEqual([]);
+  });
+
+  it("with one ID is separate mail for each recipient it names", async () => {
+    const forward = forwardOf(shared.did, await envelope(shared));
+    await post(forward);
+
+    const toReplica = forwardOf(second.replica.did, await envelope(second.replica), {
+      id: forward.id,
+    });
+
+    expect((await post(toReplica)).status).toBe(202);
+    expect(await waiting(second)).toHaveLength(2);
+    expect(await waiting(first)).toHaveLength(1);
+  });
+
+  it("is refused with one answer for an account, a stranger and a full account", async () => {
+    const stranger = await peer4Agent(mediator.did);
+    const unknown = await post(forwardOf(stranger.did, await envelope(stranger)));
+    const toAccount = await post(forwardOf(account.did, await envelope(account)));
+    for (let i = 0; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(shared.did, await envelope(shared)));
+    }
+    const full = await post(forwardOf(shared.did, await envelope(shared)));
+
+    for (const refused of [unknown, toAccount, full]) {
+      expect(refused.status).toBe(422);
+      expect(await refused.json()).toEqual({ error: "The forward was not queued" });
+    }
+  });
+
+  it("counts once against its account, shared or not, whatever waits for each replica", async () => {
+    for (let i = 0; i < 3; i++) {
+      expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
+    }
+    for (let i = 0; i < 2; i++) {
+      const toReplica = forwardOf(second.replica.did, await envelope(second.replica));
+      expect((await post(toReplica)).status).toBe(202);
+    }
+
+    expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(422);
+    expect(
+      (await post(forwardOf(first.replica.did, await envelope(first.replica)))).status
+    ).toBe(422);
+    expect(await waiting(first)).toHaveLength(3);
+    expect(await waiting(second)).toHaveLength(5);
+  });
+
+  it("is refused whole once its account holds the bytes it may", async () => {
+    const inner = await envelope(shared);
+    const bytes = Buffer.byteLength(canonicalize(inner)!);
+    const tight = serve({ maxRetainedBytes: 2 * bytes });
+
+    expect((await post(forwardOf(shared.did, inner), tight)).status).toBe(202);
+    expect((await post(forwardOf(second.replica.did, inner), tight)).status).toBe(202);
+    expect((await post(forwardOf(shared.did, inner), tight)).status).toBe(422);
+
+    expect(await waiting(first)).toHaveLength(1);
+    expect(await waiting(second)).toHaveLength(2);
+  });
+
+  it("leaves the accounts beside its own their full room", async () => {
+    for (let i = 0; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(shared.did, await envelope(shared)));
+    }
+    account = await peer4Agent(null);
+    mediationId = uuidv7();
+    const elsewhere = await enrollment();
+    await register(elsewhere.grant);
+
+    const forward = forwardOf(elsewhere.replica.did, await envelope(elsewhere.replica));
+
+    expect((await post(forward)).status).toBe(202);
+    expect(await waiting(elsewhere)).toHaveLength(1);
+  });
+
+  it("waits no longer than the mediator keeps mail, or than its sender allowed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Math.floor(Date.now() / 1000);
+    const brief = forwardOf(shared.did, await envelope(shared), { expires_time: now + 60 });
+    await post(brief);
+    await post(forwardOf(shared.did, await envelope(shared)));
+
+    vi.setSystemTime((now + 61) * 1000);
+    expect(await waiting(first)).toHaveLength(1);
+
+    vi.setSystemTime((now + TEST_CONFIG.messageTtlSeconds + 1) * 1000);
+    expect(await waiting(first)).toEqual([]);
+    expect(await waiting(second)).toEqual([]);
+    expect(await store.purgeExpired()).toBe(2);
+  });
+
+  it("is refused when its sender's deadline has already passed", async () => {
+    const late = forwardOf(shared.did, await envelope(shared), {
+      expires_time: Math.floor(Date.now() / 1000) - 1,
+    });
+
+    expect((await post(late)).status).toBe(422);
+    expect(await waiting(first)).toEqual([]);
+  });
+
+  it("frees its ID and its room once it has lapsed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Math.floor(Date.now() / 1000);
+    const forward = forwardOf(shared.did, await envelope(shared), { expires_time: now + 60 });
+    await post(forward);
+    for (let i = 1; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(shared.did, await envelope(shared), { expires_time: now + 60 }));
+    }
+
+    vi.setSystemTime((now + 61) * 1000);
+    const again = forwardOf(shared.did, await envelope(shared, "anew"), { id: forward.id });
+
+    expect((await post(again)).status).toBe(202);
+    expect((await waiting(first)).map((delivery) => delivery.packed)).toEqual([
+      canonicalize(again.attachments![0].data.json),
+    ]);
+  });
+
+  it("finds nobody where replica mediation is off", async () => {
+    const off = serve({ replicaMediation: false });
+
+    expect((await post(forwardOf(shared.did, await envelope(shared)), off)).status).toBe(422);
+    expect(await waiting(first)).toEqual([]);
   });
 });
 

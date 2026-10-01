@@ -102,6 +102,25 @@ export interface SharedRecipient {
  */
 export type ShareOutcome = "added" | "no_change" | "unknown" | "conflict" | "full";
 
+/**
+ * What bounds a package beyond the store's own retention and message count:
+ * the time its sender set for it to lapse, in milliseconds, when it set one,
+ * and the bytes its account may hold.
+ */
+export interface PackageBounds {
+  deadline: number | null;
+  maxRetainedBytes: number;
+}
+
+/**
+ * `repeated` and `conflict` as for an ordinary queue. `unknown`: the key's
+ * recipient is neither a shared recipient nor a replica. `full`: the account
+ * is at its message or byte limit. `lapsed`: the deadline has already passed.
+ * Only `stored` wrote anything, and it wrote the package and every delivery
+ * of it together.
+ */
+export type FanOutOutcome = "stored" | "repeated" | "conflict" | "unknown" | "full" | "lapsed";
+
 export interface RecipientPage {
   recipients: string[];
   /** Entries remaining after this page. */
@@ -162,7 +181,8 @@ export interface MediationStore {
    * replica-mediation/1.0. An account, its replicas and its shared
    * recipients are append-only, and their DIDs are kept apart from ordinary
    * accounts and recipients in both directions: neither kind of binding can
-   * be made over the other.
+   * be made over the other. Its mail is kept per account and handed out per
+   * replica, apart from the ordinary queues.
    */
   registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
   /** Whether `did` is a replica-mediation account. */
@@ -185,6 +205,15 @@ export interface MediationStore {
   addSharedRecipient(recipient: SharedRecipient): Promise<ShareOutcome>;
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
+  /**
+   * Keeps `packed` once for the account `key.next` belongs to and queues a
+   * delivery of it: for each replica the account holds at that moment when
+   * the recipient is shared, for that replica alone when it is one. A replica
+   * enrolled later gets none, and neither does anyone from a repeat.
+   */
+  fanOut(key: PackageKey, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
+  /** What waits for a replica, oldest first; each id names its delivery, not the package. */
+  deliveriesFor(replicaDid: string, limit: number): Promise<StoredMessage[]>;
 
   /** Queues `packed` under its key, once: the first bytes a key is given are the ones it keeps. */
   storeMessage(ownerDid: string, key: PackageKey, packed: string): Promise<StoreOutcome>;
