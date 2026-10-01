@@ -1,1170 +1,606 @@
 # replica-mediation/1.0
 
-> Deferred design notes only; the [phase-1 contract](../README.md) takes
-> precedence. These candidates require redesign and integration before any
-> implementation; they reserve no current schema, code or API.
+> Proposed multi-replica contract; not implemented and not part of the
+> [phase-1 contract](../README.md). The current runtime remains single-writer.
+> The [adoption work](README.md#adoption-work) must be completed before enabling
+> this profile. Candidate events and key names below are not phase-1 API.
 
-Application acceptance and rotation knowledge must follow
-[durable admission](../channels.md#application-admission). Fan-out or union
-alone cannot make disconnected executors observe a rotation simultaneously.
-Before enabling multiple active executors, this extension must specify their
-admission/dispatch coordination and offline availability tradeoff. Historical
-admissions remain facts after merge; raw delivery is not application acceptance,
-and canonical event order cannot serve as a global rotation cutoff.
+[Suite guide](../README.md) · [Identity model](#identity-model) ·
+[Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)
 
-<!-- suite-navigation:start -->
-[Suite guide](../README.md) · Deferred extension · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)
-<!-- suite-navigation:end -->
+This document defines vault-authorized replica membership at a mediator,
+fan-out of external mail and independently acknowledged pickup. Each replica
+has its own DID. Ordinary Message Pickup 3.0 authenticates that DID; a caller
+cannot select another replica's queue by supplying a replica ID in a body.
+[Vault sync](vault-sync.md) exchanges events and objects between those replicas
+using ordinary encrypted messages through the same mediator.
 
-Status: **deferred draft** — future multi-replica extension for DIDComm
-Messaging 2.1, Routing 2.0, Coordinate Mediation 3.0 and Message Pickup 3.0.
-It is outside Estoc phase 1, which uses one active full
-runtime and ordinary account-scoped Message Pickup.
+The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** and
+**MAY** are interpreted as in BCP 14 when written in capitals.
 
-This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
-**SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**,
-**NOT RECOMMENDED**, **MAY**, and **OPTIONAL** as described in BCP 14
-when, and only when, they appear in all capitals.
-
-> **Phase-1 boundary.** A mediation account that has not explicitly enabled
-> this extension behaves as an ordinary Coordinate Mediation / Message Pickup
-> account and carries no `replica_id`. Once this extension is enabled for an
-> account, pickup follows its replica-scoped rules. Account-global pickup
-> MUST NOT be mixed with replica-scoped pickup.
-
-<!-- reading-guide:start -->
 <a id="reading-guide"></a>
 
-**Reading guide**
+## Reading guide
 
-| Task | Read together |
+| Task | Sections |
 | --- | --- |
-| Understand the deferred extension | [Purpose](#what-it-is-for) → [Trust model](#terms-and-trust-model) → [Invariants](#invariants) |
-| Implement server behavior | [Replica lifecycle](#replica-lifecycle) → [Recipient control](#coordinate-mediation-profile) → [Fan-out](#routing-and-mailbox-storage-extension) → [Pickup](#message-pickup-3-0-replica-profile) → [Retention](#retention-and-replay) |
-| Handle limits and failures | [Quotas](#quotas-and-abuse-bounds) → [Security](#privacy-and-security) → [Problem reports](#problem-reports) |
-
-<details>
-<summary>Contents</summary>
-
-- [1. What it is for](#what-it-is-for)
-- [2. Dependencies](#dependencies)
-- [3. Terms and trust model](#terms-and-trust-model)
-- [4. Invariants](#invariants)
-- [5. Replica lifecycle](#replica-lifecycle)
-- [6. Coordinate Mediation profile](#coordinate-mediation-profile)
-- [7. Routing and mailbox storage extension](#routing-and-mailbox-storage-extension)
-- [8. Message Pickup 3.0 replica profile](#message-pickup-3-0-replica-profile)
-- [9. Retention and replay](#retention-and-replay)
-- [10. Quotas and abuse bounds](#quotas-and-abuse-bounds)
-- [11. Privacy and security](#privacy-and-security)
-- [12. Problem reports](#problem-reports)
-- [13. Required conformance cases](#required-conformance-cases)
-
-</details>
-<!-- reading-guide:end -->
+| Identify a vault, address or writer | [Identity model](#identity-model), [authorization](#replica-authorization) |
+| Add or retire a device | [Portable membership](#portable-replica-events), [registration](#replica-lifecycle) |
+| Implement the mediator | [Recipient registration](#coordinate-mediation-profile), [routing](#routing-and-mailbox-storage-extension), [pickup](#message-pickup-3-0-replica-profile) |
+| Implement synchronization | [Protocol boundary](#protocol-boundary), [vault-sync](vault-sync.md) |
+| Enable multiple active application runtimes | [Adoption work](README.md#adoption-work); transport membership does not choose an executor |
 
 <a id="what-it-is-for"></a>
+<a id="protocol-boundary"></a>
 
-## 1. What it is for
+## 1. Purpose and protocol boundary
 
-This deferred extension distributes receipt data; it does not authorize multiple
-automatic executors or cross-replica outbox takeover. Import/replay/fan-out cannot
-dispatch old ACKs, replies, notifications or pending messages. The active
-executor and live initial/manual action rules in
-[channels.md](../channels.md#fixed-outbound-channel) still apply. A manual action
-cannot change an existing message's channel or committed package.
+An external sender addresses one of the vault's communication DIDs. The
+mediator retains the encrypted application envelope once and creates a delivery
+for each active replica. The sender does not need a device list or this
+extension. Every replica decrypts the original envelope with the vault's
+communication keys and performs its own receive procedure.
 
-One Estoc vault may have several independently writable full replicas. Every
-full replica holds the same vault seed and can derive the same communication
-DIDs, recipient keys and mediation account keys. A sender still addresses
-one vault-scoped DID and sends one encrypted application message. The
-mediator fans that opaque message out to the vault's active replicas, and
-each replica acknowledges independently.
+A replica sends synchronization traffic to a particular replica DID. That
+message gets exactly one destination queue. It MUST NOT be fanned out to the
+vault, passed through the ordinary application receive/effect pipeline, or
+turned into another portable sent/received-message record.
 
-Local recipients are ordinary seed-derived `did:peer:4` communication addresses.
-Public discovery and private pairwise allocation use the same storage, fan-out,
-pickup and channel-receipt semantics. The mediator receives no address-role
-classification. Its method-neutral resolution also supports externally managed
-DIDs without making document publication a vault responsibility.
+| Responsibility | Owner |
+| --- | --- |
+| Authorize replica DID membership; register, list and retire delivery targets | This protocol |
+| Bind shared communication addresses to the mediation account | Coordinate Mediation with the control proof below |
+| Fan-out, per-replica pickup, retention and delivery ACK | This protocol and Message Pickup |
+| Exchange exact events, objects, inventories and durable sync receipts | [Vault sync](vault-sync.md) |
+| Decide application admission, automatic replies, rotation and dispatch | The vault/domain and runtime specifications; pending multi-replica revision |
+| Bootstrap the seed and initial history | Portable encrypted SQLite recovery; [sync bootstrap](vault-sync.md#bootstrap-and-recovery) |
 
-The protocol adds two things to ordinary DIDComm mediation:
+```text
+external peer -> shared communication DID -> mediator -> A's delivery
+                                                   -> B's delivery
 
-1. a lifecycle for **replicas** under one mediation account; and
-2. a replica-scoped profile of Message Pickup 3.0.
+replica A -> encrypted sync for replica B's DID -> mediator -> B's delivery
+```
 
-The mediator stores one encrypted inner DIDComm envelope, creates one delivery
-per active replica, and never treats one replica's acknowledgment as another's.
-This protocol does not synchronize the vault event set; that is `vault-sync/1.0`.
-Invitation and address-rotation policy belong to [relationships.md](../relationships.md).
-It does not make one full replica less trusted than another or make a lost
-copy of the shared seed revocable.
+Receiving raw mail and importing an existing receipt are different operations.
+Neither fan-out nor event union grants a new live action for historical work.
+This protocol does not select a leader, promise exactly-once effects, or permit
+outbox takeover. Multiple active automatic executors remain subject to the
+[adoption work](README.md#adoption-work).
 
 <a id="dependencies"></a>
 
-## 2. Dependencies
+## 2. Dependencies and initial deployment profile
 
-A conforming implementation uses:
+The transport uses [DIDComm Messaging 2.1](https://identity.foundation/didcomm-messaging/spec/v2.1/),
+Routing 2.0, [Coordinate Mediation 3.0](https://didcomm.org/coordinate-mediation/3.0/),
+[Message Pickup 3.0](https://didcomm.org/messagepickup/3.0/) and Problem Report 2.0.
+Control message types use `https://estoc.dev/replica-mediation/1.0/`.
+Each request has a DIDComm `id`, authenticated `from`, and one `to` naming the
+mediator. Replies are authcrypted from that mediator to the requesting DID and
+use the request ID as `thid`. Body schemas in this profile are closed. Peer DID
+comparisons use the verified canonical short form, including an authenticated
+sender or key identifier originally carried in long form.
 
-- DIDComm Messaging 2.1;
-- Routing 2.0 (`https://didcomm.org/routing/2.0`);
-- Coordinate Mediation 3.0
-  (`https://didcomm.org/coordinate-mediation/3.0`);
-- Message Pickup 3.0 (`https://didcomm.org/messagepickup/3.0`);
-- Problem Report 2.0 (`https://didcomm.org/report-problem/2.0`);
-- the channel/address-policy profile in [relationships.md](../relationships.md); and
-- this protocol family:
-  `https://estoc.dev/replica-mediation/1.0`.
+The initial profile uses one selected mediation arrangement for replica
+membership and sync delivery. Existing historical communication routes may
+still need draining under the vault's route rules. Membership across several
+mediators and a live transfer between membership authorities are later work;
+a client MUST NOT treat registration at one mediator as registration at another.
 
-A mediator implementing this document SHOULD disclose the
-`replica-mediation/1.0` protocol with Discover Features 2.0. Discovery is
-advisory; successful `register` is the authoritative capability check.
+The mediator advertises the extension using Discover Features. Successful
+registration, rather than discovery alone, establishes support. Accounts that
+have not enabled the extension retain ordinary account-scoped pickup.
 
 <a id="terms-and-trust-model"></a>
+<a id="identity-model"></a>
 
-## 3. Terms and trust model
+## 3. Identities and trust
 
-- **Vault** — one Estoc identity and its event, object and key material.
-- **Full replica** — one independently writable incarnation of a
-  vault, holding the seed and enough vault data to derive and use the
-  vault's communication identities. It is not a hardware identity.
-- **Mediation account** — the DIDComm identity that established one
-  Coordinate Mediation arrangement with a mediator. It is shared by all
-  full replicas of the vault.
-- **Recipient DID** — any DID registered under the mediation account and
-  accepted as `body.next` of a Routing 2.0 `forward` message. Local vault
-  recipients are Peer rendezvous or pairwise DIDs; the mediator does not
-  assign semantics based on method or role, including for externally managed
-  Web recipients.
-- **Replica ID** — a lowercase canonical UUIDv7 naming one writable local
-  incarnation for event provenance, delivery and acknowledgment. It is
-  stored as `store_state.replica_id`, is also used as the author of
-  events produced by that incarnation, and is not a key or authorization
-  boundary. There is no second identity for the execution host or operating
-  system.
-- **Mailbox message** — one retained encrypted inner DIDComm envelope,
-  stored once under a mediation account.
-- **Delivery** — one replica's pending right to obtain a mailbox message.
-  A delivery has its own opaque ID and acknowledgment state.
-- **Retention window** — the interval in which a mailbox message remains
-  eligible for replay to newly registered replicas.
+| Identity | Meaning | Lifetime and visibility |
+| --- | --- | --- |
+| Vault anchor | `vault_meta.anchor`, derived from the shared seed | Same for every copy; carried inside encrypted sync, not required in mediator control messages |
+| Communication DID | An external peer's rendezvous or pairwise address for the vault | Shared across replicas, subject to the existing channel and rotation rules |
+| Replica ID | The UUIDv7 in `store_state.replica_id` | One independently writable incarnation; equals the author of its newly committed events |
+| Replica DID | The incarnation's DIDComm address and pickup principal | One immutable `did:peer:4` document bound to that replica ID; used for internal synchronization |
+| Mediation account DID | The vault-controlled identity of the selected `mediation.created` arrangement | Authorizes shared recipient registration and replica membership at the mediator |
+| Store generation | The local event store's cursor generation | Local only; neither a DID nor membership authority |
 
-Every unlocked full replica is equally authorized to act as the vault.
-The mediation account's authenticated DIDComm messages authorize
-`register`, `list` and `retire`. The `replica_id` only separates normal
-clients' pickup and acknowledgment state.
+A vault anchor is not a public contact address. A communication DID is not a
+writer ID. An event author is a replica ID, never a replica DID. Synchronizing
+an event preserves its original author, timestamp, CID and references, even
+when another replica relays it.
 
-Retiring a replica changes future delivery policy. It does not erase a
-seed already copied into that local incarnation, revoke communication
-keys, or stop a holder of the seed from deriving the mediation account
-and registering a new replica ID. Recovering from a hostile or lost full
-replica requires rotation of the affected root secret or communication identities and is
-outside this protocol.
+A replica DID MUST NOT replace the external message's `to`, channel endpoint,
+or source-evidence identity. The original application ciphertext remains
+addressed to the shared communication DID; the outer pickup response is
+addressed to the replica DID. A full replica has keys for both layers.
 
-<a id="invariants"></a>
+### 3.1 Replica key and document
 
-## 4. Invariants
-
-A conforming mediator MUST preserve all of the following:
-
-1. One retained mailbox message has exactly one immutable encrypted
-   envelope.
-2. At most one delivery exists for a `(mailbox message, replica)` pair.
-3. Acknowledging a delivery for replica A MUST NOT acknowledge, delete or
-   hide the corresponding delivery for replica B.
-4. A mailbox message remains until its retention deadline, independently
-   of how many current replicas acknowledged it.
-5. Registering a replica with retained replay and accepting a concurrent
-   `forward` MUST be atomic with respect to each other: the replica gets a
-   delivery whether registration commits first or forwarding commits
-   first.
-6. The mediator MUST NOT decrypt the inner application message or possess
-   an application content-decryption key.
-7. Delivery is at least once. Clients MUST tolerate the same delivery
-   being returned or pushed more than once before acknowledgment.
-8. A transport acceptance response from a mediator is not proof that an
-   ultimate recipient durably received the application message.
-9. A sender addresses a recipient DID, never a replica ID. Replica fan-out is
-   an internal mailbox operation.
-10. Rendezvous and pairwise DIDs receive the same per-replica
-    delivery semantics; externally managed DID methods do not change them.
-
-<a id="replica-lifecycle"></a>
-
-## 5. Replica lifecycle
-
-A replica is either `active` or `retired`:
+This candidate profile adds the asymmetric key name:
 
 ```text
-              register
-   absent  ─────────────> active ─────────────> retired
-                                retire             │
-                                                   └── terminal
+replica/<replicaId>/me
 ```
 
-A retired replica ID MUST NOT become active again. A returning or
-newly created independently writable local incarnation mints a fresh replica
-ID.
+It uses the existing keystore-v3 named-key derivation, including its independent
+Ed25519 authentication and X25519 key-agreement material. It adds no KDF,
+shared sync-account key or custom encryption algorithm. Implementations MUST
+use maintained DID, JOSE and DIDComm libraries for document construction,
+signature verification and encryption.
 
-The default version-1.0 policy has no inactivity lease: a replica remains
-active until an authenticated `retire` request. A mediator MAY instead
-advertise a non-null `inactivity_retirement_seconds` service policy. When it
-does, the value MUST be at least `message_retention_seconds`, the server MUST
-base it only on its own authenticated `last_seen_time`, and crossing the limit
-atomically retires the replica before later fan-out. The retirement reason is
-`inactivity-policy`, the old ID remains terminal, and a returning local copy
-mints a new replica ID and obtains retained replay. Clients MUST surface this
-loss-of-long-offline-delivery tradeoff before using such a mediator. Message
-expiry, not an indefinitely stale delivery row, still bounds mailbox storage.
+The replica document uses the same immutable `did:peer:4` construction as a
+mediation identity, with those public keys and one DIDComm service whose URI
+is the selected mediator DID. Its verified short form is `replicaDid`; the
+long form is retained for offline resolution. Clients MUST verify both the
+short/long-form binding and the seed-derived keys before treating the document
+as their own replica identity. Re-creating the document with different bytes
+under the same replica ID is a conflicting identity, not an update.
 
-One independently writable local vault copy MUST have exactly one active
-replica ID. Creating a second independently writable copy MUST mint a
-new replica ID. A portable snapshot omits the source copy's active
-replica selection. An exact move MAY preserve a replica ID only when
-the implementation guarantees that the previous writer can no longer
-append events or acknowledge deliveries under that ID.
+A new independently writable copy MUST obtain a fresh replica ID, replica DID
+and store generation before connecting or writing. An exact move may keep
+them only when the old writer is permanently stopped. A document/key/route
+change requires explicit enrollment of a new incarnation; historical event
+authors and former replica documents remain unchanged.
 
-<a id="register"></a>
+### 3.2 Full-replica trust
 
-### 5.1 `register`
+All full replicas hold the same seed and can derive the vault's communication,
+mediation and replica keys. Distinct replica DIDs separate delivery and
+ordinary client behavior; they are not isolation from another seed holder.
+Retirement stops delivery membership. It does not revoke a copied seed or
+remove the ability of its holder to create a new identity.
 
-Message type:
+<a id="replica-authorization"></a>
 
-```text
-https://estoc.dev/replica-mediation/1.0/register
-```
+## 4. Vault authorization
 
-Example:
+A mediator list is discovery information, not sufficient authority for a
+client to send vault data to a listed DID. Each member carries a portable
+grant signed by the selected mediation account. That account is already bound
+to this vault through its verified `mediation.created` record and seed-derived
+key; sync clients MUST NOT accept an unknown account supplied by a mediator.
+
+A grant is compact JWS with these protected headers:
+
+- `alg`: `EdDSA`, using Ed25519 under RFC 8037;
+- `typ`: `estoc/replica-grant+jws`;
+- `kid`: an authentication key of the known mediation account document.
+
+Its payload is RFC 8785 canonical JSON with exactly these fields:
 
 ```json
 {
-  "id": "019b1b48-8b3c-7c19-b667-218ae742bd91",
-  "type": "https://estoc.dev/replica-mediation/1.0/register",
-  "from": "did:peer:4zQm...mediation-account",
-  "to": ["did:web:mediator.example"],
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-    "replay": "retained"
-  }
+  "account": "did:peer:4...account",
+  "mediation_id": "019b2a51-118f-7e46-b31b-c63cd090c92c",
+  "mediator": "did:web:mediator.example",
+  "replica_id": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
+  "replica_did": "did:peer:4...replica",
+  "replica_long_form": "did:peer:4...replica:...input-document"
 }
 ```
 
-The message MUST be authcrypted from the mediation account DID to the
-mediator DID.
+DID strings containing `...` in examples are explanatory placeholders.
 
-- `replica_id` is REQUIRED and MUST be a canonical UUIDv7.
-- `replay` is REQUIRED. The only value in version 1.0 is `retained`.
+The grant authorizes this exact incarnation to join this exact account and
+mediator, use its private inbox and receive shared mail. It is a lifetime
+identity binding, not an expiring bearer token: use requires proof of the
+replica key, and retirement is terminal. There is no `iat` or expiry-dependent
+renewal that could resurrect a retired ID.
 
-On first registration the mediator MUST, in one transaction:
+Before granting access the mediator MUST verify:
 
-1. create the active replica;
-2. create a delivery for every unexpired mailbox message under the
-   account for which that replica has no delivery; and
-3. commit both changes together.
+1. The account has an existing mediation grant at this mediator.
+2. The JWS uses the permitted algorithm, type and key from that account's
+   authenticated document, with no key fetched from a supplied `jku`/`x5u`.
+3. Every field has the specified form; `replica_id` and `mediation_id` are
+   canonical UUIDv7s, and `mediator` equals the DID addressed by the request.
+4. The replica long form resolves locally to the stated short form and its
+   service names that mediator. The replica DID differs from the account,
+   mediator and shared communication recipients.
+5. The request is authcrypted by the granted replica DID, proving control of
+   its key. The UUID in the body is not the authentication principal.
+6. Neither replica ID nor replica DID is retired or bound to a conflicting
+   identity. One account uses one `mediation_id` for this registration domain.
 
-Repeating the same request for an active replica is idempotent. The
-mediator MUST still repair any missing retained deliveries before
-replying. Re-registering a retired replica ID fails.
+Sync clients independently verify the grant against their own known mediation
+record, its mediator, and their seed-derived replica key. They also check local
+retirement facts. They do not need to trust a mediator's account-membership
+assertion. The same signed binding can be carried during peer discovery even
+when the recipient has not yet received its `replica.created` event.
 
-<a id="registered"></a>
-
-### 5.2 `registered`
-
-Message type:
-
-```text
-https://estoc.dev/replica-mediation/1.0/registered
-```
-
-Example:
-
-```json
-{
-  "id": "019b1b48-fb26-7de9-a962-87e065564655",
-  "thid": "019b1b48-8b3c-7c19-b667-218ae742bd91",
-  "type": "https://estoc.dev/replica-mediation/1.0/registered",
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-    "state": "active",
-    "registered_time": 1788442800,
-    "replayed_count": 17,
-    "limits": {
-      "message_retention_seconds": 604800,
-      "max_replicas": 16,
-      "max_recipients": 4096,
-      "max_message_bytes": 1048576,
-      "max_retained_messages": 100000,
-      "max_pending_deliveries_per_replica": 100000,
-      "max_deliveries_per_request": 100,
-      "max_recipient_updates_per_request": 100,
-      "inactivity_retirement_seconds": null
-    }
-  }
-}
-```
-
-- `registered_time` is UTC Epoch Seconds. For an idempotent repeat it is
-  the original registration time.
-- `replayed_count` is the number of delivery rows inserted or repaired by
-  this request. It MAY be zero.
-- `limits` is REQUIRED. A mediator MAY choose account-specific values,
-  but MUST apply the values it reports.
-- `inactivity_retirement_seconds` is either null, meaning no automatic
-  retirement, or the finite service policy defined in section 5. It MUST NOT
-  change for an existing active replica without being returned on a later
-  authenticated registration response before enforcement.
-
-<a id="list"></a>
-
-### 5.3 `list`
-
-Message type:
-
-```text
-https://estoc.dev/replica-mediation/1.0/list
-```
-
-```json
-{
-  "id": "019b1b4a-c295-769d-8b5c-c73317bd9d55",
-  "type": "https://estoc.dev/replica-mediation/1.0/list",
-  "from": "did:peer:4zQm...mediation-account",
-  "to": ["did:web:mediator.example"],
-  "body": {}
-}
-```
-
-The request MUST be authcrypted from the mediation account. It lists only
-replicas under that account.
-
-<a id="replicas"></a>
-
-### 5.4 `replicas`
-
-Message type:
-
-```text
-https://estoc.dev/replica-mediation/1.0/replicas
-```
-
-```json
-{
-  "id": "019b1b4b-0e10-7ebc-877c-46a596cc8289",
-  "thid": "019b1b4a-c295-769d-8b5c-c73317bd9d55",
-  "type": "https://estoc.dev/replica-mediation/1.0/replicas",
-  "body": {
-    "replicas": [
-      {
-        "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-        "state": "active",
-        "registered_time": 1788442800,
-        "last_seen_time": 1788443012
-      },
-      {
-        "replica_id": "019b1947-a249-79e1-a297-cb5437d1494e",
-        "state": "retired",
-        "registered_time": 1788350000,
-        "retired_time": 1788440000
-      }
-    ]
-  }
-}
-```
-
-`last_seen_time` is the mediator's UTC Epoch Seconds observation of the most
-recent successful authenticated `register`, replica-scoped pickup request,
-`messages-received`, or live-delivery operation for that ID. It MAY be absent
-when the server cannot provide it. Its age is advisory unless the server has
-explicitly advertised a finite `inactivity_retirement_seconds`; without that
-policy, age alone MUST NOT change state.
-
-Human-readable names, hardware identifiers, operating-system identifiers
-and user labels MUST NOT be sent in this protocol. A client that wants to
-display a name for a replica stores it as encrypted vault metadata and joins
-it locally with the opaque `replica_id`.
-
-A conforming client MUST periodically reconcile `list`, and MUST do so after a
-restore that minted a new replica ID. It SHOULD identify old active entries by
-locally encrypted labels and `last_seen_time`, and offer explicit retirement
-after the new replica has completed bootstrap, sync and registration. On
-`too-many-replicas`, the client MUST list current replicas and ask the user to
-retire one or more explicit IDs rather than silently reusing or evicting an
-ID. An operator MAY recommend a review interval, but that recommendation is
-not a retirement authority.
-
-<a id="retire"></a>
-
-### 5.5 `retire`
-
-Message type:
-
-```text
-https://estoc.dev/replica-mediation/1.0/retire
-```
-
-```json
-{
-  "id": "019b1b4c-7f52-77cc-98cb-02bd8c12011a",
-  "type": "https://estoc.dev/replica-mediation/1.0/retire",
-  "from": "did:peer:4zQm...mediation-account",
-  "to": ["did:web:mediator.example"],
-  "body": {
-    "replica_id": "019b1947-a249-79e1-a297-cb5437d1494e",
-    "reason": "lost"
-  }
-}
-```
-
-`reason` is OPTIONAL and is one of `user`, `replaced`, `lost`,
-`inactivity-policy`, `fork-recovery`, or `other`. An automatic retirement uses
-`inactivity-policy`. The value is diagnostic and does not change the terminal
-state.
-
-The mediator MUST atomically mark the replica retired and remove or mark
-terminal all unacknowledged deliveries for that replica. It MUST NOT
-delete the underlying mailbox messages before their retention deadline.
-Repeating retirement is idempotent.
-
-<a id="retired"></a>
-
-### 5.6 `retired`
-
-Message type:
-
-```text
-https://estoc.dev/replica-mediation/1.0/retired
-```
-
-```json
-{
-  "id": "019b1b4c-968a-7356-b5e0-9e44cd8412bf",
-  "thid": "019b1b4c-7f52-77cc-98cb-02bd8c12011a",
-  "type": "https://estoc.dev/replica-mediation/1.0/retired",
-  "body": {
-    "replica_id": "019b1947-a249-79e1-a297-cb5437d1494e",
-    "state": "retired",
-    "reason": "inactivity-policy",
-    "retired_time": 1788443100
-  }
-}
-```
-
-`reason` is the retained reason when known and null when the retirement record
-contains no reason.
-
-<a id="client-re-incarnation-after-terminal-retirement"></a>
-
-### 5.7 Client re-incarnation after terminal retirement
-
-If `register`, `list`, status, live delivery or another authenticated mediator
-response says that the client's **current** replica ID is retired, the client
-MUST treat the ID as terminal even when local runtime state is otherwise intact. It MUST:
-
-1. stop new event appends, pickup ACKs, live registration and outbound
-   submission under the old ID;
-2. durably finish or checkpoint local work; events already authored by the old
-   ID remain valid sync objects;
-3. atomically mint and store a fresh `replica_id` and `store_generation` in
-   the SQLite `store_state` row;
-4. reopen local event stores under the new author and discard change tokens or
-   caches bound to the old generation;
-5. append or reconcile `replica.retired` for the old ID with the mediator's
-   stable reason, including `inactivity-policy` when applicable;
-6. register the new ID with retained replay on **every** required mediation
-   account, and retire the old ID on remaining accounts; and
-7. resume pickup and sync under the fresh ID; pending outbounds require an
-   explicit manual action and preserve their fixed channels and committed packages.
-
-A terminal response from one required mediator rotates the local replica ID
-for all mediators. A runtime MUST NOT split event authorship and ACK identity
-by keeping the old ID on another arrangement.
-
-Local restore and exact-move rules are defined by [vault-sqlite.md section 12](../vault-sqlite.md#restore-and-import).
+Signature verification MUST use the library's verification API with an
+explicit algorithm allowlist and the already-authorized key. Decoding a JWS
+payload or comparing a DID string is not signature verification.
 
 <a id="portable-replica-events"></a>
 
-### 5.8 Portable replica events
+## 5. Portable membership and local state
 
-These portable events are part of this deferred profile and are not required
-by phase 1.
+These schemas are proposed additions to the vault's owning event specification;
+they do not yet extend the phase-1 closed payload schemas.
 
-<a id="replica-label"></a>
-
-#### 5.8.1 `replica.label`
+### 5.1 `replica.created`
 
 ```json
 {
-  "type": "replica.label",
+  "type": "replica.created",
   "roots": [],
   "data": {
     "replicaId": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
-    "name": "Phone"
+    "mediationId": "019b2a51-118f-7e46-b31b-c63cd090c92c",
+    "grant": "<compact JWS>"
   }
 }
 ```
 
-A label is encrypted vault metadata used to join a mediator's opaque
-replica list with a human-readable UI. The latest label per replica by
-canonical order wins. It is never sent to the mediator.
+The two IDs MUST match the verified grant. The event records authorized
+membership intent, not that a remote registration succeeded. Its author is the
+writer that committed it; other replicas may relay it without rewriting it.
+Equivalent verified bindings for one replica ID merge as one member even when
+the event envelopes differ. Different DID/account/document bindings for one
+replica ID are a conflict; no canonical-order winner is chosen.
 
-<a id="replica-retired"></a>
+### 5.2 `replica.label`
 
-#### 5.8.2 `replica.retired`
+`roots` is empty; `data` is `{ "replicaId": <UUIDv7>, "name": <string> }`.
+The latest label by canonical event order wins. Labels are local display
+metadata synchronized inside encrypted vault data; the mediator does not need
+them.
 
-```json
-{
-  "type": "replica.retired",
-  "roots": [],
-  "data": {
-    "replicaId": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
-    "because": "inactivity-policy"
-  }
-}
-```
+### 5.3 `replica.retired`
 
-`because` is REQUIRED and is one of:
+`roots` is empty; `data` is `{ "replicaId": <UUIDv7>, "because": <reason> }`.
+Reasons are `user`, `replaced`, `lost`, `fork-recovery` and `other`.
+Retirement dominates creation regardless of arrival or event order. A retirement
+learned before creation is a tombstone; later creation does not reactivate it.
+Existing events authored by that replica remain valid history and may be
+relayed by any still-authorized replica.
+
+A runtime learning that its current incarnation is retired MUST stop new
+application work, sync publication and pickup under that incarnation. It MAY
+preserve/export unsynchronized local history. It MUST NOT silently mint a new
+ID to undo retirement; rejoining is an explicit new-enrollment operation.
+
+### 5.4 Ownership of state
+
+| Portable vault data | Local or mediator operational state |
+| --- | --- |
+| Replica creation/grant, label, retirement | Registration request progress, actual remote membership status |
+| Communication routes, receipts, admissions and other domain events | Live connections, delivery IDs, pickup ACK progress |
+| Event CIDs and currently held raw objects | Sync retries, peer receipts, inventory sessions, staged transfers, change tokens |
+
+A desired portable state and a remote side effect are reconciled, not committed
+in a distributed transaction. Commit membership intent before registration;
+commit retirement before requesting removal. Any active full replica may
+reconcile known retirements using the shared account key. Responses and retries
+remain operational state and MUST NOT generate an endless stream of portable
+registration/synchronization records.
+
+<a id="replica-lifecycle"></a>
+
+## 6. Registration and retirement
 
 ```text
-user
-replaced
-lost
-inactivity-policy
-fork-recovery
-other
+absent -> active -> retired
+             retirement is terminal for both replica ID and DID
 ```
 
-Retirement is a terminal desired-delivery policy for that replica ID:
+This profile has explicit retirement and bounded mail retention, not an
+inactivity lease. Being offline does not change the portable member identity.
 
-- active replicas reconcile it to every shared mediation account;
-- a mediator stops creating future deliveries for the retired ID;
-- events already authored by it remain valid and synchronizable; and
-- it does not revoke the seed or prevent a holder from registering a fresh
-  replica ID.
+### 6.1 `register` / `registered`
 
-A local runtime that learns from a converged event set **or an authenticated
-mediator response** that its current ID is terminally retired MUST perform the
-local re-incarnation procedure in section 5.7 before any further append,
-pickup acknowledgment, live-delivery registration or outbound submission.
-The old author is not rewritten and pending old-author events remain valid.
+The replica sends `register` authcrypted from its replica DID to the mediator.
+The body has exactly `{ "grant": <compact JWS>, "replay": "retained" }`.
+The grant's long form may be used to resolve the claimed sender's public key
+after opening the request; the encrypted grant cannot bootstrap decryption of
+itself. The caller supplies its sender long form in the DIDComm envelope key
+identifier when the mediator does not yet know the short form. That document
+is resolved and checked locally to authenticate/decrypt the request, then
+matched to the signed grant. Neither an unverified document nor a decoded grant
+grants access; all checks must succeed before any mutation.
+
+The first valid registration is explicit account opt-in to this extension.
+In one transaction the mediator MUST:
+
+1. Enable replica delivery for the shared account if not already enabled,
+   preserving every unexpired pending legacy package as shared retained mail.
+2. Bind the new replica ID/DID/grant and provision its private destination.
+3. Create its missing deliveries for every unexpired shared mailbox message.
+4. Disable account-global pickup for the shared account.
+
+An in-flight legacy ACK arriving after activation MUST fail without deleting
+shared mail. An ACK committed before activation has the old profile's meaning;
+mail already removed before the switch can only be recovered from a replica or
+backup. Live pushes occur only after the transaction commits.
+
+An exact repeat for an active member is idempotent and repairs missing
+retained deliveries. Existing acknowledged deliveries MUST NOT be reset.
+A retired or conflicting identity fails without mutation. Shared-recipient and
+private-replica destinations cannot overlap or steal an existing destination.
+
+The `registered` response is authcrypted to the replica DID, uses `thid` equal
+to the request ID, and includes `replica_id`, `replica_did`, `state: "active"`,
+original `registered_time`, `replayed_count`, and enforced `limits`.
+
+### 6.2 `list` / `replicas`
+
+`list` is authcrypted from the shared mediation account. Its body has
+`cursor: null` for a new listing, or a previously returned opaque cursor, plus
+a positive `limit` no greater than `max_membership_page`. A new listing captures
+a fixed roster; subsequent cursors are bound to that snapshot and account.
+`replicas` contains `entries` and `next_cursor` (null for the final page).
+Each entry has `grant`, `state` (`active` or `retired`) and `registered_time`
+(UTC Epoch Seconds, or null for a tombstone created before registration).
+Repeated pages are stable; an expired snapshot returns `list-expired` and the
+client starts a fresh listing. The mediator may shorten a page to fit its wire
+limit, but cannot omit an entry from a successfully completed listing.
+
+No other account's identities are disclosed. The lifetime membership limit
+bounds retained bindings, not just active devices. Reaching that limit is an
+explicit failure, never permission to discard tombstones.
+
+Clients verify grants before contacting listed peers and reconcile local
+retirements before publishing to them. A missing row is not proof of retirement
+or data loss; the mediator may have been restored from an older database.
+No response is proof that a peer is online or has complete vault history.
+
+### 6.3 `retire` / `retired`
+
+`retire` is authcrypted from the shared mediation account. Its body is
+`{ "replica_id": <UUIDv7>, "grant": <compact JWS> }`; the grant identifies the
+exact binding even if registration has not yet reached the mediator.
+The account, mediator and replica ID MUST match the request and verified grant.
+
+The mediator atomically records the terminal binding, disables its private
+routing and pickup, and removes its pending deliveries. After commit it closes
+the replica's live subscriptions; connections do not override durable retirement
+state. Bytes already sent over a socket cannot be recalled. It retains shared
+ciphertext for other replicas and retained replay. An authorized retirement of
+an absent binding records a tombstone, so a
+late `register` cannot undo it. Conflicting bindings fail without mutation.
+Repeating the same retirement succeeds. `retired` echoes the bound IDs and
+`state: "retired"` under the request's `thid`.
+
+Retirement does not withdraw already downloaded data or other replicas'
+authored events. The mediator must retain enough terminal state to reject a
+replayed grant for its identity lifetime. After remote-state loss, clients
+reconcile their known retirements before replaying active registrations.
 
 <a id="coordinate-mediation-profile"></a>
 
-## 6. Coordinate Mediation profile
+## 7. Shared communication recipients
 
-The mediation account remains the one `recipient` in Coordinate Mediation
-3.0. All full replicas derive and use that account key. Recipient DIDs are
-registered once per mediation arrangement, not once per replica.
+The shared mediation account continues to own communication recipient
+registrations. Replica DIDs are provisioned by `register`, not added as shared
+communication recipients. A communication recipient maps to one account at a
+mediator; a private replica DID maps to one replica. The namespaces MUST be
+disjoint.
 
-Registration is method-neutral. Local vault rendezvous and pairwise DIDs
-register their canonical Peer short forms. Web application recipients additionally
-require the [deferred mutable-channel profile](did-web-channels.md). An externally managed `did:web`
-recipient may also be registered when its control proof and constrained
-resolution validate. The recipient-control proof is verified against an
-authentication method of the exact recipient DID.
+The mediator treats rendezvous and pairwise communication addresses alike; it
+is not given contact IDs or an address's public/private role. This profile uses
+the current immutable Peer channel model. Mutable application DIDs still
+require the separate [mutable-channel proposal](did-web-channels.md).
 
 <a id="recipient-control-proof"></a>
 
-### 6.1 Recipient-control proof
+### 7.1 Recipient control
 
-A conforming Estoc mediator MUST require control proof for every
-`recipient-update` entry. Estoc adds `registration_id`, `proof` and optional
-`resolution_material`:
-
-```json
-{
-  "type": "https://didcomm.org/coordinate-mediation/3.0/recipient-update",
-  "id": "019b1b50-b403-7940-abaf-f59b92d2231b",
-  "body": {
-    "updates": [
-      {
-        "recipient_did": "did:peer:4zQm...recipient-short",
-        "action": "add",
-        "registration_id": "019b1b50-42bf-71b7-a8d8-70543a158ffd",
-        "resolution_material": {
-          "kind": "did-peer-4-long-form",
-          "value": "did:peer:4zQm...recipient-short:z...input-document"
-        },
-        "proof": "eyJhbGciOiJFZERTQSIsImtpZCI6Ii4uLiIsInR5cCI6ImVzdG9jL3JlY2lwaWVudC1yZWdpc3RyYXRpb24randzIn0.eyJhY2NvdW50IjoiLi4uIn0.signature"
-      }
-    ]
-  },
-  "return_route": "all"
-}
-```
-
-`proof` is compact JWS:
-
-- protected `alg` is `EdDSA`;
-- protected `typ` is `estoc/recipient-registration+jws`;
-- protected `kid` identifies an authentication method of `recipient_did`;
-- payload is UTF-8 RFC 8785 canonical JSON:
+A recipient registration MUST prove control of the recipient DID rather than
+claiming it first. Each `recipient-update` entry includes `recipient_did`,
+`action`, `registration_id`, `resolution_material` and `proof`.
+`registration_id` is a UUIDv7; `proof` is compact JWS, protected `alg: EdDSA`,
+`typ: estoc/recipient-registration+jws`, and `kid` naming an authentication key
+of the recipient. The RFC 8785 payload is exactly:
 
 ```json
 {
-  "account": "did:peer:4zQm...mediation-account",
+  "account": "did:peer:4...account",
   "action": "add",
   "aud": "did:web:mediator.example",
   "expires_time": 1788443400,
   "registration_id": "019b1b50-42bf-71b7-a8d8-70543a158ffd",
   "request_id": "019b1b50-b403-7940-abaf-f59b92d2231b",
-  "recipient": "did:peer:4zQm...recipient-short"
+  "recipient": "did:peer:4...communication-address"
 }
 ```
 
-The mediator verifies every duplicated value against the request.
-`expires_time` is in the future and no more than five minutes after mediator
-current time. A remove proof uses `"action":"remove"` and names the active
-registration ID.
+All repeated fields MUST match the outer request. The expiry must be in the
+future and at most five minutes ahead of mediator time. Removal uses
+`action: "remove"` and the active registration ID. Verification uses the
+recipient's authorized key, not the account's key. The complete bounded update
+request is atomic: a proof, resolution or quota failure applies none of it.
 
-A single request MUST NOT contain more updates than the mediator's advertised
-`max_recipient_updates_per_request`. The whole request is atomic: quota,
-proof or resolution failure in one entry prevents applying every entry unless
-the surrounding Coordinate Mediation response explicitly reports per-entry
-atomic groups. Version 1.0 RECOMMENDS one atomic request.
+For Peer DIDs, `resolution_material` supplies the long form if not already
+known. The mediator recomputes the short form, contextualizes verification
+methods and verifies control locally. Long-form aliases normalize to the
+verified short form before comparison. The supplied document is not an
+arbitrary URL to fetch. Other DID methods require an explicitly supported,
+constrained resolver and control-proof profile; this document does not authorize
+unrestricted network resolution or mutable-channel use.
 
-<a id="method-specific-resolution"></a>
+### 7.2 Registration state
 
-### 6.2 Method-specific resolution
+An absent recipient may be added with valid proof and available quota. A repeat
+of the same account/registration ID is `no_change`; a new valid ID for that
+same account replaces it atomically. Another account cannot take it. An
+attempt to register a private replica DID, account DID or mediator DID as a
+shared address fails.
 
-<a id="peer-did-numalgo-4"></a>
-
-#### Peer DID numalgo 4
-
-Mediator storage and `recipient_did` use canonical short form. When the
-mediator does not already retain verified resolution material for that short
-form, `resolution_material` MUST contain the corresponding long form.
-
-The mediator locally:
-
-1. decodes and validates the long-form input document;
-2. recomputes the canonical short form from the encoded-document hash;
-3. requires that recomputed value to equal `recipient_did` byte-for-byte;
-4. contextualizes relative verification methods under that canonical short
-   DID;
-5. requires the proof payload `recipient` to equal the same short form;
-6. resolves the protected proof `kid` to an authentication method from the
-   supplied document, accepting a long-form DID URL only after normalizing its
-   DID portion to the verified short form; and
-7. verifies the JWS.
-
-The long form is resolution material, never the stored recipient key. No
-network request is permitted for Peer DID resolution. A mismatched short form,
-invalid input document, key fragment mismatch or unresolved authentication key
-fails the entire update entry.
-
-<a id="did-web"></a>
-
-#### `did:web`
-
-A client does not choose an arbitrary fetch URL. The mediator derives the one
-standard `did:web` resolution URL from `recipient_did` and uses either an
-operator-configured trusted DID resolver or a constrained resolver satisfying
-all of these rules:
-
-- HTTPS only; no IP-literal DID authority;
-- no userinfo, fragment or query component;
-- no redirects;
-- DNS results are resolved before connection and every selected address is
-  globally routable, excluding loopback, private, link-local, multicast,
-  documentation, carrier-grade NAT, metadata-service and other reserved
-  ranges for both IPv4 and IPv6;
-- the connected address is pinned to the validated DNS result to prevent DNS
-  rebinding;
-- strict connect, total-time, response-size and decompression limits;
-- only the derived `did.json` path is fetched;
-- the returned document `id` exactly equals `recipient_did`; and
-- the proof `kid` is an authorized authentication method in that document.
-
-A deployment unable to enforce those constraints MUST reject or defer the
-registration with `did-resolution-unavailable`; it MUST NOT fall back to an
-unrestricted server-side URL fetch. Cache entries are keyed by DID, canonical
-document hash and bounded freshness policy. Resolution failure never grants
-registration.
-
-`resolution_material` is null for ordinary `did:web` registration. Supplying
-client-provided document bytes MAY be used as a cache hint, but does not
-replace secure publication resolution.
-
-<a id="registration-state"></a>
-
-### 6.3 Registration state
-
-A recipient DID has at most one active mediation account at a mediator.
-
-For `add`:
-
-- absent recipient and available quota: add it;
-- same account and same `registration_id`: `no_change`;
-- same account and a new valid `registration_id`: atomically replace the ID;
-- another account already owns it: `client_error`;
-- recipient or registration-rate quota exceeded: reject without mutation.
-
-For `remove`:
-
-- same account and matching active registration ID: remove it;
-- absent, another account or stale registration ID: `no_change`.
-
-Removing a recipient affects future `forward` only. Retained mailbox messages
-and deliveries remain until expiry. A conforming `recipient-query` response
-SHOULD include active `registration_id` beside each recipient DID.
-
+Removal affects future routing only. A matching active registration is removed;
+an absent or stale registration has no effect. Retained shared messages and
+already-created deliveries remain until their deadlines. `recipient-query`
+returns the account's shared recipients and their current registration IDs.
 
 <a id="routing-and-mailbox-storage-extension"></a>
 
-## 7. Routing and mailbox storage extension
+## 8. Routing and durable fan-out
 
-<a id="inherited-phase-1-envelope-profile"></a>
+The accepted-envelope, normalization, package-idempotency and transport-status
+rules of [distributed delivery](../distributed-delivery.md#phase-1-mediator-envelope-and-storage-profile)
+continue to apply. A local event/object CID is not a routing identifier.
 
-### 7.1 Inherited phase-1 envelope profile
+Routing classification is determined by the registered `forward.body.next`:
 
-This deferred extension inherits `distributed-delivery/1.0` section 3.1
-unchanged. In particular, outer `forward` validation, inner encrypted-envelope
-normalization, package idempotency, quota atomicity, sender-visible `submitted`
-semantics and the no-application-plaintext storage boundary are phase-1 rules,
-not replica features.
+| Destination | Storage and delivery |
+| --- | --- |
+| Shared communication DID | One immutable shared mailbox package; one delivery for each active replica |
+| Active replica DID | One private mailbox package and delivery for that replica only |
+| Retired, unknown or unauthorized destination | Refuse without partial storage or fan-out |
 
-Enabling replica mediation MUST NOT weaken those rules. The extension changes
-only how one already accepted mailbox package is associated with delivery
-state. A local DASL CID remains absent from Routing 2.0 and is not disclosed to
-the mediator merely to deliver a package.
+For shared mail, inserting the package and every required delivery MUST be
+atomic with registration and retirement. Registration racing a new package
+must produce one delivery either through live fan-out or retained replay.
+There is at most one delivery per `(mailbox package, replica DID)`.
+An accepted shared package is retained even when there are no active replicas.
+If quotas prevent complete fan-out, the mediator refuses the whole new package.
 
-<a id="atomic-fan-out"></a>
+A private sync envelope is opaque to the mediator. It is routed by the replica
+DID just like other mail; its encrypted protocol type or contents are not
+inspected. It is never included in shared replay or copied to a newly enrolled
+replica. Requests, replies and sync receipts all use this private path.
 
-### 7.2 Atomic fan-out
+Shared package deduplication retains the original recipient and `forward.id`
+key within its account. Private deduplication is scoped to its destination
+replica DID and `forward.id`. Equal IDs do not combine different recipients'
+delivery/ACK state. A repeated package with different normalized bytes is a
+conflict. Retransmission of an acknowledged shared package before expiry MUST
+NOT recreate that member's delivery.
 
-For a new accepted package, one database transaction MUST:
-
-1. insert the mailbox message and its retention deadline; and
-2. create one delivery for every active replica of the mediation account.
-
-The message MUST still be retained when the account currently has no active
-replicas. A later `register` with `replay: retained` creates the missing
-delivery.
-
-Live delivery happens only after the transaction commits. A failed or lost live
-push changes no durable state.
-
-<a id="sender-visible-behavior"></a>
-
-### 7.3 Sender-visible behavior
-
-The sender-visible behavior remains the phase-1 behavior: mediator or HTTP
-acceptance is only `submitted`, and ultimate delivery requires an authenticated
-application-level ACK. Replica fan-out is deliberately invisible to the
-sender.
-
-<a id="recipient-role-neutrality"></a>
-
-### 7.4 Recipient-role neutrality
-
-The mediator MUST NOT require a recipient to be classified as rendezvous,
-public, pairwise or server-owned. For routing purposes all
-registered recipients have the same shape:
-
-```text
-recipient DID -> mediation account -> active replica deliveries
-```
-
-Discovery gives a peer the long form of a Peer rendezvous DID, then
-registers/routes its canonical short form. Later traffic to a pairwise
-`did:peer:4` may use the same account and storage path or a separate
-vault-scoped arrangement for metadata unlinkability. An externally managed
-DID resolved under section 6.2 uses the same mediator machinery, without a
-vault-side publisher.
-
+The mediator never rewrites the inner application envelope's recipients or
+re-encrypts its contents. A live push references committed delivery state;
+failed sockets or pushes do not consume mail.
 
 <a id="message-pickup-3-0-replica-profile"></a>
 
-## 8. Message Pickup 3.0 replica profile
+## 9. Pickup and acknowledgments
 
-All pickup messages MUST be authcrypted from the mediation account to the
-mediator. For an account using replica mediation, the following message
-bodies MUST contain `replica_id`:
+A replica authcrypts standard Message Pickup 3.0 requests to the mediator from
+its replica DID. The mediator selects the private inbox plus shared deliveries
+belonging to that authenticated principal. The body carries no `replica_id`
+selector. Supplying another ID cannot broaden access. Shared-account pickup
+is refused after profile activation.
 
-- `status-request`;
-- `status`;
-- `delivery-request`;
-- `delivery`;
-- `messages-received`; and
-- `live-delivery-change`.
+`status-request`, `delivery-request` and their replies retain standard shapes.
+An optional `recipient_did` MUST filter by the original `forward.body.next`
+within this replica's deliveries. It is not an authorization selector. Requests
+without it see all this replica's pending deliveries. An empty delivery result
+returns `status`.
 
-A request omitting `replica_id` MUST fail with
-`e.estoc.replica-mediation.replica-required` **after this extension has been
-enabled for the account**. Before enablement, a phase-1 account uses ordinary
-account-global Message Pickup 3.0. Account-global and replica-scoped pickup
-MUST NOT operate concurrently on one enabled mediation account.
-
-An account with zero active replicas may still retain accepted mailbox
-messages with zero delivery rows. It cannot perform pickup. The first later
-`register(replay=retained)` atomically creates that replica's deliveries for
-every unexpired message before pickup becomes possible.
-
-The replica MUST exist under the authenticated account and be active.
-Unknown or retired IDs fail and MUST NOT reveal another account's
-replicas.
-
-<a id="status"></a>
-
-### 8.1 Status
-
-Example request:
-
-```json
-{
-  "type": "https://didcomm.org/messagepickup/3.0/status-request",
-  "id": "019b1b54-a824-7bdb-86b7-4e89b35b0886",
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-    "recipient_did": "did:peer:4zQm...recipient"
-  },
-  "return_route": "all"
-}
-```
-
-`message_count`, `total_bytes`, oldest/newest times and longest wait MUST
-be calculated over unacknowledged, unexpired deliveries for that replica
-only. If `recipient_did` is present, every value MUST be further limited
-to that recipient DID.
-
-The matching `status` body echoes `replica_id` and, when requested,
-`recipient_did`.
-
-<a id="delivery-request-and-delivery"></a>
-
-### 8.2 Delivery request and delivery
-
-```json
-{
-  "type": "https://didcomm.org/messagepickup/3.0/delivery-request",
-  "id": "019b1b55-080a-786c-b1e8-0fb171459704",
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-    "limit": 50
-  },
-  "return_route": "all"
-}
-```
-
-The response is the standard `delivery` message with `replica_id` added:
-
-```json
-{
-  "type": "https://didcomm.org/messagepickup/3.0/delivery",
-  "id": "019b1b55-1303-7c04-8d55-ddc24d38a03c",
-  "thid": "019b1b55-080a-786c-b1e8-0fb171459704",
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d"
-  },
-  "attachments": [
-    {
-      "id": "019b1b53-75cc-71d7-a61c-45360fc20851",
-      "media_type": "application/didcomm-encrypted+json",
-      "data": { "base64": "eyJwcm90ZWN0ZWQiOi..." }
-    }
-  ]
-}
-```
-
-Each attachment ID names the delivery, not the mailbox message and not
-the application message. It MUST be opaque, contain at least 128 bits of
-unpredictability, and be unique within the mediator. One durable delivery
-keeps the same attachment ID across polling, redelivery and live push.
-Different replicas receive different attachment IDs for the same
+Each attachment ID is an opaque delivery ID with at least 128 bits of
+unpredictability. It remains stable across polling, redelivery and live push.
+Different replicas get different IDs for one shared package. Pickup responses
+are encrypted to the replica DID; attachment bytes remain the original inner
 encrypted envelope.
 
-A delivery request does not acknowledge or remove anything. The
-mediator MAY suppress immediate repeated delivery for load control, but
-MUST eventually make every unacknowledged, unexpired delivery available
-again.
+`messages-received.message_id_list` affects only this authenticated replica's
+deliveries. Repeating an ACK is harmless; unknown, already acknowledged and
+other replicas' IDs have no effect. A shared ACK marks that delivery consumed
+without deleting the shared ciphertext or another delivery. A private ACK may
+remove the private package. No application or sync end-to-end receipt is
+implied by either operation.
 
-<a id="messages-received"></a>
+For application mail, the client follows the existing
+[receive and commit boundaries](../distributed-delivery.md#cross-layer-commit-and-acknowledgment-table):
+ACK after durable receipt/evidence storage, or a terminal pre-vault rejection
+with no portable message or effect. Recoverable missing-key/history/state cases
+remain queued. Application admission and automatic effects remain separate
+from transport ACK.
 
-### 8.3 Messages received
+For sync mail, the client follows [sync durability](vault-sync.md#durability-and-acknowledgments).
+A raw event receipt does not mean its dependent objects or the entire vault are
+synchronized.
 
-```json
-{
-  "type": "https://didcomm.org/messagepickup/3.0/messages-received",
-  "id": "019b1b56-70f2-7cc7-9ba4-0fc6218bb64a",
-  "body": {
-    "replica_id": "019b1b47-dbf6-72b1-9239-0ce3de7ab12d",
-    "message_id_list": [
-      "019b1b53-75cc-71d7-a61c-45360fc20851"
-    ]
-  },
-  "return_route": "all"
-}
-```
-
-The mediator MUST affect only deliveries belonging to the authenticated
-account and named replica. Unknown IDs, IDs already acknowledged and IDs
-belonging to another replica have no effect. Processing the same list
-again is idempotent.
-
-A client may acknowledge a delivery through exactly one of two terminal
-paths, using [distributed-delivery.md section 4.1](../distributed-delivery.md#cross-layer-commit-and-acknowledgment-table)'s
-commit boundaries:
-
-1. **durable channel receipt** — follow [section 4.3](../distributed-delivery.md#receive-a-message)'s
-   authentication and dependent object/evidence/inbound commits before pickup ACK; or
-2. **terminal pre-vault rejection** — safely classify the delivery under a
-   [relationships.md section 9.2](../relationships.md#hard-pre-vault-gate),
-   then pickup-ACK without `message.in`, ultimate peer ACK, contact, application
-   effect or portable message content; only a bounded local diagnostic may remain.
-
-Recipient classification follows [relationships.md sections 9.1](../relationships.md#deferred-delivery)–[9.2](../relationships.md#hard-pre-vault-gate),
-including eligible retired historical addresses. For an otherwise eligible
-recipient, apply that profile's local
-[sender authentication](../relationships.md#sender-authentication-freshness). A future
-Web channel additionally needs the [mutable-channel extension](did-web-channels.md),
-including its failure classification and bounded sender-resolution accounting;
-retained chain membership cannot bypass authentication.
-
-A delivery awaiting recoverable decryption, local DID/route/sync state,
-or other local receive prerequisites under [channels.md](../channels.md#receipt)
-MUST NOT be acknowledged while it remains deferred under
-[relationships.md section 9.1](../relationships.md#deferred-delivery). A delivery that is otherwise
-not safely classifiable MUST NOT be acknowledged either. That profile's
-[wait definition](../relationships.md#deferred-delivery) and
-[evidence-change rules](../relationships.md#evidence-change-retries) govern redelivery,
-evidence recovery and loss of local wait state. When the deferred mutable-channel
-profile requires network accounting, its key additionally includes the named replica; its pickup ACK scope
-and idempotency remain as defined above.
-
-Authenticated channel receipt suffices for normal pickup acknowledgment;
-later processing is independent under [operation eligibility](../channels.md#operation-eligibility).
-Pickup acknowledgment itself authorizes no ultimate ACK or effect.
-
-<a id="live-delivery"></a>
-
-### 8.4 Live delivery
-
-`live-delivery-change` adds `replica_id` to its body. Live-delivery state
-is scoped to one authenticated connection and one replica. The mediator
-MUST push only that replica's deliveries to the connection.
-
-Several simultaneous connections MAY identify the same replica and MAY
-receive the same delivery. They share that replica's acknowledgment
-domain. Disconnecting or failing a push MUST NOT acknowledge a delivery.
-
-This live connection is the permitted form of direct-to-replica transport in
-version 1.0. It is an internal mailbox delivery connection authenticated under
-the mediation account; the external sender still addresses the recipient
-DID and never learns the replica ID. A live push never replaces the durable
-delivery row before `messages-received`.
+Live-delivery state belongs to the authenticated replica connection. Multiple
+connections for the same replica may see the same delivery and share its ACK
+domain. Connecting as B never subscribes to A's deliveries. Reconnection also
+drains durable queued mail; live push is not a replacement for pickup.
 
 <a id="retention-and-replay"></a>
 
-## 9. Retention and replay
+## 10. Retention, limits and failure
 
-For an accepted mailbox message, the mediator computes:
+Shared mail expires at the earlier of mediator acceptance time plus its
+advertised retention window and the outer forward's explicit expiry, if any.
+A past expiry is refused. Until that deadline it remains available for replay
+to newly registered replicas even if all current replicas acknowledged it.
+Private mail remains until its own ACK or deadline and is never shared replay.
 
-```text
-expires_at = min(
-  received_at + account.message_retention_seconds,
-  forward.expires_time when present
-)
-```
+Expiry is independent of slow/offline replicas. This is bounded mail storage,
+not a permanent archive: after expiry, missing history must come from another
+replica or backup. Transport acceptance alone is not delivery to a replica.
 
-A past `forward.expires_time` is not stored. A longer sender expiry does
-not extend the mediator's advertised retention.
+`registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
+`max_message_bytes`, `max_active_replicas`, `max_membership_records`, `max_membership_page`,
+`max_shared_recipients`, `max_retained_bytes`, `max_retained_messages`,
+`max_pending_deliveries_per_replica`, `max_deliveries_per_request` and
+`max_recipient_updates_per_request`. Membership-record quota counts tombstones.
+Byte and message quotas cover private mail as well as shared mail, with shared
+ciphertext counted once. Limits are checked before atomic publication.
 
-Until `expires_at`:
+Protocol failures use Problem Report 2.0 with code prefix
+`e.estoc.replica-mediation.` and these suffixes:
 
-- the encrypted mailbox message remains available for retained replay;
-- active replicas may have pending or acknowledged delivery state; and
-- a newly registered replica receives a delivery even if every older
-  replica already acknowledged the message.
+| Suffix | Meaning |
+| --- | --- |
+| `invalid-grant` | Binding, signature, document, sender or destination check failed |
+| `unknown-account` | Shared account has no mediation grant |
+| `identity-conflict` | ID/DID or destination already has another binding |
+| `retired` | This exact incarnation is terminal |
+| `replica-required` | Shared-account pickup attempted after activation |
+| `list-expired` | Membership-list snapshot is no longer available; start a fresh listing |
+| `quota` | No atomic mutation fits the advertised limits |
+| `message-too-large` | Envelope exceeds the transport limit |
 
-At or after `expires_at`, the mediator MAY delete the message and every
-associated delivery. An inactive but unretired replica MUST NOT prevent
-expiry.
-
-Under [distributed-delivery.md section 7](../distributed-delivery.md#submission-completion-and-expiration), the sender's durable outbox stops
-submission when `delivery.submitted` commits, independently of the ultimate
-recipient's ACK. Mediator expiry can therefore discard an already submitted
-message before the recipient receives it; it does not trigger sender retry.
-This deferred fanout protocol does not turn the mediator into a permanent
-archive or add an end-to-end delivery guarantee.
-
-<a id="quotas-and-abuse-bounds"></a>
-
-## 10. Quotas and abuse bounds
-
-A mediator MUST publish and enforce at least:
-
-- maximum active replicas per account;
-- maximum registered recipient DIDs per account;
-- maximum recipient updates per request and a bounded registration rate;
-- maximum normalized encrypted-envelope bytes per mailbox message;
-- maximum retained ciphertext bytes and/or retained messages per account;
-- maximum pending deliveries per replica and/or account;
-- maximum delivery IDs per pickup acknowledgment; and
-- message retention seconds.
-
-Ciphertext quota SHOULD count one stored envelope once rather than once per
-replica. Delivery-row quota is separate. Replica fan-out and late replay MUST
-check delivery quota transactionally.
-
-When any limit prevents accepting a forward, registering a recipient,
-registering a replica or creating replay deliveries, the mediator MUST NOT
-leave partial state. In particular it MUST NOT store one mailbox message while
-creating deliveries for only some active replicas.
-
-Public rendezvous DIDs amplify unauthenticated initiator traffic into
-recipient storage, user prompts and potential application work.
-Operators SHOULD support per-account and per-recipient rate limits in addition
-to hard storage caps. An authenticated administration or discovery response
-MAY expose current usage, but anonymous routing behavior SHOULD remain
-uniform enough not to become a precise account-existence oracle.
-
+Authenticated control failures disclose only the caller's account state.
+Anonymous routing failures retain the existing non-enumerating behavior.
 
 <a id="privacy-and-security"></a>
 
-## 11. Privacy and security
+## 11. Privacy boundary
 
-The mediator is permitted to observe and retain routing metadata needed for
-operation, including:
+The mediator may observe account and replica DIDs, their grouping, communication
+recipients, ciphertext sizes, transport addresses and delivery timing. It does
+not receive the vault seed, plaintext events, content CIDs or human-readable
+device labels through this protocol. Synchronization payloads are encrypted
+end to end between replica DIDs, including any embedded original mail.
 
-- mediation account DID;
-- recipient DID (`body.next`) and therefore its method syntax;
-- replica IDs;
-- ciphertext size and hash;
-- arrival, delivery, acknowledgment and expiry times; and
-- transport metadata such as IP address and connection timing.
-
-The mediator MUST NOT be sent an explicit rendezvous role, contact ID,
-human-readable label or web-publication state. A replica ID MUST
-NOT appear in a public DID document or in an innermost application `to`
-header as a delivery target.
-
-Recipient DIDs registered under the same mediation account are linkable to
-that mediator. Pairwise DIDs prevent public correlation by unrelated peers;
-they do not by themselves hide account membership from the mediator. A vault
-that needs that property uses separate mediation arrangements and accepts the
-additional registration, pickup and availability cost.
-
-Because every full replica uses the same mediation-account key, the mediator
-cannot cryptographically prove that a caller supplied its own local
-`replica_id`. Per-replica scoping prevents conforming clients from
-accidentally acknowledging one another's deliveries; it is not isolation
-from a malicious holder of the vault seed.
-
-The mediator MUST NOT:
-
-- decrypt an inner application envelope;
-- persist an unpacked application plaintext;
-- possess or log application content keys;
-- fetch attachment links supplied by an anonymous sender;
-- log request bodies, decrypted `forward` bodies, inner ciphertext bytes or
-  pickup attachment bytes by default; or
-- present replica retirement as cryptographic seed revocation.
-
-An encrypted envelope can contain sender-chosen bytes. The enforceable claim
-is therefore that the mediator stores only a syntactically valid DIDComm
-encrypted-message envelope and never opens it, not that every byte of
-ciphertext was honestly produced from human-unreadable input.
-
-<a id="problem-reports"></a>
-
-## 12. Problem reports
-
-Errors on authenticated request-response interactions use Problem Report
-2.0. Defined codes are:
-
-| code | meaning |
-|---|---|
-| `e.estoc.replica-mediation.invalid-request` | malformed or unsupported body |
-| `e.estoc.replica-mediation.replica-required` | pickup request omitted `replica_id` |
-| `e.estoc.replica-mediation.unknown-replica` | no such replica under this account |
-| `e.estoc.replica-mediation.replica-retired` | replica ID is terminal; current client must re-incarnate under section 5.7 |
-| `e.estoc.replica-mediation.too-many-replicas` | active replica limit reached; client must list and explicitly retire IDs |
-| `e.estoc.replica-mediation.too-many-recipients` | registered recipient limit reached |
-| `e.estoc.replica-mediation.too-many-deliveries` | fan-out or replay delivery limit reached |
-| `e.estoc.replica-mediation.registration-rate` | recipient registration rate exceeded |
-| `e.estoc.replica-mediation.recipient-proof` | recipient-control proof failed |
-| `e.estoc.replica-mediation.recipient-conflict` | another account owns the recipient |
-| `e.estoc.replica-mediation.did-resolution-unavailable` | recipient DID could not be safely resolved now |
-| `e.estoc.replica-mediation.unsafe-did-resolution` | requested resolution would violate resolver policy |
-| `e.estoc.replica-mediation.message-too-large` | normalized envelope exceeds the limit |
-| `e.estoc.replica-mediation.quota` | another advertised storage limit is exhausted |
-
-A mediator MAY intentionally give no DIDComm problem report for an
-anonymous Routing 2.0 `forward`, so as not to create a route oracle.
+The deployment may use the same mediator for both paths. Sender protection is
+an independent interoperability/privacy feature, not a prerequisite to this
+profile and not a way to hide an explicitly registered replica group.
+Default logs MUST NOT contain decrypted control bodies, mail ciphertext,
+attachment bytes, vault content or private keys. A mediator must not be given
+application content keys or represent device retirement as seed revocation.
 
 <a id="required-conformance-cases"></a>
 
-## 13. Required conformance cases
+## 12. Required conformance scenarios
 
-A conforming implementation demonstrates at least these cases:
+These are proposed requirements, not claims about the current implementation.
 
-
-<a id="fan-out-delivery-and-pickup-rm-1-rm-10"></a>
-
-### Fan-out, delivery and pickup (RM-1–RM-10)
-
-1. <a id="rm-1"></a> Two active replicas receive distinct delivery IDs for one stored
-   ciphertext; A's ACK leaves B pending.
-2. <a id="rm-2"></a> A late replica obtains every unexpired retained message, including when all
-   older replicas ACKed.
-3. <a id="rm-3"></a> Concurrent replica registration and forwarding cannot omit the new
-   replica's delivery.
-4. <a id="rm-4"></a> Crash before durable normal acceptance produces no pickup ACK; crash after
-   commit may redeliver and converges logically.
-5. <a id="rm-5"></a> A safely classified terminal pre-vault rejection may be pickup-ACKed without
-   `message.in`, while recoverable local receive prerequisites remain pending.
-   Future Web channels additionally use the [deferred resolution budget](did-web-channels.md#inbound-sender-resolution-budget).
-6. <a id="rm-6"></a> Repeating one `forward.id` with identical normalized bytes stores no second
-   message; different bytes never overwrite the first.
-7. <a id="rm-7"></a> `recipient_did` actually filters status and delivery.
-8. <a id="rm-8"></a> A retired/unknown replica cannot inspect or ACK another replica's queue.
-9. <a id="rm-9"></a> With zero active replicas, ciphertext remains retained with zero deliveries;
-   all pickup without a registered active `replica_id` fails and there is no
-   account-global fallback.
-10. <a id="rm-10"></a> First later registration atomically creates retained deliveries before
-   pickup is possible.
-
-<a id="envelope-privacy-quotas-and-recipient-control-rm-11-rm-19"></a>
-
-### Envelope privacy, quotas and recipient control (RM-11–RM-19)
-
-11. <a id="rm-11"></a> Plain, signed-only, linked or structurally invalid inner attachments are
-    not persisted as mailbox messages.
-12. <a id="rm-12"></a> Database, object storage, logs and traces do not contain an application
-    plaintext sentinel or content key.
-13. <a id="rm-13"></a> Replica protocol messages reveal no hardware/OS identifier or human label.
-14. <a id="rm-14"></a> Peer rendezvous, pairwise Peer and externally managed Web recipients receive
-    identical fan-out/ACK isolation without introducing vault publication state.
-15. <a id="rm-15"></a> Recipient, replica and delivery quotas fail atomically without partial
-    state.
-16. <a id="rm-16"></a> Peer DID long-form material is decoded locally, its canonical short form
-    exactly matches registration/proof payload, and proof key authorization
-    verifies after normalization.
-17. <a id="rm-17"></a> `did:web` proof resolution uses only the constrained resolver and never
-    unrestricted server-side URL fetching.
-18. <a id="rm-18"></a> No public document or application message uses replica ID as peer-visible
-    recipient.
-19. <a id="rm-19"></a> Adding/removing a server full replica changes delivery rows only, not
-    recipient DIDs.
-
-<a id="replica-retirement-and-receive-recovery-rm-20-rm-23"></a>
-
-### Replica retirement and receive recovery (RM-20–RM-23)
-
-20. <a id="rm-20"></a> Without an advertised inactivity policy, age alone never retires a
-    replica. With one, the server applies the exact disclosed bound and reason
-    `inactivity-policy`.
-21. <a id="rm-21"></a> A local copy whose current ID is server-retired stops using it, atomically
-    mints new replica/store-generation IDs, preserves old-author events,
-    registers the fresh ID on every required mediation and obtains retained
-    replay.
-22. <a id="rm-22"></a> A restore lists replicas and explicitly retires selected stale IDs rather
-    than silently reusing or evicting one.
-23. <a id="rm-23"></a> Recipient-key triage defers an exact known local key-agreement method
-    with recoverable missing prerequisites. Foreign DIDs, nonexistent or
-    wrong-purpose methods and terminal routes use the pre-vault ACK path.
-    Retained retired exact keys can receive on eligible routes without continuity lookup.
-    Channel sender authentication is local for numalgo 4. Future Web channels
-    use the [deferred budget](did-web-channels.md#shared-accounting-and-lost-wait-state);
-    local receive prerequisite waits suspend that accounting without resetting it.
-    Once channel receipt commits, missing channel/continuity evidence cannot withhold
-    pickup ACK; invitation/effect state recovers from saved evidence without another pickup
-    or resolution sequence. A new network delivery authenticates afresh.
+1. Two restored writable copies have different replica IDs/DIDs and preserve
+   historical event authors; an exact move cannot leave a second writer alive.
+2. A valid account-signed grant plus replica authentication registers; a forged
+   list entry, wrong account/mediator, altered document or mismatched sender does not.
+3. A first registration preserves pending legacy mail and atomically disables
+   shared-account pickup. A late legacy ACK cannot consume replica deliveries.
+4. Register and accept a shared package in both transaction orders: exactly one
+   delivery exists for the new replica. Repeating registration preserves ACKs.
+5. A and B receive identical original shared ciphertext with different delivery
+   IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
+6. Sync addressed to B is delivered only to B and never replayed to C when C
+   joins. A replica DID cannot be registered as a shared recipient.
+7. Recipient filters narrow both status and pickup within the caller's queue;
+   they cannot reach another principal. Disconnecting live push loses no mail.
+8. Retire before register and register before retire both end retired. A delayed
+   grant cannot reactivate the identity; historical authored events remain usable.
+9. All replicas ACK shared mail; C joins before expiry and gets replay. After
+   expiry it needs peer history. Private mail does not get shared replay.
+10. Quota failure publishes neither a partial fan-out nor a partial registration;
+    SQLite and D1 implementations satisfy the same atomicity boundary.
+11. A restored mediator list cannot authorize a fabricated sync recipient, and
+    known local tombstones are reconciled before registration/publication.
+12. No delivery or membership operation independently authorizes historical
+    application effects or changes a committed application's channel/package.
