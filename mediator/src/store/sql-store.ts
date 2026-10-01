@@ -643,9 +643,7 @@ export class SqlStore implements MediationStore {
    * One transaction, so a replica enrolls either before it, and is a target,
    * or after it, and is not. A recipient belongs to one account under one
    * kind of binding, which makes the recipient and the forward's id a key no
-   * two accounts share. The package goes in only under both of its account's
-   * limits, the deliveries only if the package did, and the row then holding
-   * the key says what happened.
+   * two accounts share.
    */
   async fanOut(
     { next, forwardId }: PackageKey,

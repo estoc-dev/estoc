@@ -175,8 +175,10 @@ which — a 2xx always means queued mail:
   `MEDIATOR_MAX_MESSAGE_BYTES` as well (a number can grow in it): **413**.
 - `(account, body.next, forward id)` names the package. The same forward
   again is accepted and queued once; the same id with another envelope is
-  refused and the first stays. The name is free again once its mail has been
-  picked up or has expired.
+  refused and the first stays. An ordinary recipient's name is free again once its mail has been
+  picked up and acknowledged, or has expired. A replica account's stays
+  taken until the package expires, whether or not every replica has
+  acknowledged it.
 - A recipient nobody here holds, a full queue and a reused id are one answer,
   **422**, which does not tell the three apart. A 202 does tell the sender
   that this recipient takes mail here right now; it says nothing of the

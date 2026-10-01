@@ -116,8 +116,7 @@ export interface PackageBounds {
  * `repeated` and `conflict` as for an ordinary queue. `unknown`: the key's
  * recipient is neither a shared recipient nor a replica. `full`: the account
  * is at its message or byte limit. `lapsed`: the deadline has already passed.
- * Only `stored` wrote anything, and it wrote the package and every delivery
- * of it together.
+ * Only `stored` put a package in, and it put in every delivery of it too.
  */
 export type FanOutOutcome = "stored" | "repeated" | "conflict" | "unknown" | "full" | "lapsed";
 

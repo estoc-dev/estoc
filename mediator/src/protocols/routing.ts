@@ -248,14 +248,17 @@ export async function forward(
       throw notQueued();
     }
     const expires = incoming.message.expires_time;
-    const outcome = await context.store.fanOut(
-      { next: canonicalDid(next), forwardId: incoming.message.id },
-      packed,
-      {
+    // A store that could not commit is one more way of not being queued: the
+    // forward itself was sound, and the same one may be sent again.
+    const outcome = await context.store
+      .fanOut({ next: canonicalDid(next), forwardId: incoming.message.id }, packed, {
         deadline: typeof expires === "number" ? expires * 1000 : null,
         maxRetainedBytes: context.config.maxRetainedBytes,
-      }
-    );
+      })
+      .catch((err: unknown) => {
+        context.log?.("fan-out failed; the forward is refused", err);
+        return null;
+      });
     if (outcome !== "stored" && outcome !== "repeated") {
       throw notQueued();
     }

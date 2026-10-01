@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { Hono } from "hono";
 import type { IMessage } from "@estoc/didcomm-node";
@@ -11,7 +15,7 @@ import { replicaPolicyFrom, type MediatorConfig } from "../src/config.js";
 import type { DIDCommContext } from "../src/didcomm/didcomm.js";
 import { buildServer } from "../src/server.js";
 import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
-import type { SqliteStore } from "../src/store/sqlite.js";
+import { SqliteStore } from "../src/store/sqlite.js";
 import {
   ENCRYPTED,
   forwardOf,
@@ -1358,6 +1362,40 @@ describe("a forward", () => {
       expect(refused.status).toBe(422);
       expect(await refused.json()).toEqual({ error: "The forward was not queued" });
     }
+  });
+
+  it("is refused whole, and can be sent again, when a delivery of it cannot be written", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-fanout-"));
+    const file = join(dir, "mediator.db");
+    store = new SqliteStore(file);
+    app = serve();
+    await register(first.grant);
+    await register(second.grant);
+    const added = await addition();
+    await add(added);
+    const raw = new Database(file);
+    raw.exec(
+      "CREATE TRIGGER fail_delivery BEFORE INSERT ON replica_deliveries " +
+        `WHEN NEW.replica_did = '${second.replica.did}' ` +
+        "BEGIN SELECT RAISE(ABORT, 'delivery blocked'); END"
+    );
+    const forward = forwardOf(added.recipient.did, await envelope(added.recipient));
+
+    const refused = await post(forward);
+
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toEqual({ error: "The forward was not queued" });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM replica_packages").get()).toEqual({ n: 0 });
+    expect(await waiting(first)).toEqual([]);
+
+    raw.exec("DROP TRIGGER fail_delivery");
+    expect((await post(forward)).status).toBe(202);
+    expect(await waiting(first)).toHaveLength(1);
+    expect(await waiting(second)).toHaveLength(1);
+
+    raw.close();
+    store.close();
+    rmSync(dir, { recursive: true });
   });
 
   it("counts once against its account, shared or not, whatever waits for each replica", async () => {
