@@ -641,12 +641,14 @@ Enrollment proceeds as follows:
    catch-up/import separate from live application execution. The domain revision
    defines when the new runtime may enable automatic effects.
 
-Recipient reconciliation uses the account's native `recipient-list` and
-`recipient-add`, adding missing validated bindings without removing existing
-ones. Learning DID retirement or route withdrawal does not remove an address
-from the mediator; it changes domain eligibility independently. Imported old
-ordinary-mediation history retains its original routes and does not claim those
-addresses or queued messages for this account.
+Recipient reconciliation re-sends one account-authenticated `recipient-add`
+per locally validated binding without querying the mediator. The same
+recipient-signed proof can be reused across requests; an existing binding
+returns `no_change`. Recipient identities unknown locally must come from vault
+history or backup. Learning DID retirement or route withdrawal does not remove
+an address from the mediator; it changes domain eligibility independently.
+Imported old ordinary-mediation history retains its original routes and does
+not claim those addresses or queued messages for this account.
 
 Registering before peer inventory allows mail arriving during catch-up to
 remain queued. Fixed inventory cuts plus subsequent incremental/full passes

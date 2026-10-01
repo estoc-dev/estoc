@@ -50,7 +50,7 @@ turned into another portable sent/received-message record.
 | Responsibility | Owner |
 | --- | --- |
 | Create the mediation account; register, list and retire replica delivery targets | This protocol |
-| Add and list permanent shared communication-address bindings | This protocol's recipient controls |
+| Add permanent shared communication-address bindings | This protocol's recipient control |
 | Fan-out, per-replica pickup, retention and delivery ACK | This protocol and Message Pickup |
 | Exchange exact events, objects, inventories and durable sync receipts | [Vault sync](vault-sync.md) |
 | Decide application admission, automatic replies, rotation and dispatch | The vault/domain and runtime specifications; pending multi-replica revision |
@@ -90,8 +90,7 @@ sender or key identifier originally carried in long form.
 | `register` / `registered` | Account DID | Create the account if absent and enroll one replica |
 | `list` / `replicas` | Account DID | List a fixed membership snapshot |
 | `retire` / `retired` | Account DID | Record terminal replica retirement |
-| `recipient-add` / `recipient-added` | Account DID | Add communication recipients idempotently |
-| `recipient-list` / `recipients` | Account DID | List a fixed recipient snapshot |
+| `recipient-add` / `recipient-added` | Account DID | Add one communication recipient idempotently |
 
 The account DID manages the account; replica DIDs authenticate pickup and
 peer synchronization. Account controls do not give the account a pickup queue.
@@ -506,13 +505,12 @@ require the separate [mutable-channel proposal](did-web-channels.md).
 ### 7.1 `recipient-add` / `recipient-added`
 
 `recipient-add` is authcrypted from the account DID. The account must already
-exist under this protocol. Its body is `{ "recipients": [<entry>, ...] }`, a
-nonempty array bounded by `max_recipients_per_request`. Each entry has exactly
-`recipient_did`, `resolution_material` and `proof`; duplicate recipients after
-canonicalization make the request invalid. These are native replica-mediation
+exist under this protocol. Its body has exactly `recipient_did`,
+`resolution_material` and `proof`, naming one communication recipient. Multiple
+recipients require separate requests. These are native replica-mediation
 messages, not Coordinate Mediation recipient updates.
 
-Every entry proves control of its recipient DID. `proof` is compact JWS with
+Every request proves control of its recipient DID. `proof` is compact JWS with
 protected `alg: EdDSA`, `typ: estoc/recipient-add+jws`, and `kid` naming an
 authentication key of that recipient. The RFC 8785 payload is exactly:
 
@@ -520,26 +518,26 @@ authentication key of that recipient. The RFC 8785 payload is exactly:
 {
   "account": "did:peer:4...account",
   "aud": "did:web:mediator.example",
-  "expires_time": 1788443400,
-  "request_id": "019b1b50-b403-7940-abaf-f59b92d2231b",
   "recipient": "did:peer:4...communication-address"
 }
 ```
 
 The proof fields MUST match the enclosing request as follows:
 
-| Proof payload | Enclosing request or entry |
+| Proof payload | Enclosing request |
 | --- | --- |
 | `account` | Authenticated account `from` |
 | `aud` | Mediator `to` |
-| `request_id` | DIDComm request `id` |
-| `recipient` | Entry `recipient_did` |
+| `recipient` | Body `recipient_did` |
 
-Compare DIDs after verified canonicalization. The expiry must be in the
-future and at most five minutes ahead of mediator time. Verification uses the
-recipient's authorized key, not the account's key, with the signature-verification
-requirements in §4. This proof authorizes only addition to the named account
-through `recipient-add`; there is no removal or replacement action.
+Compare DIDs after verified canonicalization. Verification uses the recipient's
+authorized key, not the account's key, with the signature-verification
+requirements in §4. This reusable proof authorizes only addition of the named
+recipient to the named account at that mediator. It has no expiry or request-ID
+binding: the same proof may be used in later authenticated requests because
+the recipient binding is permanent and addition is idempotent. It never
+authorizes a different account, mediator or recipient, nor replaces account
+authentication. DIDComm request IDs still correlate requests and replies.
 
 For Peer DIDs, `resolution_material` is the long form, or null only when the
 mediator already has verified resolution material. The mediator recomputes the
@@ -550,20 +548,20 @@ arbitrary URL to fetch. Other DID methods require an explicitly supported,
 constrained resolver and control-proof profile; this document does not authorize
 unrestricted network resolution or mutable-channel use.
 
-After validating every entry, the mediator atomically applies these rules:
+After verifying the recipient and its proof, the mediator atomically applies
+these rules:
 
 | Current destination binding | Result |
 | --- | --- |
 | Absent | Bind the recipient to this account; `added` |
 | Already a shared recipient of this account | Preserve the binding; `no_change` |
-| Another account, a private replica, an account DID or the mediator | Refuse the whole request without mutation |
+| Another account, a private replica, an account DID or the mediator | Refuse the request without mutation |
 
-Proof, resolution, ownership and capacity checks apply to the complete request;
-publication of the additions is all-or-nothing. Recheck destination ownership
-in the transaction so concurrent adds cannot bind one DID to two accounts.
+Proof and resolution checks apply even when the binding already exists.
+Recheck destination ownership and capacity in the transaction so concurrent
+adds cannot bind one DID to two accounts or partially publish a failed add.
 An existing binding consumes no additional recipient capacity. The response
-body has `results`, with one `{ "recipient_did": <canonical DID>,
-"status": "added" | "no_change" }` per entry in request order.
+body is `{ "recipient_did": <canonical DID>, "status": "added" | "no_change" }`.
 
 The binding is identified by the canonical recipient DID and its account.
 There is no per-registration UUID, generation or replacement token. If two
@@ -571,31 +569,22 @@ replicas add the same DID to their shared account concurrently, the first
 committed request adds it and the other returns `no_change`. Retrying after a
 lost response has the same effect and changes no delivery/ACK state.
 
-### 7.2 `recipient-list` / `recipients`
+### 7.2 Append-only reconciliation
 
-`recipient-list` is authcrypted from the account DID. Its body has `cursor: null`
-for a new listing, or an opaque continuation cursor, plus a positive `limit`
-no greater than `max_recipients_per_request`. The account must already exist.
-The response contains `recipient_dids`, an array of canonical shared recipient
-DIDs, and `next_cursor` (null for the final page).
+Clients send one `recipient-add` for each newly validated communication DID
+whose immutable route binds this arrangement. On startup, reconnection,
+suspected remote-state loss and periodic reconciliation, replay the adds for
+all locally known validated bindings without querying the mediator first.
+Both `added` and `no_change` complete that recipient's attempt; failed or lost
+responses remain retryable without undoing other completed adds. A previous
+success is not proof that the mediator retained the binding after storage loss.
 
-A new listing captures a fixed set sorted by canonical DID text. Cursors bind
-the account and snapshot; completed pagination has no gaps or duplicates.
-Concurrent additions appear in a later listing. Repeated pages are stable;
-an expired snapshot returns `list-expired`. A page may be shortened to fit the
-wire limit without omitting recipients from a completed listing. Replica DIDs
-and another account's recipients are never included.
-
-### 7.3 Append-only reconciliation
-
-Clients use `recipient-list` and add missing locally validated communication
-DIDs whose immutable route binds this arrangement. This includes historical
-DIDs with later DID or route retirement facts: validate their original
-identity/route binding without treating current application eligibility as a
-condition for keeping the transport registration. They never remove a listed
-recipient merely because it is unknown locally or no longer used for new work.
-An unknown recipient produces a bounded diagnostic and history reconciliation;
-the client cannot derive its entity's named key from the DID string alone.
+This includes historical DIDs with later DID or route retirement facts:
+validate their original identity/route binding without treating current
+application eligibility as a condition for keeping the transport registration.
+The protocol does not enumerate remote recipients. Bindings unknown to a
+replica remain untouched; their identities and route evidence are recovered
+through vault synchronization or backup, not a mediator listing.
 
 Recipient bindings remain for the account's lifetime. This protocol has no
 recipient remove, replacement, expiry or tombstone operation. DID retirement,
@@ -722,9 +711,9 @@ replica or backup. Transport acceptance alone is not delivery to a replica.
 `registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
 `max_message_bytes`, `max_active_replicas`, `max_retired_replicas`, `max_membership_page`,
 `max_shared_recipients`, `max_retained_bytes`, `max_retained_messages`,
-`max_pending_deliveries_per_replica`, `max_deliveries_per_request` and
-`max_recipients_per_request`. Byte and message quotas apply to the
-account's private and shared packages, with shared ciphertext counted once.
+`max_pending_deliveries_per_replica` and `max_deliveries_per_request`.
+Byte and message quotas apply to the account's private and shared packages,
+with shared ciphertext counted once.
 The pending-delivery limit applies separately to each replica's combined
 private/shared queue. Shared fan-out or replay skips only the full queue;
 private mail for a full destination is refused without storing its package.
@@ -759,7 +748,7 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `identity-conflict` | ID/DID or destination already has another binding |
 | `retired` | This exact incarnation is terminal |
 | `replica-required` | Pickup was attempted with the account identity |
-| `list-expired` | Membership or recipient snapshot is no longer available; start a fresh listing |
+| `list-expired` | Membership snapshot is no longer available; start a fresh listing |
 | `quota` | An account, membership, recipient or private-destination limit prevents the operation; a full shared-delivery queue alone does not refuse the package |
 | `message-too-large` | Envelope exceeds the transport limit |
 
@@ -835,20 +824,29 @@ These are proposed requirements, not claims about the current implementation.
     preserves the deadlines; unconfirmed history stays visible. Retirement learned from
     another replica stops work immediately without starting a new drain.
 14. A creates and registers a communication DID while B lacks its entity.
-    B preserves it and reports the mismatch. Missing or account-key-signed
-    recipient proofs fail. Concurrent adds by A and B produce one permanent
-    binding: one `added`, one `no_change`, with no registration version or churn.
+    B's replay of its own known bindings leaves A's recipient untouched.
+    Missing or account-key-signed recipient proofs fail. For another previously
+    unregistered DID known to both replicas, concurrent adds produce one
+    permanent binding: one `added`, one `no_change`, with no registration churn.
     Another account cannot claim the DID, including an ordinary account.
 15. A DID or route retires, a channel is blocked, or a replica leaves: existing
     recipient bindings remain. Rotation adds the new address while old addresses
     remain transport destinations; application eligibility is checked separately.
     A remove/replacement request fails without mutation. Package ACK and expiry
     still clear mail without deleting recipients.
-16. Append recipients during pagination: the fixed listing has no gaps or
-    duplicates, and a later listing includes the additions. After remote-state
-    loss, reconcile validated historical recipient bindings without filtering
-    them out because their DIDs no longer serve new application work.
+16. Reconcile by independently re-sending known recipient adds without a remote
+    listing. Existing bindings return `no_change`; a failed request leaves
+    other successful adds intact. After remote-state loss, restore validated
+    historical bindings even when their DIDs no longer serve new application
+    work. A lost add response is recovered by retrying the same binding.
 17. Two first registrations for different replicas race under the same account
     and mediation ID: both share one account. Conflicting account bindings,
     cross-protocol account reuse and recipient/private-destination collisions
     fail atomically.
+18. Reuse a recipient proof in later account-authenticated requests with new
+    request IDs: it remains valid without a time check, and replies correlate
+    to their enclosing requests. A mismatched request account, mediator or
+    recipient is refused, and altering the proof's payload invalidates its
+    signature. Proof checks also apply to an existing binding. A batch-shaped
+    body is invalid and changes no recipient binding; each valid request and
+    response names one recipient.

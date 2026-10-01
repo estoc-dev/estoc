@@ -80,11 +80,13 @@ Before adopting the candidate events/key names, update
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
 - Replace phase-1 desired-set removal for the new profile with append-only
-  `recipient-add` / `recipient-list`. The canonical communication DID binds to
+  single-recipient `recipient-add`. The canonical communication DID binds to
   one account; concurrent same-account adds are idempotent and need no registration
-  version. Preserve all existing bindings, including recipients unknown locally
-  or no longer eligible for new application work. Reconciliation can restore
-  validated historical bindings after remote-state loss. DID/route retirement,
+  version. Reuse recipient-signed proofs bound to the recipient, account and
+  mediator without an expiry or request-ID binding. Reconciliation re-sends
+  locally validated adds without remote enumeration, including historical
+  bindings after remote-state loss. Existing bindings remain even when unknown
+  locally or no longer eligible for new application work. DID/route retirement,
   blocking and rotation do not withdraw recipient registrations; application
   admission and outbound selection remain separate. Replica retirement still
   ends that replica's delivery membership. Message ACK/expiry still clears mail.
