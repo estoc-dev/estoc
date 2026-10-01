@@ -27,6 +27,7 @@ import type {
   PackageBounds,
   PackageKey,
   RecipientPage,
+  RecipientPlace,
   RegisterAccountOutcome,
   RemoveOutcome,
   ReplicaAccount,
@@ -34,6 +35,7 @@ import type {
   ReplicaDelivery,
   RosterPage,
   SharedRecipient,
+  SharedRecipientPage,
   ShareOutcome,
   StoredMessage,
   StoreOutcome,
@@ -734,8 +736,7 @@ export class SqlStore implements MediationStore {
 
   /*
    * One transaction, so two accounts racing for a DID cannot both bind it and
-   * a refused add leaves nothing behind. The recipient's owner before and
-   * after the insert tells an addition from a binding that was already there.
+   * a refused add leaves nothing behind.
    */
   async addSharedRecipient({
     accountDid,
@@ -749,17 +750,11 @@ export class SqlStore implements MediationStore {
     const unbound =
       `${NOT_ORDINARY} AND NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did IN (?, ?)) ` +
       "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?))";
-    const owner = {
-      sql: "SELECT account_did FROM replica_recipients WHERE recipient_did = ?",
-      params: [recipientDid],
-    };
-
-    const [account, before, , after, free] = await this.batch([
+    const [account, , held, free] = await this.batch([
       {
         sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
-      owner,
       {
         sql:
           "INSERT INTO replica_recipients (recipient_did, account_did, long_form, created_at) " +
@@ -780,22 +775,23 @@ export class SqlStore implements MediationStore {
           maxRecipients,
         ],
       },
-      owner,
+      {
+        sql: "SELECT account_did, created_at FROM replica_recipients WHERE recipient_did = ?",
+        params: [recipientDid],
+      },
       { sql: `SELECT (${unbound}) AS free`, params: elsewhere },
     ]);
 
     if (account.rows.length === 0) {
-      return "unknown";
+      return { outcome: "unknown" };
     }
-    const ownerIn = (result: SqlResult) =>
-      (result.rows as { account_did: string }[])[0]?.account_did ?? null;
-    if (ownerIn(after) === accountDid) {
-      return ownerIn(before) === accountDid ? "no_change" : "added";
+    const binding = (held.rows as { account_did: string; created_at: number }[])[0];
+    if (binding !== undefined) {
+      return binding.account_did === accountDid
+        ? { outcome: "added", addedTime: Math.floor(binding.created_at / 1000) }
+        : { outcome: "conflict" };
     }
-    if (ownerIn(after) !== null) {
-      return "conflict";
-    }
-    return (free.rows as { free: number }[])[0].free === 1 ? "full" : "conflict";
+    return { outcome: (free.rows as { free: number }[])[0].free === 1 ? "full" : "conflict" };
   }
 
   async removeSharedRecipient(
@@ -824,32 +820,28 @@ export class SqlStore implements MediationStore {
   async listSharedRecipients(
     accountDid: string,
     mediator: string,
-    offset: number,
+    after: RecipientPlace | null,
     limit: number
-  ): Promise<RecipientPage | null> {
-    const [account, page, count] = await this.batch([
+  ): Promise<SharedRecipientPage | null> {
+    const [account, page] = await this.batch([
       {
         sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
       {
         sql:
-          "SELECT recipient_did FROM replica_recipients WHERE account_did = ? " +
-          "ORDER BY created_at, recipient_did LIMIT ? OFFSET ?",
-        params: [accountDid, limit, offset],
-      },
-      {
-        sql: "SELECT COUNT(*) AS n FROM replica_recipients WHERE account_did = ?",
-        params: [accountDid],
+          "SELECT recipient_did AS did, created_at AS addedAt FROM replica_recipients " +
+          "WHERE account_did = ? AND (created_at, recipient_did) > (?, ?) " +
+          "ORDER BY created_at, recipient_did LIMIT ?",
+        params: [accountDid, after?.addedAt ?? -1, after?.did ?? "", limit + 1],
       },
     ]);
     if (account.rows.length === 0) {
       return null;
     }
 
-    const recipients = (page.rows as { recipient_did: string }[]).map((row) => row.recipient_did);
-    const total = (count.rows as { n: number }[])[0].n;
-    return { recipients, remaining: Math.max(0, total - offset - recipients.length) };
+    const rows = page.rows as { did: string; addedAt: number }[];
+    return { recipients: rows.slice(0, limit), more: rows.length > limit };
   }
 
   async sharedRecipientMaterial(did: string): Promise<string | null> {

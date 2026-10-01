@@ -231,8 +231,9 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 | `replica-add` | `grant` | `replica-added` | `replica_id`, `replica_did`, `state`, `added_time` |
 | `replica-list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `added_time`, `removed_time`), `next_cursor` |
 | `replica-remove` | `replica_id` | `replica-removed` | `replica_id`, `state`, `removed_time` |
-| `recipient-update` | `updates` (`recipient_did`, `action`, and for an addition `resolution_material`, `proof`) | `recipient-updated` | `updated` (`recipient_did`, `action`, `result`, `problem`) |
-| `recipient-query` | `paginate` (`limit`, `offset`) | `recipients` | `dids` (`recipient_did`), `pagination` (`count`, `offset`, `remaining`) |
+| `recipient-add` | `recipient_did`, `resolution_material`, `proof` | `recipient-added` | `recipient_did`, `added_time` |
+| `recipient-list` | `cursor`, `limit` | `recipients` | `entries` (`recipient_did`, `added_time`), `next_cursor` |
+| `recipient-remove` | `recipient_did` | `recipient-removed` | `recipient_did` |
 
 **`account-register`** creates the account of the DID that sends it, with no
 replica and no recipient yet. No mediate-request comes before it, and every
@@ -276,36 +277,29 @@ and a replica added afterwards receives only what comes after. A repeat
 answers as the first time did; an id the account never added is
 `unknown-replica`.
 
-**`recipient-update`** changes which recipient DIDs route to the account. It
-has the shape of coordinate-mediation's message of that name: `updates` is a
-list of 1 to `max_recipient_updates` entries, applied one by one in order,
-and `updated` answers each at the same place with `result` `success`,
-`no_change` or `client_error`. A refused entry carries in `problem` the code
-a problem-report would have (`invalid-recipient`, `identity-conflict` or
-`quota` under the same prefix) and undoes none of the others. An entry that
-is not exactly one of the two below refuses the whole request as
-`invalid-message`, with nothing applied.
+**`recipient-add`** routes one recipient DID's mail to the account. `proof`
+is a compact JWS signed by the *recipient's* authentication key
+(`typ: estoc/recipient-add+jws`) over exactly `account`, `aud` (the mediator)
+and `recipient`; it is checked on every request and names no time, so the
+same proof serves every retry. `resolution_material` is the recipient's long
+form, or null while the mediator holds the recipient. A repeat answers as
+the first time did. A recipient that does not resolve or whose proof does
+not stand is `invalid-recipient`, a DID bound otherwise is
+`identity-conflict`, and an account at `max_shared_recipients` gets `quota`.
 
-- `action: "add"` with `resolution_material` and `proof` routes the DID to
-  the account. `proof` is a compact JWS signed by the *recipient's*
-  authentication key (`typ: estoc/recipient-add+jws`) over exactly `account`,
-  `aud` (the mediator) and `recipient`; it is checked on every request and
-  names no time, so the same proof serves every retry.
-  `resolution_material` is the recipient's long form, or null while the
-  mediator holds the recipient. `no_change` means the account already held
-  it.
-- `action: "remove"` with nothing else stops routing the DID. Mail already
-  kept for it stays this account's: it still waits for its replicas, is
-  still counted, and follows the DID nowhere. The DID is then bound nowhere,
-  so a forward to it is refused, a repeat of kept mail included. It can be
-  added again, to this account or another, by a proof naming that account
-  and with its long form, or enrolled as a replica or an ordinary recipient.
-  `no_change` means the account did not hold it.
+**`recipient-list`** pages the recipients the account holds, oldest first.
+`cursor` is null to begin and then the previous `next_cursor`; `limit` is at
+most `max_membership_page`. A listing gives every recipient the account
+holds from its first page to its last exactly once; one added or removed in
+between may be in it or not. Its cursors never expire.
 
-**`recipient-query`** pages the account's recipients, oldest first, in the
-shape of coordinate-mediation's: `limit` is at most `max_membership_page`,
-`offset` is how many to pass over, and `remaining` is how many come after
-the page. A removal between two pages moves the recipients after it.
+**`recipient-remove`** stops routing the DID. Mail already kept for it stays
+this account's: it still waits for its replicas, is still counted, and
+follows the DID nowhere. The DID is then bound nowhere, so a forward to it
+is refused, a repeat of kept mail included. It can be added again, to this
+account or another, by a proof naming that account and with its long form,
+or enrolled as a replica or an ordinary recipient. A DID the account does
+not hold, a repeat included, gets the same reply and changes nothing.
 
 ### Mail
 

@@ -14,9 +14,8 @@
 > `account-register` and `replica-add`, in place of `register`, so an account
 > can exist with no replica; `list` is `replica-list`; and membership and
 > recipients are not append-only. A replica can be removed
-> (`replica-remove`), and recipients are added and removed by
-> `recipient-update`, which replaces `recipient-add`, and listed by
-> `recipient-query`.
+> (`replica-remove`), a recipient can be removed (`recipient-remove`), and
+> recipients are listed by `recipient-list`.
 
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
 [Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)

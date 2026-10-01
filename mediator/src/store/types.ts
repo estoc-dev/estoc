@@ -124,12 +124,26 @@ export interface SharedRecipient {
 }
 
 /**
- * `no_change`: the account already held the recipient, whatever its limit is
- * now. `unknown`: no such account is bound to that mediator. `conflict`: the
- * DID is bound otherwise, under either protocol. `full`: the account is at
- * its recipient limit. Only `added` wrote anything.
+ * `added` also answers a recipient the account already held, whatever its
+ * limit is now, with the time of the first. `unknown`: no such account is
+ * bound to that mediator. `conflict`: the DID is bound otherwise, under
+ * either protocol. `full`: the account is at its recipient limit.
  */
-export type ShareOutcome = "added" | "no_change" | "unknown" | "conflict" | "full";
+export type ShareOutcome =
+  | { outcome: "added"; addedTime: number }
+  | { outcome: "unknown" | "conflict" | "full" };
+
+/** Where a shared recipient stands among its account's: by when it was added, in milliseconds, then by DID. */
+export interface RecipientPlace {
+  addedAt: number;
+  did: string;
+}
+
+export interface SharedRecipientPage {
+  recipients: RecipientPlace[];
+  /** Whether the account holds recipients after these. */
+  more: boolean;
+}
 
 /**
  * What bounds a package beyond the store's own retention and message count:
@@ -273,13 +287,16 @@ export interface MediationStore {
     mediator: string,
     recipientDid: string
   ): Promise<"removed" | "no_change" | "unknown">;
-  /** The account's recipients, oldest first; null without such an account bound to `mediator`. */
+  /**
+   * The account's recipients after `after`, oldest first; null without such
+   * an account bound to `mediator`.
+   */
   listSharedRecipients(
     accountDid: string,
     mediator: string,
-    offset: number,
+    after: RecipientPlace | null,
     limit: number
-  ): Promise<RecipientPage | null>;
+  ): Promise<SharedRecipientPage | null>;
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
   /**
