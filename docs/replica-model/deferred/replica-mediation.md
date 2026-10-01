@@ -283,16 +283,16 @@ For an orderly local self-retirement:
 3. Commit the local `replica.retired` event. Its single-event batch is the last
    publication to each still-active known peer. Until the notification deadline,
    the runtime may send/retry only that batch and pick up its sync receipts.
-   Receiving peers may send the terminal `stored` receipt after applying it;
-   this does not authorize any further vault-data exchange with the retired
-   incarnation.
+   Receiving peers follow the terminal `stored` receipt rule in
+   [sync authorization](vault-sync.md#roles-and-dependencies).
 4. After those receipts or the notification deadline, request mediator removal
    using the account identity and stop all replica publication and pickup.
    Mediator failure does not extend the deadline or resume application work.
 
 The exception applies only to the local retirement event committed in step 3;
 learning a retirement from elsewhere cancels the plan and stops work immediately.
-It cannot be recreated merely from a retirement event found in restored history.
+The notification exception cannot be recreated merely from a retirement event
+found in restored history.
 A lost or damaged incarnation is retired by another active replica, which
 publishes the event under its own identity. Neither path
 promises to recover history that no remaining peer or backup has received.
@@ -305,7 +305,7 @@ need explicit enrollment with distinct fresh identities to continue writing.
 | --- | --- |
 | Replica creation/grant, label, retirement | Registration request progress, actual remote membership status |
 | Communication routes, receipts, admissions and other domain events | Live connections, delivery IDs, pickup ACK progress |
-| Event CIDs and currently held raw objects | Sync retries, peer receipts, inventory sessions, staged transfers, change tokens |
+| Event CIDs and currently held raw objects | Verified peer grants/limits, sync retries, peer receipts, inventory sessions, staged transfers, change tokens |
 
 A desired portable state and a remote side effect are reconciled, not committed
 in a distributed transaction. Commit membership intent before registration
@@ -497,10 +497,10 @@ At first replica registration, each existing communication recipient keeps its
 account and routing but becomes a legacy row with `registration_id: null`.
 `recipient-query` returns these nulls explicitly. The next reconciliation by
 a replica holding that recipient's DID entity MUST issue a proved `add` with a
-fresh UUIDv7 to upgrade the row. A legacy row cannot be removed by an unproved
-request or a null registration ID: upgrade it first, then prove removal of the
-current ID. Updates committed before activation use phase-1 rules; every update
-processed after activation, including an in-flight legacy request, uses the new
+fresh UUIDv7 if the queried row is still null. A legacy row cannot be removed
+by an unproved request or a null registration ID: upgrade it first, then prove
+removal of the current ID. Updates committed before activation use phase-1 rules;
+every update processed after activation, including an in-flight legacy request, uses the new
 proof checks and fails atomically if they are absent. Repeated replica
 registration never resets an upgraded recipient's ID to null.
 
@@ -509,6 +509,16 @@ of the same account/registration ID is `no_change`; a new valid ID for that
 same account replaces it atomically. Another account cannot take it. An
 attempt to register a private replica DID, account DID or mediator DID as a
 shared address fails.
+
+Reconciliation MUST use `recipient-query` as the current registration state.
+A desired recipient with any non-null registration ID is already satisfied;
+adopt that ID as the target of any later authorized removal, even if another
+replica generated it. Issue a proved `add` only for an absent desired recipient
+or a legacy null-ID row whose entity is held locally. A different local ID is
+not a reason to replace the queried ID. Concurrent adds may replace each other
+while in flight; after they settle, each replica's next query adopts the
+resulting ID without another update. Outside that race, a fresh ID replacing
+an already registered recipient is reserved for explicit route re-registration.
 
 Removal requires a valid proof signed by that recipient's authentication key
 and affects future routing only. A matching active registration is removed;
@@ -743,3 +753,6 @@ These are proposed requirements, not claims about the current implementation.
     B preserves it and reports the mismatch, including for a legacy null-ID row.
     Missing or account-key-signed removal proofs fail; a valid recipient proof
     with a stale registration ID cannot remove a newer registration.
+    Two replicas concurrently add the same recipient; after those adds settle,
+    both adopt the current ID on their next reconciliation without another
+    mediator update, including when upgrading a legacy null-ID row.

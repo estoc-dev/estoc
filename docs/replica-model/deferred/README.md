@@ -9,7 +9,7 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Topic | Candidate draft | Decisions still needed before implementation |
 | --- | --- | --- |
 | Mutable channel DIDs | [Web channel DIDs](did-web-channels.md) | Current-document authorization, lookup/retry limits, proof recovery and any new failure model |
-| Multiple receiving replicas | [Replica mediation](replica-mediation.md) | Recipient-control rollout at account activation, concurrent recipient reconciliation, domain effects and mediator capacity policy |
+| Multiple receiving replicas | [Replica mediation](replica-mediation.md) | Recipient-control rollout at account activation, domain effects and mediator capacity policy |
 | Replica-to-replica synchronization | [Vault sync](vault-sync.md) | Bounded atomic imports, maximum event/wire sizes, catch-up execution policy and reconciliation cost |
 
 Phase 1 implements immutable `did:peer:4` application channels, one active
@@ -70,6 +70,8 @@ Before adopting the candidate events/key names, update
   makes proofs mandatory for every subsequent update; existing recipients
   become legacy rows with `registration_id: null` until a proved add upgrades
   them. Reject legacy updates arriving after activation without changing state.
+  Concurrent reconcilers adopt the current non-null registration ID returned by
+  the mediator; they do not replace it merely because another replica chose it.
 - Replace phase-1 removal based solely on one replica's desired set. The
   multi-replica desired recipient set is the union of live DIDs known across
   replicas; an incomplete local history is not evidence that a registration

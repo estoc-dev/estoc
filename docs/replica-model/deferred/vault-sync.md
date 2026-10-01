@@ -99,9 +99,10 @@ Every plaintext sync body contains `vault_anchor` equal to the local immutable
 vault anchor. Authentication also verifies that the sender matches a valid
 replica grant under the already-known selected mediation arrangement. A wrong
 anchor, invalid binding, wrong authenticated sender or locally retired peer
-is rejected before staging vault data. Verified Peer long/short forms are
-normalized before identity comparison. A request cannot introduce a new
-trusted vault or mediation account by asserting it in its own body.
+is rejected before staging vault data, apart from the narrow retirement receipt
+exception below. Verified Peer long/short forms are normalized before identity
+comparison. A request cannot introduce a new trusted vault or mediation account
+by asserting it in its own body.
 
 `hello` is the only message accepted from a not-yet-known replica DID. It
 carries the signed grant and long-form resolution material through that grant.
@@ -115,14 +116,28 @@ seed-derived replica keys and local retirement state. A successful grant check
 permits synchronization while the peer's genuine `replica.created` event is
 being fetched; it does not synthesize that event or trust the mediator's list.
 
+A known peer has durable local operational state containing its verified grant
+and document, vault/mediation binding, supported vault version and latest
+negotiated peer limits. This state is scoped to the local and peer replica DIDs;
+it is not tied to a socket or copied into another incarnation. A normal restart
+recovers it and does not make the peer unknown. Every message still checks
+authentication, the vault binding and current local retirement/conflict state;
+persisted verification never overrides a later retirement.
+
 Retirement stops future sync with that incarnation once learned. The bounded
 [local self-retirement procedure](replica-mediation.md#portable-replica-events)
 permits only its final retirement notification after the local event is
-committed. A peer applying that single-event batch may return `stored` even
-though the import just retired its sender. An exact retry of that already
-accepted batch may only repeat the terminal receipt after authentication and
-batch-content verification; it cannot stage or import new data. No other
-traffic from a known retired sender is admitted. Old-author events relayed by
+committed. After the normal anchor, sender/grant and batch-content checks, a
+receiver SHOULD return `stored` for a single-event batch whose sole event is
+`replica.retired`, authored by and naming that sender's replica ID, if the CID
+is already accepted or passes the normal atomic import. This includes a CID
+first accepted through another active peer; no prior record of this sender's
+`batch_id` is required. Record the verified immutable batch binding before
+replying, and reject reuse of that ID with different contents as usual.
+For a known retired sender, this exception permits only that retirement event
+and its terminal receipt/retry, with no other events or object attachments.
+No other traffic from a known retired sender is admitted, and the receipt
+does not authorize further vault-data exchange. Old-author events relayed by
 an active authorized peer remain acceptable. There is no claim of instantaneous
 retirement knowledge or revocation of a shared seed.
 
@@ -185,6 +200,12 @@ to complete. Use the limits in the most recently received valid `hello` or
 matching `hello-result` from that peer; unsolicited or obsolete results do not
 replace negotiated state.
 
+Persist the pending request ID and expected peer binding before sending
+`hello`. Durably record a verified peer's grant, document, version and limits
+before sending its `hello-result`, or before treating a matching result as
+completing the local exchange. Recover those records after a normal restart;
+pending exchanges remain retryable and completed exchanges remain usable.
+
 The example values are illustrative. Before adoption, the owning event profile
 must define a canonical event byte ceiling and the corresponding plaintext and
 mediator wire floors in the [adoption work](README.md#adoption-work). A peer or
@@ -193,9 +214,10 @@ single-event batch and transport overhead fails negotiation explicitly; it
 cannot claim support and leave otherwise valid events permanently unsendable.
 
 The limits govern each message/page; implementations also enforce bounded
-staging and concurrency as specified below. Reopening a connection does not
-preserve a transient negotiation by assumption: establish or recover verified
-peer state before sending further protocol messages.
+staging and concurrency as specified below. Reopening a connection reuses the
+durable verified peer state; a new `hello` is not required solely because a
+connection or runtime restarted. A fresh incarnation establishes its own
+exchange instead of inheriting another incarnation's negotiation.
 
 <a id="full-inventory"></a>
 
@@ -470,6 +492,10 @@ For a full reconciliation or initial catch-up:
    incomplete. Imported history does not mint a live input, send a pending
    message or regenerate an old reply.
 
+The receiver chooses subset bounds from its local import resource budget,
+including event and required-object work. These bounds are independent of
+`max_events_per_batch`, which limits wire messages, not database transactions.
+
 During this full reconciliation, learn the event cut before scheduling its
 object downloads or replaying old local object-transfer work. This lets the
 known erasure facts participate in the plan. New commits after that cut remain
@@ -545,6 +571,9 @@ requires a distributed transaction with the mediator.
 Sync progress belongs to durable local operational storage with an explicit
 rebuild path. It is not a disposable cache whose loss may silently advance a
 cursor. Clearing it forces reconciliation instead of assuming peers are current.
+Resetting batch or inventory progress preserves the durable peer authorization
+and negotiation records. Portable restore instead creates a fresh incarnation
+and performs enrollment with new peer exchanges.
 
 <a id="retention-and-erasure"></a>
 
@@ -624,6 +653,9 @@ Sync problem reports use prefix `e.estoc.vault-sync.` with suffixes
 `incomplete-history`, `quota` and `message-too-large`. Problem reports reference
 the original request; any involved batch remains pending/failed, never stored.
 Responses disclose no vault data to an unauthenticated or unauthorized sender.
+`unauthorized-peer` reports a failed binding/authorization check or known local
+retirement/conflict, not a lost connection or normal restart. Recovered peer
+state remains subject to the checks in §2.
 
 The authenticated sync worker is scheduled independently of user-message
 outbounds and application effects. Its protocol retries do not authorize
@@ -698,7 +730,16 @@ separate domain revision as well as transport tests.
 19. Repackage an immutable batch under a fresh wire ID and discard the old ID.
     A delayed valid `stored` still advances only the matching peer/batch progress;
     the same batch ID from another peer or an unknown batch advances nothing.
-20. Applying a sender's final self-retirement batch permits its terminal receipt
-    and exact receipt replay, but no new data from that retired sender. A mediator
-    retirement/conflict response suspends operational sends without fabricating
-    a portable retirement event or completing any pending batch.
+20. Apply a sender's final self-retirement batch directly, or first learn that
+    exact CID through an active third peer. Both paths follow the terminal
+    `stored` rule, including a previously unseen sender/batch pair and exact
+    receipt replay. Additional events/objects and conflicting batch contents
+    remain refused. A mediator retirement/conflict response suspends operational
+    sends without fabricating a portable retirement event or completing a batch.
+21. Restart a receiver after a completed `hello` exchange, then deliver an
+    existing batch without another `hello`. It recovers the verified binding
+    and limits and completes the batch without human intervention. Resetting
+    batch/inventory progress preserves that peer state; a newly learned local
+    retirement still prevents ordinary traffic. A crash during `hello` leaves
+    either a retryable pending exchange or durable verified state, never a
+    successful reply whose peer state existed only in memory.
