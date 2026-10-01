@@ -9,7 +9,7 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Topic | Candidate draft | Decisions still needed before implementation |
 | --- | --- | --- |
 | Mutable channel DIDs | [Web channel DIDs](did-web-channels.md) | Current-document authorization, lookup/retry limits, proof recovery and any new failure model |
-| Multiple receiving replicas | [Replica mediation](replica-mediation.md) | Recipient-control rollout at account activation, domain effects and mediator capacity policy |
+| Multiple receiving replicas | [Replica mediation](replica-mediation.md) | Standalone-account event integration, domain effects and mediator capacity policy |
 | Replica-to-replica synchronization | [Vault sync](vault-sync.md) | Bounded atomic imports, maximum event/wire sizes, catch-up execution policy and reconciliation cost |
 
 Phase 1 implements immutable `did:peer:4` application channels, one active
@@ -27,12 +27,16 @@ registered replicas. Sync messages address one replica DID and are delivered
 only to that replica. They carry events and objects encrypted end to end.
 
 [Replica mediation](replica-mediation.md#identity-model) owns the identity model
-and account-signed membership grants. [Vault sync](vault-sync.md#roles-and-dependencies)
+and account-signed membership grants. It creates its own accounts and manages
+append-only communication recipients, without a Coordinate Mediation exchange
+or conversion of an ordinary account. The account DID sends registration and
+membership controls; each replica DID authenticates pickup and synchronization.
+[Vault sync](vault-sync.md#roles-and-dependencies)
 uses those grants; it does not create another account or membership authority.
 Inventory, missing-data requests and sync receipts are answered by replicas,
 not a dedicated sync-storage service. The first deployment profile uses one
-selected mediation arrangement. The existing encrypted SQLite restore is the
-initial device-enrollment path; a simpler pairing UI can be added later.
+selected mediation arrangement. Additional devices initially enroll through
+encrypted SQLite restore; a simpler pairing UI can be added later.
 
 These documents specify the proposed transport and identity contract. They do
 not yet authorize multiple active application executors or claim that the
@@ -46,7 +50,7 @@ current folds converge under independently generated automatic effects.
 | --- | --- |
 | 1. Protocol and identity contract | The two drafts define vault/communication/replica identities, membership authority, shared versus private routing, transferred data and local progress. No runtime API is activated by their presence. |
 | 2. Multi-replica domain semantics | Revise owning specifications and prove two independently writable vaults can receive the same external mail, perform supported concurrent operations and merge without manufactured conflicts or unauthorized effects. |
-| 3. Replica mediation | Implement account activation and recipient-proof migration, registration, terminal retirement, per-replica fan-out limits and independent pickup; verify equivalent SQLite and D1 atomicity. |
+| 3. Replica mediation | Implement standalone account creation, account-authorized replica registration, append-only recipient controls, terminal replica retirement and independent pickup; verify equivalent SQLite and D1 atomicity. |
 | 4. Vault synchronization | Implement authenticated peer control handling, durable staging/retries, inventory and bounded atomic event/object imports; verify crash/expiry recovery. |
 | 5. Device workflow | Wire encrypted restore, fresh replica identity, enrollment, catch-up and device/sync status into daemon and app. |
 | 6. Integration | Exercise multiple Node/browser replicas, offline mail, concurrent writes, restore, missing objects and erasure over a real mediator. |
@@ -64,20 +68,26 @@ Before adopting the candidate events/key names, update
 - Revise the single-seed rule in vault events that key names do not encode a
   replica. Reserve `replica/<replicaId>/me` explicitly for incarnation identity;
   communication DID entity keys keep their existing meanings and names.
-- Define the account activation boundary for recipient control in distributed
-  delivery's mediator profile and vault events' recipient reconciliation.
-  Before activation, ordinary phase-1 registrations remain valid. Activation
-  makes proofs mandatory for every subsequent update; existing recipients
-  become legacy rows with `registration_id: null` until a proved add upgrades
-  them. Reject legacy updates arriving after activation without changing state.
-  Concurrent reconcilers adopt the current non-null registration ID returned by
-  the mediator; they do not replace it merely because another replica chose it.
-- Replace phase-1 removal based solely on one replica's desired set. The
-  multi-replica desired recipient set is the union of live DIDs known across
-  replicas; an incomplete local history is not evidence that a registration
-  is obsolete. Removal needs recipient control and locally validated retirement
-  or route-withdrawal evidence. Unknown recipients remain registered with a
-  bounded diagnostic until history is reconciled.
+- Add the candidate `profile: "replica-mediation/1.0"` discriminator to
+  `mediation.created` and require fresh mediation/account identities. Define
+  native `registered` as the source of `mediation.granted` for that profile;
+  the returned routing DID is the addressed mediator DID. Existing untagged
+  records remain ordinary mediation and cannot authorize replica membership.
+  The current closed schemas must be revised before the new profile is enabled.
+- Implement independent account state and authorization for replica mediation.
+  Account-authenticated registration creates the account and first replica
+  atomically without a prior mediation grant. Ordinary accounts, their recipient
+  bindings, queues and ACK domains remain separate; old addresses/mail are not
+  automatically moved into the new account. Replica DIDs remain pickup principals.
+- Replace phase-1 desired-set removal for the new profile with append-only
+  `recipient-add` / `recipient-list`. The canonical communication DID binds to
+  one account; concurrent same-account adds are idempotent and need no registration
+  version. Preserve all existing bindings, including recipients unknown locally
+  or no longer eligible for new application work. Reconciliation can restore
+  validated historical bindings after remote-state loss. DID/route retirement,
+  blocking and rotation do not withdraw recipient registrations; application
+  admission and outbound selection remain separate. Replica retirement still
+  ends that replica's delivery membership. Message ACK/expiry still clears mail.
 - Define semantic compatibility for independent observations and effects.
   Removing receipt ordinals does not make events from different authors and
   clocks byte-identical. Source-event references must retain their evidence

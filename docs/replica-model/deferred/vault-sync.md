@@ -88,6 +88,8 @@ The [identity model and signed replica grant](replica-mediation.md#replica-autho
 are shared with replica mediation. No second sync identity or independently
 maintained membership registry exists. A client uses its own replica DID as
 sender and one authorized active peer's replica DID as recipient.
+The selected account must have the verified replica-mediation profile intent;
+an ordinary Coordinate Mediation account or grant cannot authorize this exchange.
 
 All sync messages MUST be authcrypted end to end between those DIDs using
 DIDComm Messaging 2.1. If routed, the outer Routing 2.0 `forward.body.next`
@@ -107,7 +109,8 @@ by asserting it in its own body.
 `hello` is the only message accepted from a not-yet-known replica DID. It
 carries the signed grant and long-form resolution material through that grant.
 To decrypt a first `hello`, resolve its sender's long-form DID key identifier
-locally, as for [replica registration](replica-mediation.md#replica-lifecycle),
+locally, as for the account sender in
+[replica registration](replica-mediation.md#replica-lifecycle),
 then verify the grant inside. The encrypted grant cannot be its own decryption
 prerequisite. A reply to a pending `hello` is accepted only from its expected
 peer and must pass the same binding checks.
@@ -602,20 +605,32 @@ they are not mediator storage keys.
 
 ## 8. Bootstrap and recovery
 
-The first enrollment workflow starts from an authorized portable encrypted
-SQLite backup/restore containing the seed, vault anchor, selected mediation
-arrangement and an initial event cut. The destination retains its own seed
-wrapper/passphrase according to the restore procedure and obtains a fresh
+The first replica of a new arrangement records a fresh replica-mediation account
+intent and replica grant in its existing vault, then uses the account DID to
+register directly with the mediator. That transaction creates the account and
+its first replica without Coordinate Mediation. It needs no peer to initialize
+the account; synchronization starts when another authorized replica joins.
+
+Enrollment of another device starts from an authorized portable encrypted
+SQLite backup/restore containing the seed, vault anchor, selected
+replica-mediation arrangement and an initial event cut. A backup containing only
+ordinary mediation must first obtain the new arrangement's verified account
+intent through authorized bootstrap, or explicitly create a new arrangement;
+it cannot convert or reuse the ordinary account as replica authority.
+The destination retains its own seed wrapper/passphrase according to the
+restore procedure and obtains a fresh
 replica ID, replica DID and store generation. Ordinary sync never transmits
 another replica's wrapper or runtime control rows.
 
 Enrollment proceeds as follows:
 
 1. Verify the restored anchor against the unlocked seed and select the known
-   mediation arrangement. Build the new replica document and account-signed
-   grant; durably record the proposed membership.
-2. Register with replica mediation, enabling its private inbox and shared-mail
-   deliveries. The new device can queue/stage mail while catching up.
+   replica-mediation arrangement. Build the new replica document and
+   account-signed grant; durably record the proposed membership.
+2. Send `register` from the account DID, naming the new replica in its grant.
+   Verify the response's account, mediation, replica and routing bindings.
+   The replica DID then picks up its private inbox and shared-mail deliveries;
+   the new device can queue/stage mail while catching up.
 3. Discover peers through the mediator list and known portable membership.
    Exclude listed tombstones and locally retired/conflicting identities, verify
    each remaining active grant locally, and establish `hello` with usable peers.
@@ -625,6 +640,13 @@ Enrollment proceeds as follows:
 5. Continue incremental sync and drain retained shared mail. Keep historical
    catch-up/import separate from live application execution. The domain revision
    defines when the new runtime may enable automatic effects.
+
+Recipient reconciliation uses the account's native `recipient-list` and
+`recipient-add`, adding missing validated bindings without removing existing
+ones. Learning DID retirement or route withdrawal does not remove an address
+from the mediator; it changes domain eligibility independently. Imported old
+ordinary-mediation history retains its original routes and does not claim those
+addresses or queued messages for this account.
 
 Registering before peer inventory allows mail arriving during catch-up to
 remain queued. Fixed inventory cuts plus subsequent incremental/full passes
@@ -743,3 +765,9 @@ separate domain revision as well as transport tests.
     retirement still prevents ordinary traffic. A crash during `hello` leaves
     either a retryable pending exchange or durable verified state, never a
     successful reply whose peer state existed only in memory.
+22. Initialize an account without Coordinate Mediation, then restore and enroll
+    a second replica using that verified account intent. Account registration
+    and replica pickup use their respective DIDs. Ordinary account evidence
+    cannot substitute for the replica-mediation intent or transfer old mail.
+    Synchronizing retired communication DIDs preserves their recipient bindings
+    without authorizing new application work through those DIDs.
