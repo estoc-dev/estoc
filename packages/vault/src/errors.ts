@@ -41,6 +41,14 @@ export class InvalidDidDocument extends Error {
   }
 }
 
+/** A compact JWS that is not a replica grant, or one the account's key did not sign. */
+export class InvalidReplicaGrant extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidReplicaGrant";
+  }
+}
+
 /** The seed in hand does not derive what the vault records: its anchor, or a DID entity's spelling. */
 export class IdentityMismatch extends Error {
   constructor(message: string) {

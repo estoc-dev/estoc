@@ -58,6 +58,12 @@ export type EventReference<T extends string> = EventCid & { readonly __eventType
 /** An integer count of seconds since the Unix epoch, as DIDComm timing headers carry it. */
 export type EpochSeconds = number;
 
+/**
+ * What an arrangement is to its mediator when it is not an ordinary
+ * Coordinate Mediation account: an account of the replica-mediation
+ * protocol, whose mail each replica picks up under a DID of its own.
+ */
+export type MediationProfile = "replica-mediation/1.0";
 export type RouteKind = "mediated" | "direct";
 export type DisclosureAs = "oob" | "direct";
 export type ContactOrigin = "user" | "automatic";
@@ -143,10 +149,11 @@ export type VaultData = {
     keyAgreementMethodIds: DidUrl[];
     service: string | null;
   };
-  "mediation.created": { mediationId: MediationId; mediatorDid: Did; me: { keyName: KeyName; did: Did } };
+  "mediation.created": { mediationId: MediationId; mediatorDid: Did; me: { keyName: KeyName; did: Did }; profile?: MediationProfile };
   "mediation.granted": { mediationId: MediationId; routingDid: Did };
   "mediation.selected": { mediationId: MediationId };
   "mediation.retired": { mediationId: MediationId; because: string };
+  "replica.created": { replicaId: ReplicaId; mediationId: MediationId; grant: string };
   "did.created": { didId: DidId; did: Did; longFormDid: Did; boundRouteId: RouteId };
   "route.configured":
     | { routeId: RouteId; kind: "mediated"; mediationId: MediationId; endpoint: null }

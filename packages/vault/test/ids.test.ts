@@ -18,6 +18,7 @@ import {
   executionId,
   inboundMessageId,
   mediationKeyName,
+  replicaKeyName,
   sameChannel,
   type Did,
   type DidId,
@@ -25,6 +26,7 @@ import {
   type ExecutionId,
   type KeyName,
   type MediationId,
+  type ReplicaId,
   type WireMessageId,
 } from "../src/index.js";
 
@@ -159,5 +161,7 @@ describe("key names", () => {
     expect(() => didKeyName("" as DidId, "authentication")).toThrow(InvalidIdentifier);
     expect(() => didKeyName("019b0000-0000-5000-8000-00000000000c" as DidId, "authentication")).toThrow(InvalidIdentifier);
     expect(() => mediationKeyName("" as MediationId)).toThrow(InvalidIdentifier);
+    expect(replicaKeyName("019b2a43-4a56-7c0f-862f-194c0c4124a0" as ReplicaId)).toBe("replica/019b2a43-4a56-7c0f-862f-194c0c4124a0/me");
+    expect(() => replicaKeyName("019b0000-0000-5000-8000-00000000000c" as ReplicaId)).toThrow(InvalidIdentifier);
   });
 });

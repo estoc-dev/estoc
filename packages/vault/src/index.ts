@@ -27,6 +27,7 @@ export type {
   ExecutionId,
   KeyName,
   MediationId,
+  MediationProfile,
   MessageHash,
   MessageId,
   MessageIn,
@@ -43,7 +44,7 @@ export type {
   WireMessageId,
 } from "./types.js";
 
-export { IdentityMismatch, InvalidDidDocument, InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, Locked } from "./errors.js";
+export { IdentityMismatch, InvalidDidDocument, InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, InvalidReplicaGrant, Locked } from "./errors.js";
 
 export {
   NAMESPACE_PURPOSES,
@@ -66,6 +67,7 @@ export {
   type DidKeyRole,
   didKeyName,
   mediationKeyName,
+  replicaKeyName,
 } from "./ids.js";
 
 export { canonicalPublicKey, parsePublicKey, decodePublicKey, agreementKey, type KeyType, type DecodedPublicKey, type Jwk } from "./public-key.js";
@@ -116,11 +118,13 @@ export {
   inputDocumentOf,
   mintDid,
   mintMediationDid,
+  mintReplicaDid,
   didDocumentOf,
   documentSendsTo,
   routeServiceUri,
   checkDidKeys,
   checkMediationKeys,
+  checkReplicaKeys,
   checkDidCreated,
   checkMediationCreated,
 } from "./identity.js";
@@ -137,6 +141,7 @@ export {
 } from "./peer-document.js";
 
 export { type IssuerLongForm, signFromPrior, issuerLongFormOf } from "./from-prior.js";
+export { REPLICA_GRANT_TYP, MAX_GRANT_LONG_FORM_BYTES, type ReplicaGrant, type GrantingMediation, readReplicaGrant, sameBinding, signReplicaGrant, verifyReplicaGrant } from "./replica-grant.js";
 
 export { VaultEventSet, type InvalidVaultEvent, type Resolved, type SourceKey, latest, groupBy, samePayload, keyOf, compareKeys } from "./fold/set.js";
 export { type AuthorActivity, foldAuthors, foldLabel } from "./fold/author.js";
@@ -150,6 +155,7 @@ export {
   foldMediations,
   verifyMediationKeys,
 } from "./fold/mediation.js";
+export { type ReplicaStatus, type Replica, type ReplicaFold, type ReplicaFoldOptions, foldReplicas, verifyReplicaGrants } from "./fold/replicas.js";
 export {
   type Route,
   type LocalDidEntity,

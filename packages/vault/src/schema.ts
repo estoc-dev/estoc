@@ -9,11 +9,12 @@
 
 import { isEventCid, isJsonObject, isRawCid, type Draft, type Event } from "@estoc/event-store";
 
-import { InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey } from "./errors.js";
+import { InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, InvalidReplicaGrant } from "./errors.js";
 import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationKeyName } from "./ids.js";
 import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
+import { readReplicaGrant } from "./replica-grant.js";
 import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type {
   Channel,
@@ -30,6 +31,7 @@ import type {
   MessageId,
   PackageId,
   PublicKey,
+  ReplicaId,
   RouteId,
   VaultData,
   VaultEventType,
@@ -112,19 +114,23 @@ const arrayOf =
 type Shape = { readonly [member: string]: Check<unknown> };
 type Of<S extends Shape> = { [M in keyof S]: S[M] extends Check<infer T> ? T : never };
 
+/** A closed member set; a member of `optional` may be left out, and is then left out of what is read too. */
 const shape =
-  <S extends Shape>(members: S): Check<Of<S>> =>
+  <S extends Shape, O extends Shape = {}>(members: S, optional: O = {} as O): Check<Of<S> & Partial<Of<O>>> =>
   (value, at) => {
     if (!isJsonObject(value)) fail(at, "a JSON object");
     for (const member of Object.keys(members)) {
       if (!Object.hasOwn(value, member)) throw new Fault(`${at}.${member} is missing`);
     }
     for (const member of Object.keys(value)) {
-      if (!Object.hasOwn(members, member)) throw new Fault(`${at}.${member} is not a member`);
+      if (!Object.hasOwn(members, member) && !Object.hasOwn(optional, member)) throw new Fault(`${at}.${member} is not a member`);
     }
     const out: Record<string, unknown> = {};
     for (const [member, check] of Object.entries(members)) out[member] = check(value[member], `${at}.${member}`);
-    return out as Of<S>;
+    for (const [member, check] of Object.entries(optional)) {
+      if (Object.hasOwn(value, member)) out[member] = check(value[member], `${at}.${member}`);
+    }
+    return out as Of<S> & Partial<Of<O>>;
   };
 
 const checked =
@@ -301,15 +307,29 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     (data) => [data.documentCid]
   ),
   "mediation.created": schema(
-    checked(shape({ mediationId: idMembers.mediationId, mediatorDid: did, me: shape({ keyName, did }) }), (data) => {
+    checked(shape({ mediationId: idMembers.mediationId, mediatorDid: did, me: shape({ keyName, did }) }, { profile: oneOf(["replica-mediation/1.0"]) }), (data) => {
       const expected = mediationKeyName(data.mediationId);
       if (data.me.keyName !== expected) throw new Fault(`me.keyName is the arrangement's own key, ${expected}`);
+      if (data.profile !== undefined && !isPeer4Long(data.me.did)) throw new Fault("a replica-mediation account is a did:peer:4, recorded in its long form");
     }),
     none
   ),
   "mediation.granted": schema(shape({ mediationId: idMembers.mediationId, routingDid: did }), none),
   "mediation.selected": schema(shape({ mediationId: idMembers.mediationId }), none),
   "mediation.retired": schema(shape({ mediationId: idMembers.mediationId, because: nonEmpty }), none),
+  "replica.created": schema(
+    checked(shape({ replicaId: minted<ReplicaId>(), mediationId: idMembers.mediationId, grant: text }), (data) => {
+      let grant;
+      try {
+        grant = readReplicaGrant(data.grant);
+      } catch (err) {
+        if (err instanceof InvalidReplicaGrant) throw new Fault(`grant: ${err.message}`);
+        throw err;
+      }
+      if (grant.replicaId !== data.replicaId || grant.mediationId !== data.mediationId) throw new Fault("replicaId and mediationId are the grant's own");
+    }),
+    none
+  ),
   "did.created": schema(
     checked(shape({ didId: idMembers.didId, did: text, longFormDid: text, boundRouteId: idMembers.routeId }), (data) => {
       if (!isPeer4Short(data.did)) throw new Fault("did is a did:peer:4 short form");

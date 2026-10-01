@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Replica-mediation membership**: `mediation.created` takes an optional
+  `profile`, whose only value `"replica-mediation/1.0"` makes the
+  arrangement an account of the mediator's replica-mediation protocol
+  (`Mediation.profile`; such an arrangement granted a routing DID other
+  than its mediator is a conflict). The new event `replica.created`
+  records one replica's grant, and `foldReplicas` (`VaultFold.replicas`)
+  reads which replicas are members of which arrangement, with
+  `verifyReplicaGrants` as the seed's check beside it
+  (`VaultChecks.replicaGrants`). `replicaKeyName`, `Keys.replicaKeys`,
+  `mintReplicaDid` and `checkReplicaKeys` derive a replica's own DID;
+  `signReplicaGrant`, `readReplicaGrant`, `verifyReplicaGrant` and
+  `sameBinding` are the grant. Nothing enrolls or picks up yet: this is
+  the vault's side of the contract only. A reader older than this
+  version refuses a `mediation.created` carrying `profile` and keeps a
+  `replica.created` unapplied.
+
 ## 0.4.0 — 2026-09-29
 
 - **Receipt ordinals are gone** (behaviour change): `message.in` carries

@@ -17,6 +17,12 @@
 > (`replica-remove`), a recipient can be removed (`recipient-remove`), and
 > recipients are listed by `recipient-list`.
 
+> The vault side has adopted from this document the `replica/<replicaId>/me`
+> key name, the `profile` member of `mediation.created`, the grant and
+> `replica.created`. They are specified in
+> [vault events](../vault-events.md#replica-created), which takes precedence
+> wherever this document differs. `replica.label` is not adopted.
+
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
 [Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)
 

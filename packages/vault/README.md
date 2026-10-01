@@ -51,7 +51,9 @@ wrapped seed with the passphrase, and derives each named key on demand,
 an Ed25519 key and the keystore's own X25519 key per name, the latter for key agreement;
 `mintDid` builds a communication DID's numalgo-4 input document from
 the entity's two keys and its route, `mintMediationDid` a mediation
-arrangement's from the two keys its one name derives; `checkDidCreated` and
+arrangement's from the two keys its one name derives, `mintReplicaDid` a
+replica's from the keys of `replica/<replicaId>/me` with its mediator as
+the only service; `checkDidCreated` and
 `checkMediationCreated` hold a recorded entity against the seed by
 reading its own document back, so another serialization of the same
 keys and route is the same entity), the retained peer document
@@ -68,12 +70,20 @@ the key the seed derives for the predecessor entity, under the method
 its own document gives that key, and `issuerLongFormOf` finds the long
 form a carried proof verifies against, the issuer's own spelling or the
 one a verified retained `peer.resolved` of a short-form issuer holds;
-what a proof means for a channel is the continuity fold's), and the first
+what a proof means for a channel is the continuity fold's), the replica
+grant (`replica-grant.ts`: `signReplicaGrant` signs, with the account key
+of a replica-mediation arrangement, the compact JWS that binds one replica
+ID and DID to the account, the arrangement and its mediator, which is what
+the mediator enrolls the replica on and what `replica.created` records;
+`readReplicaGrant` reads a grant's spelling and `verifyReplicaGrant` holds
+its signature and its replica against the seed), and the first
 folds (`fold/`: `VaultEventSet` reads every event once against its
 schema and hands a type's events out in canonical order and a typed
 reference's target as present, missing or mismatched; `foldAuthors` and
 `foldLabel`; `foldMediations`, each arrangement's consistent creation,
-one grant, retirement and conflicts, and the preferred one;
+one grant, retirement and conflicts, its `profile` and the preferred one;
+`foldReplicas`, each replica's one binding and whether it is a member of
+its replica-mediation arrangement;
 `foldRoutes`, each route's usability and terminal dependency, each local
 DID entity's consistent record, own document, route target, disclosures,
 retirement, faults and liveness, the key-name and spelling reverse maps,
