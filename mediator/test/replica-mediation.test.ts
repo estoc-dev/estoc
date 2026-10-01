@@ -13,7 +13,8 @@ import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
 
 import { replicaPolicyFrom, type MediatorConfig } from "../src/config.js";
 import type { DIDCommContext } from "../src/didcomm/didcomm.js";
-import { buildServer } from "../src/server.js";
+import WebSocket from "ws";
+import { buildServer, type MediatorServer } from "../src/server.js";
 import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
 import { SqliteStore } from "../src/store/sqlite.js";
 import {
@@ -1234,6 +1235,21 @@ describe("a long form", () => {
   });
 });
 
+/** An envelope sealed to `to`, which nobody here can open. */
+async function envelope(to: Peer4Agent, content = "hello"): Promise<Record<string, unknown>> {
+  return JSON.parse(
+    await packAnonymous(plaintext("https://example.test/note", { content }), to.longForm)
+  );
+}
+
+async function post(forward: IMessage, to: Hono = app): Promise<Response> {
+  return to.request("/", {
+    method: "POST",
+    headers: { "content-type": ENCRYPTED },
+    body: await packAnonymous(forward, mediator.did),
+  });
+}
+
 describe("a forward", () => {
   let first: Enrollment;
   let second: Enrollment;
@@ -1252,21 +1268,6 @@ describe("a forward", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  /** An envelope sealed to `to`, which nobody here can open. */
-  async function envelope(to: Peer4Agent, content = "hello"): Promise<Record<string, unknown>> {
-    return JSON.parse(
-      await packAnonymous(plaintext("https://example.test/note", { content }), to.longForm)
-    );
-  }
-
-  async function post(forward: IMessage, to: Hono = app): Promise<Response> {
-    return to.request("/", {
-      method: "POST",
-      headers: { "content-type": ENCRYPTED },
-      body: await packAnonymous(forward, mediator.did),
-    });
-  }
 
   const waiting = (replica: Enrollment) => store.deliveriesFor(replica.replica.did, 100);
 
@@ -1491,6 +1492,331 @@ describe("a forward", () => {
 
     expect((await post(forwardOf(shared.did, await envelope(shared)), off)).status).toBe(422);
     expect(await waiting(first)).toEqual([]);
+  });
+});
+
+const PICKUP = "https://didcomm.org/messagepickup/3.0";
+const STATUS = `${PICKUP}/status`;
+const DELIVERY = `${PICKUP}/delivery`;
+
+interface Attached {
+  id: string;
+  data: { base64: string };
+}
+
+const carried = (attached: Attached): unknown =>
+  JSON.parse(Buffer.from(attached.data.base64, "base64url").toString());
+
+describe("pickup by a replica", () => {
+  let first: Enrollment;
+  let second: Enrollment;
+  let shared: Peer4Agent;
+
+  beforeEach(async () => {
+    first = await enrollment();
+    second = await enrollment();
+    await register(first.grant);
+    await register(second.grant);
+    const added = await addition();
+    await add(added);
+    shared = added.recipient;
+  });
+
+  const pickup = (
+    replica: Enrollment,
+    type: string,
+    body: Record<string, unknown> = {},
+    speaker: Speaker = known(replica.replica)
+  ) => send(speaker, `${PICKUP}/${type}`, body);
+
+  async function delivered(replica: Enrollment, body: Record<string, unknown> = {}) {
+    const reply = await pickup(replica, "delivery-request", { limit: 10, ...body });
+    return reply?.type === DELIVERY ? (reply.attachments as Attached[]) : [];
+  }
+
+  async function count(replica: Enrollment, body: Record<string, unknown> = {}) {
+    return (await pickup(replica, "status-request", body))?.body.message_count;
+  }
+
+  it("hands over the shared mail and the replica's own, under either spelling of the replica", async () => {
+    const toAll = await envelope(shared);
+    const toFirst = await envelope(first.replica);
+    await post(forwardOf(shared.did, toAll));
+    await post(forwardOf(first.replica.did, toFirst));
+    await post(forwardOf(second.replica.did, await envelope(second.replica)));
+
+    for (const speaker of [known(first.replica), firstContact(first.replica)]) {
+      const reply = await pickup(first, "delivery-request", { limit: 10 }, speaker);
+
+      expect(reply?.type).toBe(DELIVERY);
+      expect((reply?.attachments as Attached[]).map(carried)).toEqual([toAll, toFirst]);
+    }
+    expect(await count(first)).toBe(2);
+  });
+
+  it("gives each replica its own ID for the same shared envelope, the same on every request", async () => {
+    await post(forwardOf(shared.did, await envelope(shared)));
+
+    const [forFirst] = await delivered(first);
+    const [forSecond] = await delivered(second);
+
+    expect(forSecond.data).toEqual(forFirst.data);
+    expect(forSecond.id).not.toBe(forFirst.id);
+    expect((await delivered(first))[0].id).toBe(forFirst.id);
+  });
+
+  it("answers an empty queue with a status", async () => {
+    const reply = await pickup(first, "delivery-request", { limit: 10 });
+
+    expect(reply?.type).toBe(STATUS);
+    expect(reply?.body).toEqual({ message_count: 0, live_delivery: false });
+  });
+
+  it("hands over no more than was asked for, and still counts what waits", async () => {
+    for (let i = 0; i < 3; i++) {
+      await post(forwardOf(shared.did, await envelope(shared)));
+    }
+
+    expect(await delivered(first, { limit: 2 })).toHaveLength(2);
+    expect(await count(first)).toBe(3);
+  });
+
+  it("narrows to the recipient a request names, in either spelling, and echoes it", async () => {
+    const toAll = await envelope(shared);
+    await post(forwardOf(shared.did, toAll));
+    await post(forwardOf(first.replica.did, await envelope(first.replica)));
+
+    for (const recipient_did of [shared.did, shared.longForm]) {
+      const reply = await pickup(first, "delivery-request", { recipient_did });
+
+      expect(reply?.body).toEqual({ recipient_did });
+      expect((reply?.attachments as Attached[]).map(carried)).toEqual([toAll]);
+      expect((await pickup(first, "status-request", { recipient_did }))?.body).toEqual({
+        message_count: 1,
+        live_delivery: false,
+        recipient_did,
+      });
+    }
+  });
+
+  it("reaches nothing of another replica by naming it as the recipient", async () => {
+    await post(forwardOf(second.replica.did, await envelope(second.replica)));
+
+    const reply = await pickup(first, "delivery-request", { recipient_did: second.replica.did });
+
+    expect(reply?.type).toBe(STATUS);
+    expect(reply?.body.message_count).toBe(0);
+    expect(await count(first)).toBe(0);
+  });
+
+  it("ends only the acknowledging replica's delivery, whatever IDs it names", async () => {
+    await post(forwardOf(shared.did, await envelope(shared)));
+    const [forFirst] = await delivered(first);
+    const [forSecond] = await delivered(second);
+
+    const reply = await pickup(first, "messages-received", {
+      message_id_list: [forFirst.id, forSecond.id, "no-such-delivery", 7],
+    });
+
+    expect(reply?.type).toBe(STATUS);
+    expect(reply?.body.message_count).toBe(0);
+    expect((await delivered(second)).map((attached) => attached.id)).toEqual([forSecond.id]);
+
+    await pickup(first, "messages-received", { message_id_list: [forFirst.id] });
+    expect(await count(second)).toBe(1);
+  });
+
+  it("still knows an acknowledged shared envelope as a repeat, and queues it for no one again", async () => {
+    const forward = forwardOf(shared.did, await envelope(shared));
+    await post(forward);
+    for (const replica of [first, second]) {
+      const ids = (await delivered(replica)).map((attached) => attached.id);
+      await pickup(replica, "messages-received", { message_id_list: ids });
+    }
+    const late = await enrollment();
+    await register(late.grant);
+
+    expect((await post(forward)).status).toBe(202);
+    const changed = forwardOf(shared.did, await envelope(shared, "other"), { id: forward.id });
+    expect((await post(changed)).status).toBe(422);
+
+    for (const replica of [first, second, late]) {
+      expect(await count(replica)).toBe(0);
+    }
+  });
+
+  it("frees the room of mail forwarded to the replica once it is acknowledged", async () => {
+    for (let i = 0; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(first.replica.did, await envelope(first.replica)));
+    }
+    const refused = forwardOf(first.replica.did, await envelope(first.replica));
+    expect((await post(refused)).status).toBe(422);
+
+    const ids = (await delivered(first)).map((attached) => attached.id);
+    await pickup(first, "messages-received", { message_id_list: ids });
+
+    expect((await post(refused)).status).toBe(202);
+    expect(await count(first)).toBe(1);
+  });
+
+  it("shares nothing with an ordinary account's queue, in either direction", async () => {
+    const holder = await agent("holder");
+    await send(holder, MEDIATE_REQUEST, {});
+    await post(forwardOf(holder.did, JSON.parse(await packAnonymous(plaintext("note", {}), holder.did))));
+    await post(forwardOf(first.replica.did, await envelope(first.replica)));
+    const [held] = (await send(holder, `${PICKUP}/delivery-request`, { limit: 10 }))
+      ?.attachments as Attached[];
+    const [forFirst] = await delivered(first);
+
+    await pickup(first, "messages-received", { message_id_list: [held.id] });
+    const reply = await send(holder, `${PICKUP}/messages-received`, {
+      message_id_list: [forFirst.id],
+    });
+
+    expect(reply?.body.message_count).toBe(1);
+    expect(await count(first)).toBe(1);
+  });
+
+  it("is not answered for a DID that is nobody's replica", async () => {
+    const stranger = await peer4Agent(mediator.did);
+
+    expect(await send(firstContact(stranger), `${PICKUP}/status-request`, {})).toBeNull();
+  });
+
+  it("has no live mode outside a connection that stays open", async () => {
+    const reply = await pickup(first, "live-delivery-change", { live_delivery: true });
+
+    expect(reply?.type).toBe(PROBLEM);
+    expect(reply?.body.code).toBe("e.m.live-mode-not-supported");
+  });
+});
+
+describe("live delivery to a replica", () => {
+  let server: MediatorServer;
+  let origin: string;
+  let first: Enrollment;
+  let second: Enrollment;
+  let shared: Peer4Agent;
+  const sockets: WebSocket[] = [];
+
+  beforeEach(async () => {
+    server = buildServer({ identity: mediator, store, config: TEST_CONFIG });
+    app = server.app;
+    origin = `127.0.0.1:${await server.listen()}`;
+    first = await enrollment();
+    second = await enrollment();
+    await register(first.grant);
+    await register(second.grant);
+    const added = await addition();
+    await add(added);
+    shared = added.recipient;
+  });
+
+  afterEach(async () => {
+    sockets.splice(0).forEach((socket) => socket.close());
+    await server.close();
+  });
+
+  function frame(socket: WebSocket): Promise<string> {
+    return new Promise((resolve, reject) => {
+      socket.once("message", (data) => resolve(data.toString()));
+      setTimeout(() => reject(new Error("timed out waiting for a frame")), 5000);
+    });
+  }
+
+  async function ask(socket: WebSocket, speaker: Speaker, type: string, body = {}) {
+    const answer = frame(socket);
+    socket.send(
+      await speaker.ctx.packEncrypted(
+        plaintext(`${PICKUP}/${type}`, body, {
+          from: speaker.did,
+          to: [mediator.did],
+          return_route: "all",
+        }),
+        mediator.did
+      )
+    );
+    return (await speaker.ctx.unpack(await answer)).message;
+  }
+
+  /** A socket the replica has turned live mode on for. */
+  async function listening(speaker: Speaker): Promise<WebSocket> {
+    const socket = new WebSocket(`ws://${origin}/`);
+    sockets.push(socket);
+    await new Promise((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
+    const status = await ask(socket, speaker, "live-delivery-change", { live_delivery: true });
+    expect(status.body.live_delivery).toBe(true);
+    return socket;
+  }
+
+  async function forwarded(forward: IMessage): Promise<void> {
+    const res = await fetch(`http://${origin}/`, {
+      method: "POST",
+      headers: { "content-type": ENCRYPTED },
+      body: await packAnonymous(forward, mediator.did),
+    });
+    expect(res.status).toBe(202);
+  }
+
+  async function pushedTo(replica: Enrollment, pushed: string): Promise<Attached[]> {
+    const { message } = await replica.replica.shortCtx.unpack(pushed);
+    expect(message.type).toBe(DELIVERY);
+    return message.attachments as Attached[];
+  }
+
+  it("pushes a shared envelope to every listening replica under the ID pickup gives it", async () => {
+    const toFirst = await listening(firstContact(first.replica));
+    const toSecond = await listening(known(second.replica));
+    const inner = await envelope(shared);
+    const pushes = [frame(toFirst), frame(toSecond)];
+
+    await forwarded(forwardOf(shared.did, inner));
+
+    const [forFirst] = await pushedTo(first, await pushes[0]);
+    const [forSecond] = await pushedTo(second, await pushes[1]);
+    expect(carried(forFirst)).toEqual(inner);
+    expect(carried(forSecond)).toEqual(inner);
+    expect(forSecond.id).not.toBe(forFirst.id);
+
+    const waiting = await ask(toFirst, firstContact(first.replica), "delivery-request", { limit: 10 });
+    expect((waiting.attachments as Attached[]).map((attached) => attached.id)).toEqual([forFirst.id]);
+  });
+
+  it("pushes mail forwarded to one replica to that replica's connections alone", async () => {
+    const toFirst = await listening(known(first.replica));
+    const alsoToFirst = await listening(known(first.replica));
+    const toSecond = await listening(known(second.replica));
+    const pushes = [frame(toFirst), frame(alsoToFirst)];
+
+    await forwarded(forwardOf(first.replica.did, await envelope(first.replica)));
+
+    const [[one], [other]] = await Promise.all(
+      pushes.map(async (pushed) => pushedTo(first, await pushed))
+    );
+    expect(other.id).toBe(one.id);
+    const next = await ask(toSecond, known(second.replica), "status-request");
+    expect(next.type).toBe(STATUS);
+    expect(next.body.message_count).toBe(0);
+  });
+
+  it("keeps the mail a push offered until it is acknowledged, and through a lost connection", async () => {
+    const toFirst = await listening(known(first.replica));
+    const push = frame(toFirst);
+    await forwarded(forwardOf(shared.did, await envelope(shared)));
+    const [offered] = await pushedTo(first, await push);
+    toFirst.close();
+
+    const again = await listening(known(first.replica));
+    const waiting = await ask(again, known(first.replica), "delivery-request", { limit: 10 });
+    expect((waiting.attachments as Attached[]).map((attached) => attached.id)).toEqual([offered.id]);
+
+    const status = await ask(again, known(first.replica), "messages-received", {
+      message_id_list: [offered.id],
+    });
+    expect(status.body.message_count).toBe(0);
   });
 });
 

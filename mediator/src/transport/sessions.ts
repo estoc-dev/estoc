@@ -1,3 +1,5 @@
+import { isLongForm, longToShort } from "@estoc/did-peer";
+
 import type { LiveSink, Session } from "../protocols/types.js";
 
 /**
@@ -6,33 +8,39 @@ import type { LiveSink, Session } from "../protocols/types.js";
  * leaves when the socket closes; live delivery consults the index, so a
  * closed socket stops receiving pushes by ceasing to exist.
  *
+ * A did:peer:4 is indexed under its short form: a connection proves the DID
+ * in whichever spelling it sealed with, and mail is pushed to the spelling
+ * the store keeps, which need not be the same one.
+ *
  * Used wherever the sockets and the index live in the same memory: the Node
  * server process, and the inbox Durable Object on Workers.
  */
+const indexed = (did: string): string => (isLongForm(did) ? longToShort(did) : did);
+
 export class Sessions implements LiveSink {
   private byDid = new Map<string, Set<Session>>();
 
   bind(did: string, session: Session): void {
-    const set = this.byDid.get(did) ?? new Set();
+    const set = this.byDid.get(indexed(did)) ?? new Set();
     set.add(session);
-    this.byDid.set(did, set);
+    this.byDid.set(indexed(did), set);
   }
 
   drop(did: string | null, session: Session): void {
     if (did === null) {
       return;
     }
-    const set = this.byDid.get(did);
+    const set = this.byDid.get(indexed(did));
     if (set !== undefined) {
       set.delete(session);
       if (set.size === 0) {
-        this.byDid.delete(did);
+        this.byDid.delete(indexed(did));
       }
     }
   }
 
   liveSessionsFor(did: string): Session[] {
-    return [...(this.byDid.get(did) ?? [])].filter(
+    return [...(this.byDid.get(indexed(did)) ?? [])].filter(
       (session) => session.liveDelivery
     );
   }

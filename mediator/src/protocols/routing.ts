@@ -5,6 +5,7 @@ import { decodeProtectedHeader } from "jose";
 
 import { DIDCommFailure, didOf } from "../didcomm/didcomm.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
+import type { StoredMessage } from "../store/types.js";
 import type { HandlerContext, Reply } from "./types.js";
 import { pushLiveDelivery } from "./pickup.js";
 import { canonicalDid } from "./replica-grant.js";
@@ -250,7 +251,7 @@ export async function forward(
     const expires = incoming.message.expires_time;
     // A store that could not commit is one more way of not being queued: the
     // forward itself was sound, and the same one may be sent again.
-    const outcome = await context.store
+    const queued = await context.store
       .fanOut({ next: canonicalDid(next), forwardId: incoming.message.id }, packed, {
         deadline: typeof expires === "number" ? expires * 1000 : null,
         maxRetainedBytes: context.config.maxRetainedBytes,
@@ -259,7 +260,11 @@ export async function forward(
         context.log?.("fan-out failed; the forward is refused", err);
         return null;
       });
-    if (outcome !== "stored" && outcome !== "repeated") {
+    if (queued?.outcome === "stored") {
+      for (const { replicaDid, message } of queued.deliveries) {
+        await offer(incoming, context, replicaDid, message);
+      }
+    } else if (queued?.outcome !== "repeated") {
       throw notQueued();
     }
     return null;
@@ -277,16 +282,29 @@ export async function forward(
     throw notQueued();
   }
 
-  // The mail is queued, and that is what the sender is told whatever becomes
-  // of the push: pickup hands it over all the same. The push introduces itself
-  // as the DID the forward was addressed to — the routing DID the recipient's
-  // grant handed out, so the name they expect.
+  await offer(incoming, context, owner, stored.message);
+  return null;
+}
+
+/**
+ * Offers queued mail to whoever of `ownerDid` is listening. The mail is
+ * queued, and that is what the sender is told whatever becomes of the push:
+ * pickup hands it over all the same. The push introduces itself as the DID
+ * the forward was addressed to, the routing DID its recipient was given and
+ * so the name they expect.
+ */
+async function offer(
+  incoming: Unpacked,
+  context: HandlerContext,
+  ownerDid: string,
+  message: StoredMessage
+): Promise<void> {
   try {
     await pushLiveDelivery(
       context.ctx,
       context.sessions,
-      owner,
-      [stored.message],
+      ownerDid,
+      [message],
       context.ctx.asOwnDid(incoming.addressedTo)
     );
   } catch (err) {
@@ -295,5 +313,4 @@ export async function forward(
       err instanceof DIDCommFailure ? err : undefined
     );
   }
-  return null;
 }
