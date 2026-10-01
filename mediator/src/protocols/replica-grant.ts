@@ -54,12 +54,27 @@ export function canonicalDid(did: string): string {
 }
 
 /**
+ * Decoding a did:peer:4 long form takes time that grows faster than its
+ * length, and it has to be decoded before anything it claims can be checked.
+ * The documents vaults mint are a small fraction of this.
+ */
+export const MAX_LONG_FORM_BYTES = 8192;
+
+export function isDecodable(longForm: string): boolean {
+  return Buffer.byteLength(longForm) <= MAX_LONG_FORM_BYTES;
+}
+
+/**
  * The same spelling for a DID nothing has resolved yet, or null when it is a
- * long form whose document is not the one its short form commits to.
+ * long form too large to decode, or one whose document is not the one its
+ * short form commits to.
  */
 export function provenDid(did: string): string | null {
   if (!isLongForm(did)) {
     return did;
+  }
+  if (!isDecodable(did)) {
+    return null;
   }
   try {
     resolveLongForm(did);
@@ -260,6 +275,7 @@ export async function verifyReplicaGrant(
     !UUID_V7.test(mediationId) ||
     !UUID_V7.test(replicaId) ||
     !isLongForm(replicaLongForm) ||
+    !isDecodable(replicaLongForm) ||
     longToShort(replicaLongForm) !== replicaDid ||
     replicaDid === account
   ) {

@@ -15,7 +15,7 @@ import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
 import { verifyRecipientProof } from "./recipient-proof.js";
-import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
+import { canonicalDid, isDecodable, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
  * replica-mediation/1.0 — https://estoc.dev/replica-mediation/1.0
@@ -93,7 +93,7 @@ function controlOf(
     metadata.authenticated !== true ||
     !metadata.encrypted_from_kid ||
     typeof message.from !== "string" ||
-    provenDid(message.from) !== canonicalDid(sender) ||
+    (message.from !== sender && provenDid(message.from) !== canonicalDid(sender)) ||
     addressedTo === null ||
     !ctx.dids.includes(addressedTo) ||
     message.to?.length !== 1 ||
@@ -277,12 +277,7 @@ export async function list(incoming: Unpacked, context: HandlerContext): Promise
   };
 }
 
-/**
- * The document of the did:peer:4 a request names as its recipient, under its
- * short form; null unless the long form supplied, or the one kept from an
- * earlier add when none is, is that DID's own.
- */
-async function recipientOf(
+async function recipientDocument(
   named: string,
   supplied: string | null,
   { store }: HandlerContext
@@ -292,7 +287,12 @@ async function recipientOf(
     return null;
   }
   const longForm = supplied ?? (await store.sharedRecipientMaterial(did));
-  if (longForm === null || !isLongForm(longForm) || longToShort(longForm) !== did) {
+  if (
+    longForm === null ||
+    !isLongForm(longForm) ||
+    !isDecodable(longForm) ||
+    longToShort(longForm) !== did
+  ) {
     return null;
   }
   const doc = await resolveDIDCommDoc(longForm);
@@ -321,7 +321,7 @@ export async function recipientAdd(
   }
 
   // The proof is checked on every request, also for a binding already held.
-  const recipient = await recipientOf(named, supplied, context);
+  const recipient = await recipientDocument(named, supplied, context);
   const proven = recipient === null ? null : await verifyRecipientProof(proof, recipient.doc);
   if (
     recipient === null ||

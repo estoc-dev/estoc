@@ -77,6 +77,7 @@ describe("blob names", () => {
     expect(Buffer.from(blobDigest(name)!)).toEqual(digest);
     expect(blobDigest("b" + "a".repeat(55))).toBeNull();
     expect(blobDigest(name.toUpperCase())).toBeNull();
+    expect(blobDigest(name.slice(0, -1) + "b")).toBeNull();
   });
 
   it("mints ids that are random, base32, and never a blob name", () => {

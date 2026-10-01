@@ -254,7 +254,8 @@ Before registering a replica the mediator MUST verify:
    authenticated document, with no key fetched from a supplied `jku`/`x5u`.
 3. Every field has the specified form; `replica_id` and `mediation_id` are
    canonical UUIDv7s, and `mediator` equals the DID addressed by the request.
-4. The replica long form resolves locally to the stated short form and its
+4. The replica long form is no larger than 8192 UTF-8 bytes, checked before
+   decoding it, resolves locally to the stated short form and its
    service names that mediator. The replica DID differs from the account,
    mediator and shared communication recipients.
 5. The account and replica documents resolve with verified canonical bindings.
@@ -504,6 +505,17 @@ The supplied document is not an
 arbitrary URL to fetch. Other DID methods require an explicitly supported,
 constrained resolver and control-proof profile; this document does not authorize
 unrestricted network resolution or mutable-channel use.
+
+In this initial profile, each encoded `did:peer:4` long form supplied as
+recipient resolution material MUST be no larger than 8192 UTF-8 bytes, including
+the DID prefix. The same bound applies when that material is supplied through a
+long-form `recipient_did`, or through a DID value or key identifier in the
+recipient proof. Check the encoded input size before decoding, resolving or
+contextualizing that input. A request exceeding this bound fails with
+`invalid-recipient` and changes no binding, including when the recipient was
+already registered. The general envelope-size limit still applies independently.
+Implementations MUST NOT decode oversized material in order to determine this
+rejection.
 
 After verifying the recipient and its proof, the mediator atomically applies
 these rules:

@@ -128,6 +128,13 @@ async function mismatchedLongForm(short: string): Promise<string> {
   return `${short}${other.slice(other.lastIndexOf(":"))}`;
 }
 
+const MAX_LONG_FORM_BYTES = 8192;
+
+/** A sound did:peer:4 whose document carries `padding` characters nothing reads. */
+function paddedAgent(service: string | null, padding: number): Promise<Peer4Agent> {
+  return peer4Agent(service, (document) => ({ ...document, padding: "x".repeat(padding) }));
+}
+
 async function register(grant: string, speaker: Speaker = firstContact(account)) {
   return send(speaker, REGISTER, { grant });
 }
@@ -355,6 +362,20 @@ describe("register", () => {
       ];
       await refused(named.grant);
       await refused(served.grant);
+    });
+
+    it("whose replica has a long form too large to decode", async () => {
+      const replica = await paddedAgent(mediator.did, 5600);
+      const { payload } = await enrollment();
+      expect(replica.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+
+      await refused(
+        await signedBy(account, {
+          ...payload,
+          replica_did: replica.did,
+          replica_long_form: replica.longForm,
+        })
+      );
     });
 
     it("with IDs that are not UUIDv7", async () => {
@@ -759,6 +780,19 @@ describe("recipient-add", () => {
     expect(reply?.body).toEqual({ recipient_did: recipient.did, status: "added" });
   });
 
+  it("takes a recipient whose long form is large but within the limit", async () => {
+    const recipient = await paddedAgent(mediator.did, 5000);
+    const proof = await proofBy(recipient, {
+      account: account.did,
+      aud: mediator.did,
+      recipient: recipient.did,
+    });
+    expect(recipient.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES - 1024);
+    expect(recipient.longForm.length).toBeLessThanOrEqual(MAX_LONG_FORM_BYTES);
+
+    expect((await add({ recipient, proof }))?.body.status).toBe("added");
+  });
+
   it("gives two adds racing for one recipient a single binding", async () => {
     const first = await addition();
 
@@ -834,6 +868,39 @@ describe("recipient-add", () => {
           resolution_material: await mismatchedLongForm(first.recipient.did),
         }),
         first.recipient
+      );
+    });
+
+    it("whose long form is too large to decode, however sound its proof", async () => {
+      const recipient = await paddedAgent(mediator.did, 5600);
+      const payload = { account: account.did, aud: mediator.did, recipient: recipient.did };
+      const proof = await proofBy(recipient, payload);
+      expect(recipient.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+
+      await refused(await add({ recipient, proof }), recipient);
+      await refused(
+        await add({ recipient, proof }, known(account), {
+          recipient_did: recipient.longForm,
+          resolution_material: null,
+        }),
+        recipient
+      );
+    });
+
+    it("whose proof spells the account in a long form too large to decode", async () => {
+      account = await paddedAgent(null, 5600);
+      expect((await register((await enrollment()).grant))?.type).toBe(REGISTERED);
+      const { recipient, payload } = await addition();
+
+      await refused(
+        await add({
+          recipient,
+          proof: await proofBy(recipient, { ...payload, account: account.longForm }),
+        }),
+        recipient
+      );
+      expect((await add({ recipient, proof: await proofBy(recipient, payload) }))?.body.status).toBe(
+        "added"
       );
     });
 
