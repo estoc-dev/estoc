@@ -1,13 +1,16 @@
+# Built from the workspace root, which holds the lockfile and the one
+# workspace library the mediator imports:
+#   docker build -f mediator/Dockerfile .
 FROM node:26-slim AS build
-WORKDIR /app
-COPY package.json package-lock.json ./
-# better-sqlite3 ships its prebuilt binaries and needs no install script, but
-# npm 11 installing from the lockfile misses its `gypfile: false` and runs
-# node-gyp, which the slim image cannot (npm/cli#9837).
-RUN npm ci --ignore-scripts
-COPY tsconfig.json ./
-COPY src ./src
-RUN npx tsc && npm prune --omit=dev
+RUN npm install --global pnpm@9.15.9
+WORKDIR /repo
+COPY . .
+# better-sqlite3 ships its prebuilt binaries; its install script would only
+# reach for node-gyp, which the slim image cannot run.
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter "@estoc/mediator..."
+RUN pnpm --filter @estoc/did-peer run build \
+ && pnpm --filter @estoc/mediator exec tsc \
+ && pnpm --filter @estoc/mediator deploy --prod --ignore-scripts /app
 
 FROM node:26-slim
 WORKDIR /app
@@ -16,7 +19,7 @@ ENV NODE_ENV=production \
     MEDIATOR_PORT=8080
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json ./
+COPY --from=build /app/package.json ./
 # The whole mediator state — keys and messages in one SQLite db — lives here;
 # lose the volume, lose the DID.
 RUN mkdir /data && chown node:node /data

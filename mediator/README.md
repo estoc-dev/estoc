@@ -2,7 +2,7 @@
 
 A DIDComm v2 mediator anyone can run with one command — or one click:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/estoc-net/didcomm-mediator)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/estoc-net/estoc/tree/main/mediator)
 
 TypeScript, standard protocols over plain HTTP/WebSocket transport, no
 accounts to create and no vendor SDK to adopt — authentication is the
@@ -20,28 +20,31 @@ those keys, so **keep the database, keep the mediator**.
 
 ## Quick start (Cloudflare Workers)
 
-Click the button above — it clones this repo into your GitHub account,
-provisions the D1 database and Durable Object, and deploys. Or by hand:
+Click the button above — it clones the [estoc workspace](../README.md) this
+directory is part of into your GitHub account, provisions the D1 database
+and Durable Object, and deploys. Or by hand, from this directory after
+`pnpm install` at the workspace root:
 
 ```sh
-npx wrangler d1 create mediator    # paste database_id into wrangler.jsonc
-npx wrangler deploy
-npm run smoke -- https://your-worker.example.workers.dev
+pnpm exec wrangler d1 create mediator    # paste database_id into wrangler.jsonc
+pnpm run deploy
+pnpm run smoke https://your-worker.example.workers.dev
 ```
 
 The Workers deployment is URL-agnostic: it answers every host that routes to
 it as that host's own `did:web` — `your-worker.example.workers.dev` on day
 one, and if you later attach a custom domain in the dashboard, that domain
-becomes a second, equally live DID off the same keys. Locally, `npm run
+becomes a second, equally live DID off the same keys. Locally, `pnpm run
 dev:workers` serves `did:web:localhost%3A8787` the same way.
 
-`npm run smoke -- <url>` drives a real client through the whole surface —
+`pnpm run smoke <url>` drives a real client through the whole surface —
 grant, keylist, anonymous forward, pickup, WebSocket live delivery — against
 any running mediator, whichever target it is.
 
 ## Quick start (Docker)
 
 ```sh
+# in this directory; the image is built from the workspace root
 MEDIATOR_PUBLIC_URL=https://mediator.example.com docker compose up -d
 curl -s https://mediator.example.com/
 ```
@@ -192,10 +195,11 @@ Over a WebSocket there is no status: a refused forward is dropped.
 ## Development
 
 ```sh
-npm install
-MEDIATOR_PUBLIC_URL=http://localhost:8080 npm run dev
-npm test
-npm run typecheck
+pnpm install                             # at the workspace root
+pnpm --filter @estoc/did-peer run build  # the one workspace library it imports
+MEDIATOR_PUBLIC_URL=http://localhost:8080 pnpm run dev:node
+pnpm test
+pnpm run typecheck
 ```
 
 ## Design notes

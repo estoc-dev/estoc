@@ -17,7 +17,7 @@ export type PutOutcome =
   | { ok: false; code: "too-large" | "quota" | "refused"; comment: string };
 
 /**
- * blob-store/1.0, the store side (`docs/blob-store.md` in estoc): rows and
+ * blob-store/1.0, the store side: rows and
  * quotas in the database, bytes in a BlobStorage under a random id, URLs
  * under this mediator's public URL. A blob is one mediation's: put by it,
  * served at its own `/b/<id>`, gone when it deletes it or the retention

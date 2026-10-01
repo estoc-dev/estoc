@@ -15,12 +15,12 @@ import { mintIdentity } from "../src/identity-core.js";
  * forward, the pickup loop, and WebSocket live delivery (asserting text
  * frames, the thing headless clients never catch).
  *
- *   npm run smoke -- http://127.0.0.1:8787
+ *   pnpm run smoke http://127.0.0.1:8787
  */
 
 const base = process.argv[2];
 if (base === undefined || !base.startsWith("http")) {
-  console.error("usage: npm run smoke -- <mediator-url>");
+  console.error("usage: pnpm run smoke <mediator-url>");
   process.exit(1);
 }
 

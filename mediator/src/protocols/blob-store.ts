@@ -3,7 +3,7 @@ import { PROBLEM_REPORT } from "./problem-report.js";
 import type { HandlerContext, Reply } from "./types.js";
 
 /**
- * blob-store/1.0 — estoc `docs/blob-store.md`: an agent asks its own
+ * blob-store/1.0: an agent asks its own
  * mediator to keep (`put`) or delete (`delete`) a blob named by hash. The
  * bytes go over HTTP (`/b/<id>`, `src/blobs/service.ts`); these messages
  * only say what should exist. Both need a proven sender holding a mediation

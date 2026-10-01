@@ -1,22 +1,32 @@
 {
-  "name": "didcomm-mediator",
+  "name": "@estoc/mediator",
   "version": "0.1.0",
+  "private": true,
+  "description": "A DIDComm v2 mediator anyone can run: coordinate-mediation/3.0, messagepickup/3.0, routing/2.0 over plain HTTP/WS transport",
+  "license": "Apache-2.0",
+  "author": "merely",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estoc-net/estoc.git",
+    "directory": "mediator"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev:node": "tsx watch src/index.ts",
     "start": "node --import tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.workers.json",
-    "docker:build": "docker build -t ghcr.io/estoc-net/didcomm-mediator .",
+    "docker:build": "docker build -f Dockerfile -t ghcr.io/estoc-net/didcomm-mediator ..",
     "dev:workers": "wrangler dev",
+    "deploy": "wrangler deploy",
     "smoke": "tsx scripts/smoke.ts"
   },
-  "author": "merely",
-  "license": "Apache-2.0",
-  "description": "A DIDComm v2 mediator anyone can run: coordinate-mediation/3.0, messagepickup/3.0, routing/2.0 over plain HTTP/WS transport",
   "dependencies": {
-    "@estoc/did-peer": "^0.1.0",
+    "@estoc/did-peer": "workspace:^",
     "@estoc/didcomm": "^0.4.1-estoc.4",
     "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "@hono/node-server": "^1.19.17",
@@ -36,8 +46,9 @@
     "@types/node": "^26.6.2",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.7",
+    "typescript": "~5.8.0",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.122.0",
     "ws": "^8.21.3"
   }
 }

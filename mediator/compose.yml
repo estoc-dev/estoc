@@ -1,6 +1,8 @@
 services:
   mediator:
-    build: .
+    build:
+      context: ..
+      dockerfile: mediator/Dockerfile
     image: ghcr.io/estoc-net/didcomm-mediator-ts
     restart: unless-stopped
     ports:

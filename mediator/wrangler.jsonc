@@ -1,8 +1,8 @@
 // Cloudflare Workers deployment of the mediator.
 //
-// Deploying by hand:
-//   1. wrangler d1 create mediator   → paste database_id below
-//   2. wrangler deploy
+// Deploying by hand, from this directory after `pnpm install`:
+//   1. pnpm exec wrangler d1 create mediator   → paste database_id below
+//   2. pnpm run deploy
 // (The "Deploy to Cloudflare" button does both for you, including the id.)
 //
 // There is nothing else: no secrets and no URL to configure. The mediator
@@ -22,6 +22,8 @@
   "alias": {
     "@estoc/didcomm-node": "./src/workers/didcomm-wasm.ts"
   },
+  // The workspace library the mediator imports is bundled from its build.
+  "build": { "command": "pnpm --filter '@estoc/mediator^...' run build" },
   "durable_objects": {
     "bindings": [{ "name": "INBOX", "class_name": "InboxHub" }]
   },

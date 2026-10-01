@@ -102,7 +102,7 @@ or `pnpm dev` in this directory once the libraries have been built.
 
 The mediator picker defaults to `mediator.estoc.dev`
 ([didcomm-mediator] on Cloudflare Workers) and also offers a local one
-(`npm run dev` in the [didcomm-mediator] repo, minted with
+(`pnpm run dev:node` in [`mediator/`][didcomm-mediator], minted with
 `MEDIATOR_PUBLIC_URL=http://localhost:8080`), or paste any mediator's
 out-of-band invitation URL, its URL, or its DID. Opening the app through a
 mediator's invitation link (`?_oob=` with `goal_code: request-mediate`)
@@ -229,6 +229,6 @@ Apache-2.0
 [@estoc/agent-core]: https://github.com/estoc-net/estoc/tree/main/packages/agent-core
 [@estoc/keystore]: https://github.com/estoc-net/estoc/tree/main/packages/keystore
 [@estoc/event-store]: https://github.com/estoc-net/estoc/tree/main/packages/event-store
-[didcomm-mediator]: https://github.com/estoc-net/didcomm-mediator
+[didcomm-mediator]: https://github.com/estoc-net/estoc/tree/main/mediator
 [vite-plugin-pwa]: https://vite-pwa-org.netlify.app/
 [estoc-net/estoc]: https://github.com/estoc-net/estoc
