@@ -1,9 +1,17 @@
 # vault-sync/1.0
 
-> Proposed multi-replica contract; not implemented and not part of the
-> [phase-1 contract](../README.md). The [adoption work](README.md#adoption-work)
-> must be completed before enabling it. This draft defines peer synchronization
-> over DIDComm; it does not define a remote vault-storage service.
+> Deferred candidate; not implemented, outside the current replica-mediation
+> scope and not part of the [phase-1 contract](../README.md). The detailed rules
+> below describe one peer-message design, not a selected synchronization
+> interface. Revisit the [deferred sync work](README.md#deferred-vault-sync)
+> before adoption, including the choice between event/object transfer and
+> encrypted portable SQLite snapshots over blob-store.
+
+[Replica mediation](replica-mediation.md) can be implemented and tested as an
+independent transport milestone. It requires none of this draft's `hello`,
+inventory, transfer or receipt messages. Until a sync design is adopted,
+initial history uses existing portable recovery/import; missing history remains
+pending rather than being inferred complete from successful registration.
 
 [Suite guide](../README.md) · [Identity](replica-mediation.md#identity-model) ·
 [Messages](#messages) · [Durability](#durability-and-acknowledgments) ·

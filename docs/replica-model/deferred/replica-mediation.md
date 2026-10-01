@@ -2,8 +2,10 @@
 
 > Proposed multi-replica contract; not implemented and not part of the
 > [phase-1 contract](../README.md). The current runtime remains single-writer.
-> The [adoption work](README.md#adoption-work) must be completed before enabling
-> this profile. Candidate events and key names below are not phase-1 API.
+> The [replica-mediation adoption work](README.md#replica-mediation-adoption)
+> must be completed before enabling this profile. Vault synchronization is
+> deferred and is not a dependency. Candidate events and key names below are
+> not phase-1 API.
 
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
 [Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)
@@ -13,8 +15,9 @@ membership, append-only communication recipients, fan-out of external mail and
 independently acknowledged pickup. Each replica has its own DID. Ordinary
 Message Pickup 3.0 authenticates that DID; a caller cannot select another
 replica's queue by supplying a replica ID in a body.
-[Vault sync](vault-sync.md) exchanges events and objects between those replicas
-using ordinary encrypted messages through the same mediator.
+[Vault sync](vault-sync.md) is a separate deferred design. Registration,
+recipient management, routing and pickup can be implemented and tested without
+a synchronization worker or any vault-sync message.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** and
 **MAY** are interpreted as in BCP 14 when written in capitals.
@@ -28,8 +31,8 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** a
 | Identify a vault, address or writer | [Identity model](#identity-model), [authorization](#replica-authorization) |
 | Add a device | [Portable membership](#portable-replica-events), [registration](#replica-lifecycle) |
 | Implement the mediator | [Recipient registration](#shared-recipients), [routing](#routing-and-mailbox-storage-extension), [pickup](#message-pickup-3-0-replica-profile) |
-| Implement synchronization | [Protocol boundary](#protocol-boundary), [vault-sync](vault-sync.md) |
-| Enable multiple active application runtimes | [Adoption work](README.md#adoption-work); transport membership does not choose an executor |
+| Plan later synchronization | [Protocol boundary](#protocol-boundary), [deferred vault-sync work](README.md#deferred-vault-sync) |
+| Enable multiple active application runtimes | [Domain adoption work](README.md#application-concurrency-adoption); transport membership does not choose an executor |
 
 <a id="what-it-is-for"></a>
 <a id="protocol-boundary"></a>
@@ -40,37 +43,42 @@ An external sender addresses one of the vault's communication DIDs. The
 mediator retains the encrypted application envelope once and creates a delivery
 for every replica that is active at first package acceptance, subject to the
 account's storage limits. That delivery set does not expand later. A new
-replica obtains earlier history through vault synchronization or backup. The
-sender does not need a device list or this extension. Every receiving replica decrypts the
+replica obtains available earlier history through portable backup/restore or
+import; automatic history synchronization is deferred. The sender does not
+need a device list or this extension. Every receiving replica decrypts the
 original envelope with the vault's communication keys and performs its own
 receive procedure once the required history and domain prerequisites are met.
+Registration does not establish those prerequisites; missing history remains
+pending even when new mail is queued.
 
-A replica sends synchronization traffic to a particular replica DID. That
-message gets exactly one destination queue. It MUST NOT be fanned out to the
-vault, passed through the ordinary application receive/effect pipeline, or
-turned into another portable sent/received-message record.
+A private envelope addressed to a particular replica DID gets exactly one
+destination queue. Its client handling belongs to the payload's protocol;
+future synchronization may use this path. Internal replica traffic MUST NOT
+be fanned out to the vault, passed through the ordinary application
+receive/effect pipeline, or turned into another portable sent/received-message
+record.
 
 | Responsibility | Owner |
 | --- | --- |
 | Create the mediation account; register and list replica delivery targets | This protocol |
 | Add permanent shared communication-address bindings | This protocol's recipient control |
 | Fan-out, per-replica pickup, retention and delivery ACK | This protocol and Message Pickup |
-| Exchange exact events, objects, inventories and durable sync receipts | [Vault sync](vault-sync.md) |
+| Synchronize vault history | [Deferred vault-sync work](README.md#deferred-vault-sync); outside this protocol's implementation and conformance |
 | Decide application admission, automatic replies, rotation and dispatch | The vault/domain and runtime specifications; pending multi-replica revision |
-| Bootstrap the seed and initial history | Portable encrypted SQLite recovery; [sync bootstrap](vault-sync.md#bootstrap-and-recovery) |
+| Bootstrap the seed and initial history | Existing [portable SQLite recovery](../vault-sqlite.md#restore-and-import) |
 
 ```text
 external peer -> shared communication DID -> mediator -> A's delivery
                                                    -> B's delivery
 
-replica A -> encrypted sync for replica B's DID -> mediator -> B's delivery
+replica A -> private envelope for replica B's DID -> mediator -> B's delivery
 ```
 
 Receiving raw mail and importing an existing receipt are different operations.
 Neither fan-out nor event union grants a new live action for historical work.
 This protocol does not select a leader, promise exactly-once effects, or permit
 outbox takeover. Multiple active automatic executors remain subject to the
-[adoption work](README.md#adoption-work).
+[domain adoption work](README.md#application-concurrency-adoption).
 
 <a id="dependencies"></a>
 
@@ -95,13 +103,13 @@ sender or key identifier originally carried in long form.
 | `recipient-add` / `recipient-added` | Account DID | Add one communication recipient idempotently |
 
 The account DID manages the account; replica DIDs authenticate pickup and
-peer synchronization. Account controls do not give the account a pickup queue.
+private replica traffic. Account controls do not give the account a pickup queue.
 Control replies return through the originating request/response transport
 exchange, not through queued mail to the account DID. If that exchange is lost,
 the client retries the idempotent mutation or reissues the read request.
 
 The initial profile uses one selected mediation arrangement for replica
-membership and sync delivery. Existing historical communication routes may
+membership and mail delivery. Existing historical communication routes may
 still need draining under the vault's route rules. Membership across several
 mediators and a live transfer between membership authorities are later work;
 a client MUST NOT treat registration at one mediator as registration at another.
@@ -129,17 +137,17 @@ separate migration protocol, outside this profile.
 
 | Identity | Meaning | Lifetime and visibility |
 | --- | --- | --- |
-| Vault anchor | `vault_meta.anchor`, derived from the shared seed | Same for every copy; carried inside encrypted sync, not required in mediator control messages |
+| Vault anchor | `vault_meta.anchor`, derived from the shared seed | Same for every copy; verified locally, not required in mediator control messages |
 | Communication DID | An external peer's rendezvous or pairwise address for the vault | Shared across replicas, subject to the existing channel and rotation rules |
 | Replica ID | The UUIDv7 in `store_state.replica_id` | One independently writable incarnation; equals the author of its newly committed events |
-| Replica DID | The incarnation's DIDComm address and pickup principal | One immutable `did:peer:4` document bound to that replica ID; used for internal synchronization |
+| Replica DID | The incarnation's DIDComm address and pickup principal | One immutable `did:peer:4` document bound to that replica ID; also its private delivery destination |
 | Mediation account DID | The vault-controlled identity of the selected replica-mediation arrangement | Creates the standalone account and authorizes recipient registration and replica membership |
 | Store generation | The local event store's cursor generation | Local only; neither a DID nor membership authority |
 
 A vault anchor is not a public contact address. A communication DID is not a
-writer ID. An event author is a replica ID, never a replica DID. Synchronizing
-an event preserves its original author, timestamp, CID and references, even
-when another replica relays it.
+writer ID. An event author is a replica ID, never a replica DID. Portable
+history preserves each event's original author, timestamp, CID and references,
+even when another replica supplies it.
 
 A replica DID MUST NOT replace the external message's `to`, channel endpoint,
 or source-evidence identity. The original application ciphertext remains
@@ -155,10 +163,10 @@ replica/<replicaId>/me
 ```
 
 It uses the existing keystore-v3 named-key derivation, including its independent
-Ed25519 authentication and X25519 key-agreement material. It adds no KDF,
-shared sync-account key or custom encryption algorithm. Implementations MUST
-use maintained DID, JOSE and DIDComm libraries for document construction,
-signature verification and encryption.
+Ed25519 authentication and X25519 key-agreement material. It adds no KDF
+or custom encryption algorithm. Implementations MUST use maintained DID,
+JOSE and DIDComm libraries for document construction, signature verification
+and encryption.
 
 The replica document uses the same immutable `did:peer:4` construction as a
 mediation identity, with those public keys and one DIDComm service whose URI
@@ -199,9 +207,10 @@ authorize replica membership.
 
 That independently verified intent and seed-derived account key bind the
 account to the vault; they do not assert that the mediator has accepted it.
-Sync clients MUST NOT accept an unknown account supplied by a mediator. The
+Clients MUST NOT accept an unknown account supplied by a mediator. The
 owning event schemas must adopt the profile field and registration-observation
-rules before implementation; this draft does not extend phase-1 schemas.
+rules before vault-client integration; this draft does not extend phase-1
+schemas.
 
 A grant is compact JWS with these protected headers:
 
@@ -227,7 +236,7 @@ DID strings containing `...` in examples are explanatory placeholders.
 The grant authorizes this exact incarnation to join this exact account and
 mediator, use its private inbox and receive shared mail. It is a lifetime
 identity binding, not an expiring bearer token. Account authentication
-authorizes enrollment; using the inbox or syncing as the replica requires its
+authorizes enrollment; using the inbox or sending as the replica requires its
 own key. There is no `iat`, expiry-dependent renewal or automatic removal of
 this binding in the initial profile.
 
@@ -250,7 +259,7 @@ Before registering a replica the mediator MUST verify:
 6. Neither replica ID nor replica DID is bound to a conflicting identity.
    One account uses one `mediation_id` for this registration domain.
 
-Sync clients independently verify the grant against their own known
+Clients independently verify the grant against their own known
 replica-mediation record and its mediator, and compare the replica document's
 keys with their seed-derived replica keys. That key comparison establishes the
 vault binding; the grant supplies the mediator's account authorization and is
@@ -295,9 +304,9 @@ replica ID are a conflict; no canonical-order winner is chosen.
 ### 5.2 `replica.label`
 
 `roots` is empty; `data` is `{ "replicaId": <UUIDv7>, "name": <string> }`.
-The latest label by canonical event order wins. Labels are local display
-metadata synchronized inside encrypted vault data; the mediator does not need
-them.
+The latest label by canonical event order wins. Labels are portable display
+metadata carried by backup/import; the mediator does not need them. Automatic
+label synchronization is outside this profile.
 
 <a id="deferred-administration"></a>
 
@@ -313,7 +322,7 @@ human during maintenance. It must define how to quiesce the affected operations,
 serialize membership changes and resolve or exclude in-flight work before the
 administrative change takes effect. A manual trigger alone does not establish
 that boundary. Its event schema and enforcement mechanism remain future work;
-normal registration, delivery and sync in this profile require no such process.
+normal registration and delivery in this profile require no such process.
 
 ### 5.4 Ownership of state
 
@@ -322,14 +331,16 @@ normal registration, delivery and sync in this profile require no such process.
 | Account intent and first grant observation | Account registration retry progress |
 | Replica creation/grant and label | Registration request progress, actual remote membership status |
 | Communication routes, receipts, admissions and other domain events | Live connections, delivery IDs, pickup ACK progress |
-| Event CIDs and currently held raw objects | Verified peer grants/limits, sync retries, peer receipts, inventory sessions, staged transfers, change tokens |
+| Event CIDs and currently held raw objects | Local folds, caches and change tokens |
 
 A desired portable state and a remote side effect are reconciled, not committed
 in a distributed transaction. Commit account and membership intent before
 registration. Any authorized full replica may reconcile known registration
 intents using the shared account key.
 Per-replica registration responses and retries remain operational state and
-MUST NOT generate an endless stream of portable registration/synchronization records.
+MUST NOT generate an endless stream of portable registration records.
+Peer negotiation, sync receipts and staged history transfers belong to the
+deferred synchronization design, not this profile's operational requirements.
 
 <a id="replica-lifecycle"></a>
 
@@ -512,7 +523,8 @@ validate their original identity/route binding without treating current
 application eligibility as a condition for keeping the transport registration.
 The protocol does not enumerate remote recipients. Bindings unknown to a
 replica remain untouched; their identities and route evidence are recovered
-through vault synchronization or backup, not a mediator listing.
+through portable backup/import or future history synchronization, not a
+mediator listing.
 
 Recipient bindings remain for the account's lifetime. This protocol has no
 recipient remove, replacement, expiry or tombstone operation. DID retirement,
@@ -563,10 +575,10 @@ refuse the whole package without partial storage, deliveries or an acceptance
 record. If there are no active replicas, likewise refuse the new package.
 These failures use the ordinary non-enumerating routing refusal.
 
-A private sync envelope is opaque to the mediator. It is routed by the replica
-DID just like other mail; its encrypted protocol type or contents are not
-inspected. It is never copied to a newly enrolled replica. Requests, replies
-and sync receipts all use this private path.
+A private envelope is opaque to the mediator. It is routed by the replica DID
+just like other mail; its encrypted protocol type or contents are not inspected.
+It is never copied to a newly enrolled replica. This routing path requires no
+particular synchronization protocol or payload format.
 
 Shared package deduplication retains the original recipient and `forward.id`
 key within its account. Private deduplication is scoped to its destination
@@ -609,8 +621,8 @@ encrypted envelope.
 deliveries. Repeating an ACK is harmless; unknown, already acknowledged and
 other replicas' IDs have no effect. A shared ACK marks that delivery consumed
 without deleting the shared ciphertext or another delivery. A private ACK may
-remove the private package. No application or sync end-to-end receipt is
-implied by either operation.
+remove the private package. No end-to-end application or history-import receipt
+is implied by either operation.
 
 For application mail, the client follows the existing
 [receive and commit boundaries](../distributed-delivery.md#cross-layer-commit-and-acknowledgment-table):
@@ -619,9 +631,10 @@ with no portable message or effect. Recoverable missing-key/history/state cases
 remain queued. Application admission and automatic effects remain separate
 from transport ACK.
 
-For sync mail, the client follows [sync durability](vault-sync.md#durability-and-acknowledgments).
-A raw event receipt does not mean its dependent objects or the entire vault are
-synchronized.
+For private replica traffic, the consuming protocol defines the durable
+handling or terminal rejection required before pickup ACK. This profile does
+not define history-transfer messages or require sync receipts; those belong to
+the deferred synchronization work.
 
 Live-delivery state belongs to the authenticated replica connection. Multiple
 connections for the same replica may see the same delivery and share its ACK
@@ -642,9 +655,9 @@ Private mail remains until its own ACK or deadline.
 
 Expiry is independent of slow/offline replicas. This is bounded mail storage,
 not a history source for newly enrolled replicas. Earlier history and expired
-deliveries require vault sync or backup recovery where that data is still
-available. Transport acceptance alone is not delivery to a replica or completion
-of history catch-up.
+deliveries require backup/import where that data is still available, or a
+future synchronization protocol. Transport acceptance alone is not delivery
+to a replica or completion of history catch-up.
 
 `registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
 `max_message_bytes`, `max_active_replicas`, `max_membership_page`,
@@ -689,7 +702,7 @@ Anonymous routing failures retain the existing non-enumerating behavior.
 The mediator may observe account and replica DIDs, their grouping, communication
 recipients, ciphertext sizes, transport addresses and delivery timing. It does
 not receive the vault seed, plaintext events, content CIDs or human-readable
-device labels through this protocol. Synchronization payloads are encrypted
+device labels through this protocol. Private replica payloads are encrypted
 end to end between replica DIDs, including any embedded original mail.
 
 The deployment may use the same mediator for both paths. Sender protection is
@@ -725,8 +738,8 @@ These are proposed requirements, not claims about the current implementation.
    that original target set and existing ACK state.
 5. A and B receive identical original shared ciphertext with different delivery
    IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
-6. Sync addressed to B is delivered only to B and never copied to C when C
-   joins. A replica DID cannot be registered as a shared recipient.
+6. A private envelope addressed to B is delivered only to B and never copied
+   to C when C joins. A replica DID cannot be registered as a shared recipient.
 7. Recipient filters narrow both status and pickup within the caller's queue;
    they cannot reach another principal. Disconnecting live push loses no mail.
 8. Offline members keep their bindings and delivery eligibility. A fresh
@@ -735,9 +748,9 @@ These are proposed requirements, not claims about the current implementation.
    exhausting the limit refuses new enrollment without changing existing members.
 9. C joins after a shared package was accepted, while it is still retained:
    C receives no delivery whether the original targets have ACKed it or not.
-   C obtains available earlier history through vault sync or backup. After all
-   original targets ACK, an identical forward before expiry remains a duplicate
-   and creates no deliveries; changed bytes under that key conflict.
+   Registration supplies no earlier history or application readiness. After
+   all original targets ACK, an identical forward before expiry remains a
+   duplicate and creates no deliveries; changed bytes under that key conflict.
 10. An accepted shared package creates one delivery for every active replica,
     including an offline replica with a backlog, while counting its ciphertext
     and package only once against the account budget. Shared and private mail
@@ -747,7 +760,7 @@ These are proposed requirements, not claims about the current implementation.
     be submitted later once the account has capacity and an active target.
     Pickup response limits do not cap a replica's backlog. SQLite and D1 enforce
     the same registration and fan-out transaction boundaries.
-11. A restored mediator list cannot authorize a fabricated sync recipient.
+11. A restored mediator list cannot authorize an unverified replica binding.
     Missing remote entries do not delete portable membership; verified local
     registration intents can restore the same bindings after remote-state loss.
 12. No delivery or membership operation independently authorizes historical
@@ -782,3 +795,8 @@ These are proposed requirements, not claims about the current implementation.
     signature. Proof checks also apply to an existing binding. A batch-shaped
     body is invalid and changes no recipient binding; each valid request and
     response names one recipient.
+19. With no vault-sync worker, peer negotiation, inventory or sync receipt,
+    exercise registration/listing, recipient adds, shared fan-out, private
+    delivery and independent pickup/ACK. These transport operations succeed
+    independently; an application with missing history remains pending rather
+    than treating registration or pickup as completed catch-up.

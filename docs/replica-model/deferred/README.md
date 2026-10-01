@@ -9,8 +9,8 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Topic | Candidate draft | Decisions still needed before implementation |
 | --- | --- | --- |
 | Mutable channel DIDs | [Web channel DIDs](did-web-channels.md) | Current-document authorization, lookup/retry limits, proof recovery and any new failure model |
-| Multiple receiving replicas | [Replica mediation](replica-mediation.md) | Standalone-account event integration, domain effects and mediator capacity policy |
-| Replica-to-replica synchronization | [Vault sync](vault-sync.md) | Bounded atomic imports, maximum event/wire sizes, catch-up execution policy and reconciliation cost |
+| Multiple receiving replicas — current focus | [Replica mediation](replica-mediation.md) | Standalone-account integration, routing/pickup and mediator conformance |
+| Replica-to-replica synchronization — deferred | [Vault sync](vault-sync.md) | Transfer model, transport, reconciliation and catch-up execution policy |
 
 Phase 1 implements immutable `did:peer:4` application channels, one active
 writable runtime, ordinary account-scoped pickup and portable SQLite recovery.
@@ -20,27 +20,31 @@ adopted, together with the owning specifications and conformance cases.
 
 ## Multi-replica design
 
-The two replica proposals form one design. A full replica has its own DID and
-local event author; communication DIDs and the vault seed are shared. The
-mediator fans external mail addressed to shared communication DIDs out to the
-replicas active when it first accepts each package, under account-wide storage
-limits.
-Later enrollment does not add deliveries for earlier mail; new replicas recover
-history through vault sync or backup. Sync messages address one replica DID
-and are delivered only to that replica. They carry events and objects encrypted
-end to end.
+The next implementation scope is replica mediation. Vault synchronization is
+deferred and is not a prerequisite for implementing or testing that transport.
+A full replica has its own DID and local event author; communication DIDs and
+the vault seed are shared. The mediator fans external mail addressed to shared
+communication DIDs out to the replicas active when it first accepts each
+package, under account-wide storage limits. Private envelopes address one
+replica DID and are delivered only to that replica; their transfer protocol is
+independent of mailbox routing.
+
+Later enrollment does not add deliveries for earlier mail. Initial history may
+be provisioned through existing portable SQLite backup/restore or import.
+Automatic history catch-up is outside the current scope. A replica missing
+required history remains pending; successful registration and queued new mail
+do not establish readiness to process application traffic.
 
 [Replica mediation](replica-mediation.md#identity-model) owns the identity model
 and account-signed membership grants. It creates its own accounts and manages
 append-only communication recipients, without a Coordinate Mediation exchange
 or conversion of an ordinary account. The account DID sends registration and
-membership controls; each replica DID authenticates pickup and synchronization.
-[Vault sync](vault-sync.md#roles-and-dependencies)
-uses those grants; it does not create another account or membership authority.
-Inventory, missing-data requests and sync receipts are answered by replicas,
-not a dedicated sync-storage service. The first deployment profile uses one
-selected mediation arrangement. Additional devices initially enroll through
-encrypted SQLite restore; a simpler pairing UI can be added later.
+membership controls; each replica DID authenticates pickup and private traffic.
+The first deployment profile uses one selected mediation arrangement.
+Additional devices obtain their seed and initial history through authorized
+portable recovery and create fresh replica identities before enrollment.
+Future synchronization can reuse these identities and grants without creating
+another membership authority; its wire format and storage transport remain open.
 
 Replica retirement is deferred to a later human-initiated administration
 profile. The initial profile keeps registrations, including offline and replaced
@@ -48,33 +52,38 @@ incarnations. [Deferred administration](replica-mediation.md#deferred-administra
 must define an enforced maintenance boundary for concurrent and in-flight work;
 a manual trigger alone does not establish one.
 
-These documents specify the proposed transport and identity contract. They do
-not yet authorize multiple active application executors or claim that the
-current folds converge under independently generated automatic effects.
+The current work specifies transport and identity. Its conformance can be
+tested with prepared identities, opaque envelopes and independent queues.
+Enabling multiple active application executors still requires the separate
+domain work below; mailbox conformance does not establish application convergence.
 
 <a id="adoption-work"></a>
 
 ## Adoption work
 
+<a id="replica-mediation-adoption"></a>
+
+### Current scope: replica mediation
+
 | Stage | Work and completion evidence |
 | --- | --- |
-| 1. Protocol and identity contract | The two drafts define vault/communication/replica identities, membership authority, shared versus private routing, transferred data and local progress. No runtime API is activated by their presence. |
-| 2. Multi-replica domain semantics | Revise owning specifications and prove two independently writable vaults can receive the same external mail, perform supported concurrent operations and merge without manufactured conflicts or unauthorized effects. |
-| 3. Replica mediation | Implement standalone account creation, account-authorized replica registration, append-only membership/recipient bindings and independent pickup; verify equivalent SQLite and D1 atomicity. |
-| 4. Vault synchronization | Implement authenticated peer control handling, durable staging/retries, inventory and bounded atomic event/object imports; verify crash/expiry recovery. |
-| 5. Device workflow | Wire encrypted restore, fresh replica identity, enrollment, catch-up and device/sync status into daemon and app. |
-| 6. Integration | Exercise multiple Node/browser replicas, offline mail, concurrent writes, restore, missing objects and erasure over a real mediator. |
+| 1. Protocol and identity contract | Finalize standalone accounts, account-signed grants, shared recipients, private destinations and pickup boundaries. No sync message family is required. |
+| 2. Mediator transport | Implement account creation, registration/listing, append-only recipients, atomic fan-out, account storage limits and independent pickup/ACK; verify equivalent SQLite and D1 behavior. |
+| 3. Client integration | Adopt the required account/replica event and key contracts, enrollment, recipient reconciliation and replica-authenticated pickup. Provision history through existing recovery/import; retain application readiness gates. |
+| 4. Transport integration | Exercise concurrent registration, recipient adds, offline queues, private delivery, retries and ACK isolation over a real mediator with no vault-sync worker. |
 
-Before adopting the candidate events/key names, update
+The mediator transport can be implemented and verified independently of vault
+sync and multi-executor application semantics. Before enabling the new profile
+in a vault client, adopt the relevant contracts in
 [event store](../event-store.md),
 [vault events](../vault-events.md#identity-seed-and-key-names),
 [SQLite lifecycle](../vault-sqlite.md#ownership-and-lifecycle),
 [channels](../channels.md#application-admission) and
 [distributed delivery](../distributed-delivery.md). In particular:
 
-- Keep one local writer per runtime database while permitting separate
-  replicas to write. Copy/restore must create a fresh author and replica DID;
-  transport enrollment must not rewrite historical authors.
+- Keep one local writer per runtime database. Copy/restore must create a fresh
+  author and replica DID; transport enrollment must not rewrite historical
+  authors or enable concurrent application execution by itself.
 - Revise the single-seed rule in vault events that key names do not encode a
   replica. Reserve `replica/<replicaId>/me` explicitly for incarnation identity;
   communication DID entity keys keep their existing meanings and names.
@@ -94,9 +103,11 @@ Before adopting the candidate events/key names, update
   Apply storage quotas to the account's shared and private packages together;
   accept a shared package with deliveries for all active replicas or refuse
   the whole package. Keep independent pickup/ACK state for each replica and
-  ordinary redelivery for existing targets. New replicas use vault
-  sync for history and wait for the required catch-up and domain prerequisites
-  before processing queued application mail; enrollment alone is not readiness.
+  ordinary redelivery for existing targets. New replicas obtain available
+  history through backup/restore or import and wait for the required history
+  and domain prerequisites before processing queued application mail;
+  enrollment alone is not readiness. No automatic sync worker is required for
+  registration, fan-out or pickup conformance.
 - Replace phase-1 desired-set removal for the new profile with append-only
   single-recipient `recipient-add`. The canonical communication DID binds to
   one account; concurrent same-account adds are idempotent and need no registration
@@ -108,6 +119,39 @@ Before adopting the candidate events/key names, update
   blocking and rotation do not withdraw recipient registrations; application
   admission and outbound selection remain separate. Replica retirement is
   deferred; message ACK/expiry still clears mail without removing membership.
+
+<a id="deferred-vault-sync"></a>
+
+### Deferred: vault synchronization
+
+[Vault sync](vault-sync.md) is retained as a candidate design, not a required
+companion protocol for replica mediation. Its event inventories, `want`/`events`/
+`objects` transfers, peer negotiation, staged imports and `stored` receipts are
+outside the current implementation scope. Merkle reconciliation and encrypted
+portable SQLite snapshots over [blob-store](../../blob-store.md) are also future
+options; no synchronization format or transport has been selected for adoption.
+
+When this work resumes, choose the transfer model and its authorization,
+durability, retention, retry and resource bounds together. Reconcile that choice
+with the owning import contracts and define automatic device catch-up. The
+existing candidate's detailed rules and conformance cases must be reconsidered
+then; they do not gate the replica-mediation milestone.
+
+If the event/object candidate is selected, define bounded staged-input imports
+in the owning event store, vault events and SQLite contracts without weakening
+complete portable-source validation. Also define a canonical event byte ceiling,
+including unknown types, and plaintext/mediator wire floors that can carry a
+complete maximum-sized event. Existing larger events need an adoption policy
+that preserves their CIDs; incompatible peers must fail negotiation explicitly.
+
+<a id="application-concurrency-adoption"></a>
+
+### Before enabling concurrent application runtimes
+
+The following domain work is separate from transport implementation. Before
+claiming support for multiple active application executors, update the owning
+specifications and verify their behavior under independently generated facts:
+
 - Define semantic compatibility for independent observations and effects.
   Removing receipt ordinals does not make events from different authors and
   clocks byte-identical. Source-event references must retain their evidence
@@ -122,19 +166,8 @@ Before adopting the candidate events/key names, update
   learned a rotation or route change. Pull-before-send is useful reconciliation,
   but cannot prove the absence of a concurrent decision on another replica.
 - Verify contact-edit merges, admission history and erasure/held-root behavior
-  against the same event set in different arrival orders. Each sync import
-  atomically publishes a selected event subset and its required objects.
-  Staging stays invisible; already imported subsets are valid partial history,
-  not a partly published import. Define the staged-input integration in event
-  store, vault events and SQLite specifications: a network cut is not one
-  portable SQLite source file, whose existing complete-source checks remain.
-- Set a maximum canonical event byte size in the owning event specifications,
-  including unknown event types. Require the sync `max_plaintext_bytes` floor
-  to fit a maximum event, its CID and the complete single-event batch envelope;
-  require mediator wire limits to fit its encrypted and routed representation.
-  Define adoption of existing larger events without truncation or rewritten
-  CIDs before enabling the profile. Size-incompatible peers fail negotiation,
-  rather than accepting work they can never transfer.
+  against the same event set in different arrival orders. Preserve atomic
+  import with its required objects under whichever transfer model is adopted.
 - Define the transition from catch-up to permitted application processing.
   Sync/import and raw shared-mail pickup cannot by themselves authorize
   historical replies, pending-outbound takeover or exactly-once side effects.
