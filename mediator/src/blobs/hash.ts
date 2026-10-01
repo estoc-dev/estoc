@@ -1,4 +1,6 @@
 import { base32 } from "multiformats/bases/base32";
+import * as Digest from "multiformats/hashes/digest";
+import { sha256 } from "multiformats/hashes/sha2";
 
 /**
  * Two strings name a blob, for two purposes. The **hash** — a sha2-256
@@ -10,7 +12,7 @@ import { base32 } from "multiformats/bases/base32";
  * them, and two mediations putting the same hash get two ids.
  */
 
-const SHA256_PREFIX = [0x12, 0x20];
+const SHA256_BYTES = 32;
 export const BLOB_NAME_PATTERN = /^b[a-z2-7]{55}$/;
 export const BLOB_ID_PATTERN = /^[a-z2-7]{32}$/;
 const ID_BYTES = 20;
@@ -22,10 +24,10 @@ export function mintBlobId(): string {
 
 /** The blob name for a sha-256 digest. */
 export function blobName(digest: Uint8Array): string {
-  if (digest.length !== 32) {
+  if (digest.length !== SHA256_BYTES) {
     throw new Error("sha-256 digests are 32 bytes");
   }
-  return base32.encode(Uint8Array.from([...SHA256_PREFIX, ...digest]));
+  return base32.encode(Digest.create(sha256.code, digest).bytes);
 }
 
 /** The digest a blob name encodes, or null if the string is not a name. */
@@ -33,21 +35,18 @@ export function blobDigest(name: string): Uint8Array | null {
   if (!BLOB_NAME_PATTERN.test(name)) {
     return null;
   }
-  let bytes: Uint8Array;
+  let digest: Uint8Array;
   try {
-    bytes = base32.decode(name);
+    const multihash = Digest.decode(base32.decode(name));
+    if (multihash.code !== sha256.code || multihash.size !== SHA256_BYTES) {
+      return null;
+    }
+    digest = multihash.digest;
   } catch {
     return null;
   }
-  if (
-    bytes.length !== 34 ||
-    bytes[0] !== SHA256_PREFIX[0] ||
-    bytes[1] !== SHA256_PREFIX[1]
-  ) {
-    return null;
-  }
   // The name must be canonical: re-encoding must give the same string.
-  return blobName(bytes.subarray(2)) === name ? bytes.subarray(2) : null;
+  return blobName(digest) === name ? digest : null;
 }
 
 export function hex(bytes: Uint8Array): string {

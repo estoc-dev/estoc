@@ -175,8 +175,10 @@ which — a 2xx always means queued mail:
   `MEDIATOR_MAX_MESSAGE_BYTES` as well (a number can grow in it): **413**.
 - `(account, body.next, forward id)` names the package. The same forward
   again is accepted and queued once; the same id with another envelope is
-  refused and the first stays. The name is free again once its mail has been
-  picked up or has expired.
+  refused and the first stays. An ordinary recipient's name is free again
+  once its mail has been picked up and acknowledged, or has expired. A
+  shared package's name stays taken until the package expires, even after
+  every target replica has acknowledged it.
 - A recipient nobody here holds, a full queue and a reused id are one answer,
   **422**, which does not tell the three apart. A 202 does tell the sender
   that this recipient takes mail here right now; it says nothing of the
@@ -197,11 +199,11 @@ Over a WebSocket there is no status: a refused forward is dropped.
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
-| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment and shared recipients so far; no mail is routed to replicas yet) |
+| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment, shared recipients and mail queued per replica so far; replicas cannot pick it up yet). Off, a forward to one of its recipients or replicas is refused |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
-| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Disclosed to replica-mediation accounts; not enforced yet |
+| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have waiting, across shared and private mail; a shared envelope counts once however many replicas it waits for. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |
 | `MEDIATOR_BLOB_RETAIN_SECONDS` | 30 days | How long one `put` keeps a blob; a repeat `put` by the same mediation renews |

@@ -19,7 +19,9 @@ import { isLongForm, longToShort } from "@estoc/did-peer";
 import type {
   AddRecipientResult,
   BlobRow,
+  FanOutOutcome,
   MediationStore,
+  PackageBounds,
   PackageKey,
   RecipientPage,
   RegisterOutcome,
@@ -131,6 +133,26 @@ const SCHEMA = [
      created_at    INTEGER NOT NULL
    )`,
   "CREATE INDEX IF NOT EXISTS replica_recipients_account ON replica_recipients(account_did)",
+  `CREATE TABLE IF NOT EXISTS replica_packages (
+     id          TEXT PRIMARY KEY,
+     account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+     next_did    TEXT NOT NULL,
+     forward_id  TEXT NOT NULL,
+     packed      TEXT NOT NULL,
+     bytes       INTEGER NOT NULL,
+     created_at  INTEGER NOT NULL,
+     expires_at  INTEGER NOT NULL,
+     UNIQUE (next_did, forward_id)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_packages_account ON replica_packages(account_did, expires_at)",
+  "CREATE INDEX IF NOT EXISTS replica_packages_expiry ON replica_packages(expires_at)",
+  `CREATE TABLE IF NOT EXISTS replica_deliveries (
+     id          TEXT PRIMARY KEY,
+     package_id  TEXT NOT NULL REFERENCES replica_packages(id),
+     replica_did TEXT NOT NULL REFERENCES replicas(replica_did),
+     UNIQUE (package_id, replica_did)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_deliveries_replica ON replica_deliveries(replica_did)",
   `CREATE TABLE IF NOT EXISTS identity (
      id         INTEGER PRIMARY KEY CHECK (id = 1),
      secrets    TEXT NOT NULL,
@@ -618,6 +640,94 @@ export class SqlStore implements MediationStore {
   }
 
   /*
+   * One transaction, so a replica enrolls either before it, and is a target,
+   * or after it, and is not. A recipient belongs to one account under one
+   * kind of binding, which makes the recipient and the forward's id a key no
+   * two accounts share.
+   */
+  async fanOut(
+    { next, forwardId }: PackageKey,
+    packed: string,
+    { deadline, maxRetainedBytes }: PackageBounds
+  ): Promise<FanOutOutcome> {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const expiresAt = Math.min(now + this.ttlMs, deadline ?? Infinity);
+    if (expiresAt <= now) {
+      return "lapsed";
+    }
+    const bytes = new TextEncoder().encode(packed).byteLength;
+    const key = [next, forwardId];
+    const held = "next_did = ? AND forward_id = ?";
+    const lapsed = `SELECT id FROM replica_packages WHERE ${held} AND expires_at <= ?`;
+    const sharedBy = "SELECT account_did FROM replica_recipients WHERE recipient_did = ?";
+    const accounts = `${sharedBy} UNION ALL SELECT account_did FROM replicas WHERE replica_did = ?`;
+    const retained = (what: string) =>
+      `(SELECT ${what} FROM replica_packages WHERE account_did = a.account_did AND expires_at > ?)`;
+
+    const [, , , , found, account] = await this.batch([
+      {
+        sql: `DELETE FROM replica_deliveries WHERE package_id IN (${lapsed})`,
+        params: [...key, now],
+      },
+      { sql: `DELETE FROM replica_packages WHERE ${held} AND expires_at <= ?`, params: [...key, now] },
+      {
+        sql:
+          "INSERT INTO replica_packages " +
+          "(id, account_did, next_did, forward_id, packed, bytes, created_at, expires_at) " +
+          `SELECT ?, a.account_did, ?, ?, ?, ?, ?, ? FROM (${accounts}) AS a ` +
+          `WHERE ${retained("COUNT(*)")} < ? ` +
+          `AND ${retained("COALESCE(SUM(bytes), 0)")} + ? <= ? ` +
+          "ON CONFLICT (next_did, forward_id) DO NOTHING",
+        params: [
+          id,
+          ...key,
+          packed,
+          bytes,
+          now,
+          expiresAt,
+          next,
+          next,
+          now,
+          this.maxMessages,
+          now,
+          bytes,
+          maxRetainedBytes,
+        ],
+      },
+      {
+        sql:
+          "INSERT INTO replica_deliveries (id, package_id, replica_did) " +
+          "SELECT lower(hex(randomblob(16))), ?, replica_did FROM replicas " +
+          `WHERE (replica_did = ? OR account_did = (${sharedBy})) ` +
+          "AND EXISTS (SELECT 1 FROM replica_packages WHERE id = ?)",
+        params: [id, next, next, id],
+      },
+      { sql: `SELECT id, packed FROM replica_packages WHERE ${held}`, params: key },
+      { sql: accounts, params: [next, next] },
+    ]);
+
+    const row = (found.rows as { id: string; packed: string }[])[0];
+    if (row === undefined) {
+      return account.rows.length === 0 ? "unknown" : "full";
+    }
+    if (row.id === id) {
+      return "stored";
+    }
+    return row.packed === packed ? "repeated" : "conflict";
+  }
+
+  async deliveriesFor(replicaDid: string, limit: number): Promise<StoredMessage[]> {
+    const rows = await this.all<{ id: string; packed: string; created_at: number }>(
+      "SELECT d.id, p.packed, p.created_at FROM replica_deliveries d " +
+        "JOIN replica_packages p ON p.id = d.package_id " +
+        "WHERE d.replica_did = ? AND p.expires_at > ? ORDER BY p.created_at, p.rowid LIMIT ?",
+      [replicaDid, Date.now(), limit]
+    );
+    return rows.map((row) => ({ id: row.id, packed: row.packed, createdAt: row.created_at }));
+  }
+
+  /*
    * One transaction: an expired holder of the key makes way, the insert
    * happens only under the quota and only if the key is free, and whichever
    * row then holds the key says what happened. The id is how a row this call
@@ -693,7 +803,18 @@ export class SqlStore implements MediationStore {
   }
 
   async purgeExpired(): Promise<number> {
-    return this.run("DELETE FROM messages WHERE expires_at <= ?", [Date.now()]);
+    const now = Date.now();
+    const [messages, , packages] = await this.batch([
+      { sql: "DELETE FROM messages WHERE expires_at <= ?", params: [now] },
+      {
+        sql:
+          "DELETE FROM replica_deliveries WHERE package_id IN " +
+          "(SELECT id FROM replica_packages WHERE expires_at <= ?)",
+        params: [now],
+      },
+      { sql: "DELETE FROM replica_packages WHERE expires_at <= ?", params: [now] },
+    ]);
+    return messages.changes + packages.changes;
   }
 
   private static readonly BLOB_COLUMNS =

@@ -7,6 +7,7 @@ import { DIDCommFailure, didOf } from "../didcomm/didcomm.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
 import type { HandlerContext, Reply } from "./types.js";
 import { pushLiveDelivery } from "./pickup.js";
+import { canonicalDid } from "./replica-grant.js";
 
 /**
  * routing/2.0 — https://didcomm.org/routing/2.0
@@ -46,8 +47,8 @@ export const ENCRYPTED_MEDIA_TYPE = "application/didcomm-encrypted+json";
  * Why a forward was not queued, as the HTTP status its sender sees. Malformed
  * (400) and oversized (413) are judged on the forward alone. Everything that
  * depends on who holds mail here — no such recipient, a full queue, a key
- * already holding other bytes — is one answer (422), which does not tell the
- * three apart; an accepted forward still tells its sender that `next` takes
+ * already holding other bytes, a deadline only some queues honor — is one
+ * answer (422), which does not tell them apart; an accepted forward still tells its sender that `next` takes
  * mail here right now. The message never quotes the forward.
  */
 export class ForwardRefused extends Error {
@@ -243,7 +244,25 @@ export async function forward(
   const notQueued = () => new ForwardRefused(422, "The forward was not queued");
   const owner = await ownerFor(next, context);
   if (owner === null) {
-    throw notQueued();
+    if (!context.config.replicaMediation) {
+      throw notQueued();
+    }
+    const expires = incoming.message.expires_time;
+    // A store that could not commit is one more way of not being queued: the
+    // forward itself was sound, and the same one may be sent again.
+    const outcome = await context.store
+      .fanOut({ next: canonicalDid(next), forwardId: incoming.message.id }, packed, {
+        deadline: typeof expires === "number" ? expires * 1000 : null,
+        maxRetainedBytes: context.config.maxRetainedBytes,
+      })
+      .catch((err: unknown) => {
+        context.log?.("fan-out failed; the forward is refused", err);
+        return null;
+      });
+    if (outcome !== "stored" && outcome !== "repeated") {
+      throw notQueued();
+    }
+    return null;
   }
 
   const stored = await context.store.storeMessage(
