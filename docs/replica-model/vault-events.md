@@ -334,8 +334,9 @@ never proof that the target is available or valid. `effectKey` is the existing
 derived idempotency key, not a keystore name or a cryptographic public key.
 
 Message identity has three levels. An event `cid` names one exact envelope;
-identical envelopes are one event. Repeated receipt has fresh `receiptOrdinal`
-values and therefore distinct event CIDs with one `messageId`.
+identical envelopes are one event. Repeated receipt is a new event under its
+own time and author, so a distinct event CID with one `messageId`; one writer
+recording one envelope twice within a millisecond records one event.
 An inbound `messageId` names the exact sender/recipient/wire-ID input; accepted
 key variants in that channel share one execution. Different channels never
 alias message or execution identities.
@@ -1852,7 +1853,6 @@ See [distributed-delivery.md section 9](distributed-delivery.md#observation-iden
   "data": {
     "messageId": "d2192dcf-cc5c-5f7d-b4f1-46972b7b04de",
     "wireMessageId": "019b2a70-f225-721c-835f-67175be0667e",
-    "receiptOrdinal": "42",
     "intentHash": "855qiA-zQ94SVOPYj2KnooWRNJAe1GB419LMTGLMwAs",
     "plaintextHash": "dpPwT44Xre48u9xon4fUfvLOEQI6nYxQDzCCFnCJMK8",
     "localKeyName": "did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement",
@@ -1891,9 +1891,6 @@ carried `fromPrior` retains its separate continuity-verification role.
 Requirements:
 
 - `messageId` is the deterministic observation value above;
-- `receiptOrdinal` is a canonical positive decimal integer string assigned to
-  this newly committed observation event under the vault-wide allocator below;
-  it is immutable portable evidence, not an EventStore `ChangeToken`;
 - `intentHash` and `plaintextHash` are computed under [distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes);
 - `localKeyName` is the exact local key that decrypted the message;
 - `peerResolutionEventCid` is REQUIRED and names the exact `peer.resolved` used to
@@ -1942,81 +1939,45 @@ Requirements:
   entry; and
 - `roots` is the distinct ordered set of `bodyCid` followed by `attachmentCids`.
 
-Every newly committed `message.in` receives its own fresh `receiptOrdinal`,
-including a recorded duplicate of an existing channel-local message ID.
-It MUST NOT copy an earlier observation's ordinal. Re-ingest of an existing
-`cid` preserves its event and allocates no new ordinal.
+Every newly committed `message.in` is an event of its own, including a
+recorded duplicate of an existing channel-local message ID; re-ingest of an
+existing `cid` preserves its event. Inbound commit MUST be serialized across
+the active writer. A pickup batch follows the per-delivery receipt/admission
+ordering in [the receive procedure](distributed-delivery.md#receive-a-message);
+this does not permit committing all live receipts before admission.
 
-The value matches `[1-9][0-9]*`. Comparison and arithmetic MUST use its exact
-integer value, never lexical order or an inexact floating-point conversion.
-On writable open, restore and full import, recover the high-water mark from
-all accepted, payload-valid `message.in` events in this main vault, across all
-authors and including erased messages:
-
-```text
-nextReceiptOrdinal = 1 + max(all historical receiptOrdinal values)
-max(empty set) = 0
-```
-
-Allocation and inbound commit MUST be serialized across the active writer.
-A pickup batch follows the per-delivery receipt/admission ordering in
-[the receive procedure](distributed-delivery.md#receive-a-message), assigning
-distinct ordinals in that order; this does not permit committing all live
-receipts before admission. Aborted reservations
-may leave gaps; contiguous numbering is not required. A cache may accelerate
-allocation, but restart, clearing local caches, or a new `replica_id` or
-`store_generation` MUST NOT reset the recovered high-water mark or reuse an
-ordinal already present in accepted history.
-
-Receipt identity is the pair `(author, receiptOrdinal)`. One author MUST NOT
-allocate the same ordinal to distinct observation events. Distinct authors MAY
-share an ordinal after restore or after merging independently run copies; this
-is valid merged history, not an import incompatibility. The allocator above
-still advances beyond every ordinal known in the current union.
-
-For one observation `e` and one conflict-free logical message `M`, including
-consistent same-channel key variants, define:
+The observations of one logical message `M`, including consistent
+same-channel key variants, are ordered by
+[canonical event order](event-store.md#canonical-order), as are the
+candidates admission reconciliation walks under
+[channels.md](channels.md#application-admission). Define:
 
 ```text
-receiptOrderKey(e) = (integer(e.data.receiptOrdinal), e.author)
-firstReceiptKey(M) = min(receiptOrderKey(e) for every admitted complete observation of M)
+firstWitness(M) = the first admitted complete observation of M in canonical event order
 ```
 
-Compare the tuples ascending, first by exact integer ordinal and then by the
-canonical author string. The minimum is one complete observation key, not
-independent minima of its components; it is undefined when no admitted complete
-observation qualifies. Raw unadmitted duplicates cannot change this minimum.
-Admission reconciliation orders candidate observations in
-[canonical event order](event-store.md#canonical-order) under
-[channels.md](channels.md#application-admission), never by either key.
-`firstReceiptKey` orders established logical messages for display;
-it is no admission prerequisite. A pure ACK names its carrier alone, so no
-target array is ordered by either key. In a linear single-writer history
-`receiptOrderKey` preserves first-receipt order, including across restore and
-author changes. For independently run histories it defines deterministic
-recovery order, not a claim about physical receive time between disconnected
-writers.
-This rule permits history union; it does not enable concurrent phase-1 writers
-or establish multi-writer effect convergence.
+It is undefined while no admitted complete observation qualifies, and raw
+unadmitted duplicates cannot change it. `firstWitness` names the observation
+an operation reads the input's fields from and orders established logical
+messages for display; it is no admission prerequisite. A pure ACK names its
+carrier alone, so no target array is ordered. For successive events of one
+writer whose timestamps strictly increase, canonical order follows commit
+order. Events sharing a timestamp are ordered by CID, so their canonical
+order may differ from commit order even without clock rollback; a clock
+rollback may place later commits before earlier commits. What follows that
+order is the choice of witness among consistent duplicates, the order
+candidates are judged in and display; a committed admission or intent stands
+whatever the order. For independently run histories canonical order is a
+deterministic merged order, not a claim about physical receive time between
+disconnected writers. This rule permits history union; it does not enable
+concurrent phase-1 writers or establish multi-writer effect convergence.
 
-A later observation does not renumber earlier events. Learning an older alias
-or importing history may change this derived key for future decisions, but
+A later observation does not reorder earlier events. Learning an older alias
+or importing history may change the first witness for future decisions, but
 MUST NOT change a committed `message.out`.
 
-After `cid` deduplication, distinct events with the same `(author,
-receiptOrdinal)` are a receipt-integrity conflict. Affected logical messages
-are those observed by the conflicting events. Retain those events and
-surface the conflict as a diagnostic of local receipt history. By itself it
-neither blocks nor invalidates application admission, a pure-ACK intent, an
-incoming ACK witness or exact-address confirmation: admission judges the
-observations like any other, a candidate contradicting the admitted intent
-refused as any such candidate is, two independently admitted contradictory
-observations the intent conflict they would be under distinct ordinals, and a
-consistent duplicate harming nothing; every operation still requires its own
-source and authorization evidence, and intent conflicts keep their rules.
-Full import MUST
-NOT reject an event union merely for receipt-ordinal reuse or this projected
-conflict. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
+Full import MUST NOT reject an event union for repeated observations of one
+input. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
 `ForkedAuthor` check detects unseen events under the current local author; it
 does not prove that every historical author is fork-free.
 
@@ -2039,7 +2000,7 @@ Missing source or verification evidence defers the admission, never completes
 it from another observation. Schema validation rejects additional payload
 fields, wrong reference types, null references and nonempty roots.
 
-Receipt order and admission are independent facts. An earlier `receiptOrdinal`
+Event order and admission are independent facts. An earlier observation
 does not prove acceptance before rotation; use the durable admission record.
 Imported historic admissions preserve the originating runtime's decisions,
 subject to their exact cryptographic evidence, not today's supersession policy.
@@ -2055,7 +2016,7 @@ message ID. Each complete observation authenticates independently with its own
 method-valid immutable document and derives the same exact sender/recipient pair. Equal intent hashes
 represent one logical input. Differences between independently admitted
 observations conflict for application use; unadmitted differences remain raw
-diagnostics and cannot overwrite admitted content. Transport, author, ordinal,
+diagnostics and cannot overwrite admitted content. Transport, author, event time,
 authorized key and exact plaintext may
 differ without creating a new logical input in this same channel. Incomplete
 evidence for a consistent sibling neither supplies another execution nor
@@ -2362,13 +2323,12 @@ list when no new objects are needed; `Vault.events` is read-only.
    metadata, seed wrapper and derived identity under the SQLite profile.
 2. Preserve local IDs on ordinary reopen; use fresh IDs on create/restore.
    Discard only unpublished staging and reconstruct held roots before GC.
-3. Recover the vault-wide receipt ordinal high-water mark and integrity conflicts.
-4. Rebuild channel receipts, verification statuses, derived links/joins, denials,
+3. Rebuild channel receipts, verification statuses, derived links/joins, denials,
    contact channel selections, application admissions and source/intent/result projections from saved evidence.
-5. Enumerate incomplete references/content and pending/unconfirmed outbounds for
+4. Enumerate incomplete references/content and pending/unconfirmed outbounds for
    local recovery and manual action. Reuse their exact intent, channel, proof,
    package and submission records. Never infer "not sent" from missing history.
-6. Rebuild permanent erasure closure, then application display views from their
+5. Rebuild permanent erasure closure, then application display views from their
    remaining source evidence under [section 7.3](#application-message-views).
    This work may recover retained issuer material and recompute a previously
    pending proof, but appends no event for verification and grants no protocol
@@ -2593,7 +2553,7 @@ reports unknown registered recipients under [section 5.7](#route-did-and-key-fol
 
 A snapshot can omit a known peer rotation and its admission history. In that
 case restore cannot reconstruct the missing restriction or the exact past
-acceptance boundary from the seed, ordinals or timestamps. Import newer
+acceptance boundary from the seed or timestamps. Import newer
 evidence when available; never claim rollback-safe rejection from an old
 snapshot alone. Existing old-peer admissions preserve historical state, not
 permission to send to a peer whose replacement is now known.
@@ -2862,9 +2822,9 @@ derivation requires a new vault version.
 
 - <a id="ve-60"></a> **VE-60.** ACK lookup validates the exact outbound fixed channel and a role-preserving path from its peer to a carrier with an admitted complete source witness; shared contact/wire ID alone is insufficient.
 
-- <a id="ve-61"></a> **VE-61.** Every committed inbound carries a durable phase-1 receipt ordinal. `firstReceiptKey`
-    is taken over admitted complete observations only; clock rollback does not reverse receipt order in a
-    linear history, and cross-author ties have deterministic recovery order.
+- <a id="ve-61"></a> **VE-61.** Every committed inbound is an event of its own. `firstWitness` is taken over
+    admitted complete observations only, in canonical event order; a clock that went back may order a
+    later receipt of one writer first, and the observations of distinct writers order deterministically after a merge.
 - <a id="ve-62"></a> **VE-62.** Invitation availability is a projection of the disclosed DID's lifecycle and grants no preparation, automatic output, rotation or ACK/error authority.
 
 - <a id="ve-63"></a> **VE-63.** Within-channel authorized variants share one execution; another channel stays separate after graph discovery. Regrouping and retirement never rewrite existing IDs.
@@ -2889,12 +2849,9 @@ derivation requires a new vault version.
     A complete submission imported later takes precedence; cancellation never permits a replacement package.
 - <a id="ve-70"></a> **VE-70.** Shared envelope bytes remain held by another non-erased message even after
     one message/root relation is erased.
-- <a id="ve-71"></a> **VE-71.** Each new duplicate observation receives a fresh ordinal; exact re-ingest
-    does not. Admission reconciliation orders candidate observations in canonical
-    event order, not by receipt key; a later observation changes no committed intent.
-- <a id="ve-72"></a> **VE-72.** Restore, restart and loss of local caches recover the ordinal high-water mark
-    across all historical authors. Cross-author equal ordinals survive import
-    and sort by author on a tie; allocation resumes above the union's maximum.
+- <a id="ve-71"></a> **VE-71.** Each new duplicate observation is a new event; exact re-ingest is not.
+    Admission reconciliation orders candidate observations in canonical event order;
+    a later observation changes no committed intent.
 
 <a id="invitation-duplicate-and-recovery-regressions-ve-73-ve-89"></a>
 
@@ -2915,10 +2872,7 @@ derivation requires a new vault version.
 
 - <a id="ve-79"></a> **VE-79.** Crash recovery rebuilds local receipt/policy/proof state without redelivery or automatic protocol effects. A saved response cannot become a different-channel notification.
 
-- <a id="ve-80"></a> **VE-80.** Distinct events sharing a receipt `(author, ordinal)` pair remain history
-    with a projected receipt-integrity conflict, not a full-import failure.
-    The conflict is a diagnostic only: it withholds neither admission nor a pure ACK, an ACK witness or an address confirmation.
-- <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same complete receipt ordering; older same-channel duplicates affect future selection only, never a committed intent.
+- <a id="ve-81"></a> **VE-81.** Every event-set permutation produces the same order of observations; older same-channel duplicates affect future selection only, never a committed intent.
 
 
 - <a id="ve-84"></a> **VE-84.** contact.merged and contact.channelsSet change display only; operation evidence, executions, ACK authorization, denials and erasure facts remain unchanged.

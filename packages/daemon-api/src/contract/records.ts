@@ -139,7 +139,7 @@ export type VerificationStatus =
   | { status: "invalid"; because: string }
   | { status: "conflict"; because: string };
 
-export type DiagnosticKind = "input" | "observations" | "contradicting" | "receipt-integrity" | "intent" | "outcome" | "effect" | "work" | "remote-error";
+export type DiagnosticKind = "input" | "observations" | "contradicting" | "intent" | "outcome" | "effect" | "work" | "remote-error";
 
 export interface Diagnostic {
   kind: DiagnosticKind;
@@ -252,7 +252,6 @@ export interface MissingResponse {
   messageId: MessageId;
   effectType: string;
   channelId: ChannelId;
-  /** none while the input's receipt is in an integrity conflict */
   entries: ManualEntry[];
 }
 

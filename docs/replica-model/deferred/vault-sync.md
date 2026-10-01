@@ -10,7 +10,7 @@ alone cannot make disconnected executors observe a rotation simultaneously.
 Before enabling multiple active executors, this extension must specify their
 admission/dispatch coordination and offline availability tradeoff. Historical
 admissions remain facts after merge; raw delivery is not application acceptance,
-and receipt ordinal ordering cannot serve as a global rotation cutoff.
+and canonical event order cannot serve as a global rotation cutoff.
 
 <!-- suite-navigation:start -->
 [Suite guide](../README.md) · Deferred extension · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)

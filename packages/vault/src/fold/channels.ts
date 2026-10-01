@@ -21,10 +21,10 @@ import { methodPublicKey } from "../peer-document.js";
 import { channelOf, decisionFactId, didKeyName, inboundMessageId, observationFactId, transitionFactId } from "../ids.js";
 import { agreementKey, decodePublicKey, type DecodedPublicKey, type KeyType } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
-import type { AuthorId, Channel, Did, DidId, EventCid, MessageId, VaultData } from "../types.js";
+import type { Channel, Did, DidId, EventCid, VaultData } from "../types.js";
 import type { EvidenceCheck, ReadObject } from "./evidence.js";
 import type { LocalDidEntity, RouteFold } from "./routes.js";
-import { groupBy, type VaultEventSet } from "./set.js";
+import type { VaultEventSet } from "./set.js";
 
 /**
  * Whether a receipt's own authentication evidence is all here and
@@ -42,18 +42,6 @@ export interface Source {
   /** the actual pair; null for an anonymous observation, while the local endpoint is unknown, and for a standing in conflict */
   readonly channel: Channel | null;
   readonly standing: Standing;
-}
-
-/** A receipt's place in first-receipt order: its exact ordinal, then its author. */
-export type ReceiptKey = { readonly ordinal: bigint; readonly author: AuthorId };
-
-export interface ReceiptIntegrity {
-  /** one past the largest ordinal any author ever assigned, erased messages included */
-  readonly nextReceiptOrdinal: bigint;
-  /** each set of distinct observations one author gave the same ordinal */
-  readonly conflicts: readonly (readonly VaultEvent<"message.in">[])[];
-  /** the logical messages those observations belong to: no new ACK target */
-  readonly affected: ReadonlySet<MessageId>;
 }
 
 /**
@@ -91,7 +79,6 @@ export interface Decision {
 
 export interface ChannelEvidence {
   readonly sources: ReadonlyMap<EventCid, Source>;
-  readonly receipts: ReceiptIntegrity;
   /** every source that brought a proof, by its event */
   readonly carriers: ReadonlyMap<EventCid, Carrier>;
   readonly decisions: ReadonlyMap<EventCid, Decision>;
@@ -125,7 +112,7 @@ export function foldChannelEvidence(set: VaultEventSet, routes: RouteFold, check
     if (source === undefined || source.channel === null || source.standing.status !== "complete") return false;
     return source.event.data.fromPrior === null || (carriers.get(id)?.facts.length ?? 0) > 0;
   };
-  return { sources, receipts: foldReceipts(set), carriers, decisions: foldDecisions(set, routes, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
+  return { sources, carriers, decisions: foldDecisions(set, routes, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
 }
 
 /**
@@ -201,29 +188,6 @@ export function keyAgreementTypeOf(local: LocalDidEntity): KeyType | null {
     if (err instanceof InvalidDidDocument || err instanceof InvalidPublicKey) return null;
     throw err;
   }
-}
-
-export const receiptOrderKey = (event: VaultEvent<"message.in">): ReceiptKey => ({ ordinal: BigInt(event.data.receiptOrdinal), author: event.author });
-
-export function compareReceiptKeys(a: ReceiptKey, b: ReceiptKey): number {
-  if (a.ordinal !== b.ordinal) return a.ordinal < b.ordinal ? -1 : 1;
-  return a.author < b.author ? -1 : a.author > b.author ? 1 : 0;
-}
-
-export function foldReceipts(set: VaultEventSet): ReceiptIntegrity {
-  let max = 0n;
-  const byKey = groupBy(set.of("message.in"), (event) => `${event.author} ${event.data.receiptOrdinal}`);
-  const conflicts: VaultEvent<"message.in">[][] = [];
-  const affected = new Set<MessageId>();
-  for (const group of byKey.values()) {
-    const ordinal = BigInt(group[0]!.data.receiptOrdinal);
-    if (ordinal > max) max = ordinal;
-    if (group.length < 2) continue;
-    conflicts.push(group);
-    for (const event of group) affected.add(event.data.messageId);
-  }
-  conflicts.sort((a, b) => compareReceiptKeys(receiptOrderKey(a[0]!), receiptOrderKey(b[0]!)));
-  return { nextReceiptOrdinal: max + 1n, conflicts, affected };
 }
 
 /** Each proof read against its own carrier alone: one carrier's verdict says nothing about another's. */

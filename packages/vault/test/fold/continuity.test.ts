@@ -28,10 +28,10 @@ import { IAT, asPeer, blocked, channel, factsOf, noObjects, peerDid, proof, rece
 
 const fold = (scene: Scene, keys: Keys, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
 
-const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer, ordinal: number) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), ordinal });
+const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer) });
 
-const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer, ordinal: number) =>
-  receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), ordinal, fromPrior: await proof(peerKeys, predecessor, successor) });
+const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer) =>
+  receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), fromPrior: await proof(peerKeys, predecessor, successor) });
 
 const observation = (source: Event, local: { did: Channel["localDid"] }, peer: { did: Channel["peerDid"] }) => ({ kind: "address-observed", id: `receipt:${source.cid}:observation`, at: channel(local, peer), carriedTransition: null, receipt: source.cid });
 
@@ -86,9 +86,9 @@ const unsigned = (header: Record<string, unknown>, payload: Record<string, unkno
 describe("the projection", () => {
   it("names each fact by the CID of the event it derives from, references evidence by that CID, and is the same over every order of the events", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
-    const old = proofFreeReceipt(scene, a0, b0, 1);
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
-    const other = proofFreeReceipt(scene, a1, b0, 3);
+    const old = proofFreeReceipt(scene, a0, b0);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const other = proofFreeReceipt(scene, a1, b0);
     const decision = await rotation(scene, keys, { from: a0, peer: b1, to: a1, source: carrier });
     const vault = await fold(scene, keys);
     expect(vault.continuity.facts).toEqual(
@@ -106,10 +106,10 @@ describe("the projection", () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const jwt = await proof(peerKeys, b0, b1);
     const root = resolved(scene, a0.didId, b1);
-    const first = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: jwt });
-    const second = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: jwt });
+    const first = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt });
+    const second = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: jwt });
     const shortIssuer = await resign(peerKeys, b0, { alg: "EdDSA", typ: "JWT", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { iss: b0.did, sub: b1.longFormDid, iat: IAT });
-    const waiting = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 3, fromPrior: shortIssuer });
+    const waiting = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: shortIssuer });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.facts).toEqual(byId([...factsOf(first, a0, b0, b1), ...factsOf(second, a0, b0, b1)]));
@@ -127,9 +127,9 @@ describe("the projection", () => {
 describe("a peer link", () => {
   it("replaces the peer in its own channel — head, supersession, confirmation and ACK path — and leaves the same peer DID's unrelated channel alone", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
-    const old = proofFreeReceipt(scene, a0, b0, 1);
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
-    proofFreeReceipt(scene, a1, b0, 3);
+    const old = proofFreeReceipt(scene, a0, b0);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    proofFreeReceipt(scene, a1, b0);
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.conflicts).toEqual([]);
@@ -158,8 +158,8 @@ describe("a channel", () => {
   it("no fact mentions is its own head; one a saved rotation leaves has no head until the peer confirms the predecessor, and never falls back to the old pair", async () => {
     const { scene, keys, a0, a1, b0, b2 } = await vaults();
     const manual = await rotation(scene, keys, { from: a0, peer: b0, to: a1 });
-    proofFreeReceipt(scene, a1, b0, 1);
-    proofFreeReceipt(scene, a0, b2, 2);
+    proofFreeReceipt(scene, a1, b0);
+    proofFreeReceipt(scene, a0, b2);
     let vault = await fold(scene, keys);
     let c = vault.continuity;
     expect(vault.channels.decisions.get(manual.cid)!.status.status).toBe("candidate");
@@ -177,7 +177,7 @@ describe("a channel", () => {
     expect(c.decisionsIn(channel(a0, b2))).toEqual([]);
     expectSameOverEveryOrder(scene, vault.checks, [channel(a0, b0), channel(a1, b2)]);
 
-    proofFreeReceipt(scene, a0, b0, 3);
+    proofFreeReceipt(scene, a0, b0);
     vault = await fold(scene, keys);
     c = vault.continuity;
     expect(c.status(manual.cid)).toEqual({ status: "verified" });
@@ -190,7 +190,7 @@ describe("a channel", () => {
 
   test("an address is confirmed for new work by an admitted observation alone: the model confirms by every usable one, a saved decision rests on those, and confirmedBy names the first admitted", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
-    const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), ordinal: 1, admitted: false });
+    const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), admitted: false });
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1 });
     let vault = await fold(scene, keys);
     expect(vault.continuity.model.confirmation(a0.did, b0.did)).toMatchObject({ status: "confirmed", observations: [{ id: `receipt:${unadmitted.cid}:observation` }] });
@@ -199,14 +199,14 @@ describe("a channel", () => {
     expect(vault.continuity.head(channel(a0, b0))).toEqual(channel(a1, b0));
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const later = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), ordinal: 2 });
+    const later = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0) });
     vault = await fold(scene, keys);
     expect(vault.continuity.confirmedBy(a0.did, b0.did)?.event.cid).toBe(later.cid);
     expect(vault.continuity.confirmedBy(a0.did, a0.did)).toBeNull();
     expect(vault.continuity.confirmedBy(a1.did, b0.did)).toBeNull();
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), ordinal: 3, wire: later.data.wireMessageId, overrides: { intentHash: "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash } });
+    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire: later.data.wireMessageId, overrides: { intentHash: "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash } });
     vault = await fold(scene, keys);
     expect(vault.inbound.ofSource(later.cid)!.status).toEqual({ status: "conflict", because: "2 intents are admitted for one input" });
     const admitted = [later, contradicting].map((source) => observation(source, a0, b0).id);
@@ -219,7 +219,7 @@ describe("a channel", () => {
 
   test("a decision is confirmed by its own source, which does not depend on the decision", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     const sourced = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
     const { continuity } = await fold(scene, keys);
     expect(continuity.status(sourced.cid)).toEqual({ status: "verified" });
@@ -231,7 +231,7 @@ describe("a channel", () => {
     const { scene, keys, a0, a1, a2, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const wire = uuidv7() as WireMessageId;
-    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
+    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
     const invalid = await rotation(scene, keys, { from: a0, peer: b0, to: a1, fromPrior: await proof(keys, a0, a2) });
     const conflict = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: anonymous });
     const pending = await rotation(scene, keys, { from: a0, peer: b0, to: { didId: "019b7000-0000-7000-8000-000000000c00" as Local["didId"], did: a1.did, longFormDid: a1.longFormDid } });
@@ -250,10 +250,10 @@ describe("a channel", () => {
 describe("a join", () => {
   it("pairs both successors when a local and a peer replacement leave the same pair, in any order, and transports each replacement to the other's successor", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1, b2 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
-    const elsewhere = await receiptCarryingProof(scene, peerKeys, a2, b0, b1, 3);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const elsewhere = await receiptCarryingProof(scene, peerKeys, a2, b0, b1);
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.conflicts).toEqual([]);
@@ -289,9 +289,9 @@ describe("a join", () => {
 
   it("reuses the decision throughout its peer-only context: a second successor from the same predecessor competes, extending the successor needs its own confirmation", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     const first = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
     const extension = await rotation(scene, keys, { from: a1, peer: b1, to: a2 });
     let vault = await fold(scene, keys);
     expect(vault.continuity.status(extension.cid)).toMatchObject({ status: "pending-history" });
@@ -300,7 +300,7 @@ describe("a join", () => {
     expect(vault.continuity.decisionsIn(channel(a1, b0)).map((d) => d.event)).toEqual([extension]);
     expect(vault.continuity.conflicts).toEqual([]);
 
-    proofFreeReceipt(scene, a1, b1, 3);
+    proofFreeReceipt(scene, a1, b1);
     vault = await fold(scene, keys);
     expect(vault.continuity.status(extension.cid)).toEqual({ status: "verified" });
     expect(vault.continuity.head(channel(a0, b0))).toEqual(channel(a2, b1));
@@ -340,8 +340,8 @@ describe("a join", () => {
 describe("conflicts", () => {
   test("competing peer successors in one local-only context, straight from one pair or across a local link, mask every channel involved and choose no winner", async () => {
     const direct = await vaults();
-    const one = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b1, 1);
-    const two = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b2, 2);
+    const one = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b1);
+    const two = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b2);
     let vault = await fold(direct.scene, direct.keys);
     let c = vault.continuity;
     const { a0, a1, b0, b1, b2 } = direct;
@@ -358,10 +358,10 @@ describe("conflicts", () => {
     expectSameOverEveryOrder(direct.scene, vault.checks);
 
     const across = await vaults();
-    const source = proofFreeReceipt(across.scene, across.a0, across.b0, 1);
+    const source = proofFreeReceipt(across.scene, across.a0, across.b0);
     await rotation(across.scene, across.keys, { from: across.a0, peer: across.b0, to: across.a1, source });
-    await receiptCarryingProof(across.scene, across.peerKeys, across.a0, across.b0, across.b1, 2);
-    const late = await receiptCarryingProof(across.scene, across.peerKeys, across.a1, across.b0, across.b2, 3);
+    await receiptCarryingProof(across.scene, across.peerKeys, across.a0, across.b0, across.b1);
+    const late = await receiptCarryingProof(across.scene, across.peerKeys, across.a1, across.b0, across.b2);
     vault = await fold(across.scene, across.keys);
     c = vault.continuity;
     expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0), channel(a1, b0)].sort(compareChannels) } }]);
@@ -375,8 +375,8 @@ describe("conflicts", () => {
 
   test("a cycle of replacements grants nothing, and a join that would pair a DID with itself is refused as an identity collision", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
-    const forth = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-    const back = await receiptCarryingProof(scene, peerKeys, a0, b1, b0, 2);
+    const forth = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const back = await receiptCarryingProof(scene, peerKeys, a0, b1, b0);
     let vault = await fold(scene, keys);
     let c = vault.continuity;
     expect(c.conflicts).toEqual([{ conflict: { kind: "cycle", channels: [channel(a0, b0), channel(a0, b1)].sort(compareChannels), facts: [`receipt:${forth.cid}:transition`, `receipt:${back.cid}:transition`].sort() }, channels: [channel(a0, b0), channel(a0, b1)].sort(compareChannels) }]);
@@ -388,10 +388,10 @@ describe("conflicts", () => {
     expectSameOverEveryOrder(scene, vault.checks);
 
     const identity = await vaults();
-    const source = proofFreeReceipt(identity.scene, identity.a0, identity.b0, 1);
+    const source = proofFreeReceipt(identity.scene, identity.a0, identity.b0);
     await rotation(identity.scene, identity.keys, { from: identity.a0, peer: identity.b0, to: identity.a1, source });
     const ours = asPeer(identity.a1);
-    const claimed = receipt(identity.scene, { local: identity.a0, peer: ours, resolution: resolved(identity.scene, identity.a0.didId, ours), ordinal: 2, fromPrior: await proof(identity.peerKeys, identity.b0, ours) });
+    const claimed = receipt(identity.scene, { local: identity.a0, peer: ours, resolution: resolved(identity.scene, identity.a0.didId, ours), fromPrior: await proof(identity.peerKeys, identity.b0, ours) });
     vault = await fold(identity.scene, identity.keys);
     c = vault.continuity;
     expect(vault.channels.positive(claimed.cid)).toBe(true);
@@ -405,10 +405,10 @@ describe("conflicts", () => {
     const forked = await vaults();
     {
       const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = forked;
-      const first = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-      await receiptCarryingProof(scene, peerKeys, a0, b1, b2, 2);
+      const first = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+      await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
       expect((await fold(scene, keys)).continuity.head(channel(a0, b0))).toEqual(channel(a0, b2));
-      await receiptCarryingProof(scene, peerKeys, a0, b1, b3, 3);
+      await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
       const vault = await fold(scene, keys);
       const c = vault.continuity;
       expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b1)] }, channels: [channel(a0, b1), channel(a0, b2), channel(a0, b3)].sort(compareChannels) }]);
@@ -422,11 +422,11 @@ describe("conflicts", () => {
     const cyclic = await vaults();
     {
       const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = cyclic;
-      const first = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-      await receiptCarryingProof(scene, peerKeys, a0, b1, b2, 2);
-      await receiptCarryingProof(scene, peerKeys, a0, b2, b3, 3);
+      const first = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+      await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
+      await receiptCarryingProof(scene, peerKeys, a0, b2, b3);
       expect((await fold(scene, keys)).continuity.head(channel(a0, b0))).toEqual(channel(a0, b3));
-      await receiptCarryingProof(scene, peerKeys, a0, b3, b2, 4);
+      await receiptCarryingProof(scene, peerKeys, a0, b3, b2);
       const vault = await fold(scene, keys);
       const c = vault.continuity;
       expect(c.conflicts).toMatchObject([{ conflict: { kind: "cycle", channels: [channel(a0, b2), channel(a0, b3)].sort(compareChannels) } }]);
@@ -444,9 +444,9 @@ describe("conflicts", () => {
 describe("authority behind a conflict", () => {
   it("lets a carrier a conflict masks confirm no decision: the decision waits for a witness the conflict does not reach", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1, b2, b3 } = await vaults();
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b2, 2);
-    const beyond = await receiptCarryingProof(scene, peerKeys, a0, b1, b3, 3);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b2);
+    const beyond = await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
     const manual = await rotation(scene, keys, { from: a0, peer: b3, to: a1 });
     let vault = await fold(scene, keys);
     let c = vault.continuity;
@@ -462,7 +462,7 @@ describe("authority behind a conflict", () => {
     expect(c.head(channel(a0, b1))).toBeNull();
     expectSameOverEveryOrder(scene, vault.checks, [channel(a1, b3)]);
 
-    proofFreeReceipt(scene, a0, b3, 4);
+    proofFreeReceipt(scene, a0, b3);
     vault = await fold(scene, keys);
     c = vault.continuity;
     expect(c.confirmedBy(a0.did, b3.did)).not.toBeNull();
@@ -475,12 +475,12 @@ describe("authority behind a conflict", () => {
   it("keeps a sourced decision to its masked source whatever else confirms the predecessor, and transports nothing of it through a join until an unmasked decision joins", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1, b2, b3 } = await vaults();
     const b4 = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b04" as Peer["didId"]);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b2, 2);
-    const beyond = await receiptCarryingProof(scene, peerKeys, a0, b1, b3, 3);
-    proofFreeReceipt(scene, a0, b3, 4);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b2);
+    const beyond = await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
+    proofFreeReceipt(scene, a0, b3);
     const sourced = await rotation(scene, keys, { from: a0, peer: b3, to: a1, source: beyond });
-    const onward = await receiptCarryingProof(scene, peerKeys, a0, b3, b4, 5);
+    const onward = await receiptCarryingProof(scene, peerKeys, a0, b3, b4);
     let vault = await fold(scene, keys);
     let c = vault.continuity;
     expect(c.conflicts).toHaveLength(1);
@@ -509,12 +509,12 @@ describe("authority behind a conflict", () => {
     const { scene, keys, peerKeys, a0, a1, a2, b2, b3 } = await vaults();
     const a3 = await createdDid(scene, keys, "019b6a10-12c0-7410-89ab-38e54b097c22" as Local["didId"], ROUTE, MEDIATED);
     const b4 = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b04" as Peer["didId"]);
-    const localSource = proofFreeReceipt(scene, a2, b2, 1);
-    const forkSource = proofFreeReceipt(scene, a3, b3, 2);
+    const localSource = proofFreeReceipt(scene, a2, b2);
+    const forkSource = proofFreeReceipt(scene, a3, b3);
     const good = await rotation(scene, keys, { from: a2, peer: b2, to: a1, source: localSource });
     const forkOne = await rotation(scene, keys, { from: a3, peer: b3, to: a1, source: forkSource });
-    const first = await receiptCarryingProof(scene, peerKeys, a2, b2, b3, 3);
-    const next = await receiptCarryingProof(scene, peerKeys, a2, b3, b4, 4);
+    const first = await receiptCarryingProof(scene, peerKeys, a2, b2, b3);
+    const next = await receiptCarryingProof(scene, peerKeys, a2, b3, b4);
     let vault = await fold(scene, keys);
     let c = vault.continuity;
     expect(c.conflicts).toEqual([]);
@@ -546,10 +546,10 @@ describe("authority behind a conflict", () => {
 
     const control = await vaults();
     const a3Again = await createdDid(control.scene, control.keys, a3.didId, ROUTE, MEDIATED);
-    const controlSource = proofFreeReceipt(control.scene, a3Again, b3, 1);
+    const controlSource = proofFreeReceipt(control.scene, a3Again, b3);
     await rotation(control.scene, control.keys, { from: a3Again, peer: b3, to: a1, source: controlSource });
     await rotation(control.scene, control.keys, { from: a3Again, peer: b3, to: a0, source: controlSource });
-    const onward = await receiptCarryingProof(control.scene, control.peerKeys, a2, b3, b4, 2);
+    const onward = await receiptCarryingProof(control.scene, control.peerKeys, a2, b3, b4);
     const independent = await rotation(control.scene, control.keys, { from: a2, peer: b4, to: a1, source: onward });
     vault = await fold(control.scene, control.keys);
     c = vault.continuity;
@@ -565,9 +565,9 @@ describe("authority behind a conflict", () => {
 describe("denial", () => {
   it("follows the history through a conflicted branch: a fork lets no successor escape a denial", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 1);
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b2, 2);
-    await receiptCarryingProof(scene, peerKeys, a0, b1, b3, 3);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b2);
+    await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
     const denial = blocked(scene, a0, b0, true);
     const vault = await fold(scene, keys);
     const c = vault.continuity;
@@ -579,10 +579,10 @@ describe("denial", () => {
 
   it("covers the pair itself, and its successors through links and joins only when the denial says so", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
-    await receiptCarryingProof(scene, peerKeys, a2, b0, b1, 3);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a2, b0, b1);
     const pair = blocked(scene, a0, b0);
     const successors = blocked(scene, a0, b0, true);
     const vault = await fold(scene, keys);
@@ -602,13 +602,13 @@ describe("the proof boundary", () => {
     const root = resolved(scene, a0.didId, b1);
     const kid = `${b0.longFormDid}${AUTHENTICATION_METHOD}`;
     const claims = { iss: b0.longFormDid, sub: b1.longFormDid, iat: IAT };
-    const wrongAlg = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: unsigned({ alg: "ES256", kid }, claims) });
-    const wrongTyp = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: unsigned({ alg: "EdDSA", typ: "text/plain", kid }, claims) });
-    const foreignKid = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 3, fromPrior: unsigned({ alg: "EdDSA", kid: `${b1.did}${AUTHENTICATION_METHOD}` }, claims) });
-    const selfSubject = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 4, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, sub: b0.did }) });
-    const notTheSender = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 5, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, sub: b0.did.replace(/.$/, "1") }) });
-    const window = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 6, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, exp: IAT + 60 }) });
-    const shortIssuer = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 7, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { ...claims, iss: b0.did }) });
+    const wrongAlg = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "ES256", kid }, claims) });
+    const wrongTyp = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "EdDSA", typ: "text/plain", kid }, claims) });
+    const foreignKid = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "EdDSA", kid: `${b1.did}${AUTHENTICATION_METHOD}` }, claims) });
+    const selfSubject = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, sub: b0.did }) });
+    const notTheSender = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, sub: b0.did.replace(/.$/, "1") }) });
+    const window = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: unsigned({ alg: "EdDSA", kid }, { ...claims, exp: IAT + 60 }) });
+    const shortIssuer = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { ...claims, iss: b0.did }) });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.status(wrongAlg.cid)).toEqual({ status: "invalid", because: "alg is EdDSA" });
@@ -629,9 +629,9 @@ describe("the proof boundary", () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b1);
     const claims = { iss: b0.longFormDid, sub: b1.longFormDid, iat: IAT };
-    const shortKid = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 1, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, claims) });
-    const shortSubject = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 2, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", typ: "application/jwt", kid: `${b0.longFormDid}${AUTHENTICATION_METHOD}` }, { ...claims, sub: b1.did }) });
-    const lowerTyp = receipt(scene, { local: a0, peer: b1, resolution: root, ordinal: 3, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", typ: "jwt", kid: `${b0.longFormDid}${AUTHENTICATION_METHOD}` }, claims) });
+    const shortKid = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, claims) });
+    const shortSubject = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", typ: "application/jwt", kid: `${b0.longFormDid}${AUTHENTICATION_METHOD}` }, { ...claims, sub: b1.did }) });
+    const lowerTyp = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", typ: "jwt", kid: `${b0.longFormDid}${AUTHENTICATION_METHOD}` }, claims) });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     for (const event of [shortKid, shortSubject, lowerTyp]) {
@@ -648,9 +648,9 @@ describe("the proof boundary", () => {
     const { scene, keys, peerKeys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const kid = `${b0.longFormDid}${AUTHENTICATION_METHOD}`;
-    const addressed = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid }, { iss: b0.longFormDid, aud: a0.did, iat: IAT }) });
-    const bare = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 2, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid }, { iss: b0.longFormDid, iat: IAT }) });
-    const plain = proofFreeReceipt(scene, a0, b0, 3);
+    const addressed = receipt(scene, { local: a0, peer: b0, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid }, { iss: b0.longFormDid, aud: a0.did, iat: IAT }) });
+    const bare = receipt(scene, { local: a0, peer: b0, resolution: root, fromPrior: await resign(peerKeys, b0, { alg: "EdDSA", kid }, { iss: b0.longFormDid, iat: IAT }) });
+    const plain = proofFreeReceipt(scene, a0, b0);
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     for (const event of [addressed, bare]) {
@@ -671,18 +671,18 @@ describe("status and witness", () => {
   it("give each carrier one of its states and each source what it witnesses, a contradiction over an absence", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
     const root1 = resolved(scene, a0.didId, b1);
-    const proofFree = proofFreeReceipt(scene, a0, b0, 1);
+    const proofFree = proofFreeReceipt(scene, a0, b0);
     const shortIss = await resign(peerKeys, b2, { alg: "EdDSA", typ: "JWT", kid: `${b2.did}${AUTHENTICATION_METHOD}` }, { iss: b2.did, sub: b3.longFormDid, iat: IAT });
-    const pendingProof = receipt(scene, { local: a0, peer: b3, resolution: resolved(scene, a0.didId, b3), ordinal: 2, fromPrior: shortIss });
+    const pendingProof = receipt(scene, { local: a0, peer: b3, resolution: resolved(scene, a0.didId, b3), fromPrior: shortIss });
     const toShortForm = await resign(peerKeys, b0, { alg: "EdDSA", typ: "JWT", kid: `${b0.longFormDid}${AUTHENTICATION_METHOD}` }, { iss: b0.longFormDid, sub: b1.did, iat: IAT });
-    const pendingHistory = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1, { short: true }), ordinal: 3, presentedDid: b1.did, fromPrior: toShortForm });
-    const invalid = receipt(scene, { local: a0, peer: b1, resolution: root1, ordinal: 4, fromPrior: "not-a-jwt" });
+    const pendingHistory = receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1, { short: true }), presentedDid: b1.did, fromPrior: toShortForm });
+    const invalid = receipt(scene, { local: a0, peer: b1, resolution: root1, fromPrior: "not-a-jwt" });
     const [authentication] = authorizedMethodIds(b1.resolution.document, "authentication");
     const signingKey = resolved(scene, a0.didId, b1, { peerPublicKey: methodPublicKey(b1.resolution.document, authentication!) });
-    const contradicted = receipt(scene, { local: a0, peer: b1, resolution: signingKey, ordinal: 5, fromPrior: await proof(peerKeys, b0, b1) });
-    const verified = receipt(scene, { local: a0, peer: b1, resolution: root1, ordinal: 6, fromPrior: await proof(peerKeys, b0, b1) });
+    const contradicted = receipt(scene, { local: a0, peer: b1, resolution: signingKey, fromPrior: await proof(peerKeys, b0, b1) });
+    const verified = receipt(scene, { local: a0, peer: b1, resolution: root1, fromPrior: await proof(peerKeys, b0, b1) });
     const wire = uuidv7() as WireMessageId;
-    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root1, ordinal: 7, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
+    const anonymous = receipt(scene, { local: a0, peer: b0, resolution: root1, wire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), wire), peerResolutionEventCid: null, did: null, presentedDid: null } });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.status(proofFree.cid)).toEqual({ status: "not-present" });
@@ -710,9 +710,9 @@ describe("status and witness", () => {
 
   test("without the checks beside the fold, every link waits and no channel is replaced", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0, 1);
+    const source = proofFreeReceipt(scene, a0, b0);
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1, 2);
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
     const set = VaultEventSet.of(scene.events);
     const unchecked = foldVault(set).continuity;
     expect(unchecked.facts).toEqual([]);

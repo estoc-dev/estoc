@@ -16,7 +16,7 @@ describe("held roots", () => {
     const attachment = rawCidOfBytes(new Uint8Array([4]));
     const first = intent(scene, a0, b0, { bodyCid: body, attachmentCids: [attachment] });
     const second = intent(scene, a0, b0, { bodyCid: body });
-    const inbound = receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { bodyCid: attachment } });
+    const inbound = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { bodyCid: attachment } });
     const document = root.data.documentCid;
     expect(held(scene.events)).toEqual(new Set([document, body, attachment]));
     expect(retainedRoots(VaultEventSet.of(scene.events)).filter((edge) => edge.cid === first.cid)).toEqual([
@@ -56,7 +56,7 @@ describe("held roots", () => {
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
     const first = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
-    receipt(scene, { local: a0, peer: b0, resolution: root, ordinal: 1, overrides: { ack: [out.data.messageId] } });
+    receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [out.data.messageId] } });
     const heldOf = async () => (await foldVaultChecked(scene.set(), keys, noObjects)).held;
     expect((await heldOf()).has(first.data.envelopeCid)).toBe(true);
 

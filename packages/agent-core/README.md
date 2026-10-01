@@ -51,7 +51,7 @@ its sender read from what the vault already holds and never from the
 network, and recorded as an observation with its rotation proof as it
 came. Before the receipt's lock is released, the vault's ordered
 admission pass decides, among every observation still owed one in
-first-receipt order, whether this one is admitted for application use,
+canonical event order, whether this one is admitted for application use,
 so that the writer lock is the one sequence every receipt and
 admission goes through whichever way the delivery came. Whether the
 proof verifies, which channel the input is established in and what it

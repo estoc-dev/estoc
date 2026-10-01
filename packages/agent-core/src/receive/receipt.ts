@@ -9,9 +9,9 @@
  * writer lock over the fold read there: the recipient is checked
  * again, the resolution evidence is committed or reused, then the
  * observation is committed with its objects, naming that evidence by
- * the ID its commit returned and taking the next receipt ordinal. Each
- * delivery is its own observation with its own ordinal, a message
- * delivered again included; the fold groups observations of one input.
+ * the ID its commit returned. Each delivery is its own observation, a
+ * message delivered again included; the fold groups observations of
+ * one input.
  * Whether the vault already held one of the same input is read under
  * that lock too, and told with the record: only the first observation
  * of an input may earn automatic work, whichever runtime recorded the
@@ -51,7 +51,6 @@ import {
   type Keys,
   type MessageIn,
   type ReadPlaintext,
-  type ReceiptOrdinal,
   type VaultEvent,
   type WireMessageId,
 } from "@estoc/vault";
@@ -64,7 +63,7 @@ export function receiptOf(runtime: VaultRuntime, keys: Keys): Receipt {
   return (authenticated) => recordReceipt(runtime, keys, authenticated);
 }
 
-type Observed = Omit<MessageIn, "receiptOrdinal" | "peerResolutionEventCid">;
+type Observed = Omit<MessageIn, "peerResolutionEventCid">;
 
 type Objects = { cid: Cid; source: Uint8Array }[];
 
@@ -141,14 +140,14 @@ function observationOf({ recipient, sender, delivery }: Authenticated, read: Rea
  * Why the vault would refuse the observation, asked before anything is
  * committed: input refused at its last commit must not leave evidence
  * behind it, and must not come again for a refusal that never changes.
- * The ordinal and the event reference are not known yet; placeholders
- * of their kind stand in, since only their shape is checked.
+ * The event reference is not known yet; a placeholder of its kind
+ * stands in, since only its shape is checked.
  */
 const SOME_RESOLUTION = rawCidOfBytes(new Uint8Array(32)) as unknown as EventReference<"peer.resolved">;
 
 function unrecordable(observed: Observed, authenticated: boolean): string | null {
   try {
-    vaultDraft("message.in", { ...observed, receiptOrdinal: "1" as ReceiptOrdinal, peerResolutionEventCid: authenticated ? SOME_RESOLUTION : null });
+    vaultDraft("message.in", { ...observed, peerResolutionEventCid: authenticated ? SOME_RESOLUTION : null });
     return null;
   } catch (err) {
     if (err instanceof InvalidPayload) return `the message does not record: ${err.message}`;
@@ -165,9 +164,8 @@ async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticat
       return { outcome: "deferred", reason: `${recipient.did} may not receive yet: ${fold.routes.dids.get(recipient.didId)?.faults.join("; ")}`, watch: recipientWatch([recipient.didId]) };
   }
   const first = !fold.set.of("message.in").some((event) => event.data.messageId === observed.messageId);
-  const receiptOrdinal = String(fold.channels.receipts.nextReceiptOrdinal) as ReceiptOrdinal;
   const resolved = sender === null ? null : await commitResolution(held, { resolution: sender.resolution, localKeyName: recipient.localKeyName, peerPublicKey: sender.peerPublicKey });
-  const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, receiptOrdinal, peerResolutionEventCid: (resolved?.cid ?? null) as EventReference<"peer.resolved"> | null })])).map(readVaultEvent);
+  const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, peerResolutionEventCid: (resolved?.cid ?? null) as EventReference<"peer.resolved"> | null })])).map(readVaultEvent);
   const cid = (event as VaultEvent<"message.in">).cid as EventReference<"message.in">;
   const { fold: admitted } = await admitReceipts(held, await scanVault(held, keys));
   const live = first && admitted.inbound.ofSource(cid)?.firstWitness?.source.event.cid === cid;

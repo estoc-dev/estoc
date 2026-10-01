@@ -20,7 +20,7 @@ import { vaultDraft, type Keys, type VaultData, type VaultDraft, type VaultEvent
 
 import { decide } from "../procedure.js";
 
-/** The acknowledgements the complete witnesses earn and no record repeats yet, in message order, then first-receipt order. */
+/** The acknowledgements the complete witnesses earn and no record repeats yet, in message order, then canonical event order. */
 export function acknowledgementDrafts(fold: VaultFold): VaultDraft<"delivery.acknowledged">[] {
   const drafts: VaultDraft<"delivery.acknowledged">[] = [];
   const outbounds = [...fold.outbound.outbounds.values()].sort((a, b) => (a.messageId < b.messageId ? -1 : a.messageId > b.messageId ? 1 : 0));

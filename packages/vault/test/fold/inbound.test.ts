@@ -41,14 +41,14 @@ async function resign(keys: Keys, didId: DidId, header: Record<string, unknown>,
     .sign(await importJWK(key.privateJwk(), "EdDSA"));
 }
 
-type Observation = { local: Local; peer: Peer; ordinal: number; wire: string; hash?: MessageHash; fromPrior?: string; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR };
+type Observation = { local: Local; peer: Peer; wire: string; hash?: MessageHash; fromPrior?: string; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; at?: string };
 
 /** An authenticated receipt under its own resolution, of the given wire and intent. */
 const observe = (scene: Scene, o: Observation) =>
   receipt(
     scene,
-    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer), ordinal: o.ordinal, wire: o.wire, fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides } },
-    { author: o.author ?? AUTHOR }
+    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer), wire: o.wire, fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides } },
+    { author: o.author ?? AUTHOR, at: o.at }
   );
 
 /** The inbound fold as comparable data: every execution by its verdicts and members, the observations no execution places. */
@@ -64,7 +64,6 @@ function picture(vault: VaultFold) {
       intentHash: execution.intentHash,
       kind: execution.kind,
       status: execution.status,
-      firstReceiptKey: execution.firstReceiptKey,
       erased: execution.erased,
     })),
     anonymous: inbound.anonymous.map(({ event }) => event.cid),
@@ -75,14 +74,14 @@ function picture(vault: VaultFold) {
 const expectSameOverEveryOrder = (scene: Scene, checks: Required<VaultChecks>) => expectOrderFree(scene.events, (set) => picture(foldVault(set, checks)));
 
 describe("an inbound input", () => {
-  it("has one execution in its channel for every observation of it, in first-receipt order; another channel or wire ID is another input", async () => {
+  it("has one execution in its channel for every observation of it, in canonical event order; another channel or wire ID is another input", async () => {
     const { scene, keys, a0, a1, b0, b1 } = await vaults();
     const wire = uuidv7();
-    const later = observe(scene, { local: a0, peer: b0, ordinal: 2, wire, author: AUTHOR2 });
-    const first = observe(scene, { local: a0, peer: b0, ordinal: 1, wire });
-    const atA1 = observe(scene, { local: a1, peer: b0, ordinal: 3, wire });
-    const fromB1 = observe(scene, { local: a0, peer: b1, ordinal: 4, wire });
-    const otherWire = observe(scene, { local: a0, peer: b0, ordinal: 5, wire: uuidv7() });
+    const first = observe(scene, { local: a0, peer: b0, wire });
+    const later = observe(scene, { local: a0, peer: b0, wire, author: AUTHOR2 });
+    const atA1 = observe(scene, { local: a1, peer: b0, wire });
+    const fromB1 = observe(scene, { local: a0, peer: b1, wire });
+    const otherWire = observe(scene, { local: a0, peer: b0, wire: uuidv7() });
     const vault = await fold(scene, keys);
     const { inbound } = vault;
     expect(inbound.executions.size).toBe(4);
@@ -96,7 +95,6 @@ describe("an inbound input", () => {
       intentHash: HASH,
       kind: "application",
       status: { status: "complete" },
-      firstReceiptKey: { ordinal: 1n, author: AUTHOR },
       erased: false,
     });
     expect(execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness])).toEqual([
@@ -119,35 +117,35 @@ describe("an inbound input", () => {
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
-  it("orders receipts by exact ordinal, then author, whatever the events' canonical order", async () => {
+  it("orders the observations of an input by their events' canonical order, whatever order and author recorded them, the first admitted complete one its witness", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const wire = uuidv7();
-    const ten = observe(scene, { local: a0, peer: b0, ordinal: 10, wire, author: AUTHOR });
-    const nineByB = observe(scene, { local: a0, peer: b0, ordinal: 9, wire, author: AUTHOR2 });
-    const nineByA = observe(scene, { local: a0, peer: b0, ordinal: 9, wire, author: AUTHOR });
+    const third = observe(scene, { local: a0, peer: b0, wire, author: AUTHOR, at: "2026-09-12T00:00:02.000Z" });
+    const second = observe(scene, { local: a0, peer: b0, wire, author: AUTHOR2, at: "2026-09-12T00:00:01.000Z" });
+    const first = observe(scene, { local: a0, peer: b0, wire, author: AUTHOR, at: "2026-09-12T00:00:00.000Z" });
     const vault = await fold(scene, keys);
-    const execution = vault.inbound.ofMessage(ten.data.messageId)!;
-    expect(execution.members.map(({ source }) => source.event.cid)).toEqual([nineByA.cid, nineByB.cid, ten.cid]);
-    expect(execution.firstReceiptKey).toEqual({ ordinal: 9n, author: AUTHOR });
+    const execution = vault.inbound.ofMessage(third.data.messageId)!;
+    expect(execution.members.map(({ source }) => source.event.cid)).toEqual([first.cid, second.cid, third.cid]);
+    expect(execution.firstWitness!.source.event.cid).toBe(first.cid);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
   it("is in conflict for good when admitted observations carry different intents, whatever later becomes of their witnesses", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
     const wire = uuidv7();
-    const plain = observe(scene, { local: a0, peer: b1, ordinal: 1, wire });
-    const carried = observe(scene, { local: a0, peer: b1, ordinal: 2, wire, hash: OTHER_HASH, fromPrior: await proof(peerKeys, b0, b1) });
+    const plain = observe(scene, { local: a0, peer: b1, wire });
+    const carried = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: await proof(peerKeys, b0, b1) });
     let vault = await fold(scene, keys);
     const conflict = { status: "conflict", because: "2 intents are admitted for one input" };
     let execution = vault.inbound.ofMessage(plain.data.messageId)!;
-    expect(execution).toMatchObject({ status: conflict, intentHash: null, kind: null, firstReceiptKey: null });
+    expect(execution).toMatchObject({ status: conflict, intentHash: null, kind: null });
     expect(execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness])).toEqual([
       [plain.cid, true, { status: "complete" }],
       [carried.cid, true, { status: "complete" }],
     ]);
     expectSameOverEveryOrder(scene, vault.checks);
 
-    observe(scene, { local: a0, peer: b2, ordinal: 3, wire: uuidv7(), fromPrior: await proof(peerKeys, b0, b2) });
+    observe(scene, { local: a0, peer: b2, wire: uuidv7(), fromPrior: await proof(peerKeys, b0, b2) });
     blocked(scene, a0, b1);
     vault = await fold(scene, keys);
     execution = vault.inbound.ofMessage(plain.data.messageId)!;
@@ -164,21 +162,21 @@ describe("an inbound input", () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const wire = uuidv7();
     const shortIssuer = await resign(peerKeys, b0.didId, { alg: "EdDSA", typ: "JWT", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { iss: b0.did, sub: b1.longFormDid, iat: IAT });
-    const refused = observe(scene, { local: a0, peer: b1, ordinal: 1, wire, hash: OTHER_HASH, fromPrior: "not a JWT" });
-    const waiting = observe(scene, { local: a0, peer: b1, ordinal: 2, wire, hash: OTHER_HASH, fromPrior: shortIssuer });
+    const refused = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: "not a JWT" });
+    const waiting = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: shortIssuer });
     let vault = await fold(scene, keys);
     let execution = vault.inbound.ofMessage(refused.data.messageId)!;
-    expect(execution).toMatchObject({ status: { status: "pending", because: "no observation of the input is admitted" }, intentHash: null, kind: null, firstReceiptKey: null });
+    expect(execution).toMatchObject({ status: { status: "pending", because: "no observation of the input is admitted" }, intentHash: null, kind: null });
     expect(execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness])).toEqual([
       [refused.cid, false, { status: "invalid", because: expect.stringMatching(/^not a compact JWT/) }],
       [waiting.cid, false, { status: "pending", because: "the proof is not yet verified" }],
     ]);
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const plain = observe(scene, { local: a0, peer: b1, ordinal: 3, wire });
+    const plain = observe(scene, { local: a0, peer: b1, wire });
     vault = await fold(scene, keys);
     execution = vault.inbound.ofMessage(refused.data.messageId)!;
-    expect(execution).toMatchObject({ status: { status: "complete" }, intentHash: HASH, kind: "application", firstReceiptKey: { ordinal: 3n, author: AUTHOR } });
+    expect(execution).toMatchObject({ status: { status: "complete" }, intentHash: HASH, kind: "application" });
     expect(execution.members.map(({ source, positive }) => [source.event.cid, positive])).toEqual([
       [refused.cid, false],
       [waiting.cid, false],
@@ -194,22 +192,21 @@ describe("an inbound input", () => {
       [waiting.cid, true, "complete"],
       [plain.cid, true, "complete"],
     ]);
-    expect(execution).toMatchObject({ status: { status: "conflict", because: "2 intents are admitted for one input" }, intentHash: null, firstReceiptKey: null });
+    expect(execution).toMatchObject({ status: { status: "conflict", because: "2 intents are admitted for one input" }, intentHash: null });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
   it("lists an observation whose own authentication is incomplete or contradicted as a sibling of its input, or as unplaced, and an anonymous one apart", async () => {
     const { scene, keys, a0, b0, b1 } = await vaults();
     const wire = uuidv7();
-    const complete = observe(scene, { local: a0, peer: b0, ordinal: 1, wire });
-    const missingResolution = observe(scene, { local: a0, peer: b0, ordinal: 2, wire, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
-    const wrongResolution = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b1), ordinal: 3, wire, presentedDid: b0.longFormDid });
-    const alone = observe(scene, { local: a0, peer: b0, ordinal: 4, wire: uuidv7(), overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
+    const complete = observe(scene, { local: a0, peer: b0, wire });
+    const missingResolution = observe(scene, { local: a0, peer: b0, wire, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
+    const wrongResolution = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b1), wire, presentedDid: b0.longFormDid });
+    const alone = observe(scene, { local: a0, peer: b0, wire: uuidv7(), overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
     const anonymousWire = uuidv7() as WireMessageId;
     const anonymous = observe(scene, {
       local: a0,
       peer: b0,
-      ordinal: 5,
       wire: anonymousWire,
       overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), anonymousWire), peerResolutionEventCid: null, presentedDid: null, did: null },
     });
@@ -260,7 +257,7 @@ describe("an inbound input", () => {
       ["application", { msgType: "https://didcomm.org/trust-ping/2.0/ping" }],
       ["application", {}],
     ];
-    const observed = shapes.map(([kind, overrides], i) => [kind, observe(scene, { local: a0, peer: b0, ordinal: i + 1, wire: uuidv7(), overrides })] as const);
+    const observed = shapes.map(([kind, overrides]) => [kind, observe(scene, { local: a0, peer: b0, wire: uuidv7(), overrides })] as const);
     const erased = observed[0]![1];
     scene.add("message.erased", { messageId: erased.data.messageId, dropCids: [erased.data.bodyCid], because: "user" });
     const vault = await fold(scene, keys);

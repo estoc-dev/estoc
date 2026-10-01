@@ -99,9 +99,7 @@ the seed has not yet confirmed the local entity, conflict when evidence
 contradicts it, the entity is in conflict or the peer key selected
 agrees no keys or is on another curve than the entity's own
 key-agreement key, each contradiction looked for as soon as what it
-needs is here and always reported over an absence; `foldReceipts`, the receipt
-ordinals' high-water mark and the messages one author's reused ordinal
-affects; `foldCarriers`, each source that brought a `from_prior`: the
+needs is here and always reported over an absence; `foldCarriers`, each source that brought a `from_prior`: the
 package's precheck refuses, before any document, what the profile
 decides on its own — the algorithm, the media type, a `kid` of another
 DID, a subject that is the issuer or not the authenticated sender, a
@@ -154,9 +152,7 @@ admission names, in canonical event order, each `eligible`, `deferred`
 for evidence, `refused` by current policy — the peer's replacement, the
 channel's denial, a conflict in the continuity its proof needs, a
 contradiction of the intent its input admitted — or `invalid`, for the
-runtime to walk when it records admissions, the fold recording none; a
-receipt-integrity conflict withholds no admission, staying a
-diagnostic), the
+runtime to walk when it records admissions, the fold recording none), the
 invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
 disclosure as an address handed out, which whoever holds it writes to
 in a pair of their own, no receipt under it taking anything from the
@@ -172,7 +168,7 @@ whose selection holds a channel), the inbound
 inputs (`fold/inbound.ts`: `foldInbound` groups every authenticated
 observation whose own authentication is complete into the input its
 canonical sender, recipient and wire ID name, one execution per input
-in its channel, its members in first-receipt order; the members an
+in its channel, its members in canonical event order; the members an
 effective admission names must agree on the intent, and a
 disagreement is a `conflict` for good, whatever later becomes of
 those members' witnesses; the input is `complete` once one admitted
@@ -185,7 +181,7 @@ listed and counted for nothing, those with no input to join are
 `unplaced`, and the `anonymous` ones are apart; each complete input
 has the agreed intent's `kind` — application, pure ACK in its exact
 shape, any other Empty message, ping-response or problem report — its
-`firstReceiptKey` for ordering established inputs, and whether an
+`firstWitness`, which orders established inputs, and whether an
 erasure names it), the outbound
 messages (`fold/outbound.ts`: `foldOutbound` reads, for each message
 ID, the intent its `message.out` records must agree on and the
@@ -232,7 +228,7 @@ the seed's and the documents', `objectReader` reading the vault's
 objects with absence, damage and excess size each as no verdict;
 `scanVault` is one scan of a vault, the checks and the fold), the views
 (`fold/views.ts`, reached as `fold.views`: a channel with its inputs in
-first-receipt order, the outbounds fixed to it, the problem reports
+canonical event order, the outbounds fixed to it, the problem reports
 peers sent beside the outbound each one's thread names when the carrier
 may answer it, and its send gate — the local DID live and not
 replaced here by a decision, made or still waiting, the pair not

@@ -14,7 +14,7 @@ import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, ef
 import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
-import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short, isReceiptOrdinal } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type {
   Channel,
   Cid,
@@ -30,7 +30,6 @@ import type {
   MessageId,
   PackageId,
   PublicKey,
-  ReceiptOrdinal,
   RouteId,
   VaultData,
   VaultEventType,
@@ -76,7 +75,6 @@ const publicKey: Check<PublicKey> = (value, at) => {
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
 const hash: Check<MessageHash> = (value, at) => (isMessageHash(value) ? (value as MessageHash) : fail(at, "an unpadded base64url SHA-256"));
 const compactJwt: Check<string> = (value, at) => (isCompactJwt(value) ? value : fail(at, "a compact JWT"));
-const receiptOrdinal: Check<ReceiptOrdinal> = (value, at) => (isReceiptOrdinal(value) ? (value as ReceiptOrdinal) : fail(at, "a canonical positive decimal"));
 const headers: Check<VaultData["message.out"]["headers"]> = (value, at) => {
   try {
     return checkHeaders(value, at);
@@ -230,7 +228,6 @@ const messageIn = checked(
   shape({
     messageId: derived<MessageId>(),
     wireMessageId: nonEmpty as Check<WireMessageId>,
-    receiptOrdinal,
     intentHash: hash,
     plaintextHash: hash,
     localKeyName: keyName,

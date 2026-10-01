@@ -233,23 +233,6 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  test("a saved pure ACK whose carrier's input is under a receipt conflict is carried like any other: the manual dispatch posts it once, and the replaced peer's ignored observation of the same wire ID arriving after changes nothing", async () => {
-    const { alice, bob } = await parties();
-    const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
-    const asPrior = { ...bob, didId: prior.didId, did: prior.did, longFormDid: prior.longFormDid };
-    const { carrier, fold: before, messageId } = await carrierRequestingItsReceipt(alice, bob, asPrior, proof);
-    const source = before.channels.sources.get(carrier)!.event.data;
-    await observed(alice, bob, "collision", { type: BASIC_MESSAGE, body: { content: "same ordinal" } }, alice, source.receiptOrdinal);
-    const wire = posting(accepted);
-    submitted(await dispatch(alice.runtime, alice.keys, new LiveAction(messageId, "manual"), { didcomm, fetch: wire.fetch }));
-    const ignored = await delivered(alice, asPrior, { id: "carrier" });
-    const again = await dispatch(alice.runtime, alice.keys, new LiveAction(messageId, "manual"), { didcomm, fetch: wire.fetch });
-    const f = await fold(alice);
-    expect([f.channels.receipts.affected.has(source.messageId), wire.posts.length, again, f.dispositions.disposition(ignored).status]).toEqual([true, 1, { outcome: "none", messageId, because: "submitted" }, "ignored-superseded"]);
-    expect(f.outbound.outbounds.get(messageId)!).toMatchObject({ effect: { status: "complete" }, work: { kind: "none" }, outcome: { status: "submitted" } });
-    await closeAll(alice, bob);
-  });
-
   test("a peer address a verified replacement has moved on from is carried to no more: the queued intent gets no package, the prepared package is called by nothing, first or retried, a call already made records its acceptance, and the successor takes a new message", async () => {
     const { alice, bob } = await parties();
     const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);

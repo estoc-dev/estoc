@@ -21,13 +21,13 @@ async function resign(keys: Keys, local: { didId: Local["didId"] }, header: Reco
     .sign(await importJWK(key.privateJwk(), "EdDSA"));
 }
 
-type Observed = { local: Local; peer: Peer; ordinal: number; wire?: string; hash?: MessageHash; fromPrior?: string; short?: boolean; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; admitted?: boolean };
+type Observed = { local: Local; peer: Peer; wire?: string; hash?: MessageHash; fromPrior?: string; short?: boolean; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; admitted?: boolean };
 
 /** A receipt under its own resolution, admitted only when asked. */
 const observe = (scene: Scene, o: Observed) =>
   receipt(
     scene,
-    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer, { short: o.short }), ordinal: o.ordinal, wire: o.wire ?? uuidv7(), fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides }, admitted: o.admitted ?? false },
+    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer, { short: o.short }), wire: o.wire ?? uuidv7(), fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides }, admitted: o.admitted ?? false },
     { author: o.author ?? AUTHOR }
   );
 
@@ -43,31 +43,31 @@ function picture(vault: VaultFold) {
 const expectSameOverEveryOrder = (scene: Scene, checks: Required<VaultChecks>) => expectOrderFree(scene.events, (set) => picture(foldVault(set, checks)));
 
 describe("an admission", () => {
-  it("is effective when its source is positive evidence on its own, a receipt-integrity conflict withholding nothing, pending while the source or its evidence is still to arrive, and invalid for good when the source can never be positive or the record names no observation", async () => {
+  it("is effective when its source is positive evidence on its own, pending while the source or its evidence is still to arrive, and invalid for good when the source can never be positive or the record names no observation", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
     const wire = uuidv7();
-    const plain = observe(scene, { local: a0, peer: b0, ordinal: 1, wire });
+    const plain = observe(scene, { local: a0, peer: b0, wire });
     const effective = admitted(scene, plain);
-    const carried = observe(scene, { local: a0, peer: b1, ordinal: 2, fromPrior: await proof(peerKeys, b0, b1) });
+    const carried = observe(scene, { local: a0, peer: b1, fromPrior: await proof(peerKeys, b0, b1) });
     const ofCarried = admitted(scene, carried);
-    const unresolved = observe(scene, { local: a0, peer: b2, ordinal: 3, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
+    const unresolved = observe(scene, { local: a0, peer: b2, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
     const waitingForResolution = admitted(scene, unresolved);
     const b4 = await undocumentedPeer(peerKeys);
-    const undocumented = observe(scene, { local: a0, peer: b2, ordinal: 4, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b2.longFormDid, iat: IAT }) });
+    const undocumented = observe(scene, { local: a0, peer: b2, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b2.longFormDid, iat: IAT }) });
     const waitingForProof = admitted(scene, undocumented);
     const absent = scene.add("message.admitted", { sourceEventCid: fakeEventCid() as EventReference<"message.in"> });
     const anonymousWire = uuidv7() as WireMessageId;
-    const anonymous = observe(scene, { local: a0, peer: b0, ordinal: 5, wire: anonymousWire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), anonymousWire), peerResolutionEventCid: null, presentedDid: null, did: null } });
+    const anonymous = observe(scene, { local: a0, peer: b0, wire: anonymousWire, overrides: { messageId: anonymousMessageId(didKeyName(a0.didId, "key-agreement"), anonymousWire), peerResolutionEventCid: null, presentedDid: null, did: null } });
     const ofAnonymous = admitted(scene, anonymous);
-    const contradicted = observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b1), ordinal: 6, presentedDid: b0.longFormDid });
+    const contradicted = observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b1), presentedDid: b0.longFormDid });
     const ofContradicted = admitted(scene, contradicted);
-    const refusedProof = observe(scene, { local: a0, peer: b1, ordinal: 7, fromPrior: "not a JWT" });
+    const refusedProof = observe(scene, { local: a0, peer: b1, fromPrior: "not a JWT" });
     const ofRefusedProof = admitted(scene, refusedProof);
     const disclosure = invitation(scene, a0);
     const misnamed = scene.add("message.admitted", { sourceEventCid: disclosure.cid as unknown as EventReference<"message.in"> });
-    const repeated = observe(scene, { local: a0, peer: b0, ordinal: 8, wire });
-    observe(scene, { local: a0, peer: b1, ordinal: 9 });
-    const clashing = observe(scene, { local: a0, peer: b1, ordinal: 9 });
+    const repeated = observe(scene, { local: a0, peer: b0, wire });
+    observe(scene, { local: a0, peer: b1 });
+    const clashing = observe(scene, { local: a0, peer: b1 });
     const ofClashing = admitted(scene, clashing);
 
     const vault = await fold(scene, keys);
@@ -103,20 +103,20 @@ describe("a disposition", () => {
   it("is admitted by an effective admission whatever policy says now, refused for good by what refuses the source, ignored once the peer moved on without one, and pending otherwise with what stands in the way", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
     const wire = uuidv7();
-    const first = observe(scene, { local: a0, peer: b0, ordinal: 1, wire });
+    const first = observe(scene, { local: a0, peer: b0, wire });
     const ofFirst = admitted(scene, first);
-    const consistent = observe(scene, { local: a0, peer: b0, ordinal: 2, wire });
-    const contradicting = observe(scene, { local: a0, peer: b0, ordinal: 3, wire, hash: OTHER_HASH });
-    const refusedProof = observe(scene, { local: a0, peer: b1, ordinal: 4, fromPrior: "not a JWT" });
-    const carrier = observe(scene, { local: a0, peer: b3, ordinal: 5, fromPrior: await proof(peerKeys, b2, b3) });
-    const late = observe(scene, { local: a0, peer: b2, ordinal: 6 });
-    const lateAdmitted = observe(scene, { local: a0, peer: b2, ordinal: 7, admitted: true });
+    const consistent = observe(scene, { local: a0, peer: b0, wire });
+    const contradicting = observe(scene, { local: a0, peer: b0, wire, hash: OTHER_HASH });
+    const refusedProof = observe(scene, { local: a0, peer: b1, fromPrior: "not a JWT" });
+    const carrier = observe(scene, { local: a0, peer: b3, fromPrior: await proof(peerKeys, b2, b3) });
+    const late = observe(scene, { local: a0, peer: b2 });
+    const lateAdmitted = observe(scene, { local: a0, peer: b2, admitted: true });
     blocked(scene, a0, b1);
-    const denied = observe(scene, { local: a0, peer: b1, ordinal: 8 });
-    const unresolved = observe(scene, { local: a0, peer: b1, ordinal: 9, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
-    const recorded = observe(scene, { local: a0, peer: b1, ordinal: 10, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] }, admitted: true });
-    const clashing = observe(scene, { local: a0, peer: b1, ordinal: 11 });
-    const clashingToo = observe(scene, { local: a0, peer: b1, ordinal: 11, admitted: true });
+    const denied = observe(scene, { local: a0, peer: b1 });
+    const unresolved = observe(scene, { local: a0, peer: b1, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
+    const recorded = observe(scene, { local: a0, peer: b1, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] }, admitted: true });
+    const clashing = observe(scene, { local: a0, peer: b1 });
+    const clashingToo = observe(scene, { local: a0, peer: b1, admitted: true });
 
     const vault = await fold(scene, keys);
     const { dispositions } = vault;
@@ -140,8 +140,8 @@ describe("a disposition", () => {
   it("is ignored once the peer moved on while a saved admission of it still waits for the document of its proof's issuer, and admitted through that same admission once the document arrives", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const b4 = await undocumentedPeer(peerKeys);
-    const carrier = observe(scene, { local: a0, peer: b0, ordinal: 1, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b0.longFormDid, iat: IAT }), admitted: true });
-    observe(scene, { local: a0, peer: b1, ordinal: 2, fromPrior: await proof(peerKeys, b0, b1), admitted: true });
+    const carrier = observe(scene, { local: a0, peer: b0, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b0.longFormDid, iat: IAT }), admitted: true });
+    observe(scene, { local: a0, peer: b1, fromPrior: await proof(peerKeys, b0, b1), admitted: true });
     const before = await fold(scene, keys);
     expect([before.channels.sources.get(carrier.cid)!.standing.status, before.admissions.of(carrier.cid).map(({ status }) => status), before.continuity.superseded({ localDid: a0.did, peerDid: b0.did })]).toEqual(["complete", [{ status: "pending", because: "the source's proof is not yet verified" }], true]);
     expect([before.dispositions.disposition(carrier.cid), before.dispositions.candidate(carrier.cid)]).toEqual([{ status: "ignored-superseded" }, null]);
@@ -155,23 +155,23 @@ describe("a disposition", () => {
 });
 
 describe("the candidates", () => {
-  it("are every observation no effective or pending admission names, in canonical event order whatever their ordinals, each judged for good, then by what it lacks, then by current policy, a receipt-integrity conflict holding nothing against them", async () => {
+  it("are every observation no effective or pending admission names, in canonical event order, each judged for good, then by what it lacks, then by current policy", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
     const wire = uuidv7();
-    const first = observe(scene, { local: a0, peer: b3, ordinal: 1, wire, admitted: true });
-    const consistent = observe(scene, { local: a0, peer: b3, ordinal: 2, wire });
-    const contradicting = observe(scene, { local: a0, peer: b3, ordinal: 3, wire, hash: OTHER_HASH });
-    const refusedProof = observe(scene, { local: a0, peer: b1, ordinal: 4, fromPrior: "not a JWT" });
-    const unresolved = observe(scene, { local: a0, peer: b2, ordinal: 5, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
+    const first = observe(scene, { local: a0, peer: b3, wire, admitted: true });
+    const consistent = observe(scene, { local: a0, peer: b3, wire });
+    const contradicting = observe(scene, { local: a0, peer: b3, wire, hash: OTHER_HASH });
+    const refusedProof = observe(scene, { local: a0, peer: b1, fromPrior: "not a JWT" });
+    const unresolved = observe(scene, { local: a0, peer: b2, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
     const b4 = await undocumentedPeer(peerKeys);
-    const undocumented = observe(scene, { local: a0, peer: b2, ordinal: 6, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b2.longFormDid, iat: IAT }) });
-    const carrier = observe(scene, { local: a0, peer: b1, ordinal: 7, fromPrior: await proof(peerKeys, b0, b1) });
-    const superseded = observe(scene, { local: a0, peer: b0, ordinal: 8 });
+    const undocumented = observe(scene, { local: a0, peer: b2, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b2.longFormDid, iat: IAT }) });
+    const carrier = observe(scene, { local: a0, peer: b1, fromPrior: await proof(peerKeys, b0, b1) });
+    const superseded = observe(scene, { local: a0, peer: b0 });
     blocked(scene, a0, b2);
-    const denied = observe(scene, { local: a0, peer: b2, ordinal: 9 });
-    const recorded = observe(scene, { local: a0, peer: b2, ordinal: 10, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] }, admitted: true });
-    const clashing = observe(scene, { local: a0, peer: b3, ordinal: 1, author: AUTHOR2 });
-    const clashingToo = observe(scene, { local: a0, peer: b1, ordinal: 1, author: AUTHOR2 });
+    const denied = observe(scene, { local: a0, peer: b2 });
+    const recorded = observe(scene, { local: a0, peer: b2, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] }, admitted: true });
+    const clashing = observe(scene, { local: a0, peer: b3, author: AUTHOR2 });
+    const clashingToo = observe(scene, { local: a0, peer: b1, author: AUTHOR2 });
 
     const vault = await fold(scene, keys);
     expect(vault.dispositions.candidates.map(({ source, eligibility }) => [source.event.cid, eligibility])).toEqual([
@@ -193,9 +193,9 @@ describe("the candidates", () => {
 
   it("hold a proof-free receipt eligible in a conflicted context, since it witnesses on its own authentication, and refuse the carrier whose proof the conflict is about", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
-    const toB1 = observe(scene, { local: a0, peer: b1, ordinal: 1, fromPrior: await proof(peerKeys, b0, b1), admitted: true });
-    const toB2 = observe(scene, { local: a0, peer: b2, ordinal: 2, fromPrior: await proof(peerKeys, b0, b2) });
-    const plain = observe(scene, { local: a0, peer: b1, ordinal: 3 });
+    const toB1 = observe(scene, { local: a0, peer: b1, fromPrior: await proof(peerKeys, b0, b1), admitted: true });
+    const toB2 = observe(scene, { local: a0, peer: b2, fromPrior: await proof(peerKeys, b0, b2) });
+    const plain = observe(scene, { local: a0, peer: b1 });
     const vault = await fold(scene, keys);
     expect(vault.continuity.conflicted({ localDid: a0.did, peerDid: b0.did })).toBe(true);
     expect(vault.continuity.witness(toB1.cid).status).toBe("conflict");

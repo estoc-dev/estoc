@@ -173,7 +173,6 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
     {
       messageId: IN,
       wireMessageId: WIRE,
-      receiptOrdinal: "42",
       intentHash: "855qiA-zQ94SVOPYj2KnooWRNJAe1GB419LMTGLMwAs",
       plaintextHash: "dpPwT44Xre48u9xon4fUfvLOEQI6nYxQDzCCFnCJMK8",
       localKeyName: KEY,
@@ -454,12 +453,6 @@ describe("message.in", () => {
     presentedDid: null,
     did: null,
   };
-
-  it("takes a receipt ordinal as a positive decimal with no leading zero", () => {
-    accepts("message.in", { ...IN_DATA, receiptOrdinal: "1" }, [BODY, PHOTO]);
-    for (const receiptOrdinal of ["0", "042", "", "4.2", "1e3", " 1"]) rejects("message.in", { ...IN_DATA, receiptOrdinal }, [BODY, PHOTO], /receiptOrdinal/);
-    rejects("message.in", { ...IN_DATA, receiptOrdinal: 42 }, [BODY, PHOTO]);
-  });
 
   it("keeps normalized headers, the original proof string, the byte count and where it arrived", () => {
     accepts("message.in", { ...IN_DATA, pleaseAck: null, ack: [OUT, OUT], headers: { lang: "en" }, fromPrior: JWT, thid: "t", pthid: OOB }, [BODY, PHOTO]);

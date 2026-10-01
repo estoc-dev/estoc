@@ -20,7 +20,6 @@ import {
   type MediationId,
   type MintedDid,
   type PublicKey,
-  type ReceiptOrdinal,
   type VaultEvent,
   type VaultEventType,
   type WireMessageId,
@@ -216,21 +215,19 @@ export async function sealed(from: Sealer | null, to: string, extra: Partial<IMe
 
 export const kidOf = (packed: string): string => (JSON.parse(packed) as { recipients: { header: { kid: string } }[] }).recipients[0]!.header.kid;
 
-/** The peer's proof-free message observed at `at`: the peer's document pinned, the body stored, the observation committed under the next receipt ordinal — or the one given, to contradict a receipt — and nothing more: no admission is committed, so the observation waits for a pass. */
-export async function observed(party: DirectParty, peer: DirectParty, wire: string, plaintext: Record<string, unknown>, at: { didId: DidId; did: Did } = party, ordinal: ReceiptOrdinal | null = null): Promise<EventReference<"message.in">> {
+/** The peer's proof-free message observed at `at`: the peer's document pinned, the body stored, the observation committed and nothing more: no admission is committed, so the observation waits for a pass. */
+export async function observed(party: DirectParty, peer: DirectParty, wire: string, plaintext: Record<string, unknown>, at: { didId: DidId; did: Did } = party): Promise<EventReference<"message.in">> {
   const outcome = await resolve(peer.longFormDid, () => null);
   if (outcome.outcome !== "resolved") throw new Error(outcome.reason);
   const [peerPublicKey] = authorizedKeys(outcome.resolution, "keyAgreement").values();
   const resolved = await commitResolution(party.runtime, { resolution: outcome.resolution, localKeyName: didKeyName(at.didId, "key-agreement"), peerPublicKey: peerPublicKey as PublicKey });
   const read = readPlaintext({ typ: PLAINTEXT_TYP, id: wire, from: peer.longFormDid, to: [at.did], ...plaintext });
-  const receiptOrdinal = ordinal ?? (String((await scanVault(party.runtime.vault, party.keys)).channels.receipts.nextReceiptOrdinal) as ReceiptOrdinal);
   const [event] = await party.runtime.vault.commit(
     [{ cid: read.stored.bodyCid, source: read.stored.bytes }],
     [
       vaultDraft("message.in", {
         messageId: inboundMessageId(peer.did, at.did, wire as WireMessageId),
         wireMessageId: wire as WireMessageId,
-        receiptOrdinal,
         intentHash: read.intentHash,
         plaintextHash: read.plaintextHash,
         localKeyName: didKeyName(at.didId, "key-agreement"),
@@ -257,8 +254,8 @@ export async function observed(party: DirectParty, peer: DirectParty, wire: stri
 }
 
 /** The peer's proof-free message observed at `at` and admitted, as the receipt's own pass would leave it. */
-export async function received(party: DirectParty, peer: DirectParty, wire: string, plaintext: Record<string, unknown>, at: { didId: DidId; did: Did } = party, ordinal: ReceiptOrdinal | null = null): Promise<EventReference<"message.in">> {
-  const cid = await observed(party, peer, wire, plaintext, at, ordinal);
+export async function received(party: DirectParty, peer: DirectParty, wire: string, plaintext: Record<string, unknown>, at: { didId: DidId; did: Did } = party): Promise<EventReference<"message.in">> {
+  const cid = await observed(party, peer, wire, plaintext, at);
   await party.runtime.vault.commit([], [vaultDraft("message.admitted", { sourceEventCid: cid })]);
   return cid;
 }

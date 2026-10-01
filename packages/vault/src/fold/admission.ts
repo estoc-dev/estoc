@@ -23,13 +23,9 @@
  * several unadmitted observations of one input may coexist, waiting
  * for evidence, left by interrupted processing or merged from copies
  * run apart, and among those eligible the order is canonical, not the
- * order they were received in. A receipt-integrity conflict withholds
- * no admission: a candidate contradicting the admitted intent is
- * refused as any such candidate is, and a consistent duplicate harms
- * nothing. The
- * disposition sums it up for anyone shown the observation: refused,
- * admitted, ignored because the peer moved on, or still pending with
- * what stands in the way.
+ * order they were received in. The disposition sums it up for anyone
+ * shown the observation: refused, admitted, ignored because the peer
+ * moved on, or still pending with what stands in the way.
  */
 
 import { compareEvents } from "@estoc/event-store";

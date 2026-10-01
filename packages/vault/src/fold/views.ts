@@ -9,9 +9,9 @@
  * name, a shared DID or a merge. Nothing here appends an event.
  */
 
+import { compareEvents } from "@estoc/event-store";
 import { channelKey, compareChannels, sameChannel } from "../ids.js";
 import type { Channel, ContactId, Did, DidId, MessageId } from "../types.js";
-import { compareReceiptKeys } from "./channels.js";
 import type { Contact, ContactFold } from "./contacts.js";
 import type { Continuity } from "./continuity.js";
 import type { Execution, InboundFold } from "./inbound.js";
@@ -79,7 +79,7 @@ export interface ChannelView {
   readonly blocked: boolean;
   readonly conflicted: boolean;
   readonly send: SendGate;
-  /** the established and pending inputs in this channel, in first-receipt order, the pending ones last */
+  /** the established and pending inputs in this channel, in the canonical order of their first witnesses, the pending ones last */
   readonly inbound: readonly Execution[];
   /** the outbounds fixed to this channel, in message order */
   readonly outbound: readonly Outbound[];
@@ -141,7 +141,7 @@ function groupByChannel<T>(items: Iterable<T>, channelOf: (item: T) => Channel):
 
 function channelView(fold: ViewInputs, channel: Channel, executions: readonly Execution[], outbounds: readonly Outbound[]): ChannelView {
   const { continuity } = fold;
-  const inbound = [...executions].sort(byFirstReceipt);
+  const inbound = [...executions].sort(byFirstWitness);
   const errors: RemoteError[] = [];
   for (const execution of inbound) {
     if (execution.kind !== "error" || execution.firstWitness === null) continue;
@@ -160,11 +160,11 @@ function channelView(fold: ViewInputs, channel: Channel, executions: readonly Ex
   };
 }
 
-/** The complete inputs in first-receipt order, then the rest in message order: a pending input has no receipt an operation would freeze. */
-function byFirstReceipt(a: Execution, b: Execution): number {
-  if (a.firstReceiptKey !== null && b.firstReceiptKey !== null) return compareReceiptKeys(a.firstReceiptKey, b.firstReceiptKey) || cmp(a.messageId, b.messageId);
-  if (a.firstReceiptKey !== null) return -1;
-  if (b.firstReceiptKey !== null) return 1;
+/** The complete inputs in the canonical order of their first witnesses, then the rest in message order: a pending input has no witness an operation would freeze. */
+function byFirstWitness(a: Execution, b: Execution): number {
+  if (a.firstWitness !== null && b.firstWitness !== null) return compareEvents(a.firstWitness.source.event, b.firstWitness.source.event) || cmp(a.messageId, b.messageId);
+  if (a.firstWitness !== null) return -1;
+  if (b.firstWitness !== null) return 1;
   return cmp(a.messageId, b.messageId);
 }
 
