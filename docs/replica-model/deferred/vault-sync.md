@@ -100,11 +100,10 @@ layer and pickup controls but cannot open the sync payload.
 Every plaintext sync body contains `vault_anchor` equal to the local immutable
 vault anchor. Authentication also verifies that the sender matches a valid
 replica grant under the already-known selected mediation arrangement. A wrong
-anchor, invalid binding, wrong authenticated sender or locally retired peer
-is rejected before staging vault data, apart from the narrow retirement receipt
-exception below. Verified Peer long/short forms are normalized before identity
-comparison. A request cannot introduce a new trusted vault or mediation account
-by asserting it in its own body.
+anchor, invalid or conflicting binding, or wrong authenticated sender is
+rejected before staging vault data. Verified Peer long/short forms are normalized
+before identity comparison. A request cannot introduce a new trusted vault or
+mediation account by asserting it in its own body.
 
 `hello` is the only message accepted from a not-yet-known replica DID. It
 carries the signed grant and long-form resolution material through that grant.
@@ -115,8 +114,8 @@ then verify the grant inside. The encrypted grant cannot be its own decryption
 prerequisite. A reply to a pending `hello` is accepted only from its expected
 peer and must pass the same binding checks.
 The receiver independently verifies the known-account signature, document,
-seed-derived replica keys and local retirement state. A successful grant check
-permits synchronization while the peer's genuine `replica.created` event is
+seed-derived replica keys and absence of conflicting local bindings. A
+successful grant check permits synchronization while the peer's genuine `replica.created` event is
 being fetched; it does not synthesize that event or trust the mediator's list.
 
 A known peer has durable local operational state containing its verified grant
@@ -124,25 +123,15 @@ and document, vault/mediation binding, supported vault version and latest
 negotiated peer limits. This state is scoped to the local and peer replica DIDs;
 it is not tied to a socket or copied into another incarnation. A normal restart
 recovers it and does not make the peer unknown. Every message still checks
-authentication, the vault binding and current local retirement/conflict state;
-persisted verification never overrides a later retirement.
+authentication, the vault binding and current local identity-conflict state;
+persisted verification never overrides a conflicting binding.
 
-Retirement stops future sync with that incarnation once learned. The bounded
-[local self-retirement procedure](replica-mediation.md#portable-replica-events)
-permits only its final retirement notification after the local event is
-committed. After the normal anchor, sender/grant and batch-content checks, a
-receiver SHOULD return `stored` for a single-event batch whose sole event is
-`replica.retired`, authored by and naming that sender's replica ID, if the CID
-is already accepted or passes the normal atomic import. This includes a CID
-first accepted through another active peer; no prior record of this sender's
-`batch_id` is required. Record the verified immutable batch binding before
-replying, and reject reuse of that ID with different contents as usual.
-For a known retired sender, this exception permits only that retirement event
-and its terminal receipt/retry, with no other events or object attachments.
-No other traffic from a known retired sender is admitted, and the receipt
-does not authorize further vault-data exchange. Old-author events relayed by
-an active authorized peer remain acceptable. There is no claim of instantaneous
-retirement knowledge or revocation of a shared seed.
+Replica retirement belongs to
+[deferred administration](replica-mediation.md#deferred-administration).
+This initial profile has no retirement notification or terminal-receipt exception.
+All accepted batches and receipts use the ordinary authorization and durability
+rules. Being offline or absent from a mediator snapshot does not revoke a
+locally verified peer binding.
 
 <a id="messages"></a>
 
@@ -410,26 +399,21 @@ receipt completes that batch's replication attempt. A mediator 2xx and a
 pickup ACK are separate boundaries.
 
 Events learned by ingest may be relayed to another peer, including historical
-events of retired authors. Track which CIDs a peer has advertised/acknowledged
-to avoid echoing everything indefinitely. Transport/control messages, inventory
+events authored by other incarnations. Track which CIDs a peer has
+advertised/acknowledged to avoid echoing everything indefinitely.
+Transport/control messages, inventory
 pages and progress updates MUST NOT be appended as ordinary `message.in`,
 `message.out`, admission or delivery events. A duplicate CID causes no new
 portable event merely to record its arrival.
 
 Reconcile newly learned membership as part of worker discovery. Creating a
-batch for a new peer first verifies its grant and checks local retirement;
-retiring a peer cancels future sends to that incarnation without deleting the
-source's event history, apart from the terminal receipt described above. A
-stored receipt from a retired incarnation cannot authorize further publication
-to it.
-
-A mediator's `retired` status or `identity-conflict` response suspends only
-operational sends to the affected incarnation and exposes a diagnostic. It
-MUST NOT create a portable `replica.retired` event. Portable retirement comes
-only from validated vault events; recover the missing membership history from
-an active peer or backup. Operational suspension does not erase pending CIDs
-or count them as stored. If later authenticated reconciliation shows a matching
-active grant and there is no local retirement/conflict, sending may resume.
+batch for a new peer first verifies its grant and rejects conflicting local
+bindings. A mediator's `identity-conflict` response suspends only operational
+sends to the affected incarnation and exposes a diagnostic. It does not change
+portable membership. Recover the binding evidence from verified local history,
+an authorized peer or backup. Operational suspension does not erase pending
+CIDs or count them as stored. If later authenticated reconciliation shows a
+matching grant and there is no local identity conflict, sending may resume.
 
 At startup, reconnection, a new peer, lost progress or uncertain remote state,
 run a full inventory comparison. While active, repeat reconciliation at a
@@ -481,8 +465,8 @@ For a full reconciliation or initial catch-up:
    other union-held objects. Assemble and verify them outside the database
    transaction; network I/O MUST NOT hold the writer lock or a write transaction.
 5. Under the writer lock, re-plan the chosen subset against current accepted
-   events, all learned release evidence, membership/retirement and object health.
-   Recompute both held-root folds and `requiredRoots`. If prerequisites changed,
+   events, all learned release evidence, membership bindings/conflicts and
+   object health. Recompute both held-root folds and `requiredRoots`. If prerequisites changed,
    release the lock and obtain missing data or discard newly released staging.
 6. Atomically publish that subset and its required object additions or repairs
    using the vault's import boundary. Apply the existing sound-target reuse
@@ -516,7 +500,7 @@ no `stored` receipt until complete.
 Incremental publication uses the same subset and byte checks without obtaining
 an entire new inventory. Combine events where domain or release evidence is
 needed, and request/reconcile missing history. An independently applicable
-erasure/retirement subset is not blocked merely because another is awaiting
+erasure subset is not blocked merely because another is awaiting
 content. Invalid data is surfaced explicitly without holding unrelated work
 indefinitely or silently marking the inventory complete.
 
@@ -634,10 +618,10 @@ Enrollment proceeds as follows:
    replica. The new device can queue/stage this mail while catching up, but
    receiving it does not replace the required history synchronization.
 3. Discover peers through the mediator list and known portable membership.
-   Exclude listed tombstones and locally retired/conflicting identities, verify
-   each remaining active grant locally, and establish `hello` with usable peers.
+   Exclude conflicting identities, verify each remaining grant locally, and
+   establish `hello` with usable peers.
 4. Reconcile complete event inventories and required objects, including
-   retirements/erasure learned since the backup. Reconcile remote membership
+   membership and erasure facts learned since the backup. Reconcile registrations
    accordingly. CIDs already restored are ordinary duplicates.
 5. Continue incremental sync and drain shared mail queued since registration
    once its required history and domain prerequisites are available. Keep
@@ -684,13 +668,13 @@ Sync problem reports use prefix `e.estoc.vault-sync.` with suffixes
 the original request; any involved batch remains pending/failed, never stored.
 Responses disclose no vault data to an unauthenticated or unauthorized sender.
 `unauthorized-peer` reports a failed binding/authorization check or known local
-retirement/conflict, not a lost connection or normal restart. Recovered peer
+identity conflict, not a lost connection or normal restart. Recovered peer
 state remains subject to the checks in §2.
 
 The authenticated sync worker is scheduled independently of user-message
 outbounds and application effects. Its protocol retries do not authorize
 retries of an ordinary application message. Long-offline peers, expired
-mailboxes, mediator outages and explicit retirement are surfaced independently
+mailboxes, mediator outages and identity conflicts are surfaced independently
 of whether a user's local commit succeeded.
 
 The shared mediator can correlate registered replicas, endpoints, sizes and
@@ -708,8 +692,8 @@ These are proposed requirements; application-effect convergence requires the
 separate domain revision as well as transport tests.
 
 1. Peers with the same anchor and verified grants exchange data. A forged
-   discovery entry, wrong seed/account/anchor, mismatched sender or known retired
-   incarnation cannot obtain plaintext vault data.
+   discovery entry, wrong seed/account/anchor, mismatched sender or conflicting
+   identity cannot obtain plaintext vault data.
 2. Reordered and repeated identical events preserve exact CIDs/authors and
    add no extra portable events. Reusing a batch ID for different contents fails.
 3. A local commit followed by a crash before worker notification is eventually
@@ -763,18 +747,16 @@ separate domain revision as well as transport tests.
 19. Repackage an immutable batch under a fresh wire ID and discard the old ID.
     A delayed valid `stored` still advances only the matching peer/batch progress;
     the same batch ID from another peer or an unknown batch advances nothing.
-20. Apply a sender's final self-retirement batch directly, or first learn that
-    exact CID through an active third peer. Both paths follow the terminal
-    `stored` rule, including a previously unseen sender/batch pair and exact
-    receipt replay. Additional events/objects and conflicting batch contents
-    remain refused. A mediator retirement/conflict response suspends operational
-    sends without fabricating a portable retirement event or completing a batch.
+20. A mediator identity-conflict response suspends operational sends without
+    changing portable membership or completing a batch. Missing discovery rows
+    and offline peers do not remove verified membership; authenticated binding
+    reconciliation can resume suspended work once the conflict is resolved.
 21. Restart a receiver after a completed `hello` exchange, then deliver an
     existing batch without another `hello`. It recovers the verified binding
     and limits and completes the batch without human intervention. Resetting
     batch/inventory progress preserves that peer state; a newly learned local
-    retirement still prevents ordinary traffic. A crash during `hello` leaves
-    either a retryable pending exchange or durable verified state, never a
+    identity conflict still prevents traffic under that binding. A crash during
+    `hello` leaves either a retryable pending exchange or durable verified state, never a
     successful reply whose peer state existed only in memory.
 22. Initialize an account without Coordinate Mediation, then restore and enroll
     a second replica using that verified account intent. Account registration

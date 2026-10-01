@@ -42,6 +42,12 @@ not a dedicated sync-storage service. The first deployment profile uses one
 selected mediation arrangement. Additional devices initially enroll through
 encrypted SQLite restore; a simpler pairing UI can be added later.
 
+Replica retirement is deferred to a later human-initiated administration
+profile. The initial profile keeps registrations, including offline and replaced
+incarnations. [Deferred administration](replica-mediation.md#deferred-administration)
+must define an enforced maintenance boundary for concurrent and in-flight work;
+a manual trigger alone does not establish one.
+
 These documents specify the proposed transport and identity contract. They do
 not yet authorize multiple active application executors or claim that the
 current folds converge under independently generated automatic effects.
@@ -54,7 +60,7 @@ current folds converge under independently generated automatic effects.
 | --- | --- |
 | 1. Protocol and identity contract | The two drafts define vault/communication/replica identities, membership authority, shared versus private routing, transferred data and local progress. No runtime API is activated by their presence. |
 | 2. Multi-replica domain semantics | Revise owning specifications and prove two independently writable vaults can receive the same external mail, perform supported concurrent operations and merge without manufactured conflicts or unauthorized effects. |
-| 3. Replica mediation | Implement standalone account creation, account-authorized replica registration, append-only recipient controls, terminal replica retirement and independent pickup; verify equivalent SQLite and D1 atomicity. |
+| 3. Replica mediation | Implement standalone account creation, account-authorized replica registration, append-only membership/recipient bindings and independent pickup; verify equivalent SQLite and D1 atomicity. |
 | 4. Vault synchronization | Implement authenticated peer control handling, durable staging/retries, inventory and bounded atomic event/object imports; verify crash/expiry recovery. |
 | 5. Device workflow | Wire encrypted restore, fresh replica identity, enrollment, catch-up and device/sync status into daemon and app. |
 | 6. Integration | Exercise multiple Node/browser replicas, offline mail, concurrent writes, restore, missing objects and erasure over a real mediator. |
@@ -100,8 +106,8 @@ Before adopting the candidate events/key names, update
   bindings after remote-state loss. Existing bindings remain even when unknown
   locally or no longer eligible for new application work. DID/route retirement,
   blocking and rotation do not withdraw recipient registrations; application
-  admission and outbound selection remain separate. Replica retirement still
-  ends that replica's delivery membership. Message ACK/expiry still clears mail.
+  admission and outbound selection remain separate. Replica retirement is
+  deferred; message ACK/expiry still clears mail without removing membership.
 - Define semantic compatibility for independent observations and effects.
   Removing receipt ordinals does not make events from different authors and
   clocks byte-identical. Source-event references must retain their evidence
