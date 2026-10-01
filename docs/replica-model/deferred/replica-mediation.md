@@ -10,10 +10,12 @@
 > The mediator side is implemented in `mediator/`. Its wire contract is the
 > [mediator README](../../../mediator/README.md#replica-mediation), which
 > takes precedence wherever this document differs from it. It differs at
-> least here: membership and recipients are not append-only. A replica can be
-> removed (`remove`), and recipients are added and removed by
-> `recipient-update`, which replaces `recipient-add`, and listed by
-> `recipient-query`.
+> least here: creating the account and enrolling a replica are two controls,
+> `account-register` and `replica-add`, in place of `register`, so an account
+> can exist with no replica; `list` is `replica-list`; and membership and
+> recipients are not append-only. A replica can be removed
+> (`replica-remove`), a recipient can be removed (`recipient-remove`), and
+> recipients are listed by `recipient-list`.
 
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
 [Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)

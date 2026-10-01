@@ -18,6 +18,7 @@ import { isLongForm, longToShort } from "@estoc/did-peer";
 
 import type {
   AddRecipientResult,
+  AddReplicaOutcome,
   BlobKeep,
   BlobRow,
   FanOutOutcome,
@@ -26,12 +27,15 @@ import type {
   PackageBounds,
   PackageKey,
   RecipientPage,
-  RegisterOutcome,
+  RecipientPlace,
+  RegisterAccountOutcome,
   RemoveOutcome,
+  ReplicaAccount,
+  ReplicaAddition,
   ReplicaDelivery,
-  ReplicaRegistration,
   RosterPage,
   SharedRecipient,
+  SharedRecipientPage,
   ShareOutcome,
   StoredMessage,
   StoreOutcome,
@@ -475,36 +479,19 @@ export class SqlStore implements MediationStore {
     return row?.owner_did ?? null;
   }
 
-  /*
-   * One transaction. The account is created only if the replica's own insert
-   * is going to pass too, so no account is ever left without a replica; the
-   * rows read back afterwards say which of the outcomes it was.
-   */
-  async registerReplica({
+  async registerReplicaAccount({
     accountDid,
     accountLongForm,
     mediationId,
     mediator,
-    replicaId,
-    replicaDid,
-    replicaLongForm,
-    grant,
-    createAccount,
-    maxReplicas,
-  }: ReplicaRegistration): Promise<RegisterOutcome> {
-    const now = Date.now();
+    create,
+  }: ReplicaAccount): Promise<RegisterAccountOutcome> {
     const account = spellings(accountDid, accountLongForm);
-    const replica = spellings(replicaDid, replicaLongForm);
-    const replicaIsNoAccount = "NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did = ?)";
-    const enrolled = "(SELECT COUNT(*) FROM replicas WHERE account_did = ?)";
-    const active = `(SELECT COUNT(*) FROM replicas WHERE account_did = ? AND ${ACTIVE})`;
-
-    const [, , accounts, bound, members] = await this.batch([
+    const [, accounts] = await this.batch([
       {
         sql:
           "INSERT INTO replica_accounts (did, mediation_id, mediator, long_form, created_at) " +
-          `SELECT ?, ?, ?, ?, ? WHERE ? = 1 AND ? > 0 AND ${NOT_ORDINARY} AND ${NOT_ORDINARY} ` +
-          `AND ${replicaIsNoAccount} ` +
+          `SELECT ?, ?, ?, ?, ? WHERE ? = 1 AND ${NOT_ORDINARY} ` +
           "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?)) " +
           `AND ${NOT_SHARED_RECIPIENT} ` +
           "ON CONFLICT (did) DO NOTHING",
@@ -513,20 +500,47 @@ export class SqlStore implements MediationStore {
           mediationId,
           mediator,
           accountLongForm,
-          now,
-          createAccount ? 1 : 0,
-          maxReplicas,
+          Date.now(),
+          create ? 1 : 0,
           ...account,
           ...account,
-          ...replica,
-          ...replica,
-          replicaDid,
-          accountDid,
-          replicaDid,
-          accountDid,
-          replicaDid,
+          ...account,
+          ...account,
         ],
       },
+      {
+        sql: "SELECT mediation_id, mediator, created_at FROM replica_accounts WHERE did = ?",
+        params: [accountDid],
+      },
+    ]);
+
+    const held = (
+      accounts.rows as { mediation_id: string; mediator: string; created_at: number }[]
+    )[0];
+    if (held === undefined) {
+      return { outcome: create ? "conflict" : "refused" };
+    }
+    return held.mediation_id === mediationId && held.mediator === mediator
+      ? { outcome: "registered", registeredTime: Math.floor(held.created_at / 1000) }
+      : { outcome: "conflict" };
+  }
+
+  /* One transaction; the rows read back afterwards say which of the outcomes it was. */
+  async addReplica({
+    accountDid,
+    mediationId,
+    mediator,
+    replicaId,
+    replicaDid,
+    replicaLongForm,
+    grant,
+    maxReplicas,
+  }: ReplicaAddition): Promise<AddReplicaOutcome> {
+    const replica = spellings(replicaDid, replicaLongForm);
+    const enrolled = "(SELECT COUNT(*) FROM replicas WHERE account_did = ?)";
+    const active = `(SELECT COUNT(*) FROM replicas WHERE account_did = ? AND ${ACTIVE})`;
+
+    const [, accounts, bound, members] = await this.batch([
       {
         sql:
           "INSERT INTO replicas " +
@@ -534,7 +548,9 @@ export class SqlStore implements MediationStore {
           `SELECT ?, ?, ?, ${enrolled} + 1, ?, ?, ? ` +
           "WHERE EXISTS (SELECT 1 FROM replica_accounts " +
           "WHERE did = ? AND mediation_id = ? AND mediator = ?) " +
-          `AND ${NOT_ORDINARY} AND ${replicaIsNoAccount} AND ${NOT_SHARED_RECIPIENT} ` +
+          `AND ${NOT_ORDINARY} ` +
+          "AND NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did = ?) " +
+          `AND ${NOT_SHARED_RECIPIENT} ` +
           `AND ${active} < ? ` +
           "ON CONFLICT DO NOTHING",
         params: [
@@ -544,7 +560,7 @@ export class SqlStore implements MediationStore {
           accountDid,
           replicaLongForm,
           grant,
-          Math.floor(now / 1000),
+          Math.floor(Date.now() / 1000),
           accountDid,
           mediationId,
           mediator,
@@ -575,10 +591,7 @@ export class SqlStore implements MediationStore {
 
     const held = (accounts.rows as { mediation_id: string; mediator: string }[])[0];
     if (held === undefined) {
-      if (!createAccount) {
-        return { outcome: "refused" };
-      }
-      return { outcome: maxReplicas > 0 ? "conflict" : "full" };
+      return { outcome: "unknown" };
     }
     if (held.mediation_id !== mediationId || held.mediator !== mediator) {
       return { outcome: "conflict" };
@@ -596,7 +609,7 @@ export class SqlStore implements MediationStore {
       return binding.account_did === accountDid &&
         binding.replica_id === replicaId &&
         binding.removed_at === null
-        ? { outcome: "registered", registeredTime: binding.registered_at }
+        ? { outcome: "added", addedTime: binding.registered_at }
         : { outcome: "conflict" };
     }
 
@@ -672,7 +685,11 @@ export class SqlStore implements MediationStore {
   ): Promise<RosterPage | null> {
     const ofAccount =
       "account_did = (SELECT did FROM replica_accounts WHERE did = ? AND mediator = ?)";
-    const [count, page] = await this.batch([
+    const [bound, count, page] = await this.batch([
+      {
+        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
+        params: [accountDid, mediator],
+      },
       {
         sql: `SELECT COUNT(*) AS n FROM replicas WHERE ${ofAccount}`,
         params: [accountDid, mediator],
@@ -686,10 +703,10 @@ export class SqlStore implements MediationStore {
       },
     ]);
 
-    const size = (count.rows as { n: number }[])[0].n;
-    if (size === 0) {
+    if (bound.rows.length === 0) {
       return null;
     }
+    const size = (count.rows as { n: number }[])[0].n;
     return {
       size,
       entries: (
@@ -702,7 +719,7 @@ export class SqlStore implements MediationStore {
       ).map((row) => ({
         ordinal: row.ordinal,
         grant: row.grant_jws,
-        registeredTime: row.registered_at,
+        addedTime: row.registered_at,
         removedTime: row.removed_at,
       })),
     };
@@ -719,8 +736,7 @@ export class SqlStore implements MediationStore {
 
   /*
    * One transaction, so two accounts racing for a DID cannot both bind it and
-   * a refused add leaves nothing behind. The recipient's owner before and
-   * after the insert tells an addition from a binding that was already there.
+   * a refused add leaves nothing behind.
    */
   async addSharedRecipient({
     accountDid,
@@ -734,17 +750,11 @@ export class SqlStore implements MediationStore {
     const unbound =
       `${NOT_ORDINARY} AND NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did IN (?, ?)) ` +
       "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?))";
-    const owner = {
-      sql: "SELECT account_did FROM replica_recipients WHERE recipient_did = ?",
-      params: [recipientDid],
-    };
-
-    const [account, before, , after, free] = await this.batch([
+    const [account, , held, free] = await this.batch([
       {
         sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
-      owner,
       {
         sql:
           "INSERT INTO replica_recipients (recipient_did, account_did, long_form, created_at) " +
@@ -765,22 +775,23 @@ export class SqlStore implements MediationStore {
           maxRecipients,
         ],
       },
-      owner,
+      {
+        sql: "SELECT account_did, created_at FROM replica_recipients WHERE recipient_did = ?",
+        params: [recipientDid],
+      },
       { sql: `SELECT (${unbound}) AS free`, params: elsewhere },
     ]);
 
     if (account.rows.length === 0) {
-      return "unknown";
+      return { outcome: "unknown" };
     }
-    const ownerIn = (result: SqlResult) =>
-      (result.rows as { account_did: string }[])[0]?.account_did ?? null;
-    if (ownerIn(after) === accountDid) {
-      return ownerIn(before) === accountDid ? "no_change" : "added";
+    const binding = (held.rows as { account_did: string; created_at: number }[])[0];
+    if (binding !== undefined) {
+      return binding.account_did === accountDid
+        ? { outcome: "added", addedTime: Math.floor(binding.created_at / 1000) }
+        : { outcome: "conflict" };
     }
-    if (ownerIn(after) !== null) {
-      return "conflict";
-    }
-    return (free.rows as { free: number }[])[0].free === 1 ? "full" : "conflict";
+    return { outcome: (free.rows as { free: number }[])[0].free === 1 ? "full" : "conflict" };
   }
 
   async removeSharedRecipient(
@@ -809,32 +820,28 @@ export class SqlStore implements MediationStore {
   async listSharedRecipients(
     accountDid: string,
     mediator: string,
-    offset: number,
+    after: RecipientPlace | null,
     limit: number
-  ): Promise<RecipientPage | null> {
-    const [account, page, count] = await this.batch([
+  ): Promise<SharedRecipientPage | null> {
+    const [account, page] = await this.batch([
       {
         sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
       {
         sql:
-          "SELECT recipient_did FROM replica_recipients WHERE account_did = ? " +
-          "ORDER BY created_at, recipient_did LIMIT ? OFFSET ?",
-        params: [accountDid, limit, offset],
-      },
-      {
-        sql: "SELECT COUNT(*) AS n FROM replica_recipients WHERE account_did = ?",
-        params: [accountDid],
+          "SELECT recipient_did AS did, created_at AS addedAt FROM replica_recipients " +
+          "WHERE account_did = ? AND (created_at, recipient_did) > (?, ?) " +
+          "ORDER BY created_at, recipient_did LIMIT ?",
+        params: [accountDid, after?.addedAt ?? -1, after?.did ?? "", limit + 1],
       },
     ]);
     if (account.rows.length === 0) {
       return null;
     }
 
-    const recipients = (page.rows as { recipient_did: string }[]).map((row) => row.recipient_did);
-    const total = (count.rows as { n: number }[])[0].n;
-    return { recipients, remaining: Math.max(0, total - offset - recipients.length) };
+    const rows = page.rows as { did: string; addedAt: number }[];
+    return { recipients: rows.slice(0, limit), more: rows.length > limit };
   }
 
   async sharedRecipientMaterial(did: string): Promise<string | null> {

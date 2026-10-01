@@ -39,13 +39,34 @@ export type StoreOutcome =
   | { outcome: "stored"; message: StoredMessage }
   | { outcome: "repeated" | "conflict" | "full" };
 
+/** A replica-mediation account; its DID is a did:peer:4 short form. */
+export interface ReplicaAccount {
+  accountDid: string;
+  /** What resolves the account DID later. */
+  accountLongForm: string;
+  mediationId: string;
+  /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
+  mediator: string;
+  /** Whether an absent account may be created. */
+  create: boolean;
+}
+
+/**
+ * `registered` also answers an exact repeat, with the time of the first.
+ * `refused`: the account is absent and may not be created. `conflict`: the
+ * DID is already bound otherwise, here or under ordinary mediation, or the
+ * account is bound to another mediation ID or mediator DID.
+ */
+export type RegisterAccountOutcome =
+  | { outcome: "registered"; registeredTime: number }
+  | { outcome: "refused" | "conflict" };
+
 /**
  * One replica's enrollment in a replica-mediation account. Both DIDs are
- * did:peer:4 short forms; the long forms are what resolves them later.
+ * did:peer:4 short forms; the long form is what resolves the replica later.
  */
-export interface ReplicaRegistration {
+export interface ReplicaAddition {
   accountDid: string;
-  accountLongForm: string;
   mediationId: string;
   /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
@@ -53,29 +74,25 @@ export interface ReplicaRegistration {
   replicaDid: string;
   replicaLongForm: string;
   grant: string;
-  /** Whether an absent account may be created by this registration. */
-  createAccount: boolean;
   maxReplicas: number;
 }
 
 /**
- * `registered` also answers an exact repeat, with the time of the first.
- * `refused`: the account is absent and may not be created. `conflict`: an ID
- * or DID is already bound otherwise, here or under ordinary mediation, to a
- * removed replica included, or the account is bound to another mediation ID
- * or mediator DID. `full`: the account is at its limit of replicas not
- * removed. Only `registered` wrote anything, and it wrote the account and the
- * replica together or neither.
+ * `added` also answers an exact repeat, with the time of the first.
+ * `unknown`: there is no such account. `conflict`: an ID or DID is already
+ * bound otherwise, here or under ordinary mediation, to a removed replica
+ * included, or the account is bound to another mediation ID or mediator DID.
+ * `full`: the account is at its limit of replicas not removed.
  */
-export type RegisterOutcome =
-  | { outcome: "registered"; registeredTime: number }
-  | { outcome: "refused" | "conflict" | "full" };
+export type AddReplicaOutcome =
+  | { outcome: "added"; addedTime: number }
+  | { outcome: "unknown" | "conflict" | "full" };
 
 export interface RosterEntry {
   /** The replica's place in the order its account enrolled them, from 1. */
   ordinal: number;
   grant: string;
-  registeredTime: number;
+  addedTime: number;
   /** Null while the replica is active. */
   removedTime: number | null;
 }
@@ -107,12 +124,26 @@ export interface SharedRecipient {
 }
 
 /**
- * `no_change`: the account already held the recipient, whatever its limit is
- * now. `unknown`: no such account is bound to that mediator. `conflict`: the
- * DID is bound otherwise, under either protocol. `full`: the account is at
- * its recipient limit. Only `added` wrote anything.
+ * `added` also answers a recipient the account already held, whatever its
+ * limit is now, with the time of the first. `unknown`: no such account is
+ * bound to that mediator. `conflict`: the DID is bound otherwise, under
+ * either protocol. `full`: the account is at its recipient limit.
  */
-export type ShareOutcome = "added" | "no_change" | "unknown" | "conflict" | "full";
+export type ShareOutcome =
+  | { outcome: "added"; addedTime: number }
+  | { outcome: "unknown" | "conflict" | "full" };
+
+/** Where a shared recipient stands among its account's: by when it was added, in milliseconds, then by DID. */
+export interface RecipientPlace {
+  addedAt: number;
+  did: string;
+}
+
+export interface SharedRecipientPage {
+  recipients: RecipientPlace[];
+  /** Whether the account holds recipients after these. */
+  more: boolean;
+}
 
 /**
  * What bounds a package beyond the store's own retention and message count:
@@ -220,7 +251,8 @@ export interface MediationStore {
    * is kept per account and handed out per replica, apart from the ordinary
    * queues.
    */
-  registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
+  registerReplicaAccount(account: ReplicaAccount): Promise<RegisterAccountOutcome>;
+  addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
    * Ends a replica's enrollment and drops what waited for it alone: its
    * deliveries, and the mail forwarded to the replica itself. Its ID and DID
@@ -255,13 +287,16 @@ export interface MediationStore {
     mediator: string,
     recipientDid: string
   ): Promise<"removed" | "no_change" | "unknown">;
-  /** The account's recipients, oldest first; null without such an account bound to `mediator`. */
+  /**
+   * The account's recipients after `after`, oldest first; null without such
+   * an account bound to `mediator`.
+   */
   listSharedRecipients(
     accountDid: string,
     mediator: string,
-    offset: number,
+    after: RecipientPlace | null,
     limit: number
-  ): Promise<RecipientPage | null>;
+  ): Promise<SharedRecipientPage | null>;
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
   /**

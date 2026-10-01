@@ -329,19 +329,17 @@ describe("a store that read the old replica mail tables before another store reb
     await late.whenHeld();
 
     expect(await store.removeSharedRecipient(account, mediator, "did:example:shared")).toBe("removed");
-    const enrolled = await store.registerReplica({
+    const enrolled = await store.addReplica({
       accountDid: account,
-      accountLongForm: "long",
       mediationId: "m",
       mediator,
       replicaId: "former",
       replicaDid: "did:example:shared",
       replicaLongForm: "long",
       grant: "grant",
-      createAccount: false,
       maxReplicas: 3,
     });
-    expect(enrolled.outcome).toBe("registered");
+    expect(enrolled.outcome).toBe("added");
 
     late.release();
     expect(await lateRead).toBe(1);
