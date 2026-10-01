@@ -127,7 +127,7 @@ const shape =
     return out as Of<S>;
   };
 
-/** A member older writers stored and no reader uses any more: accepted whatever it holds, and left out of the payload read. */
+/** A member older writers stored and no reader uses any more: ignored during payload validation, whatever it holds. The event itself is returned as stored, so its CID stays valid. */
 const retired =
   <T>(member: string, check: Check<T>): Check<T> =>
   (value, at) => {

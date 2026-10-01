@@ -252,7 +252,6 @@ export interface MissingResponse {
   messageId: MessageId;
   effectType: string;
   channelId: ChannelId;
-  /** none while the input's receipt is in an integrity conflict */
   entries: ManualEntry[];
 }
 

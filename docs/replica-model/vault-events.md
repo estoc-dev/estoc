@@ -1960,16 +1960,17 @@ It is undefined while no admitted complete observation qualifies, and raw
 unadmitted duplicates cannot change it. `firstWitness` names the observation
 an operation reads the input's fields from and orders established logical
 messages for display; it is no admission prerequisite. A pure ACK names its
-carrier alone, so no target array is ordered. In a linear single-writer
-history canonical order is commit order, except that a writer whose clock
-went back orders what it committed after the rollback before what it
-committed earlier. What follows that order is the choice of witness among
-consistent duplicates, the order candidates are judged in and display; a
-committed admission or intent stands whatever the order. For independently
-run histories canonical order is a deterministic merged order, not a claim
-about physical receive time between disconnected writers. This rule permits
-history union; it does not enable concurrent phase-1 writers or establish
-multi-writer effect convergence.
+carrier alone, so no target array is ordered. For successive events of one
+writer whose timestamps strictly increase, canonical order follows commit
+order. Events sharing a timestamp are ordered by CID, so their canonical
+order may differ from commit order even without clock rollback; a clock
+rollback may place later commits before earlier commits. What follows that
+order is the choice of witness among consistent duplicates, the order
+candidates are judged in and display; a committed admission or intent stands
+whatever the order. For independently run histories canonical order is a
+deterministic merged order, not a claim about physical receive time between
+disconnected writers. This rule permits history union; it does not enable
+concurrent phase-1 writers or establish multi-writer effect convergence.
 
 A later observation does not reorder earlier events. Learning an older alias
 or importing history may change the first witness for future decisions, but
