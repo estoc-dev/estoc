@@ -630,16 +630,19 @@ Enrollment proceeds as follows:
 2. Send `register` from the account DID, naming the new replica in its grant.
    Verify the response's account, mediation, replica and routing bindings.
    The replica DID then picks up its private inbox and shared-mail deliveries;
-   the new device can queue/stage mail while catching up.
+   only shared packages first accepted after registration are eligible for that
+   replica. The new device can queue/stage this mail while catching up, but
+   receiving it does not replace the required history synchronization.
 3. Discover peers through the mediator list and known portable membership.
    Exclude listed tombstones and locally retired/conflicting identities, verify
    each remaining active grant locally, and establish `hello` with usable peers.
 4. Reconcile complete event inventories and required objects, including
    retirements/erasure learned since the backup. Reconcile remote membership
    accordingly. CIDs already restored are ordinary duplicates.
-5. Continue incremental sync and drain retained shared mail. Keep historical
-   catch-up/import separate from live application execution. The domain revision
-   defines when the new runtime may enable automatic effects.
+5. Continue incremental sync and drain shared mail queued since registration
+   once its required history and domain prerequisites are available. Keep
+   historical catch-up/import separate from live application execution. The
+   domain revision defines when the new runtime may enable automatic effects.
 
 Recipient reconciliation re-sends one account-authenticated `recipient-add`
 per locally validated binding without querying the mediator. The same
@@ -651,10 +654,13 @@ Imported old ordinary-mediation history retains its original routes and does
 not claim those addresses or queued messages for this account.
 
 Registering before peer inventory allows mail arriving during catch-up to
-remain queued. Fixed inventory cuts plus subsequent incremental/full passes
-cover events created during enrollment. No step requires all replicas to be
-online simultaneously, but progress requires an authorized data source to
-become available within a sequence of successful transfers.
+remain queued. Mail accepted before registration is never backfilled by the
+mediator, even if its ciphertext has not expired. Earlier history must come
+from a peer or backup that holds it. Fixed inventory cuts plus subsequent
+incremental/full passes cover available events created during enrollment.
+No step requires all replicas to be online simultaneously, but progress requires
+an authorized data source to become available within a sequence of successful
+transfers. Queued new mail is not evidence that history catch-up is complete.
 
 A seed and an empty mediator cannot reconstruct deleted history. If every
 history-holding replica and backup is lost, this protocol provides no recovery
@@ -730,8 +736,11 @@ separate domain revision as well as transport tests.
 11. A source no longer holds requested bytes; explicit unavailability leaves
     progress incomplete and permits another peer or backup to repair it.
 12. Restore a new device while other replicas append and external mail arrives.
-    Its author is fresh, shared mail remains queued, history converges through
-    catch-up, and the current profile never silently enables multiple executors.
+    Its author is fresh; only packages first accepted after its registration
+    create shared deliveries for it. New mail can remain queued while vault
+    sync obtains available earlier history. That queue does not replace catch-up
+    or authorize effects; the current profile never silently enables multiple
+    executors.
 13. A maximum legal event fits a single-event batch at the negotiated plaintext
     and mediator wire floors. Smaller limits fail negotiation. Oversized legacy
     events need the adoption policy; no event is truncated or given a new CID.

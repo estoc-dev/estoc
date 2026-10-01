@@ -38,9 +38,12 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** a
 
 An external sender addresses one of the vault's communication DIDs. The
 mediator retains the encrypted application envelope once and creates a delivery
-for each active replica with queue capacity. The sender does not need a device
-list or this extension. Every receiving replica decrypts the original envelope
-with the vault's communication keys and performs its own receive procedure.
+for each replica that is active and has queue capacity at first package
+acceptance. That delivery set does not expand later. A new replica obtains
+earlier history through vault synchronization or backup. The sender does not
+need a device list or this extension. Every receiving replica decrypts the
+original envelope with the vault's communication keys and performs its own
+receive procedure once the required history and domain prerequisites are met.
 
 A replica sends synchronization traffic to a particular replica DID. That
 message gets exactly one destination queue. It MUST NOT be fanned out to the
@@ -373,7 +376,8 @@ The client sends `register` authcrypted from the account DID to the mediator.
 The body has exactly `{ "grant": <compact JWS> }`, naming one target replica.
 The same request creates a new account and its first replica or enrolls another
 replica in an existing account. No earlier Coordinate Mediation exchange occurs.
-Retained shared-mail replay within this account is part of registration.
+Registration starts eligibility for future shared packages; it creates no
+deliveries for packages accepted before that registration commits.
 
 For first contact the caller supplies the account sender's long-form DID in
 the DIDComm envelope key identifier. The mediator resolves and validates it
@@ -388,32 +392,24 @@ In one transaction the mediator MUST:
 1. If absent, create the standalone account bound to its account DID,
    `mediation_id` and this mediator, with an empty shared mailbox and recipient
    set. Otherwise verify that exact existing account binding.
-2. Bind the new replica ID/DID/grant and provision its private destination.
-3. Create missing deliveries for unexpired shared mailbox messages up to this
-   replica's pending-delivery limit, in mediator acceptance order. Break ties
-   by the mediator's stable internal package identity. Leave the rest retained
-   for a later replay attempt; queue capacity does not abort registration.
+2. Bind the new replica ID/DID/grant and provision its private destination
+   with an empty delivery queue.
 
 There is no intermediate account-only success: failure leaves neither a new
 account nor a partial replica registration. Concurrent first registrations for
 the same account and mediation ID share one account; different bindings fail.
-Live pushes occur only after the transaction commits.
 
-An exact repeat for an active member is idempotent and repairs missing
-retained deliveries up to available queue capacity. Existing acknowledged
-deliveries MUST NOT be reset. The client repeats registration on reconnection
-and after draining a queue that reached its limit, then retries after draining
-when `replay_pending_count` still reports omitted retained mail.
+An exact repeat for an active member is idempotent and preserves its original
+registration boundary and all pending/acknowledged delivery state. It neither
+adds deliveries for older packages nor resets ACKs. Reconnection resumes pickup
+of that replica's existing queue; re-registration is not a mailbox repair step.
 A retired or conflicting identity fails without mutation. Shared-recipient and
 private-replica destinations cannot overlap or steal an existing destination.
 
 The `registered` response is authcrypted to the requesting account DID, uses
 `thid` equal to the request ID, and includes `account`, `mediation_id`,
 `routing_did`, `replica_id`, `replica_did`, `state: "active"`, original
-`registered_time`, `replayed_count`, and enforced `limits`.
-It also includes `replay_pending_count`, the number of unexpired shared
-packages with neither a pending nor an acknowledged delivery for this replica
-because its queue was full at that transaction.
+`registered_time`, and enforced `limits`.
 
 In this initial profile `routing_did` is the addressed mediator DID, matching
 the service used to construct replica documents before enrollment. A client
@@ -469,8 +465,9 @@ The mediator atomically records the terminal ID/DID pair, disables its private
 routing and pickup, and removes its pending deliveries. After commit it closes
 the replica's live subscriptions; connections do not override durable retirement
 state. Bytes already sent over a socket cannot be recalled. It retains shared
-ciphertext for other replicas and retained replay. An authorized retirement of
-an absent binding records a tombstone, so a late `register` cannot undo it.
+ciphertext for other replicas' existing deliveries and package deduplication.
+An authorized retirement of an absent binding records a tombstone, so a late
+`register` cannot undo it.
 The retired DID remains reserved in the mediator's destination namespace.
 Conflicting bindings fail without mutation.
 Repeating the same retirement succeeds. `retired` echoes the bound IDs and
@@ -614,35 +611,43 @@ Routing classification is determined by the registered `forward.body.next`:
 
 | Destination | Storage and delivery |
 | --- | --- |
-| Shared communication DID | One immutable shared mailbox package; one delivery for each active replica with queue capacity |
+| Shared communication DID | One immutable shared mailbox package; a fixed set of deliveries for replicas active with queue capacity at first acceptance |
 | Active replica DID | One private mailbox package and delivery for that replica only |
 | Retired replica, unknown or unauthorized destination | Refuse without partial storage or fan-out |
 
-For shared mail, inserting the package, selecting replicas with queue capacity
-and creating their deliveries MUST be atomic with registration and retirement.
-Registration racing a new package produces one delivery through live fan-out
-or retained replay if that replica has capacity; otherwise it leaves the
-package eligible for later replay to that replica.
-There is at most one delivery per `(mailbox package, replica DID)`.
-An accepted shared package is retained even when there are no active replicas.
+For a new shared package, selecting active replicas with queue capacity,
+inserting the package and creating their deliveries MUST be atomic with
+registration and retirement. If registration commits first, the new replica
+participates in that selection; if package acceptance commits first, it does
+not. Transaction order defines the boundary, not a sender timestamp or a
+comparison of second-resolution registration times.
+There is at most one delivery per `(mailbox package, replica DID)`. The set of
+delivery targets is fixed at first acceptance. Later registration, reconnection,
+queue drainage or a duplicate forward MUST NOT add targets or reset ACKs.
+
 Account retained-byte/message limits may refuse the whole new package. A full
-replica queue only omits that replica's new delivery and records a bounded
-account/replica diagnostic; it MUST NOT prevent package acceptance or delivery
-to replicas with capacity. The omitted delivery is not an ACK or deletion of
-the retained package. A later registration retry can recover it before expiry;
-after expiry recovery requires peer history or a backup.
+replica queue omits only that replica's delivery and records a bounded
+account/replica diagnostic; other active replicas with capacity still receive
+it. The omitted replica recovers any available history through vault sync or
+backup, not a later mediator backfill. If no active replica has queue capacity,
+refuse the new package without storing it or an acceptance record, using the
+ordinary non-enumerating routing refusal. An offline but still-active replica
+with queue capacity remains a delivery target.
 
 A private sync envelope is opaque to the mediator. It is routed by the replica
 DID just like other mail; its encrypted protocol type or contents are not
-inspected. It is never included in shared replay or copied to a newly enrolled
-replica. Requests, replies and sync receipts all use this private path.
+inspected. It is never copied to a newly enrolled replica. Requests, replies
+and sync receipts all use this private path.
 
 Shared package deduplication retains the original recipient and `forward.id`
 key within its account. Private deduplication is scoped to its destination
 replica DID and `forward.id`. Equal IDs do not combine different recipients'
 delivery/ACK state. A repeated package with different normalized bytes is a
 conflict. Retransmission of an acknowledged shared package before expiry MUST
-NOT recreate that member's delivery.
+NOT recreate that member's delivery or create one for a later member. A valid
+duplicate preserves the original acceptance result even if its delivery targets
+have since retired; it does not perform a fresh target selection or extend
+the original retention deadline.
 
 The mediator never rewrites the inner application envelope's recipients or
 re-encrypts its contents. A live push references committed delivery state;
@@ -694,19 +699,23 @@ connections for the same replica may see the same delivery and share its ACK
 domain. Connecting as B never subscribes to A's deliveries. Reconnection also
 drains durable queued mail; live push is not a replacement for pickup.
 
-<a id="retention-and-replay"></a>
+<a id="retention-and-limits"></a>
 
 ## 10. Retention, limits and failure
 
 Shared mail expires at the earlier of mediator acceptance time plus its
 advertised retention window and the outer forward's explicit expiry, if any.
-A past expiry is refused. Until that deadline it remains available for replay
-to newly registered replicas even if all current replicas acknowledged it.
-Private mail remains until its own ACK or deadline and is never shared replay.
+A past expiry is refused. Until that deadline, pending deliveries remain
+available only to their original target replicas. The shared package remains
+for duplicate detection even after all its deliveries have been acknowledged
+or removed by retirement; retention never authorizes new delivery targets.
+Private mail remains until its own ACK or deadline.
 
 Expiry is independent of slow/offline replicas. This is bounded mail storage,
-not a permanent archive: after expiry, missing history must come from another
-replica or backup. Transport acceptance alone is not delivery to a replica.
+not a history source for newly enrolled replicas. Earlier history, mail omitted
+from a full queue and expired deliveries require vault sync or backup recovery
+where that data is still available. Transport acceptance alone is not delivery
+to a replica or completion of history catch-up.
 
 `registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
 `max_message_bytes`, `max_active_replicas`, `max_retired_replicas`, `max_membership_page`,
@@ -715,9 +724,9 @@ replica or backup. Transport acceptance alone is not delivery to a replica.
 Byte and message quotas apply to the account's private and shared packages,
 with shared ciphertext counted once.
 The pending-delivery limit applies separately to each replica's combined
-private/shared queue. Shared fan-out or replay skips only the full queue;
-private mail for a full destination is refused without storing its package.
-Limits are checked before atomic publication.
+private/shared queue. Shared fan-out skips full queues and requires at least
+one active target with capacity; private mail for a full destination is refused
+without storing its package. Limits are checked before atomic publication.
 
 Only active bindings count toward `max_active_replicas`. Compact retired ID/DID
 pairs use `max_retired_replicas`, which MUST be at least 1024 times the active
@@ -749,7 +758,7 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `retired` | This exact incarnation is terminal |
 | `replica-required` | Pickup was attempted with the account identity |
 | `list-expired` | Membership snapshot is no longer available; start a fresh listing |
-| `quota` | An account, membership, recipient or private-destination limit prevents the operation; a full shared-delivery queue alone does not refuse the package |
+| `quota` | A storage or capacity limit prevents the operation; one full shared queue does not refuse a package that another active replica can accept |
 | `message-too-large` | Envelope exceeds the transport limit |
 
 Authenticated control failures disclose only the caller's account state.
@@ -791,30 +800,38 @@ These are proposed requirements, not claims about the current implementation.
    Neither registration path converts the other account kind; ordinary controls
    and ACKs cannot mutate the new account. Old recipients and queued mail stay
    with their old account. New recipients require control proof from creation.
-4. Register and accept a shared package in both transaction orders: exactly one
-   delivery exists for the new replica when it has capacity. With a full queue,
-   the package remains replayable; draining and re-registering fills available
-   slots without duplicate deliveries or resetting ACKs.
+4. With A already active, register B and accept a shared package in both
+   transaction orders. If B registers first and has capacity, it gets one
+   delivery. If acceptance commits first, B gets none, even when it joins
+   before package expiry. Re-registration and duplicate forwards preserve
+   that original target set and existing ACK state.
 5. A and B receive identical original shared ciphertext with different delivery
    IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
-6. Sync addressed to B is delivered only to B and never replayed to C when C
+6. Sync addressed to B is delivered only to B and never copied to C when C
    joins. A replica DID cannot be registered as a shared recipient.
 7. Recipient filters narrow both status and pickup within the caller's queue;
    they cannot reach another principal. Disconnecting live push loses no mail.
 8. Retire before register and register before retire both end retired. A delayed
    grant cannot reactivate the identity; historical authored events remain usable.
    With an absent account, authorized retirement atomically creates the account
-   and tombstone before a later active registration can replay that identity.
+   and tombstone before a later active registration can reactivate that identity.
    Active retirement succeeds using reserved tombstone capacity; exhausted
    tombstone capacity does not halt existing members. Increasing that budget
    permits new identities without clearing the old ID/DID pairs.
-9. All replicas ACK shared mail; C joins before expiry and gets replay. After
-   expiry it needs peer history. Private mail does not get shared replay.
+9. C joins after a shared package was accepted, while it is still retained:
+   C receives no delivery whether the original targets have ACKed it or not.
+   C obtains available earlier history through vault sync or backup. After all
+   original targets ACK or retire, an identical forward before expiry remains
+   a duplicate and creates no deliveries; changed bytes under that key conflict.
 10. Account storage exhaustion publishes no package or deliveries. One full
     replica queue omits only its shared delivery with a bounded diagnostic;
-    other replicas receive the package. Private mail to a full queue is refused.
-    Registration and its bounded replay remain atomic; SQLite and D1 satisfy
-    the same boundary.
+    other replicas receive the package. Draining and re-registering the omitted
+    replica does not backfill it. With no active replicas or all their queues
+    full, a new shared package is refused without an acceptance record; it may
+    be submitted later as a new acceptance once a target has capacity. Offline
+    active replicas still receive queued deliveries. Private mail to a full
+    queue is refused. SQLite and D1 enforce the same registration and fan-out
+    transaction boundaries.
 11. A restored mediator list cannot authorize a fabricated sync recipient, and
     known local tombstones are reconciled before registration/publication.
 12. No delivery or membership operation independently authorizes historical

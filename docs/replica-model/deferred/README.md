@@ -23,8 +23,11 @@ adopted, together with the owning specifications and conformance cases.
 The two replica proposals form one design. A full replica has its own DID and
 local event author; communication DIDs and the vault seed are shared. The
 mediator fans external mail addressed to shared communication DIDs out to the
-registered replicas. Sync messages address one replica DID and are delivered
-only to that replica. They carry events and objects encrypted end to end.
+replicas registered with queue capacity when it first accepts each package.
+Later enrollment does not add deliveries for earlier mail; new replicas recover
+history through vault sync or backup. Sync messages address one replica DID
+and are delivered only to that replica. They carry events and objects encrypted
+end to end.
 
 [Replica mediation](replica-mediation.md#identity-model) owns the identity model
 and account-signed membership grants. It creates its own accounts and manages
@@ -79,6 +82,11 @@ Before adopting the candidate events/key names, update
   atomically without a prior mediation grant. Ordinary accounts, their recipient
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
+- Fix each shared package's delivery targets at first acceptance. Registration
+  begins eligibility for later packages and never backfills an earlier one.
+  Keep ordinary pickup/redelivery for existing targets. New replicas use vault
+  sync for history and wait for the required catch-up and domain prerequisites
+  before processing queued application mail; enrollment alone is not readiness.
 - Replace phase-1 desired-set removal for the new profile with append-only
   single-recipient `recipient-add`. The canonical communication DID binds to
   one account; concurrent same-account adds are idempotent and need no registration
@@ -118,7 +126,7 @@ Before adopting the candidate events/key names, update
   CIDs before enabling the profile. Size-incompatible peers fail negotiation,
   rather than accepting work they can never transfer.
 - Define the transition from catch-up to permitted application processing.
-  Sync/import and raw shared-mail replay cannot by themselves authorize
+  Sync/import and raw shared-mail pickup cannot by themselves authorize
   historical replies, pending-outbound takeover or exactly-once side effects.
 
 The domain work must choose these rules explicitly. Neither a mediator's
