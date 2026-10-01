@@ -1,0 +1,175 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import WebSocket from "ws";
+
+import { DIDCommContext } from "../src/didcomm/didcomm.js";
+import { buildServer, type MediatorServer } from "../src/server.js";
+import { mintIdentity, type MediatorIdentity } from "../src/identity-core.js";
+import {
+  TEST_CONFIG,
+  agent,
+  forwardOf,
+  memoryStore,
+  packAnonymous,
+  plaintext,
+  sealed,
+  type TestAgent,
+} from "./helpers.js";
+
+/**
+ * The full live-delivery path over a real socket: grant + live mode over WS,
+ * an anonymous forward over HTTP, and the delivery arriving as a push on the
+ * open socket — the one flow app.inject cannot exercise.
+ */
+
+let server: MediatorServer;
+let mediator: MediatorIdentity;
+let alice: TestAgent;
+let baseUrl: string;
+const notes: unknown[][] = [];
+
+beforeAll(async () => {
+  mediator = await mintIdentity(TEST_CONFIG.publicUrl, "peer2");
+  alice = await agent("alice-live");
+  server = buildServer({
+    identity: mediator,
+    store: memoryStore(),
+    config: TEST_CONFIG,
+    log: (...note) => void notes.push(note),
+  });
+  const port = await server.listen();
+  baseUrl = `127.0.0.1:${port}`;
+});
+
+afterAll(async () => {
+  await server.close();
+});
+
+function nextMessage(ws: WebSocket): Promise<string> {
+  return new Promise((resolve, reject) => {
+    ws.once("message", (data) => resolve(data.toString()));
+    ws.once("error", reject);
+    setTimeout(() => reject(new Error("timed out waiting for a frame")), 5000);
+  });
+}
+
+async function request(
+  ws: WebSocket,
+  sender: TestAgent,
+  type: string,
+  body: Record<string, unknown>
+) {
+  const packed = await sender.ctx.packEncrypted(
+    plaintext(type, body, {
+      from: sender.did,
+      to: [mediator.did],
+      return_route: "all",
+    }),
+    mediator.did
+  );
+  const waiting = nextMessage(ws);
+  ws.send(packed);
+  const { message } = await sender.ctx.unpack(await waiting);
+  return message;
+}
+
+describe("live delivery over WebSocket", () => {
+  it("pushes a forwarded message to the open socket", async () => {
+    const ws = new WebSocket(`ws://${baseUrl}/`);
+    await new Promise((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    const grant = await request(
+      ws,
+      alice,
+      "https://didcomm.org/coordinate-mediation/3.0/mediate-request",
+      {}
+    );
+    expect(grant.type).toBe(
+      "https://didcomm.org/coordinate-mediation/3.0/mediate-grant"
+    );
+
+    const status = await request(
+      ws,
+      alice,
+      "https://didcomm.org/messagepickup/3.0/live-delivery-change",
+      { live_delivery: true }
+    );
+    expect(status.type).toBe("https://didcomm.org/messagepickup/3.0/status");
+    expect(status.body.live_delivery).toBe(true);
+
+    // A stranger forwards to Alice over plain HTTP while her socket is open.
+    const inner = await sealed(alice, "alice, live");
+    const forward = await packAnonymous(forwardOf(alice.did, inner), mediator.did);
+    const pushWaiting = nextMessage(ws);
+    const res = await fetch(`http://${baseUrl}/`, {
+      method: "POST",
+      headers: { "content-type": "application/didcomm-encrypted+json" },
+      body: forward,
+    });
+    expect(res.status).toBe(202);
+
+    const { message: push } = await alice.ctx.unpack(await pushWaiting);
+    expect(push.type).toBe("https://didcomm.org/messagepickup/3.0/delivery");
+    const attachments = push.attachments as {
+      id: string;
+      data: { base64: string };
+    }[];
+    expect(attachments).toHaveLength(1);
+    expect(
+      JSON.parse(
+        Buffer.from(attachments[0].data.base64, "base64url").toString("utf8")
+      )
+    ).toEqual(inner);
+
+    // The push is an offer, not a handoff: the message stays queued until
+    // acknowledged, so a client that crashed mid-push loses nothing.
+    const count = await request(
+      ws,
+      alice,
+      "https://didcomm.org/messagepickup/3.0/status-request",
+      {}
+    );
+    expect(count.body.message_count).toBe(1);
+
+    await request(
+      ws,
+      alice,
+      "https://didcomm.org/messagepickup/3.0/messages-received",
+      { message_id_list: attachments.map((a) => a.id) }
+    );
+
+    ws.close();
+  });
+
+  it("notes a push that failed for a forward that came over a socket, and keeps the mail", async () => {
+    const listening = new WebSocket(`ws://${baseUrl}/`);
+    const sending = new WebSocket(`ws://${baseUrl}/`);
+    for (const ws of [listening, sending]) {
+      await new Promise((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+      });
+    }
+    await request(listening, alice, "https://didcomm.org/messagepickup/3.0/live-delivery-change", {
+      live_delivery: true,
+    });
+
+    const forward = await packAnonymous(forwardOf(alice.did, await sealed(alice, "kept")), mediator.did);
+    const sealing = vi
+      .spyOn(DIDCommContext.prototype, "packEncrypted")
+      .mockRejectedValueOnce(new Error("no delivery today"));
+    notes.length = 0;
+    sending.send(forward);
+    await vi.waitFor(() => expect(notes).toHaveLength(1));
+    sealing.mockRestore();
+
+    expect(notes).toEqual([["live delivery push failed; the message stays queued", undefined]]);
+    const count = await request(listening, alice, "https://didcomm.org/messagepickup/3.0/status-request", {});
+    expect(count.body.message_count).toBe(1);
+
+    listening.close();
+    sending.close();
+  });
+});

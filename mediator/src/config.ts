@@ -1,0 +1,170 @@
+import { DID_METHODS, type DidMethod } from "./identity-core.js";
+
+/**
+ * The part of the configuration the protocol layer and shared HTTP surface
+ * consume — everything that is true of the mediator regardless of whether it
+ * runs on Node or on Workers.
+ */
+export interface MediatorPolicy {
+  /**
+   * Whether any DID that asks is granted mediation. Off, mediate-request is
+   * denied unless the DID already holds an account (granted out of band).
+   */
+  openRegistration: boolean;
+  corsOrigin: string | boolean;
+  messageTtlSeconds: number;
+  maxMessagesPerAccount: number;
+  /**
+   * The largest envelope accepted on the wire, in bytes — measured on the
+   * outer JWE as received, before unpacking, so it bounds everything inside
+   * (a forwarded attachment can only be smaller). Larger envelopes get an
+   * HTTP 413 (or are dropped on a socket). Advertised in GET / so clients
+   * can size a message before sending.
+   */
+  maxMessageBytes: number;
+  /**
+   * blob-store/1.0 limits: how long a put
+   * keeps a blob, the largest blob, and the bytes one mediation may hold at
+   * once. Whether blobs are on at all is a deployment matter (a directory on
+   * Node, an R2 binding on Workers), not policy.
+   */
+  blobRetainSeconds: number;
+  blobMaxBytes: number;
+  blobQuotaBytes: number;
+  /**
+   * replica-mediation/1.0. Off, its message types are unsupported and
+   * nothing is advertised. The limits are the ones a registration discloses; an
+   * account's mail is further bound by `messageTtlSeconds`,
+   * `maxMessagesPerAccount` and `maxMessageBytes`.
+   */
+  replicaMediation: boolean;
+  maxActiveReplicas: number;
+  maxMembershipPage: number;
+  maxSharedRecipients: number;
+  maxRetainedBytes: number;
+  /**
+   * The operator's abuse contact, shown in the footer of the human-facing
+   * invitation page. Null means no contact line is rendered.
+   */
+  abuseEmail: string | null;
+}
+
+export interface MediatorConfig extends MediatorPolicy {
+  /**
+   * The URL agents reach this mediator at. Every DID derives from the stored
+   * keys and this URL, so changing it renames the mediator (the keys stay).
+   */
+  publicUrl: string;
+  /**
+   * The active DID methods, in order — the first is the primary (advertised)
+   * DID; the rest are aliases the mediator answers to equally. All derive
+   * from the one stored key set. Empty means the default, web — set peer2
+   * here for a public URL the world cannot fetch (non-loopback http).
+   */
+  didMethods: DidMethod[];
+  host: string;
+  port: number;
+  dataDir: string;
+  /** Where blob bytes go; null turns blob-store off. */
+  blobDir: string | null;
+}
+
+/**
+ * 1 MiB: what one D1 row and one Workers WebSocket frame comfortably hold,
+ * and the ceiling `@estoc/agent-core`'s object-share sizes against.
+ */
+export const DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024;
+
+export const DEFAULT_BLOB_RETAIN_SECONDS = 30 * 24 * 3600;
+/**
+ * 100 MiB: what a Workers request body may carry on every plan, and the
+ * upload here is one PUT through the mediator itself.
+ */
+export const DEFAULT_BLOB_MAX_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_BLOB_QUOTA_BYTES = 1024 * 1024 * 1024;
+
+export function blobPolicyFrom(get: (name: string) => string | undefined) {
+  return {
+    blobRetainSeconds: Number(
+      get("MEDIATOR_BLOB_RETAIN_SECONDS") ?? DEFAULT_BLOB_RETAIN_SECONDS
+    ),
+    blobMaxBytes: Number(get("MEDIATOR_BLOB_MAX_BYTES") ?? DEFAULT_BLOB_MAX_BYTES),
+    blobQuotaBytes: Number(get("MEDIATOR_BLOB_QUOTA_BYTES") ?? DEFAULT_BLOB_QUOTA_BYTES),
+  };
+}
+
+/**
+ * The limits a registration discloses are promises to the account, and a
+ * limit of zero or less promises an account that can hold nothing.
+ */
+export function replicaPolicyFrom(get: (name: string) => string | undefined) {
+  const limit = (name: string, fallback: number): number => {
+    const value = Number(get(name) ?? fallback);
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error(`${name} must be a positive integer, got ${get(name)}`);
+    }
+    return value;
+  };
+  return {
+    replicaMediation: get("MEDIATOR_REPLICA_MEDIATION") === "true",
+    maxActiveReplicas: limit("MEDIATOR_MAX_ACTIVE_REPLICAS", 16),
+    maxMembershipPage: limit("MEDIATOR_MAX_MEMBERSHIP_PAGE", 16),
+    maxSharedRecipients: limit("MEDIATOR_MAX_SHARED_RECIPIENTS", 10000),
+    maxRetainedBytes: limit("MEDIATOR_MAX_RETAINED_BYTES", 64 * 1024 * 1024),
+  };
+}
+
+function env(name: string): string | undefined {
+  const value = process.env[name];
+  return value === undefined || value === "" ? undefined : value;
+}
+
+/**
+ * A comma-separated, ordered method list — "peer2,web" — shared with Workers.
+ * Unset means unspecified (empty list): each target applies its own default.
+ */
+export function parseDidMethods(value: string | undefined): DidMethod[] {
+  if (value === undefined) {
+    return [];
+  }
+  const methods = value.split(",").map((entry) => entry.trim());
+  for (const method of methods) {
+    if (!(DID_METHODS as readonly string[]).includes(method)) {
+      throw new Error(
+        `MEDIATOR_DID_METHODS entries must be among ${DID_METHODS.join(", ")}, got ${method}`
+      );
+    }
+  }
+  return methods as DidMethod[];
+}
+
+export function configFromEnv(): MediatorConfig {
+  const publicUrl = env("MEDIATOR_PUBLIC_URL");
+  if (publicUrl === undefined) {
+    throw new Error(
+      "MEDIATOR_PUBLIC_URL must be set — the mediator's DIDs derive from it, " +
+        "and changing it later renames the mediator"
+    );
+  }
+
+  return {
+    publicUrl,
+    didMethods: parseDidMethods(env("MEDIATOR_DID_METHODS")),
+    host: env("MEDIATOR_HOST") ?? "0.0.0.0",
+    port: Number(env("MEDIATOR_PORT") ?? 8080),
+    dataDir: env("MEDIATOR_DATA_DIR") ?? "./data",
+    openRegistration: env("MEDIATOR_OPEN_REGISTRATION") !== "false",
+    corsOrigin: env("MEDIATOR_CORS_ORIGIN") ?? "*",
+    messageTtlSeconds: Number(env("MEDIATOR_MESSAGE_TTL_SECONDS") ?? 7 * 24 * 3600),
+    maxMessagesPerAccount: Number(env("MEDIATOR_MAX_MESSAGES_PER_ACCOUNT") ?? 1000),
+    maxMessageBytes: Number(env("MEDIATOR_MAX_MESSAGE_BYTES") ?? DEFAULT_MAX_MESSAGE_BYTES),
+    ...blobPolicyFrom(env),
+    ...replicaPolicyFrom(env),
+    abuseEmail: env("MEDIATOR_ABUSE_EMAIL") ?? null,
+    // "off" disables blobs; unset means a directory beside the database.
+    blobDir:
+      env("MEDIATOR_BLOB_DIR") === "off"
+        ? null
+        : (env("MEDIATOR_BLOB_DIR") ?? `${env("MEDIATOR_DATA_DIR") ?? "./data"}/blobs`),
+  };
+}
