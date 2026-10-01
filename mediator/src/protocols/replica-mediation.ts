@@ -33,8 +33,9 @@ import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js"
  * A control is a request the account DID authcrypts to one mediator DID, with
  * a body of exactly the members its type lists below. Its answer is the
  * matching reply or a problem-report, sealed to the account, with the
- * request's `id` as `thid`. Every DID in a body that is a did:peer:4 is
- * answered in its short form.
+ * request's `id` as `thid`. A reply names accounts, replicas and recipients
+ * by their short forms; the mediator DID and a grant come back as they were
+ * sent.
  */
 
 export const REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/register`;
@@ -73,7 +74,12 @@ export interface Limits {
   /** The largest `limit` a `list` may ask for. */
   max_membership_page: number;
   max_shared_recipients: number;
-  /** Envelope bytes and envelopes waiting at once; one shared by several replicas counts once. */
+  /**
+   * Envelope bytes and envelopes the account may have kept at once. A shared
+   * envelope counts once however many replicas it waits for, and keeps
+   * counting after all of them acknowledged it, until it lapses: it is kept
+   * that long so a repeat of its forward is still recognized.
+   */
   max_retained_bytes: number;
   max_retained_messages: number;
   max_deliveries_per_request: number;

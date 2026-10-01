@@ -265,6 +265,13 @@ statuses. It is kept once and counted once against its account
 own `expires_time`; one already past is refused. A forward to the account
 DID itself is refused like one to a stranger.
 
+Both limits count what the account still has kept, not what still waits for
+pickup. An envelope forwarded to a shared recipient stays kept, and counted,
+until it lapses, even after every replica acknowledged it, so that a repeat
+of its forward is still recognized; a pickup `message_count` of zero does not
+mean the account has room. An envelope forwarded to one replica is gone when
+that replica acknowledges it.
+
 A replica uses messagepickup/3.0 unchanged, authcrypted under its own DID.
 Each replica sees a shared envelope under an attachment id of its own, and
 its `messages-received` ends its own copy only. `recipient_did` narrows
@@ -292,7 +299,7 @@ enrolled can still pick up what waits.
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
-| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have waiting, across shared and private mail; a shared envelope counts once however many replicas it waits for. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
+| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until it lapses even when all of them acknowledged it. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |
 | `MEDIATOR_BLOB_RETAIN_SECONDS` | 30 days | How long one `put` keeps a blob; a repeat `put` by the same mediation renews |

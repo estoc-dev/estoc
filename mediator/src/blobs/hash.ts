@@ -1,3 +1,4 @@
+import { base16 } from "multiformats/bases/base16";
 import { base32 } from "multiformats/bases/base32";
 import * as Digest from "multiformats/hashes/digest";
 import { sha256 } from "multiformats/hashes/sha2";
@@ -17,7 +18,6 @@ export const BLOB_NAME_PATTERN = /^b[a-z2-7]{55}$/;
 export const BLOB_ID_PATTERN = /^[a-z2-7]{32}$/;
 const ID_BYTES = 20;
 
-/** A fresh blob id: 20 random bytes as base32. */
 export function mintBlobId(): string {
   return base32.baseEncode(crypto.getRandomValues(new Uint8Array(ID_BYTES)));
 }
@@ -50,5 +50,5 @@ export function blobDigest(name: string): Uint8Array | null {
 }
 
 export function hex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return base16.baseEncode(bytes);
 }

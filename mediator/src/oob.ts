@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 
 /**
- * out-of-band/2.0 — the invitation, as specified in the DIDComm v2 core spec
- * (https://identity.foundation/didcomm-messaging/spec/#out-of-band-messages).
+ * out-of-band/2.0 — the invitation.
  *
  * The mediator only ever *issues* invitations; nothing here handles one
  * inbound, because an invitation travels as a URL, not as an envelope. The
