@@ -115,9 +115,16 @@ seed-derived replica keys and local retirement state. A successful grant check
 permits synchronization while the peer's genuine `replica.created` event is
 being fetched; it does not synthesize that event or trust the mediator's list.
 
-Retirement stops future sync with that incarnation once learned. Old-author
-events relayed by an active authorized peer remain acceptable. There is no
-claim of instantaneous retirement knowledge or revocation of a shared seed.
+Retirement stops future sync with that incarnation once learned. The bounded
+[local self-retirement procedure](replica-mediation.md#portable-replica-events)
+permits only its final retirement notification after the local event is
+committed. A peer applying that single-event batch may return `stored` even
+though the import just retired its sender. An exact retry of that already
+accepted batch may only repeat the terminal receipt after authentication and
+batch-content verification; it cannot stage or import new data. No other
+traffic from a known retired sender is admitted. Old-author events relayed by
+an active authorized peer remain acceptable. There is no claim of instantaneous
+retirement knowledge or revocation of a shared seed.
 
 <a id="messages"></a>
 
@@ -168,6 +175,22 @@ The vault version must match the receiving profile. Each positive integer limit
 is a receiver's bound; a sender uses the smaller local/peer bound and accounts
 for encoded attachment and DIDComm/routing overhead when fitting the mediator's
 wire limit. A failed size check changes no synchronization progress.
+
+Crossed `hello` messages are independent exchanges. A receiver MUST answer each
+valid `hello` with `hello-result`, including while its own `hello` to that peer
+is pending. Only a verified `hello-result` whose `thid` matches the local pending
+request completes that request; the incoming `hello` does not stand in for it.
+Process inbound requests and replies without waiting for the local exchange
+to complete. Use the limits in the most recently received valid `hello` or
+matching `hello-result` from that peer; unsolicited or obsolete results do not
+replace negotiated state.
+
+The example values are illustrative. Before adoption, the owning event profile
+must define a canonical event byte ceiling and the corresponding plaintext and
+mediator wire floors in the [adoption work](README.md#adoption-work). A peer or
+transport whose bounds cannot carry a maximum-sized event plus the complete
+single-event batch and transport overhead fails negotiation explicitly; it
+cannot claim support and leave otherwise valid events permanently unsendable.
 
 The limits govern each message/page; implementations also enforce bounded
 staging and concurrency as specified below. Reopening a connection does not
@@ -273,7 +296,10 @@ batch. Retries of one already-packed wire message keep its exact bytes and
 routing ID; repackaging uses a fresh wire ID.
 
 Receipt of this message stages data for the [application algorithm](#applying-remote-objects).
-It is not permission to expose an incomplete event-only import.
+A batch is a transfer/receipt identity, not a required database transaction
+size. Its events may be combined with other batches or split across bounded
+atomic imports, each with its required objects; staging alone is never visible
+accepted history.
 
 ### 3.5 `objects`
 
@@ -304,11 +330,16 @@ accept unsolicited object storage just because a peer knows its DID.
 ### 3.6 `stored`
 
 The body has `vault_anchor` and `batch_id`. Authentication identifies the peer
-that stored the batch; `thid` identifies the answered `events` message.
+that stored the batch; `thid` names the answered `events` message as a correlation
+hint. The sender MUST match progress by `(authenticated peer DID, batch_id)`
+within this vault. An unknown or old `thid`, including after repackaging, is
+not grounds to reject an otherwise valid receipt for that known immutable
+batch and intended peer. An unknown batch or wrong peer never advances progress.
 This receipt means every event in that exact batch is durably in the receiver's
-accepted event set, and the required held objects were present at its atomic
-application boundary. Objects released by the validated merged retention rules
-need not be present. Partial success MUST NOT produce `stored`.
+accepted event set, and the required held objects were present at each event's
+atomic import boundary. All batch CIDs must be accepted before issuing it,
+even when several imports were needed. Objects released by validated retention
+rules need not be present. Partial success MUST NOT produce `stored`.
 
 The sender accepts the receipt only for a known immutable batch and that
 intended peer. It durably records progress before pickup-ACKing the receipt.
@@ -363,8 +394,17 @@ portable event merely to record its arrival.
 Reconcile newly learned membership as part of worker discovery. Creating a
 batch for a new peer first verifies its grant and checks local retirement;
 retiring a peer cancels future sends to that incarnation without deleting the
-source's event history. A stored receipt from a retired incarnation cannot
-authorize further publication to it.
+source's event history, apart from the terminal receipt described above. A
+stored receipt from a retired incarnation cannot authorize further publication
+to it.
+
+A mediator's `retired` status or `identity-conflict` response suspends only
+operational sends to the affected incarnation and exposes a diagnostic. It
+MUST NOT create a portable `replica.retired` event. Portable retirement comes
+only from validated vault events; recover the missing membership history from
+an active peer or backup. Operational suspension does not erase pending CIDs
+or count them as stored. If later authenticated reconciliation shows a matching
+active grant and there is no local retirement/conflict, sending may resume.
 
 At startup, reconnection, a new peer, lost progress or uncertain remote state,
 run a full inventory comparison. While active, repeat reconciliation at a
@@ -394,44 +434,71 @@ For a full reconciliation or initial catch-up:
 1. Obtain the complete fixed event inventory and stage every missing event
    from it. Several batches may be in flight; servicing requests and staging
    later batches MUST NOT wait for earlier batches' `stored` receipts.
-2. Plan the prospective union of current accepted events and the complete
-   learned event cut. Follow the vault's domain validation, retained-root and
-   erasure-closure rules; preserve existing references and historical admissions.
-3. Determine which currently held objects that union requires and request
-   missing/damaged bytes. Released roots are not fetched merely because an old
-   event or source still mentions them.
-4. Outside a database transaction, assemble and verify complete requested
-   objects into hidden staging. Network I/O MUST NOT hold the vault writer lock
-   or a SQLite write transaction while waiting for a peer.
-5. Under the vault writer lock, re-plan against the current local event union,
-   membership/retirement state and object health. If concurrent commits changed
-   prerequisites, release the lock and obtain missing data or discard newly
-   released staging before trying again.
-6. Atomically publish the acceptable event union and required object additions
-   or repairs using the vault's ingestion/import boundary. Reused objects are
-   checked again at publication; a failure publishes none of that planned import.
-7. Reconcile/invalidate folds and application views using the owning runtime
-   rules, and emit `stored` for every fully applied batch. Imported history
-   does not mint a live input, send a pending message or regenerate an old reply.
+2. Plan against current accepted events and the complete learned cut. Follow
+   the vault's domain validation, retained-root and erasure-closure rules;
+   preserve existing references and historical admissions.
+3. Choose a bounded subset of staged events for the next atomic import. It
+   may cross batch boundaries or contain only part of a batch. When learned
+   erasure/release facts change its retention requirements, import the required
+   evidence first or include it in that subset. Do not omit known release
+   evidence merely to fetch or publish obsolete bytes.
+4. Let `targetBeforeImport` be the current accepted event set and `union` be
+   that set plus the chosen subset. Compute the import byte requirement:
+
+   ```text
+   requiredRoots =
+       roots retained by newly accepted subset events in union
+       ∪ (heldRoots(union) − heldRoots(targetBeforeImport))
+   ```
+
+   Every required root needs verified staged bytes or sound accepted target
+   bytes. Fetch missing/damaged required objects and any available repairs for
+   other union-held objects. Assemble and verify them outside the database
+   transaction; network I/O MUST NOT hold the writer lock or a write transaction.
+5. Under the writer lock, re-plan the chosen subset against current accepted
+   events, all learned release evidence, membership/retirement and object health.
+   Recompute both held-root folds and `requiredRoots`. If prerequisites changed,
+   release the lock and obtain missing data or discard newly released staging.
+6. Atomically publish that subset and its required object additions or repairs
+   using the vault's import boundary. Apply the existing sound-target reuse
+   rules; a failed check publishes none of this chosen import. Previously
+   completed independent imports remain accepted.
+7. Reconcile/invalidate folds and views, and emit `stored` only for batches whose
+   entire event set has now passed these imports. Repeat with other subsets;
+   the inventory cut is complete only when all its events have been accepted
+   and its required object work has completed. Missing work remains explicitly
+   incomplete. Imported history does not mint a live input, send a pending
+   message or regenerate an old reply.
 
 During this full reconciliation, learn the event cut before scheduling its
 object downloads or replaying old local object-transfer work. This lets the
 known erasure facts participate in the plan. New commits after that cut remain
 eligible for a later pass; this is not a global snapshot or completeness proof.
 
-Incremental publication can apply a self-contained batch by the same checks
-without obtaining an entire new inventory. Missing dependencies remain pending
-and trigger a request or reconciliation. Batches may be combined to resolve
-cross-batch dependencies; the union, rather than network order, is validated.
-An independently applicable erasure/retirement batch is not blocked merely
-because another staged batch is awaiting content. An invalid batch is surfaced
-explicitly rather than causing unrelated independent work to wait forever.
+Missing event references alone do not block event-set union. Their affected
+projections and effects remain incomplete until the exact evidence arrives;
+no placeholder or rewritten reference is created. Missing required bytes block
+only candidate subsets whose prospective union requires them, including roots
+newly held by existing target events. Other independently valid subsets MUST
+remain eligible for import. A partly applied batch remains visibly incomplete
+in durable progress, retaining its unapplied events in staging and receiving
+no `stored` receipt until complete.
+
+Incremental publication uses the same subset and byte checks without obtaining
+an entire new inventory. Combine events where domain or release evidence is
+needed, and request/reconcile missing history. An independently applicable
+erasure/retirement subset is not blocked merely because another is awaiting
+content. Invalid data is surfaced explicitly without holding unrelated work
+indefinitely or silently marking the inventory complete.
 
 The current [portable import boundary](../event-store.md#import-into-an-existing-vault)
 and [object merge rules](../vault-events.md#object-merge) require complete atomic
-publication. This protocol preserves that boundary; raw `EventStore.ingest`
-alone is not the application integration. Any future visible partial-state
-model needs an explicit revision of the owning specifications.
+publication of each import. This protocol proposes several such operations,
+not visible sub-transactions of one import: accepted subsets are valid partial
+history with their required objects, while network staging remains invisible.
+The [adoption work](README.md#adoption-work) must define this staged-input
+integration without weakening complete portable SQLite source validation.
+Raw `EventStore.ingest` alone is not the application integration.
 
 Repairing an object already held by accepted local events may publish verified
 bytes with no new events, using the same lock/retention/publication checks.
@@ -453,7 +520,7 @@ before retrying. Existing historical events and peer identities remain distinct.
 | Sender's local commit | Local durable event/object state |
 | Mediator accepts the encrypted forward | Bounded queued transport, not destination import |
 | Destination pickup ACK | That delivery need not remain in the queue |
-| Destination `stored` | That exact batch passed durable atomic vault application |
+| Destination `stored` | Every event in that exact batch passed an atomic import with its required objects |
 | Domain peer ACK | Application-protocol receipt, independent of synchronization |
 
 A receiver may pickup-ACK a valid sync message after either durable application
@@ -521,8 +588,8 @@ Enrollment proceeds as follows:
 2. Register with replica mediation, enabling its private inbox and shared-mail
    deliveries. The new device can queue/stage mail while catching up.
 3. Discover peers through the mediator list and known portable membership.
-   Verify each grant locally, exclude known retired/conflicting identities,
-   and establish `hello` with usable peers.
+   Exclude listed tombstones and locally retired/conflicting identities, verify
+   each remaining active grant locally, and establish `hello` with usable peers.
 4. Reconcile complete event inventories and required objects, including
    retirements/erasure learned since the backup. Reconcile remote membership
    accordingly. CIDs already restored are ordinary duplicates.
@@ -609,12 +676,29 @@ separate domain revision as well as transport tests.
 12. Restore a new device while other replicas append and external mail arrives.
     Its author is fresh, shared mail remains queued, history converges through
     catch-up, and the current profile never silently enables multiple executors.
-13. Exercise event/object/queue limits, a single event too large for the negotiated
-    envelope, and insufficient local staging capacity. Each stays visibly
-    unsatisfied rather than being truncated or falsely acknowledged as stored.
+13. A maximum legal event fits a single-event batch at the negotiated plaintext
+    and mediator wire floors. Smaller limits fail negotiation. Oversized legacy
+    events need the adoption policy; no event is truncated or given a new CID.
+    Object/queue/staging limits keep blocked work visibly unsatisfied without
+    falsely acknowledging it as stored.
 14. Repair missing bytes for an already accepted held root without any new event;
     only the verified repair becomes visible, and no synthetic sync event is made.
 15. An unseen current-author event refuses the import with no partial publication;
     recovery creates a new incarnation instead of rewriting incoming authors.
 16. No source/target cursor, wrapper, local option, trace, device key or operational
     receipt is imported as another replica's runtime state.
+17. One batch contains independent events and an event requiring unavailable
+    bytes. Import the independent subset; retain the rest as incomplete without
+    `stored`. Unimported event references defer projections, not event union.
+    Apply learned release evidence before or with affected subsets, and check
+    roots newly held by existing target events at each atomic boundary.
+18. Cross `hello` requests while both peers wait for their own result. Each sends
+    the other's correlated `hello-result`; neither treats `hello` as that result
+    nor blocks inbound handling on its own exchange.
+19. Repackage an immutable batch under a fresh wire ID and discard the old ID.
+    A delayed valid `stored` still advances only the matching peer/batch progress;
+    the same batch ID from another peer or an unknown batch advances nothing.
+20. Applying a sender's final self-retirement batch permits its terminal receipt
+    and exact receipt replay, but no new data from that retired sender. A mediator
+    retirement/conflict response suspends operational sends without fabricating
+    a portable retirement event or completing any pending batch.

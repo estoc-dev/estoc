@@ -37,9 +37,9 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** a
 
 An external sender addresses one of the vault's communication DIDs. The
 mediator retains the encrypted application envelope once and creates a delivery
-for each active replica. The sender does not need a device list or this
-extension. Every replica decrypts the original envelope with the vault's
-communication keys and performs its own receive procedure.
+for each active replica with queue capacity. The sender does not need a device
+list or this extension. Every receiving replica decrypts the original envelope
+with the vault's communication keys and performs its own receive procedure.
 
 A replica sends synchronization traffic to a particular replica DID. That
 message gets exactly one destination queue. It MUST NOT be fanned out to the
@@ -90,7 +90,11 @@ a client MUST NOT treat registration at one mediator as registration at another.
 
 The mediator advertises the extension using Discover Features. Successful
 registration, rather than discovery alone, establishes support. Accounts that
-have not enabled the extension retain ordinary account-scoped pickup.
+have not enabled the extension retain ordinary account-scoped pickup and
+phase-1 recipient updates without this profile's control proof. First replica
+registration atomically activates both replica delivery and mandatory recipient
+proofs for that account. Clients sharing that account must support the new
+profile before activation; other accounts are unaffected.
 
 <a id="terms-and-trust-model"></a>
 <a id="identity-model"></a>
@@ -205,10 +209,13 @@ Before granting access the mediator MUST verify:
    identity. One account uses one `mediation_id` for this registration domain.
 
 Sync clients independently verify the grant against their own known mediation
-record, its mediator, and their seed-derived replica key. They also check local
-retirement facts. They do not need to trust a mediator's account-membership
-assertion. The same signed binding can be carried during peer discovery even
-when the recipient has not yet received its `replica.created` event.
+record and its mediator, and compare the replica document's keys with their
+seed-derived replica keys. That key comparison establishes the vault binding;
+the grant supplies the mediator's account authorization and is not a substitute
+for deriving and checking the keys. Clients also check local retirement facts.
+They do not need to trust a mediator's account-membership assertion. The same
+signed binding can be carried during peer discovery even when the recipient
+has not yet received its `replica.created` event.
 
 Signature verification MUST use the library's verification API with an
 explicit algorithm allowlist and the already-authorized key. Decoding a JWS
@@ -259,9 +266,38 @@ Existing events authored by that replica remain valid history and may be
 relayed by any still-authorized replica.
 
 A runtime learning that its current incarnation is retired MUST stop new
-application work, sync publication and pickup under that incarnation. It MAY
-preserve/export unsynchronized local history. It MUST NOT silently mint a new
-ID to undo retirement; rejoining is an explicit new-enrollment operation.
+application work, sync publication and pickup under that incarnation, except
+for the final notification phase of an already recorded local self-retirement
+operation below. It MAY preserve/export unsynchronized local history. It MUST
+NOT silently mint a new ID to undo retirement; rejoining is an explicit
+new-enrollment operation.
+
+For an orderly local self-retirement:
+
+1. Quiesce application work and durably record the fixed local history cut,
+   known active peers and bounded deadlines for history transfer and final
+   notification. Resume the same plan and deadlines after a crash.
+2. Attempt to synchronize that history with each peer using ordinary bounded
+   batches and object requests. Wait for `stored` receipts or the history
+   deadline; surface any unconfirmed history for preservation/export.
+3. Commit the local `replica.retired` event. Its single-event batch is the last
+   publication to each still-active known peer. Until the notification deadline,
+   the runtime may send/retry only that batch and pick up its sync receipts.
+   Receiving peers may send the terminal `stored` receipt after applying it;
+   this does not authorize any further vault-data exchange with the retired
+   incarnation.
+4. After those receipts or the notification deadline, request mediator removal
+   using the account identity and stop all replica publication and pickup.
+   Mediator failure does not extend the deadline or resume application work.
+
+The exception applies only to the local retirement event committed in step 3;
+learning a retirement from elsewhere cancels the plan and stops work immediately.
+It cannot be recreated merely from a retirement event found in restored history.
+A lost or damaged incarnation is retired by another active replica, which
+publishes the event under its own identity. Neither path
+promises to recover history that no remaining peer or backup has received.
+Retiring an ID after fork recovery retires every clone using it; both clones
+need explicit enrollment with distinct fresh identities to continue writing.
 
 ### 5.4 Ownership of state
 
@@ -272,10 +308,11 @@ ID to undo retirement; rejoining is an explicit new-enrollment operation.
 | Event CIDs and currently held raw objects | Sync retries, peer receipts, inventory sessions, staged transfers, change tokens |
 
 A desired portable state and a remote side effect are reconciled, not committed
-in a distributed transaction. Commit membership intent before registration;
-commit retirement before requesting removal. Any active full replica may
-reconcile known retirements using the shared account key. Responses and retries
-remain operational state and MUST NOT generate an endless stream of portable
+in a distributed transaction. Commit membership intent before registration
+and retirement before requesting removal. For local self-retirement, make the
+removal request after the bounded notification phase. Any active full replica
+may reconcile known retirements using the shared account key. Responses and
+retries remain operational state and MUST NOT generate an endless stream of portable
 registration/synchronization records.
 
 <a id="replica-lifecycle"></a>
@@ -293,7 +330,8 @@ inactivity lease. Being offline does not change the portable member identity.
 ### 6.1 `register` / `registered`
 
 The replica sends `register` authcrypted from its replica DID to the mediator.
-The body has exactly `{ "grant": <compact JWS>, "replay": "retained" }`.
+The body has exactly `{ "grant": <compact JWS> }`. Retained shared-mail replay
+is part of registration, not an optional mode.
 The grant's long form may be used to resolve the claimed sender's public key
 after opening the request; the encrypted grant cannot bootstrap decryption of
 itself. The caller supplies its sender long form in the DIDComm envelope key
@@ -307,8 +345,13 @@ In one transaction the mediator MUST:
 
 1. Enable replica delivery for the shared account if not already enabled,
    preserving every unexpired pending legacy package as shared retained mail.
+   Activate recipient control proofs and preserve existing recipients as
+   legacy registrations with `registration_id: null`.
 2. Bind the new replica ID/DID/grant and provision its private destination.
-3. Create its missing deliveries for every unexpired shared mailbox message.
+3. Create missing deliveries for unexpired shared mailbox messages up to this
+   replica's pending-delivery limit, in mediator acceptance order. Break ties
+   by the mediator's stable internal package identity. Leave the rest retained
+   for a later replay attempt; queue capacity does not abort registration.
 4. Disable account-global pickup for the shared account.
 
 An in-flight legacy ACK arriving after activation MUST fail without deleting
@@ -317,13 +360,19 @@ mail already removed before the switch can only be recovered from a replica or
 backup. Live pushes occur only after the transaction commits.
 
 An exact repeat for an active member is idempotent and repairs missing
-retained deliveries. Existing acknowledged deliveries MUST NOT be reset.
+retained deliveries up to available queue capacity. Existing acknowledged
+deliveries MUST NOT be reset. The client repeats registration on reconnection
+and after draining a queue that reached its limit, then retries after draining
+when `replay_pending_count` still reports omitted retained mail.
 A retired or conflicting identity fails without mutation. Shared-recipient and
 private-replica destinations cannot overlap or steal an existing destination.
 
 The `registered` response is authcrypted to the replica DID, uses `thid` equal
 to the request ID, and includes `replica_id`, `replica_did`, `state: "active"`,
 original `registered_time`, `replayed_count`, and enforced `limits`.
+It also includes `replay_pending_count`, the number of unexpired shared
+packages with neither a pending nor an acknowledged delivery for this replica
+because its queue was full at that transaction.
 
 ### 6.2 `list` / `replicas`
 
@@ -332,19 +381,23 @@ original `registered_time`, `replayed_count`, and enforced `limits`.
 a positive `limit` no greater than `max_membership_page`. A new listing captures
 a fixed roster; subsequent cursors are bound to that snapshot and account.
 `replicas` contains `entries` and `next_cursor` (null for the final page).
-Each entry has `grant`, `state` (`active` or `retired`) and `registered_time`
-(UTC Epoch Seconds, or null for a tombstone created before registration).
+An active entry has `grant`, `state: "active"` and `registered_time` (UTC Epoch
+Seconds). A retired entry is a compact tombstone with exactly `replica_id`,
+`replica_did` and `state: "retired"`; it needs no long-form document or grant.
 Repeated pages are stable; an expired snapshot returns `list-expired` and the
 client starts a fresh listing. The mediator may shorten a page to fit its wire
 limit, but cannot omit an entry from a successfully completed listing.
 
-No other account's identities are disclosed. The lifetime membership limit
-bounds retained bindings, not just active devices. Reaching that limit is an
-explicit failure, never permission to discard tombstones.
+No other account's identities are disclosed. Active bindings and compact
+tombstones have separate capacity budgets. Tombstones retain both canonical
+IDs so neither a replayed replica ID nor a reused replica DID can reactivate
+the incarnation; storing only the replica ID would lose the latter check.
 
-Clients verify grants before contacting listed peers and reconcile local
-retirements before publishing to them. A missing row is not proof of retirement
-or data loss; the mediator may have been restored from an older database.
+Clients verify active grants before contacting listed peers and reconcile local
+retirements before publishing to them. A listed tombstone suspends operational
+sends to that identity but does not create a portable retirement event.
+A missing row is not proof of retirement or data loss; the mediator may have
+been restored from an older database.
 No response is proof that a peer is online or has complete vault history.
 
 ### 6.3 `retire` / `retired`
@@ -353,21 +406,27 @@ No response is proof that a peer is online or has complete vault history.
 `{ "replica_id": <UUIDv7>, "grant": <compact JWS> }`; the grant identifies the
 exact binding even if registration has not yet reached the mediator.
 The account, mediator and replica ID MUST match the request and verified grant.
+The first successful `register` or `retire` binds the account's `mediation_id`;
+later grants must match it even if no active members remain.
 
-The mediator atomically records the terminal binding, disables its private
+The mediator atomically records the terminal ID/DID pair, disables its private
 routing and pickup, and removes its pending deliveries. After commit it closes
 the replica's live subscriptions; connections do not override durable retirement
 state. Bytes already sent over a socket cannot be recalled. It retains shared
 ciphertext for other replicas and retained replay. An authorized retirement of
-an absent binding records a tombstone, so a
-late `register` cannot undo it. Conflicting bindings fail without mutation.
+an absent binding records a tombstone, so a late `register` cannot undo it.
+The retired DID remains reserved in the mediator's destination namespace.
+Conflicting bindings fail without mutation.
 Repeating the same retirement succeeds. `retired` echoes the bound IDs and
 `state: "retired"` under the request's `thid`.
 
 Retirement does not withdraw already downloaded data or other replicas'
-authored events. The mediator must retain enough terminal state to reject a
-replayed grant for its identity lifetime. After remote-state loss, clients
-reconcile their known retirements before replaying active registrations.
+authored events. The account and mediation arrangement remain bound at account
+scope; together with the compact ID/DID pair they identify the terminal binding.
+Every presented grant still undergoes signature and document validation before
+comparison. The mediator may discard a retired member's grant and long form,
+but retains its ID/DID pair for the identity lifetime. After remote-state loss,
+clients reconcile their known retirements before replaying active registrations.
 
 <a id="coordinate-mediation-profile"></a>
 
@@ -388,9 +447,9 @@ require the separate [mutable-channel proposal](did-web-channels.md).
 
 ### 7.1 Recipient control
 
-A recipient registration MUST prove control of the recipient DID rather than
-claiming it first. Each `recipient-update` entry includes `recipient_did`,
-`action`, `registration_id`, `resolution_material` and `proof`.
+After account activation, every `recipient-update` entry MUST prove control of
+the recipient DID, including removal and replacement. Each entry includes
+`recipient_did`, `action`, `registration_id`, `resolution_material` and `proof`.
 `registration_id` is a UUIDv7; `proof` is compact JWS, protected `alg: EdDSA`,
 `typ: estoc/recipient-registration+jws`, and `kid` naming an authentication key
 of the recipient. The RFC 8785 payload is exactly:
@@ -407,7 +466,18 @@ of the recipient. The RFC 8785 payload is exactly:
 }
 ```
 
-All repeated fields MUST match the outer request. The expiry must be in the
+The proof fields MUST match the enclosing request as follows:
+
+| Proof payload | Enclosing request or entry |
+| --- | --- |
+| `account` | Authenticated account `from` |
+| `aud` | Mediator `to` |
+| `request_id` | DIDComm request `id` |
+| `recipient` | Entry `recipient_did` |
+| `action` | Entry `action` |
+| `registration_id` | Entry `registration_id` |
+
+Compare DIDs after verified canonicalization. The expiry must be in the
 future and at most five minutes ahead of mediator time. Removal uses
 `action: "remove"` and the active registration ID. Verification uses the
 recipient's authorized key, not the account's key. The complete bounded update
@@ -423,16 +493,40 @@ unrestricted network resolution or mutable-channel use.
 
 ### 7.2 Registration state
 
+At first replica registration, each existing communication recipient keeps its
+account and routing but becomes a legacy row with `registration_id: null`.
+`recipient-query` returns these nulls explicitly. The next reconciliation by
+a replica holding that recipient's DID entity MUST issue a proved `add` with a
+fresh UUIDv7 to upgrade the row. A legacy row cannot be removed by an unproved
+request or a null registration ID: upgrade it first, then prove removal of the
+current ID. Updates committed before activation use phase-1 rules; every update
+processed after activation, including an in-flight legacy request, uses the new
+proof checks and fails atomically if they are absent. Repeated replica
+registration never resets an upgraded recipient's ID to null.
+
 An absent recipient may be added with valid proof and available quota. A repeat
 of the same account/registration ID is `no_change`; a new valid ID for that
 same account replaces it atomically. Another account cannot take it. An
 attempt to register a private replica DID, account DID or mediator DID as a
 shared address fails.
 
-Removal affects future routing only. A matching active registration is removed;
-an absent or stale registration has no effect. Retained shared messages and
-already-created deliveries remain until their deadlines. `recipient-query`
-returns the account's shared recipients and their current registration IDs.
+Removal requires a valid proof signed by that recipient's authentication key
+and affects future routing only. A matching active registration is removed;
+an absent or stale registration has no effect after proof verification.
+Retained shared messages and already-created deliveries remain until their
+deadlines. `recipient-query` returns the account's shared recipients and their
+current registration IDs.
+
+A replica may remove a recipient only when it holds the corresponding DID
+entity and locally validated retirement or route-withdrawal evidence making
+that recipient undesired at this mediator. Absence from its local desired set
+alone is insufficient. For an unknown recipient, including a legacy row, it
+MUST preserve the registration, report a bounded diagnostic and reconcile
+history. It cannot derive the entity's named key from the DID string alone.
+This replaces the phase-1 rule that reconciliation removes all registrations
+outside one runtime's desired set. Across replicas, the desired set is the
+union of known live DID entities, subject to the agreed domain retirement and
+route rules; a stale replica must not delete another replica's new address.
 
 <a id="routing-and-mailbox-storage-extension"></a>
 
@@ -446,16 +540,23 @@ Routing classification is determined by the registered `forward.body.next`:
 
 | Destination | Storage and delivery |
 | --- | --- |
-| Shared communication DID | One immutable shared mailbox package; one delivery for each active replica |
+| Shared communication DID | One immutable shared mailbox package; one delivery for each active replica with queue capacity |
 | Active replica DID | One private mailbox package and delivery for that replica only |
 | Retired, unknown or unauthorized destination | Refuse without partial storage or fan-out |
 
-For shared mail, inserting the package and every required delivery MUST be
-atomic with registration and retirement. Registration racing a new package
-must produce one delivery either through live fan-out or retained replay.
+For shared mail, inserting the package, selecting replicas with queue capacity
+and creating their deliveries MUST be atomic with registration and retirement.
+Registration racing a new package produces one delivery through live fan-out
+or retained replay if that replica has capacity; otherwise it leaves the
+package eligible for later replay to that replica.
 There is at most one delivery per `(mailbox package, replica DID)`.
 An accepted shared package is retained even when there are no active replicas.
-If quotas prevent complete fan-out, the mediator refuses the whole new package.
+Account retained-byte/message limits may refuse the whole new package. A full
+replica queue only omits that replica's new delivery and records a bounded
+account/replica diagnostic; it MUST NOT prevent package acceptance or delivery
+to replicas with capacity. The omitted delivery is not an ACK or deletion of
+the retained package. A later registration retry can recover it before expiry;
+after expiry recovery requires peer history or a backup.
 
 A private sync envelope is opaque to the mediator. It is routed by the replica
 DID just like other mail; its encrypted protocol type or contents are not
@@ -533,12 +634,31 @@ not a permanent archive: after expiry, missing history must come from another
 replica or backup. Transport acceptance alone is not delivery to a replica.
 
 `registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
-`max_message_bytes`, `max_active_replicas`, `max_membership_records`, `max_membership_page`,
+`max_message_bytes`, `max_active_replicas`, `max_retired_replicas`, `max_membership_page`,
 `max_shared_recipients`, `max_retained_bytes`, `max_retained_messages`,
 `max_pending_deliveries_per_replica`, `max_deliveries_per_request` and
-`max_recipient_updates_per_request`. Membership-record quota counts tombstones.
-Byte and message quotas cover private mail as well as shared mail, with shared
-ciphertext counted once. Limits are checked before atomic publication.
+`max_recipient_updates_per_request`. Byte and message quotas apply to the
+account's private and shared packages, with shared ciphertext counted once.
+The pending-delivery limit applies separately to each replica's combined
+private/shared queue. Shared fan-out or replay skips only the full queue;
+private mail for a full destination is refused without storing its package.
+Limits are checked before atomic publication.
+
+Only active bindings count toward `max_active_replicas`. Compact retired ID/DID
+pairs use `max_retired_replicas`, which MUST be at least 1024 times the active
+limit. Every active binding reserves one slot in that tombstone budget, so
+retiring it cannot fail because other retirements filled the budget. New
+registration or retirement of an absent binding requires an unreserved slot;
+the retired count plus active reservations cannot exceed that budget.
+Repeating an existing retirement consumes none. No operation may discard a
+tombstone or re-enable an incarnation to make room.
+
+Deployments MUST support increasing the tombstone budget without changing
+the account, replica identities or stored history. An exhausted budget reports
+an actionable capacity diagnostic and refuses new identities, while existing
+members keep routing and can retire using their reserved slots. This remains
+bounded storage, but ordinary device turnover does not consume the active
+device allowance or require a mediator migration to raise the capacity.
 
 Protocol failures use Problem Report 2.0 with code prefix
 `e.estoc.replica-mediation.` and these suffixes:
@@ -551,7 +671,7 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `retired` | This exact incarnation is terminal |
 | `replica-required` | Shared-account pickup attempted after activation |
 | `list-expired` | Membership-list snapshot is no longer available; start a fresh listing |
-| `quota` | No atomic mutation fits the advertised limits |
+| `quota` | An account, membership, recipient or private-destination limit prevents the operation; a full shared-delivery queue alone does not refuse the package |
 | `message-too-large` | Envelope exceeds the transport limit |
 
 Authenticated control failures disclose only the caller's account state.
@@ -586,8 +706,13 @@ These are proposed requirements, not claims about the current implementation.
    list entry, wrong account/mediator, altered document or mismatched sender does not.
 3. A first registration preserves pending legacy mail and atomically disables
    shared-account pickup. A late legacy ACK cannot consume replica deliveries.
+   Existing recipients become null-ID legacy rows; proved adds upgrade them,
+   repeated registration preserves upgraded IDs, and late unproved updates fail.
+   Accounts that have not activated retain their phase-1 update behavior.
 4. Register and accept a shared package in both transaction orders: exactly one
-   delivery exists for the new replica. Repeating registration preserves ACKs.
+   delivery exists for the new replica when it has capacity. With a full queue,
+   the package remains replayable; draining and re-registering fills available
+   slots without duplicate deliveries or resetting ACKs.
 5. A and B receive identical original shared ciphertext with different delivery
    IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
 6. Sync addressed to B is delivered only to B and never replayed to C when C
@@ -596,11 +721,25 @@ These are proposed requirements, not claims about the current implementation.
    they cannot reach another principal. Disconnecting live push loses no mail.
 8. Retire before register and register before retire both end retired. A delayed
    grant cannot reactivate the identity; historical authored events remain usable.
+   Active retirement succeeds using reserved tombstone capacity; exhausted
+   tombstone capacity does not halt existing members. Increasing that budget
+   permits new identities without clearing the old ID/DID pairs.
 9. All replicas ACK shared mail; C joins before expiry and gets replay. After
    expiry it needs peer history. Private mail does not get shared replay.
-10. Quota failure publishes neither a partial fan-out nor a partial registration;
-    SQLite and D1 implementations satisfy the same atomicity boundary.
+10. Account storage exhaustion publishes no package or deliveries. One full
+    replica queue omits only its shared delivery with a bounded diagnostic;
+    other replicas receive the package. Private mail to a full queue is refused.
+    Registration and its bounded replay remain atomic; SQLite and D1 satisfy
+    the same boundary.
 11. A restored mediator list cannot authorize a fabricated sync recipient, and
     known local tombstones are reconciled before registration/publication.
 12. No delivery or membership operation independently authorizes historical
     application effects or changes a committed application's channel/package.
+13. A local self-retirement drains history within its deadline and sends its
+    final retirement batch before its mediator removal request. Crash/restart
+    preserves the deadlines; unconfirmed history stays visible. Retirement learned from
+    another replica stops work immediately without starting a new drain.
+14. A creates and registers a communication DID while B lacks its entity.
+    B preserves it and reports the mismatch, including for a legacy null-ID row.
+    Missing or account-key-signed removal proofs fail; a valid recipient proof
+    with a stale registration ID cannot remove a newer registration.
