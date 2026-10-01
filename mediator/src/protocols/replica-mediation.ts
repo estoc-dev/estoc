@@ -11,7 +11,7 @@ import type { MediatorPolicy } from "../config.js";
 import { isAuthcrypted } from "../didcomm/didcomm.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
 import { isDecodable } from "../didcomm/did-resolver.js";
-import type { HandlerContext, Reply } from "./types.js";
+import type { Handler, HandlerContext, Reply } from "./types.js";
 import { isMediatorOwnDid } from "./coordinate-mediation.js";
 import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
@@ -25,10 +25,11 @@ import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js"
  * An account here is a vault's standalone mediation arrangement: the account
  * DID manages it and never picks up mail, and each replica it enrolls is a
  * DID of its own that will. The communication DIDs it receives mail for are
- * added one at a time, each by its own controller's proof. Enrollment and
- * recipients are append-only. These accounts share
- * nothing with coordinate-mediation's: a DID is one kind or the other, and
- * neither protocol's controls reach the other's state.
+ * added each by its own controller's proof, and the account alone takes one
+ * back. A replica it removes stays in its roster as removed and is never
+ * enrolled again. These accounts share nothing with coordinate-mediation's: a
+ * DID is one kind or the other, and neither protocol's controls reach the
+ * other's state.
  *
  * A control is a request the account DID authcrypts to one mediator DID, with
  * a body of exactly the members its type lists below. Its answer is the
@@ -42,8 +43,14 @@ export const REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/register`;
 export const REGISTERED = `${REPLICA_MEDIATION_PROTOCOL}/registered`;
 export const LIST = `${REPLICA_MEDIATION_PROTOCOL}/list`;
 export const REPLICAS = `${REPLICA_MEDIATION_PROTOCOL}/replicas`;
-export const RECIPIENT_ADD = `${REPLICA_MEDIATION_PROTOCOL}/recipient-add`;
-export const RECIPIENT_ADDED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-added`;
+export const REMOVE = `${REPLICA_MEDIATION_PROTOCOL}/remove`;
+export const REMOVED = `${REPLICA_MEDIATION_PROTOCOL}/removed`;
+export const RECIPIENT_UPDATE = `${REPLICA_MEDIATION_PROTOCOL}/recipient-update`;
+export const RECIPIENT_UPDATED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-updated`;
+export const RECIPIENT_QUERY = `${REPLICA_MEDIATION_PROTOCOL}/recipient-query`;
+export const RECIPIENTS = `${REPLICA_MEDIATION_PROTOCOL}/recipients`;
+
+export const RECIPIENT_UPDATE_LIMIT = 16;
 
 /** Enrolls the replica a grant names; the first one creates the account with it. */
 export interface RegisterBody {
@@ -70,10 +77,12 @@ export interface Limits {
   /** How long unclaimed mail waits; a forward's own `expires_time` can only shorten it. */
   message_retention_seconds: number;
   max_message_bytes: number;
+  /** Replicas enrolled and not removed. */
   max_active_replicas: number;
-  /** The largest `limit` a `list` may ask for. */
+  /** The largest `limit` a `list` or a `recipient-query` may ask for. */
   max_membership_page: number;
   max_shared_recipients: number;
+  max_recipient_updates: number;
   /**
    * Envelope bytes and envelopes the account may have kept at once. A shared
    * envelope counts once however many replicas it waits for, and keeps
@@ -85,7 +94,7 @@ export interface Limits {
   max_deliveries_per_request: number;
 }
 
-/** Asks for the account's replicas, in the order they enrolled. */
+/** Asks for the replicas the account ever enrolled, in the order they enrolled. */
 export interface ListBody {
   /** Null to begin, then the `next_cursor` of the page before. */
   cursor: string | null;
@@ -94,31 +103,105 @@ export interface ListBody {
 }
 
 export interface ReplicasBody {
-  entries: { grant: string; state: "active"; registered_time: number }[];
+  entries: {
+    grant: string;
+    state: "active" | "removed";
+    registered_time: number;
+    /** Null while the replica is active. */
+    removed_time: number | null;
+  }[];
   /**
    * Null on the last page. The pages of one listing are the replicas enrolled
-   * when it began; a cursor is the account's alone and never expires.
+   * when it began, each as it is when its page is written; a cursor is the
+   * account's alone and never expires.
    */
   next_cursor: string | null;
 }
 
-/** Routes one communication DID's mail to the account, for good. */
-export interface RecipientAddBody {
+/**
+ * Ends one replica's enrollment. What waited for that replica alone is
+ * dropped, mail forwarded to its own DID included, and that DID receives and
+ * picks up nothing more. Neither its ID nor its DID can be registered again.
+ */
+export interface RemoveBody {
+  replica_id: string;
+}
+
+/** Also the answer to a repeat, which changes nothing and keeps the first time. */
+export interface RemovedBody {
+  replica_id: string;
+  state: "removed";
+  removed_time: number;
+}
+
+/**
+ * Changes which communication DIDs' mail the account receives. The updates
+ * are applied one by one in the order given and each is answered at its own
+ * place in the reply; one that fails undoes none of the others. The shape is
+ * coordinate-mediation's recipient-update, an addition carrying what proves it.
+ */
+export interface RecipientUpdateBody {
+  /** From 1 to `max_recipient_updates` of them, each exactly one of the two. */
+  updates: (RecipientAddition | RecipientRemoval)[];
+}
+
+export interface RecipientAddition {
   /** A did:peer:4, in either form. */
   recipient_did: string;
-  /** Its long form; null once the mediator keeps one from an earlier add. */
+  action: "add";
+  /** Its long form; null while the mediator holds the recipient and so its long form. */
   resolution_material: string | null;
   /** The compact JWS `verifyRecipientProof` accepts, signed by the recipient DID. */
   proof: string;
 }
 
-export interface RecipientAddedBody {
+/**
+ * Stops routing the DID's mail to the account. Mail already kept for it still
+ * waits for its replicas, and the DID is free to be added again, by a new
+ * proof and with its long form, to this account or any other.
+ */
+export interface RecipientRemoval {
   recipient_did: string;
-  /** `no_change`: the account already held it. */
-  status: "added" | "no_change";
+  action: "remove";
 }
 
-/** How a control is refused: a problem-report with code `e.estoc.replica-mediation.<this>`. */
+export interface RecipientUpdatedBody {
+  updated: {
+    recipient_did: string;
+    action: "add" | "remove";
+    /** `no_change`: an addition of a recipient the account held, or a removal of one it did not. */
+    result: "success" | "no_change" | "client_error";
+    /** With `client_error` only: the code a problem-report would have carried. */
+    problem?: string;
+  }[];
+}
+
+/** Asks for the account's recipients, oldest first; the shape is coordinate-mediation's recipient-query. */
+export interface RecipientQueryBody {
+  paginate: {
+    /** From 1 to `max_membership_page`. */
+    limit: number;
+    /** How many recipients to pass over; a removal in between moves the ones after it. */
+    offset: number;
+  };
+}
+
+export interface RecipientsBody {
+  dids: { recipient_did: string }[];
+  pagination: {
+    /** How many `dids` holds. */
+    count: number;
+    offset: number;
+    /** How many recipients come after this page. */
+    remaining: number;
+  };
+}
+
+/**
+ * How a control is refused: a problem-report with code
+ * `e.estoc.replica-mediation.<this>`. One update of a `recipient-update` is
+ * refused with the same code, in its own answer.
+ */
 type Problem =
   /** Not authcrypt by the DID it names to exactly one mediator DID, or not exactly the control's body. */
   | "invalid-message"
@@ -130,18 +213,21 @@ type Problem =
   | "account-refused"
   /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
+  /** The account enrolled no replica under that ID. */
+  | "unknown-replica"
   /** A DID or ID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
   /** Pickup asked by the account DID: only its replicas hold queues. */
   | "replica-required"
+  /** Pickup asked by a replica its account removed. */
+  | "replica-removed"
   /** The account is at its replica or recipient limit. */
   | "quota";
 
+const problemCode = (problem: Problem) => `e.estoc.replica-mediation.${problem}`;
+
 export function replicaProblem(problem: Problem): Reply {
-  return {
-    type: PROBLEM_REPORT,
-    body: { code: `e.estoc.replica-mediation.${problem}` },
-  };
+  return { type: PROBLEM_REPORT, body: { code: problemCode(problem) } };
 }
 
 export function replicaLimits(policy: MediatorPolicy): Limits {
@@ -151,6 +237,7 @@ export function replicaLimits(policy: MediatorPolicy): Limits {
     max_active_replicas: policy.maxActiveReplicas,
     max_membership_page: policy.maxMembershipPage,
     max_shared_recipients: policy.maxSharedRecipients,
+    max_recipient_updates: RECIPIENT_UPDATE_LIMIT,
     max_retained_bytes: policy.maxRetainedBytes,
     max_retained_messages: policy.maxMessagesPerAccount,
     max_deliveries_per_request: DELIVERY_PAGE_LIMIT,
@@ -166,6 +253,15 @@ interface Control<Body> {
   mediator: string;
   /** Exactly the control's members; what each holds is still unchecked. */
   body: Record<keyof Body, unknown>;
+}
+
+function holdsExactly(value: unknown, fields: string[]): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).sort().join() === [...fields].sort().join()
+  );
 }
 
 /**
@@ -192,8 +288,7 @@ function controlOf<Body>(
     return null;
   }
 
-  const names = Object.keys(message.body).sort();
-  if (names.join() !== [...fields].sort().join()) {
+  if (!holdsExactly(message.body, fields)) {
     return null;
   }
   return {
@@ -278,8 +373,9 @@ export async function register(
 /**
  * Where a listing stands: the account it is of, how many replicas the roster
  * held when the listing began, and the last one already returned. Enrollment
- * only appends, so the first `through` replicas are the same roster for as
- * long as the account lives and a listing never expires.
+ * only appends and a removed replica keeps its place, so the first `through`
+ * replicas are the same roster for as long as the account lives and a listing
+ * never expires.
  */
 interface Cursor {
   account: string;
@@ -358,13 +454,43 @@ export async function list(incoming: Unpacked, context: HandlerContext): Promise
     body: {
       entries: roster.entries.map((entry) => ({
         grant: entry.grant,
-        state: "active",
+        state: entry.removedTime === null ? "active" : "removed",
         registered_time: entry.registeredTime,
+        removed_time: entry.removedTime,
       })),
       next_cursor:
         last < through ? writeCursor({ account: control.account, through, after: last }) : null,
     } satisfies ReplicasBody,
   };
+}
+
+export async function remove(incoming: Unpacked, context: HandlerContext): Promise<Reply | null> {
+  const { store, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf<RemoveBody>(incoming, context, ["replica_id"]);
+  if (control === null || typeof control.body.replica_id !== "string") {
+    return replicaProblem("invalid-message");
+  }
+
+  const { replica_id } = control.body;
+  const removal = await store.removeReplica(control.account, control.mediator, replica_id);
+  switch (removal.outcome) {
+    case "unknown":
+      return replicaProblem("unknown-account");
+    case "not-enrolled":
+      return replicaProblem("unknown-replica");
+    case "removed":
+      return {
+        type: REMOVED,
+        body: {
+          replica_id,
+          state: "removed",
+          removed_time: removal.removedTime,
+        } satisfies RemovedBody,
+      };
+  }
 }
 
 async function recipientDocument(
@@ -389,30 +515,41 @@ async function recipientDocument(
   return doc === null ? null : { did, longForm, doc };
 }
 
-export async function recipientAdd(
-  incoming: Unpacked,
-  context: HandlerContext
-): Promise<Reply | null> {
-  const { ctx, store, config, sender } = context;
-  if (sender === null) {
+type Updated = RecipientUpdatedBody["updated"][number];
+
+/** The updates of a `recipient-update` when every one is exactly an addition or a removal. */
+function updatesOf(listed: unknown): (RecipientAddition | RecipientRemoval)[] | null {
+  if (!Array.isArray(listed) || listed.length < 1 || listed.length > RECIPIENT_UPDATE_LIMIT) {
     return null;
   }
-  const control = controlOf<RecipientAddBody>(incoming, context, [
-    "proof",
-    "recipient_did",
-    "resolution_material",
-  ]);
-  if (control === null) {
-    return replicaProblem("invalid-message");
-  }
-  const { recipient_did: named, resolution_material: supplied, proof } = control.body;
-  if (
-    typeof named !== "string" ||
-    typeof proof !== "string" ||
-    (supplied !== null && typeof supplied !== "string")
-  ) {
-    return replicaProblem("invalid-message");
-  }
+  const isUpdate = (update: unknown): boolean => {
+    if (holdsExactly(update, ["action", "recipient_did"])) {
+      return update.action === "remove" && typeof update.recipient_did === "string";
+    }
+    return (
+      holdsExactly(update, ["action", "proof", "recipient_did", "resolution_material"]) &&
+      update.action === "add" &&
+      typeof update.recipient_did === "string" &&
+      typeof update.proof === "string" &&
+      (update.resolution_material === null || typeof update.resolution_material === "string")
+    );
+  };
+  return listed.every(isUpdate) ? (listed as (RecipientAddition | RecipientRemoval)[]) : null;
+}
+
+/** Null when the control's account is not one bound to the mediator it addressed. */
+async function addRecipient(
+  { recipient_did: named, resolution_material: supplied, proof }: RecipientAddition,
+  control: Control<RecipientUpdateBody>,
+  context: HandlerContext
+): Promise<Updated | null> {
+  const { ctx, store, config } = context;
+  const answer = { recipient_did: canonicalDid(named), action: "add" as const };
+  const refused = (problem: Problem): Updated => ({
+    ...answer,
+    result: "client_error",
+    problem: problemCode(problem),
+  });
 
   // The proof is checked on every request, also for a binding already held.
   const recipient = await recipientDocument(named, supplied, context);
@@ -423,10 +560,10 @@ export async function recipientAdd(
     proven.account !== control.account ||
     proven.mediator !== control.mediator
   ) {
-    return replicaProblem("invalid-recipient");
+    return refused("invalid-recipient");
   }
   if (isMediatorOwnDid(recipient.did, ctx.dids)) {
-    return replicaProblem("identity-conflict");
+    return refused("identity-conflict");
   }
 
   const outcome = await store.addSharedRecipient({
@@ -439,16 +576,113 @@ export async function recipientAdd(
 
   switch (outcome) {
     case "unknown":
-      return replicaProblem("unknown-account");
+      return null;
     case "conflict":
-      return replicaProblem("identity-conflict");
+      return refused("identity-conflict");
     case "full":
-      return replicaProblem("quota");
+      return refused("quota");
     case "added":
+      return { ...answer, result: "success" };
     case "no_change":
-      return {
-        type: RECIPIENT_ADDED,
-        body: { recipient_did: recipient.did, status: outcome } satisfies RecipientAddedBody,
-      };
+      return { ...answer, result: "no_change" };
   }
 }
+
+/** Null when the control's account is not one bound to the mediator it addressed. */
+async function removeRecipient(
+  { recipient_did: named }: RecipientRemoval,
+  control: Control<RecipientUpdateBody>,
+  { store }: HandlerContext
+): Promise<Updated | null> {
+  const did = canonicalDid(named);
+  const outcome = await store.removeSharedRecipient(control.account, control.mediator, did);
+  if (outcome === "unknown") {
+    return null;
+  }
+  return {
+    recipient_did: did,
+    action: "remove",
+    result: outcome === "removed" ? "success" : "no_change",
+  };
+}
+
+export async function recipientUpdate(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  if (context.sender === null) {
+    return null;
+  }
+  const control = controlOf<RecipientUpdateBody>(incoming, context, ["updates"]);
+  const updates = control === null ? null : updatesOf(control.body.updates);
+  if (control === null || updates === null) {
+    return replicaProblem("invalid-message");
+  }
+
+  const updated: Updated[] = [];
+  for (const update of updates) {
+    const answer =
+      update.action === "add"
+        ? await addRecipient(update, control, context)
+        : await removeRecipient(update, control, context);
+    if (answer === null) {
+      return replicaProblem("unknown-account");
+    }
+    updated.push(answer);
+  }
+  return { type: RECIPIENT_UPDATED, body: { updated } satisfies RecipientUpdatedBody };
+}
+
+export async function recipientQuery(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  const { store, config, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf<RecipientQueryBody>(incoming, context, ["paginate"]);
+  const paginate = control?.body.paginate;
+  if (control === null || !holdsExactly(paginate, ["limit", "offset"])) {
+    return replicaProblem("invalid-message");
+  }
+  const { limit, offset } = paginate;
+  if (
+    !Number.isSafeInteger(limit) ||
+    (limit as number) < 1 ||
+    (limit as number) > config.maxMembershipPage ||
+    !Number.isSafeInteger(offset) ||
+    (offset as number) < 0
+  ) {
+    return replicaProblem("invalid-message");
+  }
+
+  const page = await store.listSharedRecipients(
+    control.account,
+    control.mediator,
+    offset as number,
+    limit as number
+  );
+  if (page === null) {
+    return replicaProblem("unknown-account");
+  }
+  return {
+    type: RECIPIENTS,
+    body: {
+      dids: page.recipients.map((recipient_did) => ({ recipient_did })),
+      pagination: {
+        count: page.recipients.length,
+        offset: offset as number,
+        remaining: page.remaining,
+      },
+    } satisfies RecipientsBody,
+  };
+}
+
+export const REPLICA_CONTROLS: Record<string, Handler> = {
+  [REGISTER]: register,
+  [LIST]: list,
+  [REMOVE]: remove,
+  [RECIPIENT_UPDATE]: recipientUpdate,
+  [RECIPIENT_QUERY]: recipientQuery,
+};

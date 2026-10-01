@@ -205,7 +205,7 @@ an ordinary (coordinate-mediation) account or recipient here:
 - A **replica** DID is one device. It picks up, acknowledges and is pushed
   mail under its own key, and can be forwarded to directly.
 - A **recipient** DID is an address the owner gave out. Mail forwarded to it
-  waits once for every replica the account holds at that moment.
+  waits once for every active replica the account holds at that moment.
 
 A did:peer:4 is the same DID in its long and short form. The mediator keeps
 the long form the first time it sees one, so first contact uses the long
@@ -218,13 +218,15 @@ carries exactly the body members listed. The answer is sealed to the
 account with the request's `id` as `thid`: the reply named here, or a
 problem-report whose code is `e.estoc.replica-mediation.` plus one of
 `invalid-message`, `invalid-grant`, `invalid-recipient`, `account-refused`,
-`unknown-account`, `identity-conflict`, `quota`.
+`unknown-account`, `unknown-replica`, `identity-conflict`, `quota`.
 
 | Request | Body | Reply | Body |
 | --- | --- | --- | --- |
 | `register` | `grant` | `registered` | `account`, `mediation_id`, `routing_did`, `replica_id`, `replica_did`, `state`, `registered_time`, `limits` |
-| `list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `registered_time`), `next_cursor` |
-| `recipient-add` | `recipient_did`, `resolution_material`, `proof` | `recipient-added` | `recipient_did`, `status` |
+| `list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `registered_time`, `removed_time`), `next_cursor` |
+| `remove` | `replica_id` | `removed` | `replica_id`, `state`, `removed_time` |
+| `recipient-update` | `updates` (`recipient_did`, `action`, and for an addition `resolution_material`, `proof`) | `recipient-updated` | `updated` (`recipient_did`, `action`, `result`, `problem`) |
+| `recipient-query` | `paginate` (`limit`, `offset`) | `recipients` | `dids` (`recipient_did`), `pagination` (`count`, `offset`, `remaining`) |
 
 **`register`** enrolls one replica, and the first one creates the account
 with it, both or neither. No mediate-request comes before it. `grant` is a
@@ -239,21 +241,50 @@ and the mediator DID of its first grant; another name of the same deployment
 is another mediator. An exact repeat answers as the first time did. A replica
 enrolled later receives nothing forwarded before it.
 
-**`list`** pages the account's grants in enrollment order. `cursor` is null
-to begin and then the previous `next_cursor`; `limit` is at most
-`max_membership_page`. One listing is the replicas enrolled when it began,
-and its cursors never expire.
+**`list`** pages the grants of every replica the account ever enrolled, in
+enrollment order, each with its `state`: `active`, or `removed` with its
+`removed_time`. `cursor` is null to begin and then the previous
+`next_cursor`; `limit` is at most `max_membership_page`. One listing is the
+replicas enrolled when it began, and its cursors never expire.
 
-**`recipient-add`** routes one recipient DID to the account. `proof` is a
-compact JWS signed by the *recipient's* authentication key
-(`typ: estoc/recipient-add+jws`) over exactly `account`, `aud` (the mediator)
-and `recipient`; it is checked on every request and names no time, so the
-same proof serves every retry. `resolution_material` is the recipient's long
-form, or null once the mediator keeps it. `status` is `added`, or
-`no_change` when the account already held it.
+**`remove`** ends one replica's enrollment. What waited for that replica
+alone is dropped, mail forwarded to its own DID included, and nothing more
+is queued for it; what other replicas wait for is untouched. The replica
+stays in the roster as `removed`, and neither its id nor its DID can be
+registered again, so a device that comes back enrolls as a new replica. A
+removed replica no longer counts against `max_active_replicas`. The last
+replica can be removed: the account stays, and mail to its recipients is
+still kept and counted, for no one, until a new replica enrolls for what
+comes after. A repeat answers as the first time did; an id the account never
+enrolled is `unknown-replica`.
 
-Nothing here is undone: there is no control that removes a replica or a
-recipient, and none that lists recipients.
+**`recipient-update`** changes which recipient DIDs route to the account. It
+has the shape of coordinate-mediation's message of that name: `updates` is a
+list of 1 to `max_recipient_updates` entries, applied one by one in order,
+and `updated` answers each at the same place with `result` `success`,
+`no_change` or `client_error`. A refused entry carries in `problem` the code
+a problem-report would have (`invalid-recipient`, `identity-conflict` or
+`quota` under the same prefix) and undoes none of the others. An entry that
+is not exactly one of the two below refuses the whole request as
+`invalid-message`, with nothing applied.
+
+- `action: "add"` with `resolution_material` and `proof` routes the DID to
+  the account. `proof` is a compact JWS signed by the *recipient's*
+  authentication key (`typ: estoc/recipient-add+jws`) over exactly `account`,
+  `aud` (the mediator) and `recipient`; it is checked on every request and
+  names no time, so the same proof serves every retry.
+  `resolution_material` is the recipient's long form, or null while the
+  mediator holds the recipient. `no_change` means the account already held
+  it.
+- `action: "remove"` with nothing else stops routing the DID. Mail already
+  kept for it still waits for its replicas. The DID is then bound nowhere:
+  it can be added again, to this account or another, by a proof and with its
+  long form. `no_change` means the account did not hold it.
+
+**`recipient-query`** pages the account's recipients, oldest first, in the
+shape of coordinate-mediation's: `limit` is at most `max_membership_page`,
+`offset` is how many to pass over, and `remaining` is how many come after
+the page. A removal between two pages moves the recipients after it.
 
 ### Mail
 
@@ -272,12 +303,13 @@ of its forward is still recognized; a pickup `message_count` of zero does not
 mean the account has room. An envelope forwarded to one replica is gone when
 that replica acknowledges it.
 
-A replica uses messagepickup/3.0 unchanged, authcrypted under its own DID.
-Each replica sees a shared envelope under an attachment id of its own, and
-its `messages-received` ends its own copy only. `recipient_did` narrows
-`status-request` and `delivery-request` to mail forwarded to that DID. A
-request the replica only signed is not answered. The account DID asking for
-pickup is told `e.estoc.replica-mediation.replica-required`.
+An active replica uses messagepickup/3.0 unchanged, authcrypted under its
+own DID. Each replica sees a shared envelope under an attachment id of its
+own, and its `messages-received` ends its own copy only. `recipient_did`
+narrows `status-request` and `delivery-request` to mail forwarded to that
+DID. A request the replica only signed is not answered. The account DID
+asking for pickup is told `e.estoc.replica-mediation.replica-required`, and
+a removed replica `e.estoc.replica-mediation.replica-removed`.
 
 Turning the protocol off stops controls and new mail; replicas already
 enrolled can still pick up what waits.
@@ -296,9 +328,9 @@ enrolled can still pick up what waits.
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
 | `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
-| `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
-| `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
-| `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
+| `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the three limits below must be positive integers, or the mediator refuses to start |
+| `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing or a recipient listing |
+| `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may hold at once |
 | `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until it lapses even when all of them acknowledged it. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |

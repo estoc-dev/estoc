@@ -6,7 +6,8 @@ import { canonicalDid, provenDid, signedPayload } from "./replica-grant.js";
  * The proof a communication DID signs to be added to a replica-mediation
  * account: that this DID's own controller wants its mail routed to that
  * account at that mediator. It names no request and no time, so it stays
- * good for every retry of the one addition it allows.
+ * good for every retry of the addition it allows, and for adding the DID
+ * back after the account removed it.
  */
 
 export const RECIPIENT_PROOF_TYP = "estoc/recipient-add+jws";

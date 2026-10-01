@@ -97,6 +97,46 @@ describe("SqliteStore", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("keeps the replicas enrolled before one could be removed, as active ones", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const old = new Database(path);
+    old.exec(`
+      CREATE TABLE replica_accounts (
+        did TEXT PRIMARY KEY,
+        mediation_id TEXT NOT NULL,
+        mediator TEXT NOT NULL,
+        long_form TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE replicas (
+        replica_did TEXT PRIMARY KEY,
+        account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+        replica_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        long_form TEXT NOT NULL,
+        grant_jws TEXT NOT NULL,
+        registered_at INTEGER NOT NULL,
+        UNIQUE (account_did, replica_id),
+        UNIQUE (account_did, ordinal)
+      );
+      INSERT INTO replica_accounts VALUES ('did:example:account', 'm', 'did:example:mediator', 'long', 1);
+      INSERT INTO replicas VALUES ('did:example:replica', 'did:example:account', 'r', 1, 'long', 'grant', 1);
+    `);
+    old.close();
+
+    const store = new SqliteStore(path);
+    expect(await store.replicaState("did:example:replica")).toBe("active");
+    const removal = await store.removeReplica("did:example:account", "did:example:mediator", "r");
+    expect(removal.outcome).toBe("removed");
+    store.close();
+
+    const reopened = new SqliteStore(path);
+    expect(await reopened.replicaState("did:example:replica")).toBe("removed");
+    reopened.close();
+    rmSync(dir, { recursive: true });
+  });
+
   it("scopes deletion to the owner", async () => {
     const store = new SqliteStore(":memory:");
     await store.grantMediation("did:example:alice");
