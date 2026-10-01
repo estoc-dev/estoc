@@ -13,8 +13,10 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Baked into the mediator's DID on first start; set it before then and
-      # never change it — a new URL would need a new DID (delete the volume).
+      # The DIDs are derived on every start from this URL and the keys kept in
+      # the volume. A new URL keeps the keys and the data but gives new DIDs,
+      # which clients must be given; a replica-mediation account stays bound
+      # to the mediator DID it registered with.
       MEDIATOR_PUBLIC_URL: ${MEDIATOR_PUBLIC_URL:?set MEDIATOR_PUBLIC_URL before first start}
       MEDIATOR_OPEN_REGISTRATION: ${MEDIATOR_OPEN_REGISTRATION:-true}
       MEDIATOR_CORS_ORIGIN: ${MEDIATOR_CORS_ORIGIN:-*}

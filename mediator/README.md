@@ -112,6 +112,8 @@ nothing is configured, and no name is more real than another.
 | [discover-features/2.0](https://didcomm.org/discover-features/2.0) | protocol disclosure |
 | [trust-ping/2.0](https://didcomm.org/trust-ping/2.0) | liveness |
 | [out-of-band/2.0](https://didcomm.org/out-of-band/2.0) | invitation issuing (`GET /invitation`, `?_oob=` URL) |
+| `https://estoc.dev/blob-store/1.0` | content-addressed blobs one mediation holds and anyone may fetch; on when blob storage is configured |
+| `https://estoc.dev/replica-mediation/1.0` | one account, several replicas that each pick up their own copy of its mail ([below](#replica-mediation)); on when `MEDIATOR_REPLICA_MEDIATION=true` |
 
 ## Transport
 
@@ -186,6 +188,100 @@ which — a 2xx always means queued mail:
 
 Over a WebSocket there is no status: a refused forward is dropped.
 
+## Replica mediation
+
+`https://estoc.dev/replica-mediation/1.0` is for an owner who reads the same
+mail on several devices. What follows is the whole contract; the body of
+every message is a type in `src/protocols/replica-mediation.ts`, the two
+signed objects are in `replica-grant.ts` and `recipient-proof.ts`, and
+`test/replica-mediation.test.ts` reads as the list of what is accepted and
+refused.
+
+Three kinds of DID take part, all did:peer:4, and none of them can also be
+an ordinary (coordinate-mediation) account or recipient here:
+
+- The **account** DID manages the arrangement: it sends the controls below
+  and never picks up mail.
+- A **replica** DID is one device. It picks up, acknowledges and is pushed
+  mail under its own key, and can be forwarded to directly.
+- A **recipient** DID is an address the owner gave out. Mail forwarded to it
+  waits once for every replica the account holds at that moment.
+
+A did:peer:4 is the same DID in its long and short form. The mediator keeps
+the long form the first time it sees one, so first contact uses the long
+form and anything later may use the short one.
+
+### Controls
+
+A control is authcrypted by the account DID to exactly one mediator DID and
+carries exactly the body members listed. The answer is sealed to the
+account with the request's `id` as `thid`: the reply named here, or a
+problem-report whose code is `e.estoc.replica-mediation.` plus one of
+`invalid-message`, `invalid-grant`, `invalid-recipient`, `account-refused`,
+`unknown-account`, `identity-conflict`, `quota`.
+
+| Request | Body | Reply | Body |
+| --- | --- | --- | --- |
+| `register` | `grant` | `registered` | `account`, `mediation_id`, `routing_did`, `replica_id`, `replica_did`, `state`, `registered_time`, `limits` |
+| `list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `registered_time`), `next_cursor` |
+| `recipient-add` | `recipient_did`, `resolution_material`, `proof` | `recipient-added` | `recipient_did`, `status` |
+
+**`register`** enrolls one replica, and the first one creates the account
+with it, both or neither. No mediate-request comes before it. `grant` is a
+compact JWS signed by one of the account's authentication keys (header
+exactly `alg: EdDSA`, `typ: estoc/replica-grant+jws`, `kid`) over the
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly
+`account`, `mediation_id`, `mediator`, `replica_id`, `replica_did` and
+`replica_long_form`. The two ids are UUIDv7. The replica's document must
+name the granted mediator as its service and hold Ed25519 authentication and
+X25519 key-agreement keys. An account is bound for good to the mediation id
+and the mediator DID of its first grant; another name of the same deployment
+is another mediator. An exact repeat answers as the first time did. A replica
+enrolled later receives nothing forwarded before it.
+
+**`list`** pages the account's grants in enrollment order. `cursor` is null
+to begin and then the previous `next_cursor`; `limit` is at most
+`max_membership_page`. One listing is the replicas enrolled when it began,
+and its cursors never expire.
+
+**`recipient-add`** routes one recipient DID to the account. `proof` is a
+compact JWS signed by the *recipient's* authentication key
+(`typ: estoc/recipient-add+jws`) over exactly `account`, `aud` (the mediator)
+and `recipient`; it is checked on every request and names no time, so the
+same proof serves every retry. `resolution_material` is the recipient's long
+form, or null once the mediator keeps it. `status` is `added`, or
+`no_change` when the account already held it.
+
+Nothing here is undone: there is no control that removes a replica or a
+recipient, and none that lists recipients.
+
+### Mail
+
+A forward whose `next` is a recipient or a replica follows
+[the same rules](#what-a-forward-must-be) as any other, with the same
+statuses. It is kept once and counted once against its account
+(`max_retained_messages`, `max_retained_bytes`), and waits until
+`message_retention_seconds` have passed or, if sooner, until the forward's
+own `expires_time`; one already past is refused. A forward to the account
+DID itself is refused like one to a stranger.
+
+Both limits count what the account still has kept, not what still waits for
+pickup. An envelope forwarded to a shared recipient stays kept, and counted,
+until it lapses, even after every replica acknowledged it, so that a repeat
+of its forward is still recognized; a pickup `message_count` of zero does not
+mean the account has room. An envelope forwarded to one replica is gone when
+that replica acknowledges it.
+
+A replica uses messagepickup/3.0 unchanged, authcrypted under its own DID.
+Each replica sees a shared envelope under an attachment id of its own, and
+its `messages-received` ends its own copy only. `recipient_did` narrows
+`status-request` and `delivery-request` to mail forwarded to that DID. A
+request the replica only signed is not answered. The account DID asking for
+pickup is told `e.estoc.replica-mediation.replica-required`.
+
+Turning the protocol off stops controls and new mail; replicas already
+enrolled can still pick up what waits.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -203,7 +299,7 @@ Over a WebSocket there is no status: a refused forward is dropped.
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
-| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have waiting, across shared and private mail; a shared envelope counts once however many replicas it waits for. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
+| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until it lapses even when all of them acknowledged it. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |
 | `MEDIATOR_BLOB_RETAIN_SECONDS` | 30 days | How long one `put` keeps a blob; a repeat `put` by the same mediation renews |

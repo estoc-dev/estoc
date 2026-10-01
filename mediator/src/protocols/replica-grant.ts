@@ -27,7 +27,26 @@ const MAX_JWS_CHARS = 16 * 1024;
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const GRANT_FIELDS = [
+/**
+ * What the account signs: a compact JWS whose protected header is exactly
+ * `alg: EdDSA`, `typ` and a `kid` naming one of the account's authentication
+ * keys, over this object in its RFC 8785 text, every member a string.
+ */
+export interface GrantPayload {
+  /** The account's did:peer:4, in its short form. */
+  account: string;
+  /** A UUIDv7 the account keeps for as long as it lives here. */
+  mediation_id: string;
+  /** The mediator DID the replica's document names as its service. */
+  mediator: string;
+  /** The replica's did:peer:4, in its short form, and the long form it is cut from. */
+  replica_did: string;
+  /** A UUIDv7. */
+  replica_id: string;
+  replica_long_form: string;
+}
+
+const GRANT_FIELDS: (keyof GrantPayload)[] = [
   "account",
   "mediation_id",
   "mediator",
