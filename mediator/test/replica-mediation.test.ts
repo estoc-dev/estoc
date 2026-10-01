@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { Hono } from "hono";
 import type { IMessage } from "@estoc/didcomm-node";
 import { CompactSign, importJWK } from "jose";
 import canonicalize from "canonicalize";
 import bs58 from "bs58";
-import { bytesToBase64url, longToShort } from "@estoc/did-peer";
+import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
 
 import { replicaPolicyFrom, type MediatorConfig } from "../src/config.js";
 import type { DIDCommContext } from "../src/didcomm/didcomm.js";
@@ -376,6 +376,22 @@ describe("register", () => {
           replica_long_form: replica.longForm,
         })
       );
+    });
+
+    it("whose key ID spells the account in a long form too large to decode", async () => {
+      account = await paddedAgent(null, 5600);
+      const { payload, grant } = await enrollment();
+      const spelledLong = await signedBy(account, payload, { kid: `${account.longForm}#key-1` });
+      expect(account.longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+
+      await refused(spelledLong);
+
+      expect((await register(grant))?.type).toBe(REGISTERED);
+      await expectProblem(await register(spelledLong), "invalid-grant");
+      await expectProblem(await register(spelledLong, known(account)), "invalid-grant");
+      expect((await roster())?.body.entries).toEqual([
+        { grant, state: "active", registered_time: expect.any(Number) },
+      ]);
     });
 
     it("with IDs that are not UUIDv7", async () => {
@@ -1108,6 +1124,141 @@ describe("recipient-add", () => {
 
     expect(reply?.body.code).toBe("e.p.msg.unsupported");
     expect((await add(first))?.body.status).toBe("no_change");
+  });
+});
+
+describe("a long form", () => {
+  let decode: MockInstance<typeof bs58.decode>;
+
+  beforeEach(async () => {
+    await register((await enrollment()).grant);
+    decode = vi.spyOn(bs58, "decode");
+  });
+
+  afterEach(() => {
+    decode.mockRestore();
+  });
+
+  /** A sound long form that nothing has decoded yet, the test included. */
+  function unread(padding: number): string {
+    return encodeLongForm({ nonce: randomUUID(), padding: "x".repeat(padding) });
+  }
+
+  function decodings(longForm: string): number {
+    const document = longForm.slice(longForm.lastIndexOf(":") + 2);
+    return decode.mock.calls.filter(([encoded]) => encoded === document).length;
+  }
+
+  async function oversized(): Promise<string> {
+    const longForm = unread(6200);
+    expect(longForm.length).toBeGreaterThan(MAX_LONG_FORM_BYTES);
+    return longForm;
+  }
+
+  it("within the limit is decoded to be checked", async () => {
+    const longForm = unread(100);
+    const { proof } = await addition();
+
+    await send(known(account), RECIPIENT_ADD, {
+      recipient_did: longToShort(longForm),
+      resolution_material: longForm,
+      proof,
+    });
+
+    expect(decodings(longForm)).toBeGreaterThan(0);
+  });
+
+  describe("over the limit is refused undecoded", () => {
+    it("as the recipient or its resolution material", async () => {
+      const [named, supplied] = [await oversized(), await oversized()];
+      const { proof } = await addition();
+
+      await expectProblem(
+        await send(known(account), RECIPIENT_ADD, {
+          recipient_did: named,
+          resolution_material: null,
+          proof,
+        }),
+        "invalid-recipient"
+      );
+      await expectProblem(
+        await send(known(account), RECIPIENT_ADD, {
+          recipient_did: longToShort(supplied),
+          resolution_material: supplied,
+          proof,
+        }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(named)).toBe(0);
+      expect(decodings(supplied)).toBe(0);
+    });
+
+    it.each(["account", "aud", "recipient"])("as the %s a recipient proof names", async (field) => {
+      const longForm = await oversized();
+      const { recipient, payload } = await addition();
+
+      await expectProblem(
+        await add({ recipient, proof: await proofBy(recipient, { ...payload, [field]: longForm }) }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
+
+    it("as the DID in a recipient proof's key ID", async () => {
+      const longForm = await oversized();
+      const { recipient, payload } = await addition();
+
+      await expectProblem(
+        await add({
+          recipient,
+          proof: await proofBy(recipient, payload, { kid: `${longForm}#key-1` }),
+        }),
+        "invalid-recipient"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
+
+    it("as the replica or the mediator a grant names", async () => {
+      const [replica, named] = [await oversized(), await oversized()];
+      const { payload } = await enrollment();
+
+      await expectProblem(
+        await register(
+          await signedBy(account, {
+            ...payload,
+            replica_did: longToShort(replica),
+            replica_long_form: replica,
+          }),
+          known(account)
+        ),
+        "invalid-grant"
+      );
+      await expectProblem(
+        await register(await signedBy(account, { ...payload, mediator: named }), known(account)),
+        "invalid-grant"
+      );
+
+      expect(decodings(replica)).toBe(0);
+      expect(decodings(named)).toBe(0);
+    });
+
+    it("as the DID in a grant's key ID", async () => {
+      const longForm = await oversized();
+      const { payload } = await enrollment();
+
+      await expectProblem(
+        await register(
+          await signedBy(account, payload, { kid: `${longForm}#key-1` }),
+          known(account)
+        ),
+        "invalid-grant"
+      );
+
+      expect(decodings(longForm)).toBe(0);
+    });
   });
 });
 

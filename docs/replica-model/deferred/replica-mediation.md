@@ -223,6 +223,21 @@ A grant is compact JWS with these protected headers:
 - `typ`: `estoc/replica-grant+jws`;
 - `kid`: an authentication key of the known mediation account document.
 
+Each encoded `did:peer:4` long form carried by a grant MUST be no larger than
+8192 UTF-8 bytes, including the DID prefix. This applies to
+`replica_long_form`, a long-form `mediator`, and the DID portion of `kid`; a
+key fragment is not part of the encoded DID. Check this bound before decoding,
+resolving or contextualizing material read from the grant. A grant exceeding
+this bound fails registration with `invalid-grant` without changing any account
+or replica binding, including when that binding already exists. The general
+envelope-size limit applies independently.
+
+This bound concerns grant contents; it does not establish the resolution policy
+for the authenticated sender in the enclosing DIDComm envelope. A grant may name
+an already-authenticated account's key using its verified short-form DID even
+when the account's long form exceeds this grant-content bound. The ordinary
+verified canonicalization rules apply to long-form aliases within the bound.
+
 Its payload is RFC 8785 canonical JSON with exactly these fields:
 
 ```json
