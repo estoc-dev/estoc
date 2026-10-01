@@ -50,6 +50,11 @@ portable recovery and create fresh replica identities before enrollment.
 Future synchronization can reuse these identities and grants without creating
 another membership authority; its wire format and storage transport remain open.
 
+The initial profile assumes the mediator preserves committed state. Mediator
+state loss or rollback requires manual operational handling; automatic detection
+and reconstruction are outside this milestone. Clients retain local success
+confirmations and retry only unfinished registration work.
+
 Replica retirement is deferred to a later human-initiated administration
 profile. The initial profile keeps registrations, including offline and replaced
 incarnations. [Deferred administration](replica-mediation.md#deferred-administration)
@@ -73,8 +78,8 @@ domain work below; mailbox conformance does not establish application convergenc
 | --- | --- |
 | 1. Protocol and identity contract | Finalize standalone accounts, account-signed grants, shared recipients, private destinations and pickup boundaries. No sync message family is required. |
 | 2. Mediator transport | Implement account creation, registration/listing, append-only recipients, atomic fan-out, account storage limits and independent pickup/ACK; verify equivalent SQLite and D1 behavior. |
-| 3. Client integration | Adopt the required account/replica event and key contracts, enrollment, registration-first reconciliation and replica-authenticated pickup. Reject unsupported private protocols. Provision history through existing recovery/import; retain application readiness gates. |
-| 4. Transport integration | Exercise concurrent registration, recipient adds, state-loss recovery, offline queues, private delivery/rejection, retries and ACK isolation over a real mediator with no vault-sync worker. |
+| 3. Client integration | Adopt the required account/replica event and key contracts, enrollment, durable registration confirmations, retries of unfinished work and replica-authenticated pickup. Reject unsupported private protocols. Provision history through existing recovery/import; retain application readiness gates. |
+| 4. Transport integration | Exercise concurrent registration, recipient adds, restart with pending work, offline queues, private delivery/rejection, retries and ACK isolation over a real mediator with no vault-sync worker. |
 
 The mediator transport can be implemented and verified independently of vault
 sync and multi-executor application semantics. Before enabling the new profile
@@ -102,16 +107,12 @@ in a vault client, adopt the relevant contracts in
   atomically without a prior mediation grant. Ordinary accounts, their recipient
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
-- Reconcile local replica registration before recipient adds on startup,
-  reconnection, periodic checks and suspected remote-state loss. Each client
-  replays only its own saved grant, even when it knows other members' grants.
-  Routine periodic checks keep established pickup running; startup, reconnection
-  and missing-state recovery wait for verified registration. Exact repeats preserve
-  surviving delivery/ACK state and do not backfill old mail. Every account control
-  request carries its sender's long form, and recipient replays carry their
-  resolution material, so recovery can authenticate after resolver-state loss.
-  Authenticated unregistered pickup reports `unknown-replica`; failed authentication
-  gets no protocol response. Recovery must work without depending on that report.
+- Each client registers only its own saved grant and durably records the verified
+  success before starting pickup or recipient adds. Initial contact and
+  unconfirmed registration retries carry the account sender's long form.
+  Confirmed clients resume pickup on restart or reconnection; only unconfirmed
+  work is retried. Exact repeats preserve delivery/ACK state and do not backfill
+  old mail. No periodic registration replay or mediator-state repair is required.
 - Fix each shared package's delivery targets at first acceptance. Registration
   begins eligibility for later packages and never backfills an earlier one.
   Apply storage quotas to the account's shared and private packages together;
@@ -136,10 +137,12 @@ in a vault client, adopt the relevant contracts in
   one account; concurrent same-account adds are idempotent and need no registration
   version. Reuse recipient-signed proofs bound to the recipient, account and
   mediator without an expiry or request-ID binding. After local registration,
-  reconciliation re-sends locally validated adds without remote enumeration,
-  including historical bindings after remote-state loss. Existing bindings remain
-  even when unknown locally or no longer eligible for new application work. DID/route retirement,
-  blocking and rotation do not withdraw recipient registrations; application
+  send adds for locally validated bindings lacking a durable local success
+  confirmation, including historical bindings learned through import. Reconnect
+  retries only unfinished work, without remote enumeration or replay of completed
+  adds. Existing bindings remain even when unknown locally or no longer eligible
+  for new application work. DID/route retirement, blocking and rotation do not
+  withdraw recipient registrations; application
   admission and outbound selection remain separate. Replica retirement is
   deferred; message ACK/expiry still clears mail without removing membership.
 

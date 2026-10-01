@@ -629,15 +629,18 @@ Enrollment proceeds as follows:
    Exclude conflicting identities, verify each remaining grant locally, and
    establish `hello` with usable peers.
 4. Reconcile complete event inventories and required objects, including
-   membership and erasure facts learned since the backup. Reconcile registrations
-   accordingly. CIDs already restored are ordinary duplicates.
+   membership and erasure facts learned since the backup. Add newly learned
+   communication recipients under the registration rules below; do not register
+   peers on their behalf. CIDs already restored are ordinary duplicates.
 5. Continue incremental sync and drain shared mail queued since registration
    once its required history and domain prerequisites are available. Keep
    historical catch-up/import separate from live application execution. The
    domain revision defines when the new runtime may enable automatic effects.
 
-Account, local replica and recipient registration recovery follows
+Local replica registration and pending recipient adds follow
 [replica-mediation reconciliation](replica-mediation.md#append-only-reconciliation).
+Successful local confirmations are not replayed to repair mediator state;
+that operational recovery is outside the initial mediation profile.
 
 Registering before peer inventory allows mail arriving during catch-up to
 remain queued. Mail accepted before registration is never backfilled by the

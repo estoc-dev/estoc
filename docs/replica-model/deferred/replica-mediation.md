@@ -114,6 +114,11 @@ still need draining under the vault's route rules. Membership across several
 mediators and a live transfer between membership authorities are later work;
 a client MUST NOT treat registration at one mediator as registration at another.
 
+This initial profile assumes the mediator preserves its committed state.
+Mediator state loss or rollback is an operational incident requiring manual
+handling; automatic detection and reconstruction are outside this profile.
+Ordinary disconnection and retries of unconfirmed requests remain supported.
+
 The mediator advertises this protocol using Discover Features. Successful
 registration, rather than discovery alone, establishes support. A new
 arrangement uses a fresh account DID and mediation ID, separate from every
@@ -328,8 +333,9 @@ normal registration and delivery in this profile require no such process.
 
 | Portable vault data | Local or mediator operational state |
 | --- | --- |
-| Account intent and first grant observation | Account registration retry progress |
-| Replica creation/grant and label | Registration request progress, actual remote membership status |
+| Account intent and first grant observation | Local account-control request progress |
+| Replica creation/grant and label | Durable local confirmation of this replica's registration |
+| Communication DID and route bindings | Durable local recipient-add confirmations and pending work |
 | Communication routes, receipts, admissions and other domain events | Live connections, delivery IDs, pickup ACK progress |
 | Event CIDs and currently held raw objects | Local folds, caches and change tokens |
 
@@ -341,6 +347,11 @@ import or discovery remain peer membership evidence; the client MUST NOT send
 `register` on those peers' behalf.
 Per-replica registration responses and retries remain operational state and
 MUST NOT generate an endless stream of portable registration records.
+Successful registration and recipient-add confirmations persist across normal
+restart in this runtime's local operational storage. They are not portable
+membership evidence or another replica's progress to import. A fresh incarnation
+establishes its own confirmations; absent confirmation leaves an operation
+pending, so a crash before recording success permits an idempotent retry.
 Peer negotiation, sync receipts and staged history transfers belong to the
 deferred synchronization design, not this profile's operational requirements.
 
@@ -365,17 +376,16 @@ replica in an existing account. No earlier Coordinate Mediation exchange occurs.
 Registration starts eligibility for future shared packages; it creates no
 deliveries for packages accepted before that registration commits.
 
-Every account control request (`register`, `list` and `recipient-add`),
-including retries, MUST carry the account sender's long-form DID in its DIDComm
-envelope sender key identifier. This permits local resolution even after the
-mediator loses its account and DID-resolution state. The mediator validates
-that material to authenticate/decrypt the request before checking account
-state or, for `register`, verifying the enclosed grant with that account's
-authorized key. The encrypted grant is not a prerequisite for decrypting
-itself. Its replica long form identifies the enrollment target and supplies
-the verified resolution material for subsequent replica-authenticated pickup.
-All authorization checks precede mutation and account and destination conflicts
-are rechecked in the transaction.
+For first contact the caller MUST supply the account sender's long-form DID in
+the DIDComm envelope sender key identifier. Unconfirmed registration retries
+retain that long form until a matching `registered` is verified; subsequent
+controls may use the account's verified short form. The mediator resolves and
+validates the material to authenticate/decrypt the request, then verifies the
+enclosed grant with that account's authorized key. The encrypted grant is not
+a prerequisite for decrypting itself. Its replica long form identifies the
+enrollment target and supplies verified resolution material for subsequent
+replica-authenticated pickup. All authorization checks precede mutation and
+account and destination conflicts are rechecked in the transaction.
 
 In one transaction the mediator MUST:
 
@@ -391,11 +401,9 @@ the same account and mediation ID share one account; different bindings fail.
 
 An exact repeat for an active member is idempotent and preserves its original
 registration boundary and all pending/acknowledged delivery state. It neither
-adds deliveries for older packages nor resets ACKs. Clients re-send their own
-saved grant during reconciliation; §7.2 defines when pickup waits for its reply.
-If the mediator has lost the binding, registration restores it with a new
-remote registration boundary; it cannot reconstruct lost mail or ACK records
-or backfill earlier packages. A conflicting identity fails without mutation.
+adds deliveries for older packages nor resets ACKs. Clients retry their own
+saved grant only while local confirmation is pending, as specified in §7.2.
+A conflicting identity fails without mutation.
 Shared-recipient and private-replica destinations cannot overlap or steal an
 existing destination.
 
@@ -427,10 +435,10 @@ limit, but cannot omit an entry from a successfully completed listing.
 
 No other account's identities are disclosed. Clients verify grants and reject
 conflicting local bindings before contacting listed peers. A missing row does
-not remove portable membership or establish an administrative decision; the
-mediator may have been restored from an older database. Reconcile verified
-registration intent only for the local replica, without deleting local history,
-inventing a new identity or registering a missing peer on its behalf.
+not remove portable membership or establish an administrative decision, and
+does not authorize registering a peer on its behalf. A discrepancy with locally
+confirmed registration is a local operational diagnostic, not a trigger to
+clear confirmations, invent a new identity or rebuild remote state.
 No response is proof that a peer is online or has complete vault history.
 
 <a id="shared-recipients"></a>
@@ -522,34 +530,31 @@ lost response has the same effect and changes no delivery/ACK state.
 
 ### 7.2 Append-only reconciliation
 
-On startup, reconnection, suspected remote-state loss and periodic reconciliation,
-each client MUST first re-send `register` with its own saved, verified replica
-grant. Startup, reconnection and recovery from suspected remote-state loss or
-an authenticated `unknown-replica`/`unknown-account` report MUST wait for the
-matching, verified `registered` response before starting or resuming pickup.
-Routine periodic reconciliation on an established connection MUST NOT pause
-pickup while waiting for this response; the timer alone does not suspend pickup.
+Each client sends `register` with its own saved, verified grant until a matching
+`registered` response has been verified and durably recorded locally. This
+confirmation is bound to the mediator, account and exact local replica binding.
+Pickup and recipient adds wait for that initial confirmation. Once confirmed,
+startup and reconnection resume pickup without another `register`; pickup need
+not wait for recipient adds to complete.
 
-After verifying the matching `registered`, replay one `recipient-add` for every
-locally known validated communication DID whose immutable route binds this
-arrangement, without querying the mediator first. Include each recipient's
-long form as `resolution_material` on every replay so restoration does not
-depend on the mediator retaining its resolver cache. Pickup need not wait for
-all recipient adds to succeed. Clients also send an add when they validate a
-new binding.
+After its own registration is confirmed, the client sends one `recipient-add`
+for each locally known validated communication DID whose immutable route binds
+this arrangement and whose add has no local success confirmation. Verify the
+matching `recipient-added` response and durably record either `added` or
+`no_change` as success for that canonical recipient, account and mediator.
+First disclosure and unconfirmed retries carry the recipient's long form unless
+the mediator is already known to have its verified resolution material under
+§7.1. A failed or lost response leaves only that operation pending and does not
+undo other completed adds.
 
-Reconciliation MUST recur at a finite local interval while connected, even if
-pickup returns empty results or no response; previous success and a healthy
-transport connection do not prove that remote state survived. An authenticated
-`unknown-replica` pickup report or `unknown-account` control report triggers
-this same registration-first sequence. Unauthenticated silence or transport
-failure also leaves recovery pending, with bounded retry backoff; it is not
-evidence that the mailbox is empty or that membership was revoked. Recovery
-uses the existing identity and grant, not a new incarnation.
-
-Both `added` and `no_change` complete that recipient's attempt; failed or lost
-responses remain retryable without undoing other completed adds. A previous
-success is not proof that the mediator retained the binding after storage loss.
+Startup, reconnection and newly learned local history resume only unconfirmed
+work, including newly validated bindings. They MUST NOT replay confirmed
+registrations or adds. There is no periodic remote-state reconciliation or
+full replay after success. A lost response or crash before local confirmation
+can cause an idempotent retry; it does not change delivery/ACK state. Local
+confirmation records follow §5.4 and are not inferred from imported membership
+intent. Suspected mediator state loss is reported for manual handling without
+automatically clearing these confirmations or replaying completed work.
 
 This includes historical DIDs with later DID or route retirement facts:
 validate their original identity/route binding without treating current
@@ -749,20 +754,15 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `unknown-account` | An operation requiring an existing replica-mediation account names none |
 | `identity-conflict` | ID/DID or destination already has another binding |
 | `replica-required` | Pickup was attempted with the account identity |
-| `unknown-replica` | An authenticated pickup requester has no registered replica binding and is not an ordinary account pickup principal |
 | `list-expired` | Membership snapshot is no longer available; start a fresh listing |
 | `quota` | An account storage, membership or recipient capacity limit prevents the operation |
 | `message-too-large` | Envelope exceeds the transport limit |
 
 Authenticated control failures disclose only the caller's account state.
-Handle an authenticated ordinary-account pickup principal under its existing
-profile before checking replica bindings or returning this profile's errors.
-An authenticated pickup request with no replica binding MUST return
-`unknown-replica` through the request/response transport, unless it belongs to
-an ordinary account's pickup domain or is the account-identity misuse reported
-as `replica-required`. The report discloses only the requester's own missing
-binding. If the mediator cannot authenticate the request, it sends no protocol
-response; client reconciliation does not depend on receiving this report.
+Replica-mediation account pickup returns `replica-required`; ordinary accounts
+keep their existing pickup behavior. Other unregistered pickup senders and
+unauthenticated requests receive no protocol response. A failure or missing
+response does not clear confirmed registrations or trigger remote-state repair.
 Anonymous routing failures retain the existing non-enumerating behavior.
 
 <a id="privacy-and-security"></a>
@@ -840,26 +840,17 @@ These are proposed requirements, not claims about the current implementation.
     A refused package may be submitted later once the account has capacity.
     Pickup response limits do not cap a replica's backlog. SQLite and D1 enforce
     the same registration and fan-out transaction boundaries.
-11. A restored mediator list cannot authorize an unverified replica binding.
-    Missing remote entries do not delete portable membership; each client
-    reconciles only its own verified registration intent after remote-state loss.
-    Restore the mediator to before B's registration while A and the account
-    remain. B's periodic or reconnect reconciliation registers its saved grant
-    without human intervention; packages first accepted afterward include B.
-    Existing bindings preserve their delivery/ACK state on exact repeats;
-    missing bindings get no backfill of earlier packages. Also lose the whole
-    account and resolver cache: the long-form account sender permits `register`
-    to authenticate, its grant restores replica resolution, and long-form
-    recipient replays restore known addresses. Authenticated unregistered
-    pickup gets `unknown-replica`; an unresolvable sender gets no response.
-    Either outcome leaves automatic registration-first recovery enabled.
+11. A mediator list cannot authorize an unverified replica binding. Missing
+    entries do not delete portable membership or trigger registration on a
+    peer's behalf. A discrepancy with local confirmation is diagnostic and
+    does not clear completed work or start automatic reconstruction.
 12. No delivery or membership operation independently authorizes historical
     application effects or changes a committed application's channel/package.
 13. Membership-removal controls are unsupported and change neither bindings nor
     queued deliveries. Stopping a runtime does not create a portable removal
     event, a drain plan or a special final sync exchange.
 14. A creates and registers a communication DID while B lacks its entity.
-    B's replay of its own known bindings leaves A's recipient untouched.
+    B's adds for its own known bindings leave A's recipient untouched.
     Missing or account-key-signed recipient proofs fail. For another previously
     unregistered DID known to both replicas, concurrent adds produce one
     permanent binding: one `added`, one `no_change`, with no registration churn.
@@ -869,16 +860,15 @@ These are proposed requirements, not claims about the current implementation.
     remain transport destinations; application eligibility is checked separately.
     A remove/replacement request fails without mutation. Package ACK and expiry
     still clear mail without deleting recipients.
-16. Reconcile by first re-registering the local replica, then independently
-    re-sending known recipient adds without a remote listing, at startup,
-    reconnection and periodic checks even after previous success. Existing
-    bindings return `no_change`; a failed request leaves other successful adds
-    intact. After remote-state loss, restore validated
-    historical bindings even when their DIDs no longer serve new application
-    work. A lost add response is recovered by retrying the same binding.
-    During routine periodic reconciliation on an established connection, a
-    pending `registered` response does not pause pickup. Startup, reconnection
-    and suspected missing-binding recovery wait for the verified response.
+16. Confirm the local replica's registration before pickup and recipient adds.
+    Record verified success durably for each operation. On normal restart or
+    reconnection, resume pickup directly and retry only unconfirmed work;
+    completed registration and adds are not re-sent. New validated bindings,
+    including historical DIDs learned through import, receive an add when they
+    lack local confirmation. Existing remote bindings return `no_change`.
+    A lost reply or crash before recording success permits an idempotent retry
+    of that same binding, without changing other completions or delivery/ACK
+    state. A fresh incarnation uses its own grant and local confirmations.
 17. Two first registrations for different replicas race under the same account
     and mediation ID: both share one account. Conflicting account bindings,
     cross-protocol account reuse and recipient/private-destination collisions
