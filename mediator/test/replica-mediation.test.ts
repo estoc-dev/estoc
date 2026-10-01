@@ -21,10 +21,12 @@ import {
   ENCRYPTED,
   forwardOf,
   RECIPIENT_PROOF_TYP,
+  SIGNED,
   TEST_CONFIG,
   agent,
   memoryStore,
   packAnonymous,
+  packSigned,
   peer4Agent,
   plaintext,
   signedBy,
@@ -1677,6 +1679,30 @@ describe("pickup by a replica", () => {
     expect(await count(first)).toBe(1);
   });
 
+  it("is not answered for a request the replica signed without sealing it, and keeps the mail", async () => {
+    await post(forwardOf(first.replica.did, await envelope(first.replica)));
+    const [waiting] = await delivered(first);
+    const acknowledgement = plaintext(
+      `${PICKUP}/messages-received`,
+      { message_id_list: [waiting.id] },
+      { from: first.replica.did, to: [mediator.did], return_route: "all" }
+    );
+
+    for (const [packed, contentType] of [
+      [await packSigned(first.replica, acknowledgement), SIGNED],
+      [await packSigned(first.replica, acknowledgement, mediator.did), ENCRYPTED],
+    ]) {
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body: packed,
+      });
+
+      expect(await res.text()).toBe("");
+      expect(await count(first)).toBe(1);
+    }
+  });
+
   it("is not answered for a DID that is nobody's replica", async () => {
     const stranger = await peer4Agent(mediator.did);
 
@@ -1739,14 +1765,19 @@ describe("live delivery to a replica", () => {
     return (await speaker.ctx.unpack(await answer)).message;
   }
 
-  /** A socket the replica has turned live mode on for. */
-  async function listening(speaker: Speaker): Promise<WebSocket> {
+  async function connected(): Promise<WebSocket> {
     const socket = new WebSocket(`ws://${origin}/`);
     sockets.push(socket);
     await new Promise((resolve, reject) => {
       socket.once("open", resolve);
       socket.once("error", reject);
     });
+    return socket;
+  }
+
+  /** A socket the replica has turned live mode on for. */
+  async function listening(speaker: Speaker): Promise<WebSocket> {
+    const socket = await connected();
     const status = await ask(socket, speaker, "live-delivery-change", { live_delivery: true });
     expect(status.body.live_delivery).toBe(true);
     return socket;
@@ -1817,6 +1848,60 @@ describe("live delivery to a replica", () => {
       message_id_list: [offered.id],
     });
     expect(status.body.message_count).toBe(0);
+  });
+
+  it("answers the replica a connection belongs to in either spelling", async () => {
+    const socket = await listening(firstContact(first.replica));
+
+    const status = await ask(socket, known(first.replica), "status-request");
+
+    expect(status.type).toBe(STATUS);
+    expect(status.body.live_delivery).toBe(true);
+  });
+
+  it("refuses another replica on a connection, and leaves its live mode as it was", async () => {
+    const socket = await listening(known(first.replica));
+
+    for (const [type, body] of [
+      ["status-request", {}],
+      ["delivery-request", { limit: 1 }],
+      ["messages-received", { message_id_list: [] }],
+      ["live-delivery-change", { live_delivery: false }],
+    ] as const) {
+      const refusal = await ask(socket, known(second.replica), type, body);
+      expect(refusal.type).toBe(PROBLEM);
+      expect(refusal.body.code).toBe("e.p.msg.connection-bound");
+    }
+
+    const push = frame(socket);
+    await forwarded(forwardOf(shared.did, await envelope(shared)));
+    expect(await pushedTo(first, await push)).toHaveLength(1);
+  });
+
+  it("turns on no live mode for a replica on a connection another one opened", async () => {
+    const socket = await connected();
+    await ask(socket, known(first.replica), "status-request");
+
+    const refusal = await ask(socket, known(second.replica), "live-delivery-change", {
+      live_delivery: true,
+    });
+
+    expect(refusal.body.code).toBe("e.p.msg.connection-bound");
+    const status = await ask(socket, known(first.replica), "status-request");
+    expect(status.body.live_delivery).toBe(false);
+  });
+
+  it("refuses a replica on a connection its account opened", async () => {
+    const socket = await connected();
+    const told = await ask(socket, known(account), "status-request");
+    expect(told.body.code).toBe(problem("replica-required"));
+
+    const refusal = await ask(socket, known(first.replica), "live-delivery-change", {
+      live_delivery: true,
+    });
+
+    expect(refusal.type).toBe(PROBLEM);
+    expect(refusal.body.code).toBe("e.p.msg.connection-bound");
   });
 });
 

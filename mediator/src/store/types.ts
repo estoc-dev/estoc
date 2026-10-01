@@ -146,6 +146,22 @@ export interface BlobRow {
   retainUntil: number;
 }
 
+/** A blob a mediation asks to hold until `retainUntil`, under `id` if it is new to it. */
+export interface BlobKeep {
+  id: string;
+  ownerDid: string;
+  hash: string;
+  size: number;
+  retainUntil: number;
+}
+
+/**
+ * `kept`: the mediation holds the blob, as the row says. `mismatch`: it holds
+ * the hash at another size. `full`: holding it would take the mediation past
+ * its quota. Only `kept` wrote anything.
+ */
+export type KeepOutcome = { outcome: "kept"; blob: BlobRow } | { outcome: "mismatch" | "full" };
+
 export interface UploadGrant {
   id: string;
   hash: string;
@@ -192,9 +208,7 @@ export interface MediationStore {
    * replica, apart from the ordinary queues.
    */
   registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
-  /** Whether `did` is a replica-mediation account. */
   isReplicaAccount(did: string): Promise<boolean>;
-  /** Whether `did` is a replica some replica-mediation account enrolled. */
   isReplica(did: string): Promise<boolean>;
   /**
    * The account's replicas with an ordinal after `after` and up to `through`
@@ -253,14 +267,12 @@ export interface MediationStore {
   blobById(id: string): Promise<BlobRow | null>;
   /** Bytes of this mediation's live blobs, uploaded or not. */
   blobUsage(ownerDid: string): Promise<number>;
-  /** Creates the row if absent (under `id`), else extends its retention; never shortens it. */
-  keepBlob(
-    id: string,
-    ownerDid: string,
-    hash: string,
-    size: number,
-    retainUntil: number
-  ): Promise<void>;
+  /**
+   * Creates the row if absent (under `keep.id`), else extends its retention
+   * and never shortens it, all within `quotaBytes` of live blobs. A blob still
+   * retained renews for nothing; one past its retention counts as new.
+   */
+  keepBlob(keep: BlobKeep, quotaBytes: number): Promise<KeepOutcome>;
   /** Removes the mediation's blob for the hash; returns its id (bytes to delete) or null if there was none. */
   dropBlob(ownerDid: string, hash: string): Promise<string | null>;
   /** A one-time upload token for the blob, good until `expiresAt`. */

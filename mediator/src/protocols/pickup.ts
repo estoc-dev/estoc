@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isAuthcrypted } from "../didcomm/didcomm.js";
 import type { DIDCommContext, Unpacked } from "../didcomm/didcomm.js";
 import type { StoredMessage } from "../store/types.js";
 import type { HandlerContext, LiveSink, Reply } from "./types.js";
@@ -18,6 +19,11 @@ import { replicaProblem } from "./replica-mediation.js";
  * forwarded to itself or to its account's shared recipients, and there
  * `recipient_did` narrows to what was forwarded to that DID. Neither can name
  * its way into another's queue.
+ *
+ * A connection that stays open belongs to the DID that first proved itself
+ * on it: that is who its live mode is kept for and whose mail is pushed down
+ * it. Pickup from any other DID is refused there, so that no one is told
+ * about, or changes, a live mode that is not theirs.
  */
 
 export const STATUS_REQUEST =
@@ -42,19 +48,38 @@ interface Inbox {
 const forwardedTo = (recipientDid: unknown): string | null =>
   typeof recipientDid === "string" ? canonicalDid(recipientDid) : null;
 
+const ANOTHERS_CONNECTION: Reply = {
+  type: PROBLEM_REPORT,
+  body: {
+    code: "e.p.msg.connection-bound",
+    comment: "This connection belongs to another DID",
+  },
+};
+
 /**
- * The sender's queue; a refusal for a replica-mediation account, which
- * manages its replicas and holds no queue of its own; null for anyone else.
+ * The sender's queue; a refusal on a connection another DID holds, and for a
+ * replica-mediation account, which manages its replicas and holds no queue
+ * of its own; null for anyone else, and for a replica that proved itself by
+ * signature alone: its queue opens to the key that mail is sealed to.
  */
-async function inboxOf({ store, sender }: HandlerContext): Promise<Inbox | Reply | null> {
+async function inboxOf(
+  incoming: Unpacked,
+  { store, sender, session }: HandlerContext
+): Promise<Inbox | Reply | null> {
   if (sender === null) {
     return null;
   }
   const did = canonicalDid(sender);
+  if (session !== null && session.did !== null && canonicalDid(session.did) !== did) {
+    return ANOTHERS_CONNECTION;
+  }
   if (await store.isReplicaAccount(did)) {
     return replicaProblem("replica-required");
   }
   if (await store.isReplica(did)) {
+    if (!isAuthcrypted(incoming)) {
+      return null;
+    }
     return {
       count: (recipientDid) => store.deliveryCount(did, forwardedTo(recipientDid)),
       waiting: (limit, recipientDid) => store.deliveriesFor(did, limit, forwardedTo(recipientDid)),
@@ -92,7 +117,7 @@ export async function statusRequest(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const inbox = await inboxOf(context);
+  const inbox = await inboxOf(incoming, context);
   return isInbox(inbox) ? status(inbox, context, incoming.message.body.recipient_did) : inbox;
 }
 
@@ -108,7 +133,7 @@ export async function deliveryRequest(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const inbox = await inboxOf(context);
+  const inbox = await inboxOf(incoming, context);
   if (!isInbox(inbox)) {
     return inbox;
   }
@@ -134,7 +159,7 @@ export async function messagesReceived(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const inbox = await inboxOf(context);
+  const inbox = await inboxOf(incoming, context);
   if (!isInbox(inbox)) {
     return inbox;
   }
@@ -150,7 +175,7 @@ export async function liveDeliveryChange(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const inbox = await inboxOf(context);
+  const inbox = await inboxOf(incoming, context);
   if (!isInbox(inbox)) {
     return inbox;
   }

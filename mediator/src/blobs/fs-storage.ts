@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import { BLOB_ID_PATTERN, blobDigest, bytesEqual } from "./hash.js";
+import { BLOB_ID_PATTERN, blobDigest } from "./hash.js";
 import {
   blobHeaders,
   parseRange,
@@ -58,7 +58,13 @@ export class FsBlobStorage implements BlobStorage {
       await unlink(temp).catch(() => {});
       return "mismatch";
     }
-    if (overflow || seen !== size || !bytesEqual(digest.digest(), expected)) {
+    const actual = digest.digest();
+    if (
+      overflow ||
+      seen !== size ||
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    ) {
       await unlink(temp).catch(() => {});
       return "mismatch";
     }

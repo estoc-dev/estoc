@@ -18,8 +18,10 @@ import { isLongForm, longToShort } from "@estoc/did-peer";
 
 import type {
   AddRecipientResult,
+  BlobKeep,
   BlobRow,
   FanOutOutcome,
+  KeepOutcome,
   MediationStore,
   PackageBounds,
   PackageKey,
@@ -906,19 +908,41 @@ export class SqlStore implements MediationStore {
   }
 
   async keepBlob(
-    id: string,
-    ownerDid: string,
-    hash: string,
-    size: number,
-    retainUntil: number
-  ): Promise<void> {
-    await this.run(
-      "INSERT INTO blobs (id, owner_did, hash, size, created_at, retain_until) " +
-        "VALUES (?, ?, ?, ?, ?, ?) " +
-        "ON CONFLICT (owner_did, hash) DO UPDATE SET " +
-        "retain_until = MAX(retain_until, excluded.retain_until)",
-      [id, ownerDid, hash, size, Date.now(), retainUntil]
-    );
+    { id, ownerDid, hash, size, retainUntil }: BlobKeep,
+    quotaBytes: number
+  ): Promise<KeepOutcome> {
+    const now = Date.now();
+    const room =
+      "(SELECT COALESCE(SUM(size), 0) FROM blobs WHERE owner_did = ? AND retain_until > ?) + ? <= ?";
+    const [created, renewed, kept] = await this.batch([
+      {
+        sql:
+          "INSERT INTO blobs (id, owner_did, hash, size, created_at, retain_until) " +
+          "SELECT ?, ?, ?, ?, ?, ? " +
+          "WHERE NOT EXISTS (SELECT 1 FROM blobs WHERE owner_did = ? AND hash = ?) " +
+          `AND ${room}`,
+        params: [id, ownerDid, hash, size, now, retainUntil, ownerDid, hash, ownerDid, now, size, quotaBytes],
+      },
+      {
+        sql:
+          "UPDATE blobs SET retain_until = MAX(retain_until, ?) " +
+          "WHERE owner_did = ? AND hash = ? AND size = ? " +
+          `AND (retain_until > ? OR ${room})`,
+        params: [retainUntil, ownerDid, hash, size, now, ownerDid, now, size, quotaBytes],
+      },
+      {
+        sql: `SELECT ${SqlStore.BLOB_COLUMNS} FROM blobs WHERE owner_did = ? AND hash = ?`,
+        params: [ownerDid, hash],
+      },
+    ]);
+    const row = kept.rows[0] as Record<string, unknown> | undefined;
+    if (row !== undefined && row.size !== size) {
+      return { outcome: "mismatch" };
+    }
+    if (row === undefined || created.changes + renewed.changes === 0) {
+      return { outcome: "full" };
+    }
+    return { outcome: "kept", blob: SqlStore.blobRow(row) };
   }
 
   async dropBlob(ownerDid: string, hash: string): Promise<string | null> {

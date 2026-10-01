@@ -226,7 +226,11 @@ pnpm run typecheck
 - **One inbox per account.** Every recipient DID an account binds routes to
   the same queue; pickup always reads the authenticated sender's own inbox.
   A replica of a replica-mediation account reads the deliveries queued for
-  it alone, and there `recipient_did` narrows a request to one recipient.
+  it alone, and there `recipient_did` narrows a request to one recipient; it
+  must authcrypt the request, a signature alone opens no replica's queue.
+- **A WebSocket belongs to the first DID proven on it.** Its live mode is
+  that DID's and its mail is what gets pushed; pickup from any other DID on
+  the same socket is refused with `e.p.msg.connection-bound`.
 - **Bindings are exclusive and squat-resistant.** A recipient DID binds to one
   account, first-come; binding the mediator's DID, a non-DID, or a DID that
   holds its own account here is refused — and on the forward path a local

@@ -52,14 +52,3 @@ export function blobDigest(name: string): Uint8Array | null {
 export function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
-
-export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a[i] ^ b[i];
-  }
-  return diff === 0;
-}
