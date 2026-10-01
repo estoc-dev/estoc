@@ -25,7 +25,7 @@ export const GRANT_TYP = "estoc/replica-grant+jws";
 /** Several times what the did:peer:4 long forms a payload names and a signature come to. */
 const MAX_JWS_CHARS = 16 * 1024;
 
-const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /**
  * What the account signs: a compact JWS whose protected header is exactly

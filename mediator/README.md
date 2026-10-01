@@ -227,42 +227,54 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 
 | Request | Body | Reply | Body |
 | --- | --- | --- | --- |
-| `register` | `grant` | `registered` | `account`, `mediation_id`, `routing_did`, `replica_id`, `replica_did`, `state`, `registered_time`, `limits` |
-| `list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `registered_time`, `removed_time`), `next_cursor` |
-| `remove` | `replica_id` | `removed` | `replica_id`, `state`, `removed_time` |
+| `account-register` | `mediation_id` | `account-registered` | `account`, `mediation_id`, `routing_did`, `registered_time`, `limits` |
+| `replica-add` | `grant` | `replica-added` | `replica_id`, `replica_did`, `state`, `added_time` |
+| `replica-list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `added_time`, `removed_time`), `next_cursor` |
+| `replica-remove` | `replica_id` | `replica-removed` | `replica_id`, `state`, `removed_time` |
 | `recipient-update` | `updates` (`recipient_did`, `action`, and for an addition `resolution_material`, `proof`) | `recipient-updated` | `updated` (`recipient_did`, `action`, `result`, `problem`) |
 | `recipient-query` | `paginate` (`limit`, `offset`) | `recipients` | `dids` (`recipient_did`), `pagination` (`count`, `offset`, `remaining`) |
 
-**`register`** enrolls one replica, and the first one creates the account
-with it, both or neither. No mediate-request comes before it. `grant` is a
-compact JWS signed by one of the account's authentication keys (header
-exactly `alg: EdDSA`, `typ: estoc/replica-grant+jws`, `kid`) over the
+**`account-register`** creates the account of the DID that sends it, with no
+replica and no recipient yet. No mediate-request comes before it, and every
+other control answers `unknown-account` until it has succeeded. The sender
+names itself by its long form here. `mediation_id` is a UUIDv7 the account
+chooses, and the account is bound for good to it and to the mediator DID the
+request addressed; another name of the same deployment is another mediator.
+The reply's `routing_did` is that mediator DID, where senders forward the
+account's mail, and `limits` is what the mediator holds the account to. An
+exact repeat answers as the first time did, also where
+`MEDIATOR_OPEN_REGISTRATION` is `false`; there a DID without an account is
+answered `account-refused`.
+
+**`replica-add`** enrolls one replica in the account. `grant` is a compact
+JWS signed by one of the account's authentication keys (header exactly
+`alg: EdDSA`, `typ: estoc/replica-grant+jws`, `kid`) over the
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly
 `account`, `mediation_id`, `mediator`, `replica_id`, `replica_did` and
-`replica_long_form`. The two ids are UUIDv7. The replica's document must
-name the granted mediator as its service and hold Ed25519 authentication and
-X25519 key-agreement keys. An account is bound for good to the mediation id
-and the mediator DID of its first grant; another name of the same deployment
-is another mediator. An exact repeat answers as the first time did. A replica
-enrolled later receives nothing forwarded before it.
+`replica_long_form`. The two ids are UUIDv7, and `mediation_id` and
+`mediator` are the ones the account registered with. The replica's document
+must name that mediator as its service and hold Ed25519 authentication and
+X25519 key-agreement keys. An exact repeat answers as the first time did. A
+replica added later receives nothing forwarded before it.
 
-**`list`** pages the grants of every replica the account ever enrolled, in
-enrollment order, each with its `state`: `active`, or `removed` with its
-`removed_time`. `cursor` is null to begin and then the previous
+**`replica-list`** pages the grants of every replica the account ever added,
+in the order it added them, each with its `state`: `active`, or `removed`
+with its `removed_time`. `cursor` is null to begin and then the previous
 `next_cursor`; `limit` is at most `max_membership_page`. One listing is the
-replicas enrolled when it began, and its cursors never expire.
+replicas added when it began, and its cursors never expire.
 
-**`remove`** ends one replica's enrollment. What waited for that replica
-alone is dropped, mail forwarded to its own DID included, and nothing more
-is queued for it; what other replicas wait for is untouched. A reply or a
-push already on its way when the removal lands may still arrive. The replica
-stays in the roster as `removed`, and neither its id nor its DID can be
-registered again, so a device that comes back enrolls as a new replica. A
-removed replica no longer counts against `max_active_replicas`. The last
-replica can be removed: the account stays, and mail to its recipients is
-still kept and counted, for no one, until a new replica enrolls for what
-comes after. A repeat answers as the first time did; an id the account never
-enrolled is `unknown-replica`.
+**`replica-remove`** ends one replica's enrollment. What waited for that
+replica alone is dropped, mail forwarded to its own DID included, and
+nothing more is queued for it; what other replicas wait for is untouched. A
+reply or a push already on its way when the removal lands may still arrive.
+The replica stays in the roster as `removed`, and neither its id nor its DID
+can be added again, so a device that comes back is added as a new replica. A
+removed replica no longer counts against `max_active_replicas`. An account
+with no active replica, a new one or one whose last replica was removed,
+still takes mail for its recipients: it is kept and counted, for no one,
+and a replica added afterwards receives only what comes after. A repeat
+answers as the first time did; an id the account never added is
+`unknown-replica`.
 
 **`recipient-update`** changes which recipient DIDs route to the account. It
 has the shape of coordinate-mediation's message of that name: `updates` is a
@@ -331,7 +343,7 @@ enrolled can still pick up what waits.
 | `MEDIATOR_DID_METHODS` | `web` | Ordered list of active methods (`peer2,peer4,web`); first = primary. Set `peer2` for a non-loopback http URL |
 | `MEDIATOR_PORT` / `MEDIATOR_HOST` | `8080` / `0.0.0.0` | Listen address |
 | `MEDIATOR_DATA_DIR` | `/data` in Docker, `./data` otherwise | Identity + SQLite |
-| `MEDIATOR_OPEN_REGISTRATION` | `true` | Grant mediation to any DID that asks |
+| `MEDIATOR_OPEN_REGISTRATION` | `true` | Grant mediation, or a replica-mediation account, to any DID that asks |
 | `MEDIATOR_CORS_ORIGIN` | `*` | CORS for browser agents |
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
