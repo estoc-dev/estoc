@@ -18,13 +18,16 @@ import { isLongForm, longToShort } from "@estoc/did-peer";
 
 import type {
   AddRecipientResult,
+  BlobKeep,
   BlobRow,
   FanOutOutcome,
+  KeepOutcome,
   MediationStore,
   PackageBounds,
   PackageKey,
   RecipientPage,
   RegisterOutcome,
+  ReplicaDelivery,
   ReplicaRegistration,
   RosterPage,
   SharedRecipient,
@@ -521,6 +524,11 @@ export class SqlStore implements MediationStore {
     return row !== null;
   }
 
+  async isReplica(did: string): Promise<boolean> {
+    const row = await this.first("SELECT 1 AS one FROM replicas WHERE replica_did = ?", [did]);
+    return row !== null;
+  }
+
   async replicaRoster(
     accountDid: string,
     mediator: string,
@@ -654,7 +662,7 @@ export class SqlStore implements MediationStore {
     const now = Date.now();
     const expiresAt = Math.min(now + this.ttlMs, deadline ?? Infinity);
     if (expiresAt <= now) {
-      return "lapsed";
+      return { outcome: "lapsed" };
     }
     const bytes = new TextEncoder().encode(packed).byteLength;
     const key = [next, forwardId];
@@ -665,7 +673,7 @@ export class SqlStore implements MediationStore {
     const retained = (what: string) =>
       `(SELECT ${what} FROM replica_packages WHERE account_did = a.account_did AND expires_at > ?)`;
 
-    const [, , , , found, account] = await this.batch([
+    const [, , , , found, account, queued] = await this.batch([
       {
         sql: `DELETE FROM replica_deliveries WHERE package_id IN (${lapsed})`,
         params: [...key, now],
@@ -705,26 +713,70 @@ export class SqlStore implements MediationStore {
       },
       { sql: `SELECT id, packed FROM replica_packages WHERE ${held}`, params: key },
       { sql: accounts, params: [next, next] },
+      { sql: "SELECT id, replica_did FROM replica_deliveries WHERE package_id = ?", params: [id] },
     ]);
 
     const row = (found.rows as { id: string; packed: string }[])[0];
     if (row === undefined) {
-      return account.rows.length === 0 ? "unknown" : "full";
+      return { outcome: account.rows.length === 0 ? "unknown" : "full" };
     }
-    if (row.id === id) {
-      return "stored";
+    if (row.id !== id) {
+      return { outcome: row.packed === packed ? "repeated" : "conflict" };
     }
-    return row.packed === packed ? "repeated" : "conflict";
+    const deliveries: ReplicaDelivery[] = (queued.rows as { id: string; replica_did: string }[]).map(
+      (delivery) => ({
+        replicaDid: delivery.replica_did,
+        message: { id: delivery.id, packed, createdAt: now },
+      })
+    );
+    return { outcome: "stored", deliveries };
   }
 
-  async deliveriesFor(replicaDid: string, limit: number): Promise<StoredMessage[]> {
+  private static readonly WAITING =
+    "FROM replica_deliveries d JOIN replica_packages p ON p.id = d.package_id " +
+    "WHERE d.replica_did = ? AND p.expires_at > ? AND (? IS NULL OR p.next_did = ?)";
+
+  async deliveriesFor(
+    replicaDid: string,
+    limit: number,
+    next: string | null = null
+  ): Promise<StoredMessage[]> {
     const rows = await this.all<{ id: string; packed: string; created_at: number }>(
-      "SELECT d.id, p.packed, p.created_at FROM replica_deliveries d " +
-        "JOIN replica_packages p ON p.id = d.package_id " +
-        "WHERE d.replica_did = ? AND p.expires_at > ? ORDER BY p.created_at, p.rowid LIMIT ?",
-      [replicaDid, Date.now(), limit]
+      `SELECT d.id, p.packed, p.created_at ${SqlStore.WAITING} ORDER BY p.created_at, p.rowid LIMIT ?`,
+      [replicaDid, Date.now(), next, next, limit]
     );
     return rows.map((row) => ({ id: row.id, packed: row.packed, createdAt: row.created_at }));
+  }
+
+  async deliveryCount(replicaDid: string, next: string | null = null): Promise<number> {
+    const row = await this.first<{ n: number }>(`SELECT COUNT(*) AS n ${SqlStore.WAITING}`, [
+      replicaDid,
+      Date.now(),
+      next,
+      next,
+    ]);
+    return row?.n ?? 0;
+  }
+
+  /*
+   * A package forwarded to a replica has that replica's delivery and no
+   * other, so one left without a delivery has been acknowledged.
+   */
+  async acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void> {
+    await this.batch([
+      {
+        sql:
+          "DELETE FROM replica_deliveries " +
+          "WHERE replica_did = ? AND id IN (SELECT value FROM json_each(?))",
+        params: [replicaDid, JSON.stringify(ids)],
+      },
+      {
+        sql:
+          "DELETE FROM replica_packages WHERE next_did = ? AND NOT EXISTS " +
+          "(SELECT 1 FROM replica_deliveries WHERE package_id = replica_packages.id)",
+        params: [replicaDid],
+      },
+    ]);
   }
 
   /*
@@ -856,19 +908,41 @@ export class SqlStore implements MediationStore {
   }
 
   async keepBlob(
-    id: string,
-    ownerDid: string,
-    hash: string,
-    size: number,
-    retainUntil: number
-  ): Promise<void> {
-    await this.run(
-      "INSERT INTO blobs (id, owner_did, hash, size, created_at, retain_until) " +
-        "VALUES (?, ?, ?, ?, ?, ?) " +
-        "ON CONFLICT (owner_did, hash) DO UPDATE SET " +
-        "retain_until = MAX(retain_until, excluded.retain_until)",
-      [id, ownerDid, hash, size, Date.now(), retainUntil]
-    );
+    { id, ownerDid, hash, size, retainUntil }: BlobKeep,
+    quotaBytes: number
+  ): Promise<KeepOutcome> {
+    const now = Date.now();
+    const room =
+      "(SELECT COALESCE(SUM(size), 0) FROM blobs WHERE owner_did = ? AND retain_until > ?) + ? <= ?";
+    const [created, renewed, kept] = await this.batch([
+      {
+        sql:
+          "INSERT INTO blobs (id, owner_did, hash, size, created_at, retain_until) " +
+          "SELECT ?, ?, ?, ?, ?, ? " +
+          "WHERE NOT EXISTS (SELECT 1 FROM blobs WHERE owner_did = ? AND hash = ?) " +
+          `AND ${room}`,
+        params: [id, ownerDid, hash, size, now, retainUntil, ownerDid, hash, ownerDid, now, size, quotaBytes],
+      },
+      {
+        sql:
+          "UPDATE blobs SET retain_until = MAX(retain_until, ?) " +
+          "WHERE owner_did = ? AND hash = ? AND size = ? " +
+          `AND (retain_until > ? OR ${room})`,
+        params: [retainUntil, ownerDid, hash, size, now, ownerDid, now, size, quotaBytes],
+      },
+      {
+        sql: `SELECT ${SqlStore.BLOB_COLUMNS} FROM blobs WHERE owner_did = ? AND hash = ?`,
+        params: [ownerDid, hash],
+      },
+    ]);
+    const row = kept.rows[0] as Record<string, unknown> | undefined;
+    if (row !== undefined && row.size !== size) {
+      return { outcome: "mismatch" };
+    }
+    if (row === undefined || created.changes + renewed.changes === 0) {
+      return { outcome: "full" };
+    }
+    return { outcome: "kept", blob: SqlStore.blobRow(row) };
   }
 
   async dropBlob(ownerDid: string, hash: string): Promise<string | null> {

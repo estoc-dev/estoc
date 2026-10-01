@@ -63,30 +63,30 @@ export class BlobService {
         comment: `blobs are at most ${this.policy.blobMaxBytes} bytes`,
       };
     }
-    const existing = await this.store.blobOf(ownerDid, hash);
-    if (existing !== null && existing.size !== size) {
-      return { ok: false, code: "refused", comment: "size differs from the stored blob" };
-    }
-    // A renewal adds nothing to the mediation's usage; a new blob adds its
-    // whole size, uploaded or not.
-    if (existing === null) {
-      const usage = await this.store.blobUsage(ownerDid);
-      if (usage + size > this.policy.blobQuotaBytes) {
-        return {
-          ok: false,
-          code: "quota",
-          comment: `this mediation may hold ${this.policy.blobQuotaBytes} bytes; ${usage} held`,
-        };
-      }
-    }
-
     const now = Date.now();
-    const retainUntil = now + this.policy.blobRetainSeconds * 1000;
-    const id = existing?.id ?? mintBlobId();
-    await this.store.keepBlob(id, ownerDid, hash, size, retainUntil);
+    const kept = await this.store.keepBlob(
+      {
+        id: mintBlobId(),
+        ownerDid,
+        hash,
+        size,
+        retainUntil: now + this.policy.blobRetainSeconds * 1000,
+      },
+      this.policy.blobQuotaBytes
+    );
+    if (kept.outcome !== "kept") {
+      return kept.outcome === "mismatch"
+        ? { ok: false, code: "refused", comment: "size differs from the stored blob" }
+        : {
+            ok: false,
+            code: "quota",
+            comment: `this mediation may hold ${this.policy.blobQuotaBytes} bytes`,
+          };
+    }
 
+    const { id, uploadedAt, retainUntil } = kept.blob;
     let upload: { url: string; expires: number } | null = null;
-    if (existing === null || existing.uploadedAt === null) {
+    if (uploadedAt === null) {
       const expires = now + UPLOAD_GRANT_MS;
       const token = await this.store.grantUpload(id, expires);
       upload = { url: `${this.url(id)}?token=${token}`, expires };

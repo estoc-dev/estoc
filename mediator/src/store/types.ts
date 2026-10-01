@@ -112,13 +112,21 @@ export interface PackageBounds {
   maxRetainedBytes: number;
 }
 
+/** One replica's copy of a package; the message's id names the delivery, not the package. */
+export interface ReplicaDelivery {
+  replicaDid: string;
+  message: StoredMessage;
+}
+
 /**
  * `repeated` and `conflict` as for an ordinary queue. `unknown`: the key's
  * recipient is neither a shared recipient nor a replica. `full`: the account
  * is at its message or byte limit. `lapsed`: the deadline has already passed.
  * Only `stored` put a package in, and it put in every delivery of it too.
  */
-export type FanOutOutcome = "stored" | "repeated" | "conflict" | "unknown" | "full" | "lapsed";
+export type FanOutOutcome =
+  | { outcome: "stored"; deliveries: ReplicaDelivery[] }
+  | { outcome: "repeated" | "conflict" | "unknown" | "full" | "lapsed" };
 
 export interface RecipientPage {
   recipients: string[];
@@ -137,6 +145,22 @@ export interface BlobRow {
   uploadedAt: number | null;
   retainUntil: number;
 }
+
+/** A blob a mediation asks to hold until `retainUntil`, under `id` if it is new to it. */
+export interface BlobKeep {
+  id: string;
+  ownerDid: string;
+  hash: string;
+  size: number;
+  retainUntil: number;
+}
+
+/**
+ * `kept`: the mediation holds the blob, as the row says. `mismatch`: it holds
+ * the hash at another size. `full`: holding it would take the mediation past
+ * its quota. Only `kept` wrote anything.
+ */
+export type KeepOutcome = { outcome: "kept"; blob: BlobRow } | { outcome: "mismatch" | "full" };
 
 export interface UploadGrant {
   id: string;
@@ -184,8 +208,8 @@ export interface MediationStore {
    * replica, apart from the ordinary queues.
    */
   registerReplica(registration: ReplicaRegistration): Promise<RegisterOutcome>;
-  /** Whether `did` is a replica-mediation account. */
   isReplicaAccount(did: string): Promise<boolean>;
+  isReplica(did: string): Promise<boolean>;
   /**
    * The account's replicas with an ordinal after `after` and up to `through`
    * (its current size when null), oldest first; null without such an account
@@ -211,8 +235,18 @@ export interface MediationStore {
    * enrolled later gets none, and neither does anyone from a repeat.
    */
   fanOut(key: PackageKey, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
-  /** What waits for a replica, oldest first; each id names its delivery, not the package. */
-  deliveriesFor(replicaDid: string, limit: number): Promise<StoredMessage[]>;
+  /**
+   * What waits for a replica, oldest first, each under its delivery's id;
+   * only what was forwarded to `next` when one is given.
+   */
+  deliveriesFor(replicaDid: string, limit: number, next?: string | null): Promise<StoredMessage[]>;
+  deliveryCount(replicaDid: string, next?: string | null): Promise<number>;
+  /**
+   * Ends the named deliveries that are this replica's and ignores every other
+   * id. Mail forwarded to the replica itself goes with its delivery; a shared
+   * package stays, for the other replicas and so a repeat is still known.
+   */
+  acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void>;
 
   /** Queues `packed` under its key, once: the first bytes a key is given are the ones it keeps. */
   storeMessage(ownerDid: string, key: PackageKey, packed: string): Promise<StoreOutcome>;
@@ -233,14 +267,12 @@ export interface MediationStore {
   blobById(id: string): Promise<BlobRow | null>;
   /** Bytes of this mediation's live blobs, uploaded or not. */
   blobUsage(ownerDid: string): Promise<number>;
-  /** Creates the row if absent (under `id`), else extends its retention; never shortens it. */
-  keepBlob(
-    id: string,
-    ownerDid: string,
-    hash: string,
-    size: number,
-    retainUntil: number
-  ): Promise<void>;
+  /**
+   * Creates the row if absent (under `keep.id`), else extends its retention
+   * and never shortens it, all within `quotaBytes` of live blobs. A blob still
+   * retained renews for nothing; one past its retention counts as new.
+   */
+  keepBlob(keep: BlobKeep, quotaBytes: number): Promise<KeepOutcome>;
   /** Removes the mediation's blob for the hash; returns its id (bytes to delete) or null if there was none. */
   dropBlob(ownerDid: string, hash: string): Promise<string | null>;
   /** A one-time upload token for the blob, good until `expiresAt`. */

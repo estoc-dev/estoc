@@ -64,6 +64,18 @@ async function send(
   return (await sender.ctx.unpack(await res.text())).message;
 }
 
+/** A ten-byte blob kept for `ownerDid`, within a quota nothing here reaches unless one is given. */
+function keep(
+  store: SqliteStore,
+  id: string,
+  ownerDid: string,
+  hash: string,
+  retainUntil: number,
+  quotaBytes = 1_000_000
+) {
+  return store.keepBlob({ id, ownerDid, hash, size: 10, retainUntil }, quotaBytes);
+}
+
 function path(url: string): string {
   const u = new URL(url);
   return u.pathname + u.search;
@@ -236,6 +248,39 @@ describe("blob-store/1.0", () => {
     expect(fits.type).toBe("https://estoc.dev/blob-store/1.0/put-result");
   });
 
+  it("holds puts of different blobs that arrive together to the quota", async () => {
+    const together = await Promise.all(
+      [2, 3].map((seed) => send(bob, PUT, { hash: nameOf(randomBytes(seed + 10)), size: 3500 }))
+    );
+
+    expect(together.map((reply) => reply.body.code ?? "kept").sort()).toEqual([
+      "e.p.blob.quota",
+      "kept",
+    ]);
+    for (const reply of together.filter((reply) => reply.type !== PROBLEM)) {
+      await send(bob, DELETE, { hash: reply.body.hash });
+    }
+  });
+
+  it("counts a blob past its retention as new when it is put again", async () => {
+    const store = memoryStore();
+    const owner = "did:example:a";
+    await keep(store, "old", owner, "hold", Date.now() - 1);
+    await keep(store, "new", owner, "hnew", Date.now() + 60_000);
+
+    const renewed = await store.keepBlob(
+      { id: "ignored", ownerDid: owner, hash: "hold", size: 10, retainUntil: Date.now() + 60_000 },
+      15
+    );
+
+    expect(renewed.outcome).toBe("full");
+    expect(await store.blobUsage(owner)).toBe(10);
+    expect((await keep(store, "ignored", owner, "hold", Date.now() + 60_000, 20)).outcome).toBe("kept");
+    expect((await store.blobOf(owner, "hold"))?.id).toBe("old");
+    expect(await store.blobUsage(owner)).toBe(20);
+    store.close();
+  });
+
   it("refuses bad names, mismatched sizes and strangers", async () => {
     const bad = await send(alice, PUT, { hash: "not-a-name", size: 10 });
     expect(bad.body.code).toBe("e.p.blob.refused");
@@ -254,13 +299,13 @@ describe("blob-store/1.0", () => {
     const store = memoryStore();
     await store.grantMediation("did:example:a");
     await store.grantMediation("did:example:b");
-    await store.keepBlob("x", "did:example:a", "hx", 10, Date.now() - 1);
-    await store.keepBlob("y", "did:example:b", "hy", 10, Date.now() + 60_000);
-    await store.keepBlob("z", "did:example:a", "hy", 10, Date.now() - 1);
+    await keep(store, "x", "did:example:a", "hx", Date.now() - 1);
+    await keep(store, "y", "did:example:b", "hy", Date.now() + 60_000);
+    await keep(store, "z", "did:example:a", "hy", Date.now() - 1);
     expect(await store.blobUsage("did:example:a")).toBe(0);
     expect(await store.blobUsage("did:example:b")).toBe(10);
     // A later keep only ever extends.
-    await store.keepBlob("ignored", "did:example:a", "hx", 10, Date.now() + 60_000);
+    await keep(store, "ignored", "did:example:a", "hx", Date.now() + 60_000);
     expect((await store.blobOf("did:example:a", "hx"))?.id).toBe("x");
     expect(await store.blobUsage("did:example:a")).toBe(10);
     expect((await store.purgeBlobs()).sort()).toEqual(["z"]);
@@ -286,7 +331,7 @@ describe("blob-store/1.0", () => {
     );
     raw.close();
     const store = new SqliteStore(file);
-    await store.keepBlob("n", "did:example:a", "hn", 1, Date.now() + 1000);
+    await keep(store, "n", "did:example:a", "hn", Date.now() + 1000);
     expect((await store.blobById("n"))?.hash).toBe("hn");
     store.close();
     const check = new Database(file);

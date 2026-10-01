@@ -176,9 +176,9 @@ which — a 2xx always means queued mail:
 - `(account, body.next, forward id)` names the package. The same forward
   again is accepted and queued once; the same id with another envelope is
   refused and the first stays. An ordinary recipient's name is free again
-  once its mail has been picked up and acknowledged, or has expired. A
-  shared package's name stays taken until the package expires, even after
-  every target replica has acknowledged it.
+  once its mail has been picked up and acknowledged, or has expired, and so
+  is a replica's own. A shared package's name stays taken until the package
+  expires, even after every target replica has acknowledged it.
 - A recipient nobody here holds, a full queue and a reused id are one answer,
   **422**, which does not tell the three apart. A 202 does tell the sender
   that this recipient takes mail here right now; it says nothing of the
@@ -199,7 +199,7 @@ Over a WebSocket there is no status: a refused forward is dropped.
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
-| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment, shared recipients and mail queued per replica so far; replicas cannot pick it up yet). Off, a forward to one of its recipients or replicas is refused |
+| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may enroll; enrollment is never undone. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may add; an addition is never undone |
@@ -225,6 +225,12 @@ pnpm run typecheck
 
 - **One inbox per account.** Every recipient DID an account binds routes to
   the same queue; pickup always reads the authenticated sender's own inbox.
+  A replica of a replica-mediation account reads the deliveries queued for
+  it alone, and there `recipient_did` narrows a request to one recipient; it
+  must authcrypt the request, a signature alone opens no replica's queue.
+- **A WebSocket belongs to the first DID proven on it.** Its live mode is
+  that DID's and its mail is what gets pushed; pickup from any other DID on
+  the same socket is refused with `e.p.msg.connection-bound`.
 - **Bindings are exclusive and squat-resistant.** A recipient DID binds to one
   account, first-come; binding the mediator's DID, a non-DID, or a DID that
   holds its own account here is refused — and on the forward path a local

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isAuthcrypted } from "../didcomm/didcomm.js";
 import type { DIDCommContext, Unpacked } from "../didcomm/didcomm.js";
 import type { StoredMessage } from "../store/types.js";
 import type { HandlerContext, LiveSink, Reply } from "./types.js";
@@ -10,12 +11,19 @@ import { replicaProblem } from "./replica-mediation.js";
 /**
  * messagepickup/3.0 — https://didcomm.org/messagepickup/3.0
  *
- * One inbox per account: every message forwarded to any recipient DID an
- * account has bound lands in the same queue, and pickup always reads the
- * sender's own. `recipient_did` is accepted and echoed for spec conformance
- * but does not narrow the query — the DIF demo sends only `{limit}`, and an
- * account picking up someone else's queue is not a thing this store can
- * express in the first place.
+ * Pickup always reads the sender's own queue, and which queue that is follows
+ * from who the sender proved to be. An ordinary account has one inbox: every
+ * message forwarded to any recipient DID it has bound lands there, and
+ * `recipient_did` is echoed without narrowing anything — the DIF demo sends
+ * only `{limit}`. A replica has the deliveries queued for it alone, of mail
+ * forwarded to itself or to its account's shared recipients, and there
+ * `recipient_did` narrows to what was forwarded to that DID. Neither can name
+ * its way into another's queue.
+ *
+ * A connection that stays open belongs to the DID that first proved itself
+ * on it: that is who its live mode is kept for and whose mail is pushed down
+ * it. Pickup from any other DID is refused there, so that no one is told
+ * about, or changes, a live mode that is not theirs.
  */
 
 export const STATUS_REQUEST =
@@ -31,46 +39,86 @@ export const LIVE_DELIVERY_CHANGE =
 
 export const DELIVERY_PAGE_LIMIT = 10;
 
-async function statusBody(
-  { store, session, sender }: HandlerContext,
-  recipientDid: unknown
-): Promise<Record<string, unknown>> {
-  return {
-    message_count: sender === null ? 0 : await store.messageCount(sender),
-    live_delivery: session?.liveDelivery ?? false,
-    ...(typeof recipientDid === "string" ? { recipient_did: recipientDid } : {}),
-  };
+interface Inbox {
+  count(recipientDid: unknown): Promise<number>;
+  waiting(limit: number, recipientDid: unknown): Promise<StoredMessage[]>;
+  acknowledge(ids: string[]): Promise<void>;
 }
 
-async function requireAccount({ store, sender }: HandlerContext): Promise<boolean> {
-  return sender !== null && (await store.isMediated(sender));
-}
+const forwardedTo = (recipientDid: unknown): string | null =>
+  typeof recipientDid === "string" ? canonicalDid(recipientDid) : null;
+
+const ANOTHERS_CONNECTION: Reply = {
+  type: PROBLEM_REPORT,
+  body: {
+    code: "e.p.msg.connection-bound",
+    comment: "This connection belongs to another DID",
+  },
+};
 
 /**
- * A replica-mediation account manages its replicas and holds no queue: mail
- * is picked up by each replica under its own DID, and the account is told so.
+ * The sender's queue; a refusal on a connection another DID holds, and for a
+ * replica-mediation account, which manages its replicas and holds no queue
+ * of its own; null for anyone else, and for a replica that proved itself by
+ * signature alone: its queue opens to the key that mail is sealed to.
  */
-async function accountHasNoInbox({ store, sender }: HandlerContext): Promise<Reply | null> {
-  return sender !== null && (await store.isReplicaAccount(canonicalDid(sender)))
-    ? replicaProblem("replica-required")
-    : null;
+async function inboxOf(
+  incoming: Unpacked,
+  { store, sender, session }: HandlerContext
+): Promise<Inbox | Reply | null> {
+  if (sender === null) {
+    return null;
+  }
+  const did = canonicalDid(sender);
+  if (session !== null && session.did !== null && canonicalDid(session.did) !== did) {
+    return ANOTHERS_CONNECTION;
+  }
+  if (await store.isReplicaAccount(did)) {
+    return replicaProblem("replica-required");
+  }
+  if (await store.isReplica(did)) {
+    if (!isAuthcrypted(incoming)) {
+      return null;
+    }
+    return {
+      count: (recipientDid) => store.deliveryCount(did, forwardedTo(recipientDid)),
+      waiting: (limit, recipientDid) => store.deliveriesFor(did, limit, forwardedTo(recipientDid)),
+      acknowledge: (ids) => store.acknowledgeDeliveries(did, ids),
+    };
+  }
+  if (await store.isMediated(sender)) {
+    return {
+      count: () => store.messageCount(sender),
+      waiting: (limit) => store.messagesFor(sender, limit),
+      acknowledge: async (ids) => void (await store.deleteMessages(sender, ids)),
+    };
+  }
+  return null;
+}
+
+const isInbox = (found: Inbox | Reply | null): found is Inbox => found !== null && "count" in found;
+
+async function status(
+  inbox: Inbox,
+  { session }: HandlerContext,
+  recipientDid: unknown
+): Promise<Reply> {
+  return {
+    type: STATUS,
+    body: {
+      message_count: await inbox.count(recipientDid),
+      live_delivery: session?.liveDelivery ?? false,
+      ...(typeof recipientDid === "string" ? { recipient_did: recipientDid } : {}),
+    },
+  };
 }
 
 export async function statusRequest(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const refusal = await accountHasNoInbox(context);
-  if (refusal !== null) {
-    return refusal;
-  }
-  if (!(await requireAccount(context))) {
-    return null;
-  }
-  return {
-    type: STATUS,
-    body: await statusBody(context, incoming.message.body.recipient_did),
-  };
+  const inbox = await inboxOf(incoming, context);
+  return isInbox(inbox) ? status(inbox, context, incoming.message.body.recipient_did) : inbox;
 }
 
 /** DIDComm attachments carry base64url, not standard base64. */
@@ -85,29 +133,21 @@ export async function deliveryRequest(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const refusal = await accountHasNoInbox(context);
-  if (refusal !== null) {
-    return refusal;
-  }
-  if (!(await requireAccount(context)) || context.sender === null) {
-    return null;
+  const inbox = await inboxOf(incoming, context);
+  if (!isInbox(inbox)) {
+    return inbox;
   }
 
-  const rawLimit = incoming.message.body.limit;
+  const { limit: rawLimit, recipient_did: recipientDid } = incoming.message.body;
   const limit =
     typeof rawLimit === "number" && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), DELIVERY_PAGE_LIMIT)
       : DELIVERY_PAGE_LIMIT;
 
-  const messages = await context.store.messagesFor(context.sender, limit);
+  const messages = await inbox.waiting(limit, recipientDid);
   if (messages.length === 0) {
-    return {
-      type: STATUS,
-      body: await statusBody(context, incoming.message.body.recipient_did),
-    };
+    return status(inbox, context, recipientDid);
   }
-
-  const recipientDid = incoming.message.body.recipient_did;
   return {
     type: DELIVERY,
     body: typeof recipientDid === "string" ? { recipient_did: recipientDid } : {},
@@ -119,33 +159,25 @@ export async function messagesReceived(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const refusal = await accountHasNoInbox(context);
-  if (refusal !== null) {
-    return refusal;
-  }
-  if (!(await requireAccount(context)) || context.sender === null) {
-    return null;
+  const inbox = await inboxOf(incoming, context);
+  if (!isInbox(inbox)) {
+    return inbox;
   }
 
   const list = incoming.message.body.message_id_list;
-  const ids = Array.isArray(list)
-    ? list.filter((id): id is string => typeof id === "string")
-    : [];
-
-  await context.store.deleteMessages(context.sender, ids);
-  return { type: STATUS, body: await statusBody(context, undefined) };
+  await inbox.acknowledge(
+    Array.isArray(list) ? list.filter((id): id is string => typeof id === "string") : []
+  );
+  return status(inbox, context, undefined);
 }
 
 export async function liveDeliveryChange(
   incoming: Unpacked,
   context: HandlerContext
 ): Promise<Reply | null> {
-  const refusal = await accountHasNoInbox(context);
-  if (refusal !== null) {
-    return refusal;
-  }
-  if (!(await requireAccount(context))) {
-    return null;
+  const inbox = await inboxOf(incoming, context);
+  if (!isInbox(inbox)) {
+    return inbox;
   }
 
   // Live delivery is a property of a connection that stays open; an HTTP
@@ -161,13 +193,13 @@ export async function liveDeliveryChange(
   }
 
   context.session.liveDelivery = incoming.message.body.live_delivery === true;
-  return { type: STATUS, body: await statusBody(context, undefined) };
+  return status(inbox, context, undefined);
 }
 
 /**
  * Push freshly stored messages to every live session the owner holds open —
  * the WebSocket half of pickup, called from the forward handler. Messages
- * stay in the inbox until messages-received deletes them, so a push that
+ * stay queued until messages-received acknowledges them, so a push that
  * races a disconnect loses nothing.
  */
 export async function pushLiveDelivery(

@@ -252,3 +252,34 @@ export async function signedBy(
     .setProtectedHeader({ alg: "EdDSA", typ: GRANT_TYP, kid: `${signer.did}#key-1`, ...header })
     .sign(await importJWK(signer.signingKey, "EdDSA"));
 }
+
+export const SIGNED = "application/didcomm-signed+json";
+
+/**
+ * `message` signed by a did:peer:4 under its short form and never sealed by
+ * it: left in the open, or wrapped anonymously for `to`.
+ */
+export async function packSigned(
+  who: Peer4Agent,
+  message: IMessage,
+  to: string | null = null
+): Promise<string> {
+  const doc = toDIDCommDIDDoc(resolveShortForm(who.longForm));
+  const key: Secret = {
+    id: `${who.did}#key-1`,
+    type: "JsonWebKey2020",
+    privateKeyJwk: who.signingKey as Record<string, unknown>,
+  };
+  const dids = { resolve: async (did: string) => (did === who.did ? doc : resolveDIDCommDoc(did)) };
+  const secrets = {
+    get_secret: async (id: string) => (id === key.id ? key : null),
+    find_secrets: async (ids: string[]) => ids.filter((id) => id === key.id),
+  };
+  const [packed] =
+    to === null
+      ? await new Message(message).pack_signed(who.did, dids, secrets)
+      : await new Message(message).pack_encrypted(to, null, who.did, dids, secrets, {
+          forward: false,
+        });
+  return packed;
+}

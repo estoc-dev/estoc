@@ -136,6 +136,20 @@ export interface Unpacked {
   addressedTo: string | null;
 }
 
+/**
+ * Whether the envelope was sealed by its sender's own key-agreement key. A
+ * signature proves a DID too, and `verifiedFrom` takes either; this tells
+ * the sealed kind from a signed plaintext, in the open or wrapped anonymously.
+ */
+export function isAuthcrypted({ metadata }: Unpacked): boolean {
+  return (
+    metadata.encrypted === true &&
+    metadata.authenticated === true &&
+    typeof metadata.encrypted_from_kid === "string" &&
+    metadata.encrypted_from_kid !== ""
+  );
+}
+
 export interface ContextOptions {
   /** The mediator's other active DIDs, beyond the primary. */
   aliases?: OwnIdentity[];

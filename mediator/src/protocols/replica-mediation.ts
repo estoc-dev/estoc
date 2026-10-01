@@ -8,6 +8,7 @@ import {
 import type { DIDDoc } from "@estoc/did-peer";
 
 import type { MediatorPolicy } from "../config.js";
+import { isAuthcrypted } from "../didcomm/didcomm.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
 import { isDecodable } from "../didcomm/did-resolver.js";
 import type { HandlerContext, Reply } from "./types.js";
@@ -87,12 +88,10 @@ function controlOf(
   { ctx, sender }: HandlerContext,
   fields: string[]
 ): Control | null {
-  const { message, metadata, addressedTo } = incoming;
+  const { message, addressedTo } = incoming;
   if (
     sender === null ||
-    metadata.encrypted !== true ||
-    metadata.authenticated !== true ||
-    !metadata.encrypted_from_kid ||
+    !isAuthcrypted(incoming) ||
     typeof message.from !== "string" ||
     (message.from !== sender && provenDid(message.from) !== canonicalDid(sender)) ||
     addressedTo === null ||
