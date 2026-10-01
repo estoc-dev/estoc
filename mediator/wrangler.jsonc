@@ -1,0 +1,76 @@
+// Cloudflare Workers deployment of the mediator.
+//
+// Deploying, from this directory after `pnpm install`:
+//   1. pnpm exec wrangler d1 create mediator   → paste database_id below
+//   2. pnpm run deploy
+//
+// There is nothing else: no secrets and no URL to configure. The mediator
+// mints its keys into D1 on first contact and answers every host that routes
+// to it — workers.dev, a custom domain added later, or both at once — as that
+// host's own did:web. Attach custom domains in the dashboard rather than
+// here, so this file stays deployable on any account.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "didcomm-mediator",
+  "main": "src/workers/index.ts",
+  "compatibility_date": "2025-10-01",
+  // Buffer and node:crypto in the shared protocol code.
+  "compatibility_flags": ["nodejs_compat"],
+  // The didcomm-node WASM build is Node-only; on workerd the bundler build
+  // stands in through a small instantiation shim (same API, same wasm).
+  "alias": {
+    "@estoc/didcomm-node": "./src/workers/didcomm-wasm.ts"
+  },
+  // The workspace library the mediator imports is bundled from its build.
+  "build": { "command": "pnpm --filter '@estoc/mediator^...' run build" },
+  "durable_objects": {
+    "bindings": [{ "name": "INBOX", "class_name": "InboxHub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InboxHub"] }],
+  // web stays the primary (advertised) name; the did:peer:2 alias answers
+  // for clients whose correspondents cannot use a did:web routing DID —
+  // demo.didcomm.org's resolver mangles JWK-material did:web documents.
+  "vars": { "MEDIATOR_DID_METHODS": "web,peer2" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "didcomm-mediator",
+      "database_id": "e57679e6-e700-46e9-abbf-a9b529a5a67d"
+    }
+  ],
+  // Hourly purge of expired messages.
+  "triggers": { "crons": ["17 * * * *"] },
+  "observability": { "enabled": true },
+  // This deployment's own settings, deployed with `wrangler deploy --env
+  // prod` — the same worker and database, just the extra vars. Kept in an
+  // environment because a copy deployed on another account must not ship
+  // someone else's abuse inbox. Bindings aren't inherited into environments, so the D1 and
+  // DO blocks are repeated here verbatim — keep them in sync.
+  "env": {
+    "prod": {
+      "name": "didcomm-mediator",
+      "vars": {
+        "MEDIATOR_DID_METHODS": "web,peer2",
+        // This deployment's operator contact, shown on the invitation page.
+        "MEDIATOR_ABUSE_EMAIL": "abuse@merely.ca"
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "INBOX", "class_name": "InboxHub" }]
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "didcomm-mediator",
+          "database_id": "e57679e6-e700-46e9-abbf-a9b529a5a67d"
+        }
+      ],
+      // blob-store/1.0: encrypted packages agents put here for contacts to
+      // download. Optional — without the binding the mediator keeps no
+      // blobs — so it is not in the default deployment;
+      // `wrangler r2 bucket create didcomm-mediator-blobs` before deploying.
+      "r2_buckets": [
+        { "binding": "BLOBS", "bucket_name": "didcomm-mediator-blobs" }
+      ]
+    }
+  }
+}

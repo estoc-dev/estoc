@@ -1,0 +1,25 @@
+# Fixed, so the volume below is the same one wherever this file is run from:
+# the default project name is the directory's, and a renamed directory would
+# start the mediator on an empty volume with fresh keys.
+name: didcomm-mediator
+
+services:
+  mediator:
+    build:
+      context: ..
+      dockerfile: mediator/Dockerfile
+    image: ghcr.io/estoc-net/didcomm-mediator-ts
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Baked into the mediator's DID on first start; set it before then and
+      # never change it — a new URL would need a new DID (delete the volume).
+      MEDIATOR_PUBLIC_URL: ${MEDIATOR_PUBLIC_URL:?set MEDIATOR_PUBLIC_URL before first start}
+      MEDIATOR_OPEN_REGISTRATION: ${MEDIATOR_OPEN_REGISTRATION:-true}
+      MEDIATOR_CORS_ORIGIN: ${MEDIATOR_CORS_ORIGIN:-*}
+    volumes:
+      - mediator-data:/data
+
+volumes:
+  mediator-data:

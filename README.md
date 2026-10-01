@@ -1,6 +1,7 @@
 # estoc-net/estoc
 
-The Estoc web app and the libraries it is made of, in one pnpm workspace:
+The Estoc web app, the libraries it is made of and the mediator it talks
+through, in one pnpm workspace:
 
 | path | package | what |
 |---|---|---|
@@ -14,6 +15,7 @@ The Estoc web app and the libraries it is made of, in one pnpm workspace:
 | `packages/post/` | [`@estoc/post`](https://www.npmjs.com/package/@estoc/post) | the post/1.0 format for folder-objects: recognise, validate, read, and the reference renderer |
 | `packages/daemon-api/` | `@estoc/daemon-api` | the contract between a daemon and its views, the one package a view installs: the published state and records, the method table and error codes with a schema for each, the client, the wire, and the pure helpers a view computes with |
 | `packages/daemon/` | `@estoc/daemon` | the daemon: agent + vault behind the API; a browser-worker host (the app) and a Node host (`estoc-daemon`, a SQLite vault in a folder on disk, the app served on the same origin) |
+| `mediator/` | `@estoc/mediator` | a DIDComm v2 mediator anyone can run — Cloudflare Workers or Node + Docker; [mediator.estoc.dev](https://mediator.estoc.dev) is one. Not published: it is deployed from this tree |
 | `packages/cli/` | [`@estoc/cli`](https://www.npmjs.com/package/@estoc/cli) | `estoc` — vaults on disk, `estoc object hash\|sign\|verify`, `estoc serve` |
 
 Inside the workspace every `@estoc/*` dependency is `workspace:^`: the app
@@ -27,10 +29,6 @@ The [version-3 vault specification](docs/replica-model/README.md) has a
 reading guide covering storage, events, delivery and relationship policy;
 it is what the packages above implement. The version-2 documents under
 `docs/` are retired and kept as a record.
-
-The mediator ([didcomm-mediator]) stays its own repository: it is a thing
-anyone runs, with its own one-click deploy, and depends only on the
-published `@estoc/did-peer`.
 
 ## Work in it
 
@@ -83,7 +81,7 @@ pnpm --filter @estoc/vault test:watch
 ```
 
 The browser e2e is run by hand, against a served build and a mediator
-(a local [didcomm-mediator] on `:8080`, or `E2E_MEDIATOR=estoc` for
+(a local [mediator](mediator/README.md) on `:8080`, or `E2E_MEDIATOR=estoc` for
 production):
 
 ```sh
@@ -123,9 +121,10 @@ This repository was assembled on 2026-08-16 from four repositories —
 [estoc-net/did-peer], [estoc-net/keystore], [estoc-net/agent-core],
 [estoc-net/app] — with `git filter-repo --to-subdirectory-filter`, so each
 package's full history is here under its current path (`git log --follow`
-works across the move). The originals are archived.
+works across the move). The originals are archived. The mediator joined
+the same way on 2026-10-01, from [estoc-net/didcomm-mediator].
 
-[didcomm-mediator]: https://github.com/estoc-net/didcomm-mediator
+[estoc-net/didcomm-mediator]: https://github.com/estoc-net/didcomm-mediator
 [estoc-net/did-peer]: https://github.com/estoc-net/did-peer
 [estoc-net/keystore]: https://github.com/estoc-net/keystore
 [estoc-net/agent-core]: https://github.com/estoc-net/agent-core

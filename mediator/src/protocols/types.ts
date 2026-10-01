@@ -1,0 +1,70 @@
+import type { IMessage } from "@estoc/didcomm-node";
+
+import type { BlobService } from "../blobs/service.js";
+import type { MediatorPolicy } from "../config.js";
+import type { DIDCommContext, Unpacked } from "../didcomm/didcomm.js";
+import type { MediationStore } from "../store/types.js";
+
+/**
+ * One live connection (in practice: a WebSocket) a client is holding open.
+ * HTTP requests are not sessions — their reply rides the response body and
+ * that is the whole relationship.
+ */
+export interface Session {
+  /** The account this session authenticated as, once it has. */
+  did: string | null;
+  liveDelivery: boolean;
+  /**
+   * Whether this connection has been declared a return route: the
+   * return-route extension is set once per WebSocket and marks the socket as
+   * where replies flow for the rest of its life.
+   */
+  returnRoute: boolean;
+  /** Push a packed message to the client; false once the connection is gone. */
+  send(packed: string): boolean;
+}
+
+/**
+ * Where live-delivery pushes go. On Node this is the in-process session
+ * registry; on Workers it is a stub that hands the packed delivery to the
+ * inbox Durable Object holding the sockets. `wantsPush` exists so the caller
+ * can skip packing a delivery nobody is listening for.
+ */
+export interface LiveSink {
+  wantsPush(ownerDid: string): boolean | Promise<boolean>;
+  push(ownerDid: string, packedDelivery: string): void | Promise<void>;
+}
+
+export interface HandlerContext {
+  ctx: DIDCommContext;
+  store: MediationStore;
+  config: MediatorPolicy;
+  sessions: LiveSink;
+  /** blob-store/1.0, or null when this deployment keeps no blobs. */
+  blobs: BlobService | null;
+  /** The session the message arrived on; null for plain HTTP. */
+  session: Session | null;
+  /** The DID proven by the envelope (authcrypt or signature); null if anonymous. */
+  sender: string | null;
+  /**
+   * Where a handler notes a failure that does not change its answer. What is
+   * passed must never quote a message.
+   */
+  log?: (msg: string, err?: unknown) => void;
+}
+
+/**
+ * A handler's reply, if any — type and body only. Dispatch fills in the
+ * envelope bookkeeping (id, typ, from, to, thid, created_time) so no handler
+ * can get it wrong.
+ */
+export interface Reply {
+  type: string;
+  body: Record<string, unknown>;
+  attachments?: IMessage["attachments"];
+}
+
+export type Handler = (
+  incoming: Unpacked,
+  context: HandlerContext
+) => Promise<Reply | null> | Reply | null;

@@ -1,7 +1,8 @@
 # estoc-net/estoc — workspace notes
 
 pnpm workspace (`pnpm-workspace.yaml`): `packages/{did-peer,keystore,agent-core}` are
-published libraries, `app/` is the PWA. Internal deps are `workspace:^` — never bump
+published libraries, `app/` is the PWA, `mediator/` is the DIDComm mediator (its own
+`CLAUDE.md`; deployed from its directory, never published). Internal deps are `workspace:^` — never bump
 a version or publish just to get a library change into the app; `pnpm build` at the
 root builds in dependency order and the app resolves the symlinked `dist/`.
 
