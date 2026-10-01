@@ -1279,6 +1279,40 @@ describe("recipient-update", () => {
       const reply = await send(known(replica.replica), `${PICKUP}/delivery-request`, { limit: 10 });
       expect((reply?.attachments as Attached[]).map(carried)).toEqual([inner]);
     });
+
+    it("refuses a repeat of that mail while the DID is bound nowhere", async () => {
+      const forward = forwardOf(first.recipient.did, await envelope(first.recipient));
+      await post(forward);
+
+      await update([removing(first.recipient)]);
+
+      expect((await post(forward)).status).toBe(422);
+      expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
+    });
+
+    it("keeps for its next account a forward the former one kept, as a package of its own", async () => {
+      const other = await peer4Agent(null);
+      const theirs = await enrollment(other);
+      await register(theirs.grant, firstContact(other));
+      const forward = forwardOf(first.recipient.did, await envelope(first.recipient));
+      await post(forward);
+      await update([removing(first.recipient)]);
+      const moved = {
+        recipient: first.recipient,
+        proof: await proofBy(first.recipient, { ...first.payload, account: other.did }),
+      };
+      await add(moved, known(other));
+
+      expect((await post(forward)).status).toBe(202);
+      expect((await post(forward)).status).toBe(202);
+      const changed = forwardOf(first.recipient.did, await envelope(first.recipient), {
+        id: forward.id,
+      });
+      expect((await post(changed)).status).toBe(422);
+
+      expect(await store.deliveryCount(theirs.replica.did)).toBe(1);
+      expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
+    });
   });
 });
 
@@ -2330,6 +2364,65 @@ describe("remove", () => {
     expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
     expect((await register(late.grant, known(account)))?.type).toBe(REGISTERED);
     expect(await waiting(late)).toEqual([]);
+  });
+
+  describe("of a replica whose DID was a shared recipient before", () => {
+    let forward: IMessage;
+
+    beforeEach(async () => {
+      forward = forwardOf(shared.did, await envelope(shared));
+      await post(forward);
+      await update([removing(shared)]);
+    });
+
+    const enrollFormer = async (owner: Peer4Agent): Promise<Enrollment> => {
+      const former = await enrollment(owner, {
+        replica_did: shared.did,
+        replica_long_form: shared.longForm,
+      });
+      const speaker = owner === account ? known(owner) : firstContact(owner);
+      expect((await register(former.grant, speaker))?.type).toBe(REGISTERED);
+      return former;
+    };
+
+    it("leaves the mail kept for the recipient to the replicas it waits for, whichever account enrolled it", async () => {
+      const other = await peer4Agent(null);
+      await remove(await enrollFormer(account));
+
+      expect(await store.replicaState(shared.did)).toBe("removed");
+      expect(await waiting(first)).toHaveLength(1);
+      expect(await waiting(second)).toHaveLength(1);
+
+      const elsewhere = await addition();
+      await add(elsewhere);
+      await post(forwardOf(elsewhere.recipient.did, await envelope(elsewhere.recipient)));
+      await update([removing(elsewhere.recipient)]);
+      const theirs = await enrollment(other, {
+        replica_did: elsewhere.recipient.did,
+        replica_long_form: elsewhere.recipient.longForm,
+      });
+      await register(theirs.grant, firstContact(other));
+
+      const reply = await remove(theirs, known(other));
+
+      expect(reply?.type).toBe(REMOVED);
+      expect(await waiting(first)).toHaveLength(2);
+    });
+
+    it("keeps that mail a known repeat after every replica acknowledged, the former recipient included", async () => {
+      await enrollFormer(account);
+      for (const replica of [first, second]) {
+        await send(known(replica.replica), `${PICKUP}/messages-received`, {
+          message_id_list: (await waiting(replica)).map((message) => message.id),
+        });
+      }
+      await send(firstContact(shared), `${PICKUP}/messages-received`, { message_id_list: [] });
+
+      expect((await post(forward)).status).toBe(202);
+
+      expect(await store.deliveryCount(shared.did)).toBe(0);
+      expect(await waiting(first)).toEqual([]);
+    });
   });
 
   it("refuses an ID the account never enrolled, another account's included", async () => {

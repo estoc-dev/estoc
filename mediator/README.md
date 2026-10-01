@@ -175,12 +175,16 @@ which — a 2xx always means queued mail:
   sender's own JSON text: the same JSON spelled another way or carried the
   other way is the same bytes, numbers included. That form is held to
   `MEDIATOR_MAX_MESSAGE_BYTES` as well (a number can grow in it): **413**.
-- `(account, body.next, forward id)` names the package. The same forward
+- `(account, body.next, forward id)` names the package, the account being
+  the one `body.next` routes to when the forward arrives. The same forward
   again is accepted and queued once; the same id with another envelope is
   refused and the first stays. An ordinary recipient's name is free again
   once its mail has been picked up and acknowledged, or has expired, and so
   is a replica's own. A shared package's name stays taken until the package
-  expires, even after every target replica has acknowledged it.
+  expires, even after every target replica has acknowledged it. A recipient
+  that has moved to another account starts there with no name taken: a
+  forward its former account already kept is a new package for the new one,
+  under the new one's limits.
 - A recipient nobody here holds, a full queue and a reused id are one answer,
   **422**, which does not tell the three apart. A 202 does tell the sender
   that this recipient takes mail here right now; it says nothing of the
@@ -249,7 +253,8 @@ replicas enrolled when it began, and its cursors never expire.
 
 **`remove`** ends one replica's enrollment. What waited for that replica
 alone is dropped, mail forwarded to its own DID included, and nothing more
-is queued for it; what other replicas wait for is untouched. The replica
+is queued for it; what other replicas wait for is untouched. A reply or a
+push already on its way when the removal lands may still arrive. The replica
 stays in the roster as `removed`, and neither its id nor its DID can be
 registered again, so a device that comes back enrolls as a new replica. A
 removed replica no longer counts against `max_active_replicas`. The last
@@ -277,9 +282,12 @@ is not exactly one of the two below refuses the whole request as
   mediator holds the recipient. `no_change` means the account already held
   it.
 - `action: "remove"` with nothing else stops routing the DID. Mail already
-  kept for it still waits for its replicas. The DID is then bound nowhere:
-  it can be added again, to this account or another, by a proof and with its
-  long form. `no_change` means the account did not hold it.
+  kept for it stays this account's: it still waits for its replicas, is
+  still counted, and follows the DID nowhere. The DID is then bound nowhere,
+  so a forward to it is refused, a repeat of kept mail included. It can be
+  added again, to this account or another, by a proof naming that account
+  and with its long form, or enrolled as a replica or an ordinary recipient.
+  `no_change` means the account did not hold it.
 
 **`recipient-query`** pages the account's recipients, oldest first, in the
 shape of coordinate-mediation's: `limit` is at most `max_membership_page`,

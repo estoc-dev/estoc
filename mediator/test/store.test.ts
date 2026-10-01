@@ -137,6 +137,85 @@ describe("SqliteStore", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("keeps the replica mail queued before a package recorded what its recipient was", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const later = Date.now() + 60_000;
+    const old = new Database(path);
+    old.exec(`
+      CREATE TABLE replica_accounts (
+        did TEXT PRIMARY KEY,
+        mediation_id TEXT NOT NULL,
+        mediator TEXT NOT NULL,
+        long_form TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE replicas (
+        replica_did TEXT PRIMARY KEY,
+        account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+        replica_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        long_form TEXT NOT NULL,
+        grant_jws TEXT NOT NULL,
+        registered_at INTEGER NOT NULL,
+        UNIQUE (account_did, replica_id),
+        UNIQUE (account_did, ordinal)
+      );
+      CREATE TABLE replica_recipients (
+        recipient_did TEXT PRIMARY KEY,
+        account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+        long_form TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE replica_packages (
+        id TEXT PRIMARY KEY,
+        account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+        next_did TEXT NOT NULL,
+        forward_id TEXT NOT NULL,
+        packed TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        UNIQUE (next_did, forward_id)
+      );
+      CREATE TABLE replica_deliveries (
+        id TEXT PRIMARY KEY,
+        package_id TEXT NOT NULL REFERENCES replica_packages(id),
+        replica_did TEXT NOT NULL REFERENCES replicas(replica_did),
+        UNIQUE (package_id, replica_did)
+      );
+      INSERT INTO replica_accounts VALUES ('did:example:account', 'm', 'did:example:mediator', 'long', 1);
+      INSERT INTO replicas VALUES ('did:example:replica', 'did:example:account', 'r', 1, 'long', 'grant', 1);
+      INSERT INTO replica_recipients VALUES ('did:example:shared', 'did:example:account', 'long', 1);
+      INSERT INTO replica_packages VALUES
+        ('p1', 'did:example:account', 'did:example:shared', '1', 'shared mail', 11, 1, ${later}),
+        ('p2', 'did:example:account', 'did:example:replica', '1', 'own mail', 8, 2, ${later});
+      INSERT INTO replica_deliveries VALUES
+        ('d1', 'p1', 'did:example:replica'),
+        ('d2', 'p2', 'did:example:replica');
+    `);
+    old.close();
+    const bounds = { deadline: null, maxRetainedBytes: 1000 };
+    const toShared = { next: "did:example:shared", forwardId: "1" };
+    const toReplica = { next: "did:example:replica", forwardId: "1" };
+
+    const store = new SqliteStore(path);
+    const waiting = await store.deliveriesFor("did:example:replica", 10);
+    expect(waiting.map((message) => [message.id, message.packed])).toEqual([
+      ["d1", "shared mail"],
+      ["d2", "own mail"],
+    ]);
+    await store.acknowledgeDeliveries("did:example:replica", ["d1", "d2"]);
+    expect((await store.fanOut(toShared, "shared mail", bounds)).outcome).toBe("repeated");
+    expect((await store.fanOut(toReplica, "own mail", bounds)).outcome).toBe("stored");
+    store.close();
+
+    const reopened = new SqliteStore(path);
+    expect(await reopened.deliveryCount("did:example:replica")).toBe(1);
+    reopened.close();
+    rmSync(dir, { recursive: true });
+  });
+
   it("scopes deletion to the owner", async () => {
     const store = new SqliteStore(":memory:");
     await store.grantMediation("did:example:alice");

@@ -47,7 +47,7 @@ export interface ReplicaRegistration {
   accountDid: string;
   accountLongForm: string;
   mediationId: string;
-  /** The mediator DID the account is bound to, a did:peer:4 in its short form. */
+  /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
   replicaId: string;
   replicaDid: string;
@@ -265,10 +265,12 @@ export interface MediationStore {
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
   /**
-   * Keeps `packed` once for the account `key.next` belongs to and queues a
-   * delivery of it: for each active replica the account holds at that moment
+   * Keeps `packed` once for the account `key.next` routes to at that moment
+   * and queues a delivery of it: for each active replica the account holds
    * when the recipient is shared, for that replica alone when it is one. A
    * replica enrolled later gets none, and neither does anyone from a repeat.
+   * The key is that account's: what another account kept under it while the
+   * recipient was its own is neither a repeat nor a conflict.
    */
   fanOut(key: PackageKey, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
   /**
@@ -280,7 +282,8 @@ export interface MediationStore {
   /**
    * Ends the named deliveries that are this replica's and ignores every other
    * id. Mail forwarded to the replica itself goes with its delivery; a shared
-   * package stays, for the other replicas and so a repeat is still known.
+   * package stays, for the other replicas and so a repeat is still known,
+   * whatever its recipient DID has been bound as since.
    */
   acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void>;
 

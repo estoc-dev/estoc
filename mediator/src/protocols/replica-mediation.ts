@@ -120,8 +120,9 @@ export interface ReplicasBody {
 
 /**
  * Ends one replica's enrollment. What waited for that replica alone is
- * dropped, mail forwarded to its own DID included, and that DID receives and
- * picks up nothing more. Neither its ID nor its DID can be registered again.
+ * dropped, mail forwarded to its own DID included, and nothing is queued for
+ * or read by that DID afterwards; a reply already on its way is not recalled.
+ * Neither its ID nor its DID can be registered again.
  */
 export interface RemoveBody {
   replica_id: string;
@@ -156,9 +157,10 @@ export interface RecipientAddition {
 }
 
 /**
- * Stops routing the DID's mail to the account. Mail already kept for it still
- * waits for its replicas, and the DID is free to be added again, by a new
- * proof and with its long form, to this account or any other.
+ * Stops routing the DID's mail to the account. Mail already kept for it stays
+ * the account's and still waits for its replicas, and the DID is free to be
+ * added again, to this account or any other, by a valid proof for that account
+ * and this mediator and with its long form.
  */
 export interface RecipientRemoval {
   recipient_did: string;
@@ -517,7 +519,6 @@ async function recipientDocument(
 
 type Updated = RecipientUpdatedBody["updated"][number];
 
-/** The updates of a `recipient-update` when every one is exactly an addition or a removal. */
 function updatesOf(listed: unknown): (RecipientAddition | RecipientRemoval)[] | null {
   if (!Array.isArray(listed) || listed.length < 1 || listed.length > RECIPIENT_UPDATE_LIMIT) {
     return null;

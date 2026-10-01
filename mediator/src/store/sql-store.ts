@@ -72,6 +72,35 @@ export interface SqlStoreOptions {
 const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_MAX_MESSAGES = 1000;
 
+/*
+ * `shared` is what the recipient was when the package was accepted: 1 for a
+ * shared recipient, 0 for a replica's own DID. It is kept because a DID can
+ * later be bound otherwise, and what its earlier mail was must not follow.
+ */
+const REPLICA_MAIL = [
+  `CREATE TABLE IF NOT EXISTS replica_packages (
+     id          TEXT PRIMARY KEY,
+     account_did TEXT NOT NULL REFERENCES replica_accounts(did),
+     next_did    TEXT NOT NULL,
+     forward_id  TEXT NOT NULL,
+     shared      INTEGER NOT NULL,
+     packed      TEXT NOT NULL,
+     bytes       INTEGER NOT NULL,
+     created_at  INTEGER NOT NULL,
+     expires_at  INTEGER NOT NULL,
+     UNIQUE (account_did, next_did, forward_id)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_packages_account ON replica_packages(account_did, expires_at)",
+  "CREATE INDEX IF NOT EXISTS replica_packages_expiry ON replica_packages(expires_at)",
+  `CREATE TABLE IF NOT EXISTS replica_deliveries (
+     id          TEXT PRIMARY KEY,
+     package_id  TEXT NOT NULL REFERENCES replica_packages(id),
+     replica_did TEXT NOT NULL REFERENCES replicas(replica_did),
+     UNIQUE (package_id, replica_did)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_deliveries_replica ON replica_deliveries(replica_did)",
+];
+
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS accounts (
      did        TEXT PRIMARY KEY,
@@ -138,26 +167,7 @@ const SCHEMA = [
      created_at    INTEGER NOT NULL
    )`,
   "CREATE INDEX IF NOT EXISTS replica_recipients_account ON replica_recipients(account_did)",
-  `CREATE TABLE IF NOT EXISTS replica_packages (
-     id          TEXT PRIMARY KEY,
-     account_did TEXT NOT NULL REFERENCES replica_accounts(did),
-     next_did    TEXT NOT NULL,
-     forward_id  TEXT NOT NULL,
-     packed      TEXT NOT NULL,
-     bytes       INTEGER NOT NULL,
-     created_at  INTEGER NOT NULL,
-     expires_at  INTEGER NOT NULL,
-     UNIQUE (next_did, forward_id)
-   )`,
-  "CREATE INDEX IF NOT EXISTS replica_packages_account ON replica_packages(account_did, expires_at)",
-  "CREATE INDEX IF NOT EXISTS replica_packages_expiry ON replica_packages(expires_at)",
-  `CREATE TABLE IF NOT EXISTS replica_deliveries (
-     id          TEXT PRIMARY KEY,
-     package_id  TEXT NOT NULL REFERENCES replica_packages(id),
-     replica_did TEXT NOT NULL REFERENCES replicas(replica_did),
-     UNIQUE (package_id, replica_did)
-   )`,
-  "CREATE INDEX IF NOT EXISTS replica_deliveries_replica ON replica_deliveries(replica_did)",
+  ...REPLICA_MAIL,
   `CREATE TABLE IF NOT EXISTS identity (
      id         INTEGER PRIMARY KEY CHECK (id = 1),
      secrets    TEXT NOT NULL,
@@ -220,6 +230,7 @@ export class SqlStore implements MediationStore {
         ? this.dropOldBlobTables()
             .then(() => this.driver.batch(SCHEMA.map((sql) => ({ sql }))))
             .then(() => this.addLaterColumns())
+            .then(() => this.rebuildReplicaMail())
         : Promise.resolve();
       this.ready.catch(() => {
         this.ready = null;
@@ -268,6 +279,40 @@ export class SqlStore implements MediationStore {
       ),
       { sql: MESSAGE_KEY_INDEX },
     ]);
+  }
+
+  /*
+   * A package table from before `shared` keyed a package by its recipient
+   * alone, which only a new table can change. No recipient could be unbound
+   * while that table was written, so a recipient that is a replica's DID
+   * today was one when its package was accepted.
+   */
+  private async rebuildReplicaMail(): Promise<void> {
+    const [found] = await this.driver.batch([
+      {
+        sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'replica_packages'",
+      },
+    ]);
+    if ((found.rows as { sql: string }[])[0].sql.includes("shared")) {
+      return;
+    }
+    await this.driver.batch(
+      [
+        "CREATE TABLE replica_packages_before AS SELECT * FROM replica_packages",
+        "CREATE TABLE replica_deliveries_before AS SELECT * FROM replica_deliveries",
+        "DROP TABLE replica_deliveries",
+        "DROP TABLE replica_packages",
+        ...REPLICA_MAIL,
+        "INSERT INTO replica_packages " +
+          "(id, account_did, next_did, forward_id, shared, packed, bytes, created_at, expires_at) " +
+          "SELECT id, account_did, next_did, forward_id, " +
+          "next_did NOT IN (SELECT replica_did FROM replicas), packed, bytes, created_at, expires_at " +
+          "FROM replica_packages_before",
+        "INSERT INTO replica_deliveries SELECT id, package_id, replica_did FROM replica_deliveries_before",
+        "DROP TABLE replica_deliveries_before",
+        "DROP TABLE replica_packages_before",
+      ].map((sql) => ({ sql }))
+    );
   }
 
   private async batch(statements: SqlStatement[]): Promise<SqlResult[]> {
@@ -567,7 +612,10 @@ export class SqlStore implements MediationStore {
     const [bound, , , , removed] = await this.batch([
       account,
       { sql: `DELETE FROM replica_deliveries WHERE replica_did IN (${replica})`, params: member },
-      { sql: `DELETE FROM replica_packages WHERE next_did IN (${replica})`, params: member },
+      {
+        sql: `DELETE FROM replica_packages WHERE shared = 0 AND next_did IN (${replica})`,
+        params: member,
+      },
       {
         sql: `UPDATE replicas SET removed_at = ? WHERE ${enrolled} AND ${ACTIVE}`,
         params: [Math.floor(Date.now() / 1000), ...member],
@@ -784,10 +832,9 @@ export class SqlStore implements MediationStore {
 
   /*
    * One transaction, so a replica enrolls either before it, and is a target,
-   * or after it, and is not. A recipient belongs to one account at a time
-   * under one kind of binding, and the recipient with the forward's id is one
-   * key for the whole store: a forward repeated after its recipient moved to
-   * another account is still a repeat.
+   * or after it, and is not. The account is the one the recipient routes to
+   * in this transaction, and a package is that account's: what a former
+   * account of the recipient keeps under the same forward id is not looked at.
    */
   async fanOut(
     { next, forwardId }: PackageKey,
@@ -801,13 +848,14 @@ export class SqlStore implements MediationStore {
       return { outcome: "lapsed" };
     }
     const bytes = new TextEncoder().encode(packed).byteLength;
-    const key = [next, forwardId];
-    const held = "next_did = ? AND forward_id = ?";
-    const lapsed = `SELECT id FROM replica_packages WHERE ${held} AND expires_at <= ?`;
     const sharedBy = "SELECT account_did FROM replica_recipients WHERE recipient_did = ?";
     const accounts =
-      `${sharedBy} UNION ALL ` +
-      `SELECT account_did FROM replicas WHERE replica_did = ? AND ${ACTIVE}`;
+      `SELECT account_did, 1 AS shared FROM replica_recipients WHERE recipient_did = ? UNION ALL ` +
+      `SELECT account_did, 0 AS shared FROM replicas WHERE replica_did = ? AND ${ACTIVE}`;
+    const key = [next, next, next, forwardId];
+    const held =
+      `account_did = (SELECT account_did FROM (${accounts})) AND next_did = ? AND forward_id = ?`;
+    const lapsed = `SELECT id FROM replica_packages WHERE ${held} AND expires_at <= ?`;
     const retained = (what: string) =>
       `(SELECT ${what} FROM replica_packages WHERE account_did = a.account_did AND expires_at > ?)`;
 
@@ -820,14 +868,15 @@ export class SqlStore implements MediationStore {
       {
         sql:
           "INSERT INTO replica_packages " +
-          "(id, account_did, next_did, forward_id, packed, bytes, created_at, expires_at) " +
-          `SELECT ?, a.account_did, ?, ?, ?, ?, ?, ? FROM (${accounts}) AS a ` +
+          "(id, account_did, next_did, forward_id, shared, packed, bytes, created_at, expires_at) " +
+          `SELECT ?, a.account_did, ?, ?, a.shared, ?, ?, ?, ? FROM (${accounts}) AS a ` +
           `WHERE ${retained("COUNT(*)")} < ? ` +
           `AND ${retained("COALESCE(SUM(bytes), 0)")} + ? <= ? ` +
-          "ON CONFLICT (next_did, forward_id) DO NOTHING",
+          "ON CONFLICT (account_did, next_did, forward_id) DO NOTHING",
         params: [
           id,
-          ...key,
+          next,
+          forwardId,
           packed,
           bytes,
           now,
@@ -897,8 +946,8 @@ export class SqlStore implements MediationStore {
   }
 
   /*
-   * A package forwarded to a replica has that replica's delivery and no
-   * other, so one left without a delivery has been acknowledged.
+   * A package forwarded to a replica's own DID has that replica's delivery
+   * and no other, so one left without a delivery has been acknowledged.
    */
   async acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void> {
     await this.batch([
@@ -910,7 +959,7 @@ export class SqlStore implements MediationStore {
       },
       {
         sql:
-          "DELETE FROM replica_packages WHERE next_did = ? AND NOT EXISTS " +
+          "DELETE FROM replica_packages WHERE shared = 0 AND next_did = ? AND NOT EXISTS " +
           "(SELECT 1 FROM replica_deliveries WHERE package_id = replica_packages.id)",
         params: [replicaDid],
       },
