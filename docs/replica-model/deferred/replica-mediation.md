@@ -548,12 +548,14 @@ the mediator is already known to have its verified resolution material under
 undo other completed adds.
 
 Startup, reconnection and newly learned local history resume only unconfirmed
-work, including newly validated bindings. They MUST NOT replay confirmed
-registrations or adds. There is no periodic remote-state reconciliation or
-full replay after success. A lost response or crash before local confirmation
-can cause an idempotent retry; it does not change delivery/ACK state. Local
-confirmation records follow §5.4 and are not inferred from imported membership
-intent. Suspected mediator state loss is reported for manual handling without
+work, including newly validated bindings. Confirmed registrations and adds need
+not be replayed. Explicitly clearing a local confirmation during manual
+maintenance makes that operation pending again. There is no periodic
+remote-state reconciliation or full replay after success. A lost response or
+crash before local confirmation can cause an idempotent retry; it does not
+change delivery/ACK state. Local confirmation records follow §5.4 and are not
+inferred from imported membership intent. Suspected mediator state loss is
+reported for manual handling without
 automatically clearing these confirmations or replaying completed work.
 
 This includes historical DIDs with later DID or route retirement facts:
