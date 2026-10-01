@@ -363,13 +363,17 @@ replica in an existing account. No earlier Coordinate Mediation exchange occurs.
 Registration starts eligibility for future shared packages; it creates no
 deliveries for packages accepted before that registration commits.
 
-For first contact the caller supplies the account sender's long-form DID in
-the DIDComm envelope key identifier. The mediator resolves and validates it
-locally to authenticate/decrypt the request, then verifies the enclosed grant
-with that account's authorized key. The encrypted grant is not a prerequisite
-for decrypting itself. Its replica long form identifies the enrollment target,
-not the request sender. All authorization checks precede mutation and account
-and destination conflicts are rechecked in the transaction.
+Every account control request (`register`, `list` and `recipient-add`),
+including retries, MUST carry the account sender's long-form DID in its DIDComm
+envelope sender key identifier. This permits local resolution even after the
+mediator loses its account and DID-resolution state. The mediator validates
+that material to authenticate/decrypt the request before checking account
+state or, for `register`, verifying the enclosed grant with that account's
+authorized key. The encrypted grant is not a prerequisite for decrypting
+itself. Its replica long form identifies the enrollment target and supplies
+the verified resolution material for subsequent replica-authenticated pickup.
+All authorization checks precede mutation and account and destination conflicts
+are rechecked in the transaction.
 
 In one transaction the mediator MUST:
 
@@ -385,10 +389,13 @@ the same account and mediation ID share one account; different bindings fail.
 
 An exact repeat for an active member is idempotent and preserves its original
 registration boundary and all pending/acknowledged delivery state. It neither
-adds deliveries for older packages nor resets ACKs. Reconnection resumes pickup
-of that replica's existing queue; re-registration is not a mailbox repair step.
-A conflicting identity fails without mutation. Shared-recipient and
-private-replica destinations cannot overlap or steal an existing destination.
+adds deliveries for older packages nor resets ACKs. Clients re-send their own
+saved grant during reconciliation as specified in §7.2, then resume pickup.
+If the mediator has lost the binding, registration restores it with a new
+remote registration boundary; it cannot reconstruct lost mail or ACK records
+or backfill earlier packages. A conflicting identity fails without mutation.
+Shared-recipient and private-replica destinations cannot overlap or steal an
+existing destination.
 
 The `registered` response is authcrypted to the requesting account DID, uses
 `thid` equal to the request ID, and includes `account`, `mediation_id`,
@@ -508,12 +515,29 @@ replicas add the same DID to their shared account concurrently, the first
 committed request adds it and the other returns `no_change`. Retrying after a
 lost response has the same effect and changes no delivery/ACK state.
 
+<a id="append-only-reconciliation"></a>
+
 ### 7.2 Append-only reconciliation
 
-Clients send one `recipient-add` for each newly validated communication DID
-whose immutable route binds this arrangement. On startup, reconnection,
-suspected remote-state loss and periodic reconciliation, replay the adds for
-all locally known validated bindings without querying the mediator first.
+On startup, reconnection, suspected remote-state loss and periodic reconciliation,
+each client MUST first re-send `register` with its own saved, verified replica
+grant. After verifying the matching `registered` response, resume replica pickup
+and replay one `recipient-add` for every locally known validated communication
+DID whose immutable route binds this arrangement, without querying the mediator
+first. Include each recipient's long form as `resolution_material` on every
+replay so restoration does not depend on the mediator retaining its resolver
+cache. Pickup need not wait for all recipient adds to succeed. Clients also
+send an add when they validate a new binding.
+
+Reconciliation MUST recur at a finite local interval while connected, even if
+pickup returns empty results or no response; previous success and a healthy
+transport connection do not prove that remote state survived. An authenticated
+`unknown-replica` pickup report or `unknown-account` control report triggers
+this same registration-first sequence. Unauthenticated silence or transport
+failure also leaves recovery pending, with bounded retry backoff; it is not
+evidence that the mailbox is empty or that membership was revoked. Recovery
+uses the existing identity and grant, not a new incarnation.
+
 Both `added` and `no_change` complete that recipient's attempt; failed or lost
 responses remain retryable without undoing other completed adds. A previous
 success is not proof that the mediator retained the binding after storage loss.
@@ -559,10 +583,10 @@ Routing classification is determined by the registered `forward.body.next`:
 
 For a new shared package, selecting all active replicas, checking account
 capacity, inserting the package and creating every target's delivery MUST be
-atomic with registration. If registration commits first, the new replica
-participates in that selection; if package acceptance commits first, it does
-not. Transaction order defines the boundary, not a sender timestamp or a
-comparison of second-resolution registration times.
+one transaction, serialized against registration. If registration commits first,
+the new replica participates in that selection; if package acceptance commits
+first, it does not. Transaction order defines the boundary, not a sender timestamp
+or a comparison of second-resolution registration times.
 There is at most one delivery per `(mailbox package, replica DID)`. The set of
 delivery targets is fixed at first acceptance. Later registration, reconnection,
 queue drainage or a duplicate forward MUST NOT add targets or reset ACKs.
@@ -572,8 +596,7 @@ is no per-replica queue quota: an accepted shared package creates a delivery
 for every active replica, including offline replicas and those with a backlog.
 If account capacity is insufficient or any delivery cannot be committed,
 refuse the whole package without partial storage, deliveries or an acceptance
-record. If there are no active replicas, likewise refuse the new package.
-These failures use the ordinary non-enumerating routing refusal.
+record. These failures use the ordinary non-enumerating routing refusal.
 
 A private envelope is opaque to the mediator. It is routed by the replica DID
 just like other mail; its encrypted protocol type or contents are not inspected.
@@ -617,6 +640,17 @@ Different replicas get different IDs for one shared package. Pickup responses
 are encrypted to the replica DID; attachment bytes remain the original inner
 encrypted envelope.
 
+Before dispatching an attachment to a consumer, classify its enclosed message
+by the verified DID owning the exact recipient key-agreement method used to
+decrypt it. A key of this local replica DID selects private replica handling;
+a key of a locally retained communication DID selects application handling.
+Use the DIDComm library's verified recipient evidence; the outer pickup
+envelope, request filter and plaintext `to` do not establish this identity.
+Inspecting recipient key identifiers may select keys before unpacking but
+does not replace envelope validation. For nested envelopes, an anonymous
+wrapper's recipient cannot substitute for the authcrypt layer's recipient,
+as required by the [adapter boundary](../channels.md#carried-proof-and-library-boundary).
+
 `messages-received.message_id_list` affects only this authenticated replica's
 deliveries. Repeating an ACK is harmless; unknown, already acknowledged and
 other replicas' IDs have no effect. A shared ACK marks that delivery consumed
@@ -627,14 +661,22 @@ is implied by either operation.
 For application mail, the client follows the existing
 [receive and commit boundaries](../distributed-delivery.md#cross-layer-commit-and-acknowledgment-table):
 ACK after durable receipt/evidence storage, or a terminal pre-vault rejection
-with no portable message or effect. Recoverable missing-key/history/state cases
-remain queued. Application admission and automatic effects remain separate
-from transport ACK.
+with no portable message or effect. Recovery of missing local DID/key/history
+state and handling of mail that cannot yet be opened belong to a separate
+synchronization channel and its receive integration. They impose no additional
+pickup scheduling or local staging requirement in this transport profile and
+do not change the current receive boundary. Application admission and automatic
+effects remain separate from transport ACK.
 
-For private replica traffic, the consuming protocol defines the durable
-handling or terminal rejection required before pickup ACK. This profile does
-not define history-transfer messages or require sync receipts; those belong to
-the deferred synchronization work.
+For private replica traffic, a supported consuming protocol defines the durable
+handling or terminal rejection required before pickup ACK. A successfully
+unpacked private message whose type belongs to no locally supported
+inter-replica protocol MUST be terminally rejected and pickup-ACKed, with a
+bounded local diagnostic and no portable event or application receive/effect
+work. The initial replica-mediation milestone supports no such payload
+protocol, so every successfully unpacked private message takes this rejection
+path, including candidate vault-sync messages. Future protocol adoption must
+define its own handling and ACK boundary.
 
 Live-delivery state belongs to the authenticated replica connection. Multiple
 connections for the same replica may see the same delivery and share its ACK
@@ -688,11 +730,18 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `unknown-account` | An operation requiring an existing replica-mediation account names none |
 | `identity-conflict` | ID/DID or destination already has another binding |
 | `replica-required` | Pickup was attempted with the account identity |
+| `unknown-replica` | An authenticated pickup requester has no registered replica binding and is not an ordinary account pickup principal |
 | `list-expired` | Membership snapshot is no longer available; start a fresh listing |
 | `quota` | An account storage, membership or recipient capacity limit prevents the operation |
 | `message-too-large` | Envelope exceeds the transport limit |
 
 Authenticated control failures disclose only the caller's account state.
+An authenticated pickup request with no replica binding MUST return
+`unknown-replica` through the request/response transport, unless it belongs to
+an ordinary account's pickup domain or is the account-identity misuse reported
+as `replica-required`. The report discloses only the requester's own missing
+binding. If the mediator cannot authenticate the request, it sends no protocol
+response; client reconciliation does not depend on receiving this report.
 Anonymous routing failures retain the existing non-enumerating behavior.
 
 <a id="privacy-and-security"></a>
@@ -740,6 +789,11 @@ These are proposed requirements, not claims about the current implementation.
    IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
 6. A private envelope addressed to B is delivered only to B and never copied
    to C when C joins. A replica DID cannot be registered as a shared recipient.
+   B identifies private traffic from the enclosed message's verified recipient
+   key, independently of pickup filters or plaintext audience claims. With no
+   supported inter-replica protocol, it rejects an unpacked private message,
+   ACKs its delivery and retains only a bounded local diagnostic. It creates
+   no portable message/event, application effect or sync receipt.
 7. Recipient filters narrow both status and pickup within the caller's queue;
    they cannot reach another principal. Disconnecting live push loses no mail.
 8. Offline members keep their bindings and delivery eligibility. A fresh
@@ -756,13 +810,22 @@ These are proposed requirements, not claims about the current implementation.
     and package only once against the account budget. Shared and private mail
     consume that same budget. Account storage exhaustion or a delivery-write
     failure publishes no package, partial deliveries or acceptance record.
-    With no active replicas, new shared mail is refused. A refused package may
-    be submitted later once the account has capacity and an active target.
+    A refused package may be submitted later once the account has capacity.
     Pickup response limits do not cap a replica's backlog. SQLite and D1 enforce
     the same registration and fan-out transaction boundaries.
 11. A restored mediator list cannot authorize an unverified replica binding.
     Missing remote entries do not delete portable membership; verified local
     registration intents can restore the same bindings after remote-state loss.
+    Restore the mediator to before B's registration while A and the account
+    remain. B's periodic or reconnect reconciliation registers its saved grant
+    without human intervention; packages first accepted afterward include B.
+    Existing bindings preserve their delivery/ACK state on exact repeats;
+    missing bindings get no backfill of earlier packages. Also lose the whole
+    account and resolver cache: the long-form account sender permits `register`
+    to authenticate, its grant restores replica resolution, and long-form
+    recipient replays restore known addresses. Authenticated unregistered
+    pickup gets `unknown-replica`; an unresolvable sender gets no response.
+    Either outcome leaves automatic registration-first recovery enabled.
 12. No delivery or membership operation independently authorizes historical
     application effects or changes a committed application's channel/package.
 13. Membership-removal controls are unsupported and change neither bindings nor
@@ -779,9 +842,11 @@ These are proposed requirements, not claims about the current implementation.
     remain transport destinations; application eligibility is checked separately.
     A remove/replacement request fails without mutation. Package ACK and expiry
     still clear mail without deleting recipients.
-16. Reconcile by independently re-sending known recipient adds without a remote
-    listing. Existing bindings return `no_change`; a failed request leaves
-    other successful adds intact. After remote-state loss, restore validated
+16. Reconcile by first re-registering the local replica, then independently
+    re-sending known recipient adds without a remote listing, at startup,
+    reconnection and periodic checks even after previous success. Existing
+    bindings return `no_change`; a failed request leaves other successful adds
+    intact. After remote-state loss, restore validated
     historical bindings even when their DIDs no longer serve new application
     work. A lost add response is recovered by retrying the same binding.
 17. Two first registrations for different replicas race under the same account

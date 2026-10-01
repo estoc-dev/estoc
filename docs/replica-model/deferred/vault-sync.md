@@ -636,14 +636,8 @@ Enrollment proceeds as follows:
    historical catch-up/import separate from live application execution. The
    domain revision defines when the new runtime may enable automatic effects.
 
-Recipient reconciliation re-sends one account-authenticated `recipient-add`
-per locally validated binding without querying the mediator. The same
-recipient-signed proof can be reused across requests; an existing binding
-returns `no_change`. Recipient identities unknown locally must come from vault
-history or backup. Learning DID retirement or route withdrawal does not remove
-an address from the mediator; it changes domain eligibility independently.
-Imported old ordinary-mediation history retains its original routes and does
-not claim those addresses or queued messages for this account.
+Account, local replica and recipient registration recovery follows
+[replica-mediation reconciliation](replica-mediation.md#append-only-reconciliation).
 
 Registering before peer inventory allows mail arriving during catch-up to
 remain queued. Mail accepted before registration is never backfilled by the
