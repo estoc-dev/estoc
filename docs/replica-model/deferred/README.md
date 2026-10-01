@@ -23,7 +23,8 @@ adopted, together with the owning specifications and conformance cases.
 The two replica proposals form one design. A full replica has its own DID and
 local event author; communication DIDs and the vault seed are shared. The
 mediator fans external mail addressed to shared communication DIDs out to the
-replicas registered with queue capacity when it first accepts each package.
+replicas active when it first accepts each package, under account-wide storage
+limits.
 Later enrollment does not add deliveries for earlier mail; new replicas recover
 history through vault sync or backup. Sync messages address one replica DID
 and are delivered only to that replica. They carry events and objects encrypted
@@ -84,7 +85,10 @@ Before adopting the candidate events/key names, update
   automatically moved into the new account. Replica DIDs remain pickup principals.
 - Fix each shared package's delivery targets at first acceptance. Registration
   begins eligibility for later packages and never backfills an earlier one.
-  Keep ordinary pickup/redelivery for existing targets. New replicas use vault
+  Apply storage quotas to the account's shared and private packages together;
+  accept a shared package with deliveries for all active replicas or refuse
+  the whole package. Keep independent pickup/ACK state for each replica and
+  ordinary redelivery for existing targets. New replicas use vault
   sync for history and wait for the required catch-up and domain prerequisites
   before processing queued application mail; enrollment alone is not readiness.
 - Replace phase-1 desired-set removal for the new profile with append-only

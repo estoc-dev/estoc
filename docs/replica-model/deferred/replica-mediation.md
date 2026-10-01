@@ -38,10 +38,10 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** a
 
 An external sender addresses one of the vault's communication DIDs. The
 mediator retains the encrypted application envelope once and creates a delivery
-for each replica that is active and has queue capacity at first package
-acceptance. That delivery set does not expand later. A new replica obtains
-earlier history through vault synchronization or backup. The sender does not
-need a device list or this extension. Every receiving replica decrypts the
+for every replica that is active at first package acceptance, subject to the
+account's storage limits. That delivery set does not expand later. A new
+replica obtains earlier history through vault synchronization or backup. The
+sender does not need a device list or this extension. Every receiving replica decrypts the
 original envelope with the vault's communication keys and performs its own
 receive procedure once the required history and domain prerequisites are met.
 
@@ -611,28 +611,27 @@ Routing classification is determined by the registered `forward.body.next`:
 
 | Destination | Storage and delivery |
 | --- | --- |
-| Shared communication DID | One immutable shared mailbox package; a fixed set of deliveries for replicas active with queue capacity at first acceptance |
+| Shared communication DID | One immutable shared mailbox package; a fixed set of deliveries for all replicas active at first acceptance |
 | Active replica DID | One private mailbox package and delivery for that replica only |
 | Retired replica, unknown or unauthorized destination | Refuse without partial storage or fan-out |
 
-For a new shared package, selecting active replicas with queue capacity,
-inserting the package and creating their deliveries MUST be atomic with
-registration and retirement. If registration commits first, the new replica
-participates in that selection; if package acceptance commits first, it does
+For a new shared package, selecting all active replicas, checking account
+capacity, inserting the package and creating every target's delivery MUST be
+atomic with registration and retirement. If registration commits first, the
+new replica participates in that selection; if package acceptance commits first, it does
 not. Transaction order defines the boundary, not a sender timestamp or a
 comparison of second-resolution registration times.
 There is at most one delivery per `(mailbox package, replica DID)`. The set of
 delivery targets is fixed at first acceptance. Later registration, reconnection,
 queue drainage or a duplicate forward MUST NOT add targets or reset ACKs.
 
-Account retained-byte/message limits may refuse the whole new package. A full
-replica queue omits only that replica's delivery and records a bounded
-account/replica diagnostic; other active replicas with capacity still receive
-it. The omitted replica recovers any available history through vault sync or
-backup, not a later mediator backfill. If no active replica has queue capacity,
-refuse the new package without storing it or an acceptance record, using the
-ordinary non-enumerating routing refusal. An offline but still-active replica
-with queue capacity remains a delivery target.
+Account retained-byte/message limits may refuse the whole new package. There
+is no per-replica queue quota: an accepted shared package creates a delivery
+for every active replica, including offline replicas and those with a backlog.
+If account capacity is insufficient or any delivery cannot be committed,
+refuse the whole package without partial storage, deliveries or an acceptance
+record. If there are no active replicas, likewise refuse the new package.
+These failures use the ordinary non-enumerating routing refusal.
 
 A private sync envelope is opaque to the mediator. It is routed by the replica
 DID just like other mail; its encrypted protocol type or contents are not
@@ -712,21 +711,22 @@ or removed by retirement; retention never authorizes new delivery targets.
 Private mail remains until its own ACK or deadline.
 
 Expiry is independent of slow/offline replicas. This is bounded mail storage,
-not a history source for newly enrolled replicas. Earlier history, mail omitted
-from a full queue and expired deliveries require vault sync or backup recovery
-where that data is still available. Transport acceptance alone is not delivery
-to a replica or completion of history catch-up.
+not a history source for newly enrolled replicas. Earlier history and expired
+deliveries require vault sync or backup recovery where that data is still
+available. Transport acceptance alone is not delivery to a replica or completion
+of history catch-up.
 
 `registered.limits` MUST disclose positive bounds for `message_retention_seconds`,
 `max_message_bytes`, `max_active_replicas`, `max_retired_replicas`, `max_membership_page`,
-`max_shared_recipients`, `max_retained_bytes`, `max_retained_messages`,
-`max_pending_deliveries_per_replica` and `max_deliveries_per_request`.
-Byte and message quotas apply to the account's private and shared packages,
-with shared ciphertext counted once.
-The pending-delivery limit applies separately to each replica's combined
-private/shared queue. Shared fan-out skips full queues and requires at least
-one active target with capacity; private mail for a full destination is refused
-without storing its package. Limits are checked before atomic publication.
+`max_shared_recipients`, `max_retained_bytes`, `max_retained_messages` and
+`max_deliveries_per_request`. Byte and message quotas apply to all of the
+account's private and shared packages together. A shared package counts once
+toward both quotas regardless of its number of deliveries; a private package
+uses the same account budget and creates one delivery for its target replica.
+Exhausting the account budget refuses new shared and private packages without
+partial publication. Limits are checked in the publication transaction.
+`max_deliveries_per_request` bounds one pickup response, not a replica's backlog.
+Delivery and ACK state remain independent for each replica.
 
 Only active bindings count toward `max_active_replicas`. Compact retired ID/DID
 pairs use `max_retired_replicas`, which MUST be at least 1024 times the active
@@ -758,7 +758,7 @@ Protocol failures use Problem Report 2.0 with code prefix
 | `retired` | This exact incarnation is terminal |
 | `replica-required` | Pickup was attempted with the account identity |
 | `list-expired` | Membership snapshot is no longer available; start a fresh listing |
-| `quota` | A storage or capacity limit prevents the operation; one full shared queue does not refuse a package that another active replica can accept |
+| `quota` | An account storage, membership or recipient capacity limit prevents the operation |
 | `message-too-large` | Envelope exceeds the transport limit |
 
 Authenticated control failures disclose only the caller's account state.
@@ -801,8 +801,8 @@ These are proposed requirements, not claims about the current implementation.
    and ACKs cannot mutate the new account. Old recipients and queued mail stay
    with their old account. New recipients require control proof from creation.
 4. With A already active, register B and accept a shared package in both
-   transaction orders. If B registers first and has capacity, it gets one
-   delivery. If acceptance commits first, B gets none, even when it joins
+   transaction orders. If B registers first, the accepted package creates one
+   delivery for B. If acceptance commits first, B gets none, even when it joins
    before package expiry. Re-registration and duplicate forwards preserve
    that original target set and existing ACK state.
 5. A and B receive identical original shared ciphertext with different delivery
@@ -823,15 +823,15 @@ These are proposed requirements, not claims about the current implementation.
    C obtains available earlier history through vault sync or backup. After all
    original targets ACK or retire, an identical forward before expiry remains
    a duplicate and creates no deliveries; changed bytes under that key conflict.
-10. Account storage exhaustion publishes no package or deliveries. One full
-    replica queue omits only its shared delivery with a bounded diagnostic;
-    other replicas receive the package. Draining and re-registering the omitted
-    replica does not backfill it. With no active replicas or all their queues
-    full, a new shared package is refused without an acceptance record; it may
-    be submitted later as a new acceptance once a target has capacity. Offline
-    active replicas still receive queued deliveries. Private mail to a full
-    queue is refused. SQLite and D1 enforce the same registration and fan-out
-    transaction boundaries.
+10. An accepted shared package creates one delivery for every active replica,
+    including an offline replica with a backlog, while counting its ciphertext
+    and package only once against the account budget. Shared and private mail
+    consume that same budget. Account storage exhaustion or a delivery-write
+    failure publishes no package, partial deliveries or acceptance record.
+    With no active replicas, new shared mail is refused. A refused package may
+    be submitted later once the account has capacity and an active target.
+    Pickup response limits do not cap a replica's backlog. SQLite and D1 enforce
+    the same registration and fan-out transaction boundaries.
 11. A restored mediator list cannot authorize a fabricated sync recipient, and
     known local tombstones are reconciled before registration/publication.
 12. No delivery or membership operation independently authorizes historical
