@@ -182,9 +182,10 @@ which — a 2xx always means queued mail:
   once its mail has been picked up and acknowledged, or has expired, and so
   is a replica's own. A shared package's name stays taken until the package
   expires, even after every target replica has acknowledged it. A recipient
-  that has moved to another account starts there with no name taken: a
-  forward its former account already kept is a new package for the new one,
-  under the new one's limits.
+  that has moved to another account takes none of the former account's names
+  with it: a forward only the former account kept is a new package for the
+  new one, under the new one's limits. A name the new account itself still
+  keeps for that recipient, from an earlier binding, still applies.
 - A recipient nobody here holds, a full queue and a reused id are one answer,
   **422**, which does not tell the three apart. A 202 does tell the sender
   that this recipient takes mail here right now; it says nothing of the

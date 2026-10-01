@@ -285,34 +285,49 @@ export class SqlStore implements MediationStore {
    * A package table from before `shared` keyed a package by its recipient
    * alone, which only a new table can change. No recipient could be unbound
    * while that table was written, so a recipient that is a replica's DID
-   * today was one when its package was accepted.
+   * today was one when its package was accepted. That holds for the old
+   * table only: once rebuilt, DIDs change roles and a kind derived again
+   * would be wrong. Another store may rebuild between the read below and the
+   * batch, so the batch opens by adding the column to the table it expects,
+   * which a rebuilt table refuses, taking the whole batch with it.
    */
   private async rebuildReplicaMail(): Promise<void> {
+    if (await this.packagesKeepKind()) {
+      return;
+    }
+    try {
+      await this.driver.batch(
+        [
+          "ALTER TABLE replica_packages ADD COLUMN shared INTEGER",
+          "CREATE TABLE replica_packages_before AS SELECT * FROM replica_packages",
+          "CREATE TABLE replica_deliveries_before AS SELECT * FROM replica_deliveries",
+          "DROP TABLE replica_deliveries",
+          "DROP TABLE replica_packages",
+          ...REPLICA_MAIL,
+          "INSERT INTO replica_packages " +
+            "(id, account_did, next_did, forward_id, shared, packed, bytes, created_at, expires_at) " +
+            "SELECT id, account_did, next_did, forward_id, " +
+            "next_did NOT IN (SELECT replica_did FROM replicas), packed, bytes, created_at, expires_at " +
+            "FROM replica_packages_before",
+          "INSERT INTO replica_deliveries SELECT id, package_id, replica_did FROM replica_deliveries_before",
+          "DROP TABLE replica_deliveries_before",
+          "DROP TABLE replica_packages_before",
+        ].map((sql) => ({ sql }))
+      );
+    } catch (error) {
+      if (!(await this.packagesKeepKind())) {
+        throw error;
+      }
+    }
+  }
+
+  private async packagesKeepKind(): Promise<boolean> {
     const [found] = await this.driver.batch([
       {
         sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'replica_packages'",
       },
     ]);
-    if ((found.rows as { sql: string }[])[0].sql.includes("shared")) {
-      return;
-    }
-    await this.driver.batch(
-      [
-        "CREATE TABLE replica_packages_before AS SELECT * FROM replica_packages",
-        "CREATE TABLE replica_deliveries_before AS SELECT * FROM replica_deliveries",
-        "DROP TABLE replica_deliveries",
-        "DROP TABLE replica_packages",
-        ...REPLICA_MAIL,
-        "INSERT INTO replica_packages " +
-          "(id, account_did, next_did, forward_id, shared, packed, bytes, created_at, expires_at) " +
-          "SELECT id, account_did, next_did, forward_id, " +
-          "next_did NOT IN (SELECT replica_did FROM replicas), packed, bytes, created_at, expires_at " +
-          "FROM replica_packages_before",
-        "INSERT INTO replica_deliveries SELECT id, package_id, replica_did FROM replica_deliveries_before",
-        "DROP TABLE replica_deliveries_before",
-        "DROP TABLE replica_packages_before",
-      ].map((sql) => ({ sql }))
-    );
+    return (found.rows as { sql: string }[])[0].sql.includes("shared");
   }
 
   private async batch(statements: SqlStatement[]): Promise<SqlResult[]> {
