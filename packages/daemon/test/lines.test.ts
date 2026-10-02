@@ -18,6 +18,7 @@ describe("the lines a view is shown", () => {
           unreachable: "socket closed",
           reconciled: { mediationId: MEDIATION, desired: dids("a"), held: dids("a", "b"), added: [], removed: dids("b"), refused: [], unknown: dids("b") },
           enrolled: null,
+          recipients: null,
           unknownRegistrations: dids("b"),
           drained: { acked: 2, ended: "empty" },
           live: false,

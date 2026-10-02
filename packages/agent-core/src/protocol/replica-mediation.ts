@@ -8,3 +8,5 @@ export const ACCOUNT_REGISTER = `${REPLICA_MEDIATION}/account-register`;
 export const ACCOUNT_REGISTERED = `${REPLICA_MEDIATION}/account-registered`;
 export const REPLICA_ADD = `${REPLICA_MEDIATION}/replica-add`;
 export const REPLICA_ADDED = `${REPLICA_MEDIATION}/replica-added`;
+export const RECIPIENT_ADD = `${REPLICA_MEDIATION}/recipient-add`;
+export const RECIPIENT_ADDED = `${REPLICA_MEDIATION}/recipient-added`;

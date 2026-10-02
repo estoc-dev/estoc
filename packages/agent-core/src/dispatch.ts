@@ -50,7 +50,9 @@ import type { LiveAction } from "./action.js";
 import { UnknownEntity } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { bounded, sealData, type MediatorLink } from "./link.js";
-import { reconcile, registered } from "./mediation.js";
+import { mediationOf, reconcile, registered } from "./mediation.js";
+import type { Confirmations } from "./replica-enrollment.js";
+import { addRecipients, holds } from "./replica-recipients.js";
 import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
 import { serially } from "./procedure.js";
 import { knownLongForms, resolve, type ResolverOptions, type Resolved } from "./resolver.js";
@@ -71,6 +73,8 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
   fetch: typeof fetch;
   /** The link to each mediation arrangement of this vault, or null where there is none now: what a mediated sender's registration is confirmed over. */
   links?: (mediationId: MediationId) => MediatorLink | null;
+  /** What a replica-mediation mediator confirmed to this runtime: what a sender of such an arrangement is confirmed held against. */
+  confirmations?: Confirmations;
   /** how long one attempt may take, the mediator resolved, the forward sealed and the call answered; `DISPATCH_TIMEOUT_MS` when left out */
   timeoutMs?: number;
 }
@@ -187,10 +191,16 @@ async function confirmRegistration(runtime: VaultRuntime, keys: Keys, { mediatio
   const link = options.links?.(mediationId) ?? null;
   if (link === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before a package discloses it`;
   try {
-    return registered(await reconcile(link, runtime, keys, mediationId), did) ? null : `the mediator of ${mediationId} does not hold ${did}`;
+    return (await heldByMediator(link, runtime, keys, mediationId, did, options.confirmations)) ? null : `the mediator of ${mediationId} does not hold ${did}`;
   } catch (err) {
     return `the mediator of ${mediationId} could not be asked to hold ${did}: ${messageOf(err)}`;
   }
+}
+
+async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId, did: Did, confirmations: Confirmations | undefined): Promise<boolean> {
+  if (mediationOf(await scanVault(runtime.vault, keys), mediationId).profile === null) return registered(await reconcile(link, runtime, keys, mediationId), did);
+  if (confirmations === undefined) throw new Error("a replica-mediation account's confirmations are not given");
+  return holds(await addRecipients(link, runtime, keys, confirmations, mediationId), did);
 }
 
 /**

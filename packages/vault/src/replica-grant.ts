@@ -14,16 +14,15 @@
  * this seed's, are `verifyReplicaGrant`'s.
  */
 
-import { InvalidJson, canonicalText, isJsonObject, type JsonObject } from "@estoc/event-store";
+import { InvalidJson, canonicalText, isJsonObject } from "@estoc/event-store";
 import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
-import { base64urlnopad } from "@scure/base";
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
-import { checkReplicaKeys, mintReplicaDid, type Keys, type LocalKey } from "./identity.js";
-import { authorizedMethodIds, definedMethod, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl } from "./peer-document.js";
-import { decodePublicKey } from "./public-key.js";
+import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
+import { didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
+import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
 import { isCompactJwt, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
-import type { Did, DidUrl, MediationId, PublicKey, ReplicaId } from "./types.js";
+import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
 
 export const REPLICA_GRANT_TYP = "estoc/replica-grant+jws";
 
@@ -124,26 +123,6 @@ export function sameBinding(a: ReplicaGrant, b: ReplicaGrant): boolean {
   return a.account === b.account && a.mediationId === b.mediationId && a.mediator === b.mediator && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
 }
 
-const MULTIBASE_SIGNING_TYPES: ReadonlySet<unknown> = new Set(["Multikey", "Ed25519VerificationKey2020"]);
-
-/**
- * The Ed25519 key a mediator verifies a grant with when `kid` names
- * this authentication method, or null when it would refuse the method:
- * a mediator reads a key only under the method types it supports for
- * the key's encoding, so the same key under any other type signs
- * grants no mediator takes.
- */
-function signingKey(document: JsonObject, methodId: DidUrl): PublicKey | null {
-  if (!authorizedMethodIds(document, "authentication").includes(methodId)) return null;
-  const method = definedMethod(document, methodId);
-  const readable = method["publicKeyJwk"] === undefined ? MULTIBASE_SIGNING_TYPES.has(method["type"]) : method["type"] === "JsonWebKey2020";
-  if (!readable) return null;
-  const key = methodPublicKey(document, methodId);
-  return decodePublicKey(key).type === "Ed25519" ? key : null;
-}
-
-const publicJwk = (key: LocalKey) => ({ kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(key.publicKeyBytes()) });
-
 /** The arrangement a grant is signed for: what its `mediation.created` records. */
 export type GrantingMediation = { mediationId: MediationId; mediatorDid: Did; me: { did: Did } };
 
@@ -158,7 +137,7 @@ export type GrantingMediation = { mediationId: MediationId; mediatorDid: Did; me
 export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation, replicaId: ReplicaId): Promise<string> {
   const account = peerResolution(mediation.me.did);
   const key = (await keys.mediationKeys(mediation.mediationId)).authentication;
-  const methodId = authorizedMethodIds(account.document, "authentication").find((id) => splitDidUrl(id)[0] === account.presentedDid && signingKey(account.document, id) === key.publicKey);
+  const methodId = signingMethod(account, key);
   if (methodId === undefined) throw new IdentityMismatch(`mediation ${mediation.mediationId} authorizes no authentication method a mediator reads the key the seed derives from`);
   const replica = await mintReplicaDid(keys, replicaId, mediation.mediatorDid);
   const payload: GrantPayload = {

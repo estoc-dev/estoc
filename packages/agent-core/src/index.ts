@@ -71,6 +71,7 @@ export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "./same-did.js";
 export { createMediation, establish, mediationOf, reconcile, reconcileNow, registered, selectMediation, watchUnknownRegistrations, type EstablishStep, type Established, type Reconciled } from "./mediation.js";
 export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
+export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
 export {
   configureRoute,
   createDid,
