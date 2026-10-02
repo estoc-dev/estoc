@@ -35,13 +35,13 @@ export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 export interface GrantPayload {
   /** The account's did:peer:4, in its short form. */
   account: string;
-  /** A UUIDv7 the account keeps for as long as it lives here. */
+  /** A UUIDv7 by which the account's own records name this arrangement; the mediator compares it with nothing. */
   mediation_id: string;
   /** The mediator DID the replica's document names as its service. */
   mediator: string;
   /** The replica's did:peer:4, in its short form, and the long form it is cut from. */
   replica_did: string;
-  /** A UUIDv7. */
+  /** A UUIDv7 by which the account's own records name the replica; the mediator compares it with nothing. */
   replica_id: string;
   replica_long_form: string;
 }
@@ -57,10 +57,8 @@ const GRANT_FIELDS: (keyof GrantPayload)[] = [
 
 export interface ReplicaGrant {
   account: string;
-  mediationId: string;
   /** In its short form when it is a did:peer:4, however the grant spelled it. */
   mediator: string;
-  replicaId: string;
   replicaDid: string;
   replicaLongForm: string;
 }
@@ -258,7 +256,7 @@ function servedBy(doc: DIDDoc, mediator: string): boolean {
  * What `jws` grants, once `accountDoc`'s own authentication key has signed
  * it and everything it names holds together; null otherwise. The replica it
  * names must be able to act as one: it will sign in with an Ed25519 key and
- * be sealed to on an X25519 one, and enrollment is for life. Whether the
+ * be sealed to on an X25519 one. Whether the
  * account and mediator are the ones the request came from and went to is
  * the caller's to compare.
  */
@@ -304,5 +302,5 @@ export async function verifyReplicaGrant(
     return null;
   }
 
-  return { account, mediationId, mediator, replicaId, replicaDid, replicaLongForm };
+  return { account, mediator, replicaDid, replicaLongForm };
 }

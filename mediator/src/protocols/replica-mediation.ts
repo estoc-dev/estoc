@@ -18,7 +18,7 @@ import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
 import { verifyRecipientProof } from "./recipient-proof.js";
-import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-grant.js";
+import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
  * replica-mediation/1.0 — https://estoc.dev/replica-mediation/1.0
@@ -28,7 +28,7 @@ import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-
  * adds is a DID of its own that will. The communication DIDs it receives mail for are
  * added each by its own controller's proof, and the account alone takes one
  * back. A replica it removes stays in its roster as removed and is never
- * added again. These accounts share nothing with coordinate-mediation's: a
+ * added again while the account lives. These accounts share nothing with coordinate-mediation's: a
  * DID is one kind or the other, and neither protocol's controls reach the
  * other's state.
  *
@@ -42,6 +42,8 @@ import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-
 
 export const ACCOUNT_REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/account-register`;
 export const ACCOUNT_REGISTERED = `${REPLICA_MEDIATION_PROTOCOL}/account-registered`;
+export const ACCOUNT_DELETE = `${REPLICA_MEDIATION_PROTOCOL}/account-delete`;
+export const ACCOUNT_DELETED = `${REPLICA_MEDIATION_PROTOCOL}/account-deleted`;
 export const REPLICA_ADD = `${REPLICA_MEDIATION_PROTOCOL}/replica-add`;
 export const REPLICA_ADDED = `${REPLICA_MEDIATION_PROTOCOL}/replica-added`;
 export const REPLICA_LIST = `${REPLICA_MEDIATION_PROTOCOL}/replica-list`;
@@ -59,22 +61,32 @@ export const RECIPIENT_REMOVED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-remove
  * Creates the account of the sending DID, a did:peer:4 that names itself by
  * its long form here; the mediator keeps that form, and later controls may
  * name the account by the short one. The account starts with no replica and
- * no recipient.
+ * no recipient. The body is empty: the sender is all the request says.
  */
-export interface AccountRegisterBody {
-  /** A UUIDv7 the account keeps for as long as it lives here; its grants carry the same one. */
-  mediation_id: string;
-}
+export type AccountRegisterBody = Record<never, never>;
 
-/** Also the answer to an exact repeat, which changes nothing and keeps the first time. */
+/** Also the answer to a repeat, which changes nothing and keeps the first time. */
 export interface AccountRegisteredBody {
   account: string;
-  mediation_id: string;
   /** The mediator DID the request addressed: where senders forward the account's mail. */
   routing_did: string;
   /** Seconds since the epoch, as are all times here. */
   registered_time: number;
   limits: Limits;
+}
+
+/**
+ * Deletes the sending account and everything kept for it: its replicas, its
+ * recipients and its mail. Nothing of it is remembered, so its DIDs and IDs
+ * are free for any binding, its replicas are strangers to pickup, and a
+ * repeat finds no account. The sender names itself by its long form, which
+ * the mediator no longer keeps by the time it seals the reply. The body is
+ * empty.
+ */
+export type AccountDeleteBody = Record<never, never>;
+
+export interface AccountDeletedBody {
+  account: string;
 }
 
 /** Enrolls the replica a grant names in the sending account. */
@@ -83,9 +95,11 @@ export interface ReplicaAddBody {
   grant: string;
 }
 
-/** Also the answer to an exact repeat, which changes nothing and keeps the first time. */
+/**
+ * Also the answer to any grant naming a replica the account already has
+ * active, which changes nothing and keeps the first time and the first grant.
+ */
 export interface ReplicaAddedBody {
-  replica_id: string;
   replica_did: string;
   state: "active";
   added_time: number;
@@ -140,15 +154,16 @@ export interface ReplicasBody {
  * Ends one replica's enrollment. What waited for that replica alone is
  * dropped, mail forwarded to its own DID included, and nothing is queued for
  * or read by that DID afterwards; a reply already on its way is not recalled.
- * Neither its ID nor its DID can be added again.
+ * Its DID cannot be added again while the account exists.
  */
 export interface ReplicaRemoveBody {
-  replica_id: string;
+  /** The replica's did:peer:4, in either form. */
+  replica_did: string;
 }
 
 /** Also the answer to a repeat, which changes nothing and keeps the first time. */
 export interface ReplicaRemovedBody {
-  replica_id: string;
+  replica_did: string;
   state: "removed";
   removed_time: number;
 }
@@ -218,9 +233,9 @@ type Problem =
   | "account-refused"
   /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
-  /** The account added no replica under that ID. */
+  /** The account added no replica with that DID. */
   | "unknown-replica"
-  /** A DID or ID in the request is already bound otherwise, here or under ordinary mediation. */
+  /** A DID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
   /** Pickup asked by the account DID: only its replicas hold queues. */
   | "replica-required"
@@ -311,9 +326,8 @@ export async function accountRegister(
   if (sender === null) {
     return null;
   }
-  const control = controlOf<AccountRegisterBody>(incoming, context, ["mediation_id"]);
-  const mediationId = control?.body.mediation_id;
-  if (control === null || typeof mediationId !== "string" || !UUID_V7.test(mediationId)) {
+  const control = controlOf<AccountRegisterBody>(incoming, context, []);
+  if (control === null) {
     return replicaProblem("invalid-message");
   }
   if (isMediatorOwnDid(control.account, ctx.dids)) {
@@ -329,7 +343,6 @@ export async function accountRegister(
   const registration = await store.registerReplicaAccount({
     accountDid: control.account,
     accountLongForm,
-    mediationId,
     mediator: control.mediator,
     create: config.openRegistration,
   });
@@ -344,13 +357,34 @@ export async function accountRegister(
         type: ACCOUNT_REGISTERED,
         body: {
           account: control.account,
-          mediation_id: mediationId,
           routing_did: control.addressed,
           registered_time: registration.registeredTime,
           limits: replicaLimits(config),
         } satisfies AccountRegisteredBody,
       };
   }
+}
+
+export async function accountDelete(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  const { store, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf<AccountDeleteBody>(incoming, context, []);
+  if (control === null || !isLongForm(sender)) {
+    return replicaProblem("invalid-message");
+  }
+
+  if (!(await store.deleteReplicaAccount(control.account, control.mediator))) {
+    return replicaProblem("unknown-account");
+  }
+  return {
+    type: ACCOUNT_DELETED,
+    body: { account: control.account } satisfies AccountDeletedBody,
+  };
 }
 
 export async function replicaAdd(
@@ -380,9 +414,7 @@ export async function replicaAdd(
 
   const addition = await store.addReplica({
     accountDid: grant.account,
-    mediationId: grant.mediationId,
     mediator: grant.mediator,
-    replicaId: grant.replicaId,
     replicaDid: grant.replicaDid,
     replicaLongForm: grant.replicaLongForm,
     grant: control.body.grant as string,
@@ -400,7 +432,6 @@ export async function replicaAdd(
       return {
         type: REPLICA_ADDED,
         body: {
-          replica_id: grant.replicaId,
           replica_did: grant.replicaDid,
           state: "active",
           added_time: addition.addedTime,
@@ -410,14 +441,17 @@ export async function replicaAdd(
 }
 
 /**
- * Where a listing stands: the account it is of, how many replicas the roster
- * held when the listing began, and the last one already returned. Adding
- * only appends and a removed replica keeps its place, so the first `through`
- * replicas are the same roster for as long as the account lives and a listing
- * never expires.
+ * Where a listing stands: the account it is of and which registration of
+ * it, how many replicas the roster held when the listing began, and the last
+ * one already returned. Adding only appends and a removed replica keeps its
+ * place, so the first `through` replicas are the same roster for as long as
+ * that registration lives. An account deleted and registered again counts
+ * its replicas from one again, which the numbers alone would not tell from
+ * the roster the listing began on.
  */
 interface Cursor {
   account: string;
+  registration: string;
   through: number;
   after: number;
 }
@@ -437,9 +471,10 @@ function cursorMembers(text: string, count: number): unknown[] | null {
 }
 
 function readCursor(text: string): Cursor | null {
-  const [account, through, after] = cursorMembers(text, 3) ?? [];
+  const [account, registration, through, after] = cursorMembers(text, 4) ?? [];
   if (
     typeof account !== "string" ||
+    typeof registration !== "string" ||
     !Number.isSafeInteger(through) ||
     !Number.isSafeInteger(after) ||
     (after as number) < 1 ||
@@ -447,7 +482,7 @@ function readCursor(text: string): Cursor | null {
   ) {
     return null;
   }
-  return { account, through: through as number, after: after as number };
+  return { account, registration, through: through as number, after: after as number };
 }
 
 export async function replicaList(
@@ -485,7 +520,7 @@ export async function replicaList(
     return replicaProblem("unknown-account");
   }
   const through = cursor?.through ?? roster.size;
-  if (through > roster.size) {
+  if ((cursor !== null && cursor.registration !== roster.registration) || through > roster.size) {
     return replicaProblem("invalid-message");
   }
 
@@ -500,7 +535,9 @@ export async function replicaList(
         removed_time: entry.removedTime,
       })),
       next_cursor:
-        last < through ? writeCursor([control.account, through, last]) : null,
+        last < through
+          ? writeCursor([control.account, roster.registration, through, last])
+          : null,
     } satisfies ReplicasBody,
   };
 }
@@ -513,13 +550,13 @@ export async function replicaRemove(
   if (sender === null) {
     return null;
   }
-  const control = controlOf<ReplicaRemoveBody>(incoming, context, ["replica_id"]);
-  if (control === null || typeof control.body.replica_id !== "string") {
+  const control = controlOf<ReplicaRemoveBody>(incoming, context, ["replica_did"]);
+  if (control === null || typeof control.body.replica_did !== "string") {
     return replicaProblem("invalid-message");
   }
 
-  const { replica_id } = control.body;
-  const removal = await store.removeReplica(control.account, control.mediator, replica_id);
+  const replica_did = canonicalDid(control.body.replica_did);
+  const removal = await store.removeReplica(control.account, control.mediator, replica_did);
   switch (removal.outcome) {
     case "unknown":
       return replicaProblem("unknown-account");
@@ -529,7 +566,7 @@ export async function replicaRemove(
       return {
         type: REPLICA_REMOVED,
         body: {
-          replica_id,
+          replica_did,
           state: "removed",
           removed_time: removal.removedTime,
         } satisfies ReplicaRemovedBody,
@@ -626,20 +663,27 @@ export async function recipientAdd(
 }
 
 /**
- * Where a listing of recipients stands: the account it is of and the last
- * recipient already returned, by the place the store orders it at.
+ * Where a listing of recipients stands: the account it is of, which
+ * registration of it, and the last recipient already returned, by the place
+ * the store orders it at.
  */
 interface RecipientCursor {
   account: string;
+  registration: string;
   after: RecipientPlace;
 }
 
 function readRecipientCursor(text: string): RecipientCursor | null {
-  const [account, addedAt, did] = cursorMembers(text, 3) ?? [];
-  if (typeof account !== "string" || !Number.isSafeInteger(addedAt) || typeof did !== "string") {
+  const [account, registration, addedAt, did] = cursorMembers(text, 4) ?? [];
+  if (
+    typeof account !== "string" ||
+    typeof registration !== "string" ||
+    !Number.isSafeInteger(addedAt) ||
+    typeof did !== "string"
+  ) {
     return null;
   }
-  return { account, after: { addedAt: addedAt as number, did } };
+  return { account, registration, after: { addedAt: addedAt as number, did } };
 }
 
 export async function recipientList(
@@ -675,6 +719,9 @@ export async function recipientList(
   if (page === null) {
     return replicaProblem("unknown-account");
   }
+  if (cursor !== null && cursor.registration !== page.registration) {
+    return replicaProblem("invalid-message");
+  }
   const last = page.recipients.at(-1);
   return {
     type: RECIPIENTS,
@@ -685,7 +732,7 @@ export async function recipientList(
       })),
       next_cursor:
         page.more && last !== undefined
-          ? writeCursor([control.account, last.addedAt, last.did])
+          ? writeCursor([control.account, page.registration, last.addedAt, last.did])
           : null,
     } satisfies RecipientsBody,
   };
@@ -714,6 +761,7 @@ export async function recipientRemove(
 
 export const REPLICA_CONTROLS: Record<string, Handler> = {
   [ACCOUNT_REGISTER]: accountRegister,
+  [ACCOUNT_DELETE]: accountDelete,
   [REPLICA_ADD]: replicaAdd,
   [REPLICA_LIST]: replicaList,
   [REPLICA_REMOVE]: replicaRemove,
