@@ -28,7 +28,7 @@ import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-
  * adds is a DID of its own that will. The communication DIDs it receives mail for are
  * added each by its own controller's proof, and the account alone takes one
  * back. A replica it removes stays in its roster as removed and is never
- * added again. These accounts share nothing with coordinate-mediation's: a
+ * added again while the account lives. These accounts share nothing with coordinate-mediation's: a
  * DID is one kind or the other, and neither protocol's controls reach the
  * other's state.
  *
@@ -42,6 +42,8 @@ import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-
 
 export const ACCOUNT_REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/account-register`;
 export const ACCOUNT_REGISTERED = `${REPLICA_MEDIATION_PROTOCOL}/account-registered`;
+export const ACCOUNT_DELETE = `${REPLICA_MEDIATION_PROTOCOL}/account-delete`;
+export const ACCOUNT_DELETED = `${REPLICA_MEDIATION_PROTOCOL}/account-deleted`;
 export const REPLICA_ADD = `${REPLICA_MEDIATION_PROTOCOL}/replica-add`;
 export const REPLICA_ADDED = `${REPLICA_MEDIATION_PROTOCOL}/replica-added`;
 export const REPLICA_LIST = `${REPLICA_MEDIATION_PROTOCOL}/replica-list`;
@@ -75,6 +77,26 @@ export interface AccountRegisteredBody {
   /** Seconds since the epoch, as are all times here. */
   registered_time: number;
   limits: Limits;
+}
+
+/**
+ * Deletes the sending account and everything kept for it: its replicas, its
+ * recipients and its mail. Nothing of it is remembered, so its DIDs and IDs
+ * are free for any binding, its replicas are strangers to pickup, and a
+ * repeat finds no account. The sender names itself by its long form, which
+ * the mediator no longer keeps by the time it seals the reply.
+ */
+export interface AccountDeleteBody {
+  /**
+   * The ID the account registered with. A request kept from an earlier
+   * registration of the same DID names another and deletes nothing.
+   */
+  mediation_id: string;
+}
+
+export interface AccountDeletedBody {
+  account: string;
+  mediation_id: string;
 }
 
 /** Enrolls the replica a grant names in the sending account. */
@@ -216,7 +238,7 @@ type Problem =
   | "invalid-recipient"
   /** The sender is no did:peer:4, or has no account and this mediator creates none. */
   | "account-refused"
-  /** No account of the sender is bound to the mediator DID it addressed. */
+  /** No account of the sender is bound to the mediator DID it addressed, or to the mediation ID it named. */
   | "unknown-account"
   /** The account added no replica under that ID. */
   | "unknown-replica"
@@ -351,6 +373,29 @@ export async function accountRegister(
         } satisfies AccountRegisteredBody,
       };
   }
+}
+
+export async function accountDelete(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  const { store, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf<AccountDeleteBody>(incoming, context, ["mediation_id"]);
+  if (control === null || typeof control.body.mediation_id !== "string" || !isLongForm(sender)) {
+    return replicaProblem("invalid-message");
+  }
+
+  const { mediation_id } = control.body;
+  if (!(await store.deleteReplicaAccount(control.account, control.mediator, mediation_id))) {
+    return replicaProblem("unknown-account");
+  }
+  return {
+    type: ACCOUNT_DELETED,
+    body: { account: control.account, mediation_id } satisfies AccountDeletedBody,
+  };
 }
 
 export async function replicaAdd(
@@ -714,6 +759,7 @@ export async function recipientRemove(
 
 export const REPLICA_CONTROLS: Record<string, Handler> = {
   [ACCOUNT_REGISTER]: accountRegister,
+  [ACCOUNT_DELETE]: accountDelete,
   [REPLICA_ADD]: replicaAdd,
   [REPLICA_LIST]: replicaList,
   [REPLICA_REMOVE]: replicaRemove,

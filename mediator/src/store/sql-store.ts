@@ -525,6 +525,43 @@ export class SqlStore implements MediationStore {
       : { outcome: "conflict" };
   }
 
+  /*
+   * One transaction, so a fan-out or an enrollment lands wholly before the
+   * deletion, and goes with the account, or finds no account at all.
+   */
+  async deleteReplicaAccount(
+    accountDid: string,
+    mediator: string,
+    mediationId: string
+  ): Promise<boolean> {
+    const key = [accountDid, mediator, mediationId];
+    const held =
+      "account_did = (SELECT did FROM replica_accounts " +
+      "WHERE did = ? AND mediator = ? AND mediation_id = ?)";
+
+    const [bound] = await this.batch([
+      {
+        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ? AND mediation_id = ?",
+        params: key,
+      },
+      {
+        sql:
+          "DELETE FROM replica_deliveries WHERE package_id IN " +
+          `(SELECT id FROM replica_packages WHERE ${held}) ` +
+          `OR replica_did IN (SELECT replica_did FROM replicas WHERE ${held})`,
+        params: [...key, ...key],
+      },
+      { sql: `DELETE FROM replica_packages WHERE ${held}`, params: key },
+      { sql: `DELETE FROM replica_recipients WHERE ${held}`, params: key },
+      { sql: `DELETE FROM replicas WHERE ${held}`, params: key },
+      {
+        sql: "DELETE FROM replica_accounts WHERE did = ? AND mediator = ? AND mediation_id = ?",
+        params: key,
+      },
+    ]);
+    return bound.rows.length > 0;
+  }
+
   /* One transaction; the rows read back afterwards say which of the outcomes it was. */
   async addReplica({
     accountDid,

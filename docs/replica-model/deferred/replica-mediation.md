@@ -15,7 +15,8 @@
 > can exist with no replica; `list` is `replica-list`; and membership and
 > recipients are not append-only. A replica can be removed
 > (`replica-remove`), a recipient can be removed (`recipient-remove`), and
-> recipients are listed by `recipient-list`.
+> recipients are listed by `recipient-list`. An account can be deleted whole
+> (`account-delete`), after which the mediator keeps nothing of it.
 
 > The vault side has adopted from this document the `replica/<replicaId>/me`
 > key name, the `profile` member of `mediation.created`, the grant and

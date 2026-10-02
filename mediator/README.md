@@ -228,6 +228,7 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 | Request | Body | Reply | Body |
 | --- | --- | --- | --- |
 | `account-register` | `mediation_id` | `account-registered` | `account`, `mediation_id`, `routing_did`, `registered_time`, `limits` |
+| `account-delete` | `mediation_id` | `account-deleted` | `account`, `mediation_id` |
 | `replica-add` | `grant` | `replica-added` | `replica_id`, `replica_did`, `state`, `added_time` |
 | `replica-list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `added_time`, `removed_time`), `next_cursor` |
 | `replica-remove` | `replica_id` | `replica-removed` | `replica_id`, `state`, `removed_time` |
@@ -239,13 +240,27 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 replica and no recipient yet. No mediate-request comes before it, and every
 other control answers `unknown-account` until it has succeeded. The sender
 names itself by its long form here. `mediation_id` is a UUIDv7 the account
-chooses, and the account is bound for good to it and to the mediator DID the
-request addressed; another name of the same deployment is another mediator.
+chooses, and the account is bound to it and to the mediator DID the request
+addressed for as long as it exists; another name of the same deployment is
+another mediator.
 The reply's `routing_did` is that mediator DID, where senders forward the
 account's mail, and `limits` is what the mediator holds the account to. An
 exact repeat answers as the first time did, also where
 `MEDIATOR_OPEN_REGISTRATION` is `false`; there a DID without an account is
 answered `account-refused`.
+
+**`account-delete`** deletes the account and everything kept for it: its
+replicas, the removed ones included, its recipients and its mail. The sender
+names itself by its long form, since the mediator no longer holds it when it
+seals the reply, and `mediation_id` is the one the account registered with;
+any other is `unknown-account` and deletes nothing. The mediator remembers
+nothing of a deleted account. Its DID, its replicas' and its recipients' are
+bound nowhere, so each can be bound again under either protocol, and a
+forward to one is refused. Pickup by the account DID or by a replica it had
+is not answered, as for any DID the mediator does not know. A reply or a push
+already on its way when the deletion lands may still arrive. A repeat is
+`unknown-account`. The DID can register again as a new account, with a new
+`mediation_id`, which no grant of the deleted one names.
 
 **`replica-add`** enrolls one replica in the account. `grant` is a compact
 JWS signed by one of the account's authentication keys (header exactly
@@ -269,7 +284,7 @@ replica alone is dropped, mail forwarded to its own DID included, and
 nothing more is queued for it; what other replicas wait for is untouched. A
 reply or a push already on its way when the removal lands may still arrive.
 The replica stays in the roster as `removed`, and neither its id nor its DID
-can be added again, so a device that comes back is added as a new replica. A
+can be added again while the account exists, so a device that comes back is added as a new replica. A
 removed replica no longer counts against `max_active_replicas`. An account
 with no active replica, a new one or one whose last replica was removed,
 still takes mail for its recipients: it is kept and counted, for no one,

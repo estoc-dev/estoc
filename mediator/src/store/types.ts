@@ -245,13 +245,20 @@ export interface MediationStore {
 
   /*
    * replica-mediation/1.0. An account and the replicas it enrolled are kept
-   * for good, a removed replica as removed, and their DIDs and its shared
-   * recipients' are kept apart from ordinary accounts and recipients in both
-   * directions: neither kind of binding can be made over the other. Its mail
-   * is kept per account and handed out per replica, apart from the ordinary
-   * queues.
+   * until the account is deleted, a removed replica as removed, and their
+   * DIDs and its shared recipients' are kept apart from ordinary accounts and
+   * recipients in both directions: neither kind of binding can be made over
+   * the other. Its mail is kept per account and handed out per replica, apart
+   * from the ordinary queues.
    */
   registerReplicaAccount(account: ReplicaAccount): Promise<RegisterAccountOutcome>;
+  /**
+   * Deletes the account with everything kept for it: its replicas, the
+   * removed ones included, its shared recipients and its mail. Every DID and
+   * ID it bound is free again. False, and nothing deleted, without such an
+   * account under that mediation ID bound to `mediator`.
+   */
+  deleteReplicaAccount(accountDid: string, mediator: string, mediationId: string): Promise<boolean>;
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
    * Ends a replica's enrollment and drops what waited for it alone: its
