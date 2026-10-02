@@ -12,7 +12,10 @@
   against that successor's other changes. Only the changes the complete
   changes, claimed and implied together, order are implied; one implied
   along the way that they do not order is dropped, so the answers are
-  the same whether a competing change was claimed or implied. The fact schema is unchanged; a snapshot of
+  the same whether a competing change was claimed or implied. Where the
+  derivation alternates instead of settling, every change it reaches is
+  implied and the ones not every derivation holds are a new conflict
+  kind, `unsettled-changes`, scoped as competing changes are. The fact schema is unchanged; a snapshot of
   `estoc-continuity/1` is refused by `mergeFacts` as any other profile
   is, and holds the same facts under the new string.
 

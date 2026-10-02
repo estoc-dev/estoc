@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveContinuity, InvalidFact, mergeFacts, type Channel, type ContinuityFact, type Continuity } from "../src/index.js";
+import { deriveContinuity, InvalidFact, mergeFacts, type Change, type Channel, type ContinuityFact, type Continuity } from "../src/index.js";
 import { C, decide, localEnd, observe, peerEnd, permutations, rotate, snapshot } from "./facts.js";
 
 const A0B0 = C("A0", "B0");
@@ -544,6 +544,71 @@ describe("successors the other party's changes order", () => {
       const received = deriveContinuity([...ours, decide("x-y", C("X", "B1"), "Y", "ox1")]);
       expect(fromU(received)).toEqual(fromU(implied));
       expect(received.path(C("U", "B1"), C("W", "B1"))).toEqual(implied.path(C("U", "B1"), C("W", "B1")));
+    });
+  });
+
+  describe("replacements the derivation does not settle", () => {
+    const A3_Y = C("A3", "Y");
+    const A3_Z = C("A3", "Z");
+    // A1 returns to A0 towards X, and Y returns to B: what X → Y and the implied A2 → A0 join to leads back from
+    // C(A2,B) to C(A0,B), which undoes the very order of B's successors that implied them.
+    const peer = [
+      observe("o-a0-b", C("A0", "B")),
+      observe("o-a1-b", C("A1", "B")),
+      observe("o-a1-x", C("A1", "X")),
+      observe("o-a2-b", C("A2", "B")),
+      decide("a0-a1", C("A0", "B"), "A1", "o-a0-b"),
+      decide("a1-a2", C("A1", "B"), "A2", "o-a1-b"),
+      decide("a1-a0", C("A1", "X"), "A0", "o-a1-x"),
+      decide("a2-a3", C("A2", "B"), "A3", "o-a2-b"),
+      rotate("b-x", C("A0", "B"), "X"),
+      rotate("b-y", C("A2", "B"), "Y"),
+      rotate("b-z", C("A3", "B"), "Z"),
+      rotate("y-b", C("A0", "Y"), "B"),
+    ];
+    const atY = (model: Continuity) => ({
+      unsettled: model.conflicts().filter((conflict) => conflict.kind === "unsettled-changes"),
+      head: model.head(A3_Y),
+      path: model.path(A3_Y, A3_Z),
+      replacements: [...new Set(model.changes(A3_Y, "peer").map(({ at, change }) => JSON.stringify({ at, change })))].map((text) => JSON.parse(text) as { at: Channel; change: Change }),
+      links: model.history(A3_Y).links.filter((link) => link.from.localDid === "A3" && link.from.peerDid === "Y"),
+    });
+
+    it("are implied and reported as unsettled, with a scope that grants no path", () => {
+      const model = deriveContinuity(peer);
+      const result = atY(model);
+      expect(result.unsettled).toContainEqual({ kind: "unsettled-changes", side: "peer", context: [C("A0", "Y"), C("A1", "Y"), C("A2", "Y"), A3_Y], changes: [{ change: { kind: "rotate", successor: "Z" }, facts: ["b-z"] }] });
+      expect(result.unsettled).toContainEqual({ kind: "unsettled-changes", side: "local", context: [C("A2", "B"), C("A2", "X"), C("A2", "Y")], changes: [{ change: { kind: "rotate", successor: "A0" }, facts: ["a1-a0"] }] });
+      expect(result.replacements).toContainEqual({ at: A3_Y, change: { kind: "rotate", successor: "Z" } });
+      expect(result.links).toContainEqual({ from: A3_Y, to: A3_Z, replaces: "peer", support: expect.arrayContaining(["a2-a3", "b-y", "b-z"]), derived: true, usable: false });
+      expect(result.head).toMatchObject({ status: "conflict" });
+      expect(result.path).toMatchObject({ status: "conflict" });
+      expect(model.status("b-z")).toMatchObject({ status: "conflict" });
+      expect(atY(deriveContinuity([...peer].reverse()))).toEqual(result);
+    });
+
+    it("answer the same for Y whether its replacement was received or implied, and list a received one once", () => {
+      const implied = atY(deriveContinuity(peer));
+      const received = atY(deriveContinuity([...peer, rotate("y-z", A3_Y, "Z")]));
+      expect(received.head).toMatchObject({ status: "conflict" });
+      expect(received.path).toMatchObject({ status: "conflict" });
+      expect(received.replacements.filter(({ at }) => at.peerDid === "Y")).toEqual(implied.replacements.filter(({ at }) => at.peerDid === "Y"));
+      expect(received.links.filter((link) => link.to.peerDid !== "Z")).toEqual(implied.links.filter((link) => link.to.peerDid !== "Z"));
+      expect(received.links.filter((link) => link.to.peerDid === "Z")).toEqual([{ from: A3_Y, to: A3_Z, replaces: "peer", support: expect.arrayContaining(["y-z"]), derived: false, usable: false }]);
+    });
+
+    it("are reported on the local side the same way", () => {
+      const ours = peer.flatMap((fact): ContinuityFact[] => {
+        const at = C(fact.at.peerDid, fact.at.localDid);
+        if (fact.kind === "address-observed") return [observe(fact.id, at)];
+        if (fact.kind === "local-decision") return [rotate(fact.id, at, fact.change.kind === "rotate" ? fact.change.successor : "")];
+        return [observe(`source-${fact.id}`, at), decide(fact.id, at, fact.change.kind === "rotate" ? fact.change.successor : "", `source-${fact.id}`)];
+      });
+      const model = deriveContinuity(ours);
+      expect(model.conflicts()).toContainEqual({ kind: "unsettled-changes", side: "local", context: [C("Y", "A0"), C("Y", "A1"), C("Y", "A2"), C("Y", "A3")], changes: [{ change: { kind: "rotate", successor: "Z" }, facts: ["b-z"] }] });
+      expect(model.changes(C("Y", "A3"), "local")).toContainEqual(expect.objectContaining({ id: "b-z", at: C("Y", "A3"), change: { kind: "rotate", successor: "Z" } }));
+      expect(model.head(C("Y", "A3"))).toMatchObject({ status: "conflict" });
+      expect(model.path(C("Y", "A3"), C("Z", "A3"))).toMatchObject({ status: "conflict" });
     });
   });
 

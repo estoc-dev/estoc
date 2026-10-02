@@ -121,13 +121,19 @@ depends on itself:
    predecessor address an observation confirms, and every join two
    rotations imply, all branches kept. Every variant of a repeated ID
    enters when its own prerequisites hold, so the competition it creates
-   is visible; no variant links or witnesses anything usable.
+   is visible; no variant links or witnesses anything usable. A decision
+   is confirmed against the graph built so far without it, and once
+   confirmed it stays, even where the implied changes settle afterwards
+   on a set that no longer leads to its confirming observation: the
+   positive graph keeps what the evidence confirmed at some stage, and
+   whether the decision is confirmed usably is the usable graph's answer.
 3. **Contexts and conflicts** over that whole graph. A peer change's
    context is the set of pairs local-only links connect while keeping
    that peer; a local change's context is the symmetric one. The
    conflicts are competing changes of one endpoint in one context,
-   cycles, joins that would pair a DID with itself, and repeated IDs
-   with different values. Every saved local decision counts toward
+   implied replacements the derivation does not settle, cycles, joins
+   that would pair a DID with itself, and repeated IDs with different
+   values. Every saved local decision counts toward
    competition whether or not it is confirmed yet: two saved successors
    of one predecessor at one pair are a fork either way. A conflict's
    scope is its context and the successors the claims in that context
@@ -164,9 +170,21 @@ depends on itself:
    say because the change that implied it has come to compete with
    another at its pair, is not implied, and whatever it would have
    superseded or competed with is judged without it. The answers are
-   therefore the same whether a competing change was claimed or implied. Should the
-   derivations alternate between sets instead of settling, only the
-   changes every set of the alternation holds are implied.
+   therefore the same whether a competing change was claimed or implied.
+
+   The derivations may instead alternate between sets without settling,
+   when the links a set implies lead the other party back from a later
+   pair to an earlier one and so undo the order that implied them; a
+   party rotating back to a DID it left makes such links. Then every
+   change any set of the alternation holds is implied, so that no branch
+   hides and every usable link has a positive one, and the changes not
+   every set holds are reported as `unsettled-changes`, by context, with
+   the same scope as competing changes: no path, head or admission rests
+   on them, and `changes` lists them, so a host treats an endpoint they
+   replace as replaced. Which changes are unsettled depends on the
+   derivation, so a claim of one of them, which settles the derivation
+   around it, can change what else is unsettled; a settled derivation
+   does not depend on which changes were claimed and which implied.
 4. **Usable graph.** The same closure again over unambiguous facts,
    admitting no channel a conflict reaches. The positive graph says what
    replacements the evidence shows; the usable graph says which of them

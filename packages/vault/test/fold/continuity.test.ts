@@ -425,6 +425,47 @@ describe("conflicts", () => {
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
+  test("a replacement the derivation does not settle is unsettled: the peer counts as replaced and nothing is admitted from it, whether its replacement was received or implied", async () => {
+    const { scene, keys, peerKeys, a0, a1, a2, b0: b, b1: x, b2: y, b3: z } = await vaults();
+    const a3 = await createdDid(scene, keys, "019b7000-0000-7000-8000-000000000a04" as DidId, ROUTE, MEDIATED);
+    for (const [from, peer, to] of [
+      [a0, b, a1],
+      [a1, b, a2],
+      [a1, x, a0],
+      [a2, b, a3],
+    ] as const)
+      await rotation(scene, keys, { from, peer, to, source: proofFreeReceipt(scene, from, peer) });
+    await receiptCarryingProof(scene, peerKeys, a0, b, x);
+    await receiptCarryingProof(scene, peerKeys, a2, b, y);
+    await receiptCarryingProof(scene, peerKeys, a3, b, z);
+    await receiptCarryingProof(scene, peerKeys, a0, y, b);
+    const pending = receipt(scene, { local: a3, peer: y, resolution: resolved(scene, a3.didId, y), admitted: false });
+    const look = (vault: VaultFold) => ({
+      unsettled: vault.continuity.conflicts.filter(({ conflict }) => conflict.kind === "unsettled-changes").map(({ conflict }) => (conflict.kind === "unsettled-changes" ? { side: conflict.side, context: conflict.context, successors: conflict.changes.map(({ change }) => (change.kind === "rotate" ? change.successor : null)) } : null)),
+      replacedY: vault.continuity.superseded(channel(a3, y)),
+      head: vault.continuity.head(channel(a3, y)),
+      ackPath: vault.continuity.ackPath(channel(a3, y), channel(a3, z)),
+      send: vault.views.channel(channel(a3, z)).send.status,
+      eligibility: vault.dispositions.candidate(pending.cid)?.eligibility.status,
+      drafted: admissionDrafts(vault).some((draft) => draft.data.sourceEventCid === pending.cid),
+    });
+    const implied = look(await fold(scene, keys));
+    expect(implied).toEqual({
+      unsettled: expect.arrayContaining([{ side: "peer", context: [channel(a0, y), channel(a1, y), channel(a2, y), channel(a3, y)].sort(compareChannels), successors: [z.did] }]),
+      replacedY: true,
+      head: null,
+      ackPath: false,
+      send: "closed",
+      eligibility: "refused",
+      drafted: false,
+    });
+    await receiptCarryingProof(scene, peerKeys, a3, y, z);
+    const vault = await fold(scene, keys);
+    expect(look(vault)).toEqual({ ...implied, unsettled: expect.any(Array) });
+    expect(vault.continuity.conflicts.some(({ conflict }) => conflict.kind === "unsettled-changes")).toBe(true);
+    expectSameOverEveryOrder(scene, vault.checks);
+  });
+
   test("a cycle of replacements grants nothing, and a join that would pair a DID with itself is refused as an identity collision", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const forth = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);

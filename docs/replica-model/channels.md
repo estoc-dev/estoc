@@ -357,8 +357,9 @@ flowchart LR
 
 Only these evidence-backed joins are permitted. Sharing a DID, key or contact
 cannot fill a missing side. Competing successors for the same
-endpoint/context, cycles and contradictory identity evidence are visible
-conflicts, not ordinary opposite-side rotation.
+endpoint/context, derived replacements the derivation does not settle on,
+cycles and contradictory identity evidence are visible conflicts, not
+ordinary opposite-side rotation.
 
 Phase 1 retains all independently valid branch evidence and exposes the fork;
 it defines no operation to select a winning branch or clear this conflict.

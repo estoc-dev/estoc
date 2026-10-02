@@ -267,7 +267,9 @@ A `cycle` returns to a pair the rotations left. An `identity-collision` would
 give both endpoints the same successor DID. These are positive claims; the
 resulting conflicts prevent usable paths. The local rotation in the collision
 example has predecessor confirmation. Endpoint collision is distinct from
-`identity-conflict`, where a fact ID has multiple values.
+`identity-conflict`, where a fact ID has multiple values. A fourth kind,
+`unsettled-changes`, names [implied replacements the derivation does not
+settle](#ordered); it has the shape and scope of `competing-changes`.
 
 **Tests:** [repeated carriers][test-peer], [competing changes][test-competition],
 [observations][test-observations].
@@ -309,6 +311,7 @@ it gets for B0.
 | B1 rotates to B3 at C(A0,B1), before the local change | B3 is superseded with it: B1, B3, then B2 by the same order. |
 | An ending of the endpoint itself beside either rotation | Ordered with nothing; it competes as before. |
 | The superseded X had rotated to U at C(A0,X) and to V at C(A1,X), where P's Y replaces it | X's U, V and the implied Y compete. U → V, which X's own changes alone would imply, is not implied: the complete changes do not order it. U's own onward change at C(A1,U) stands, exactly as when X → Y was received at C(A1,X). |
+| A1 rotates back to A0 towards X, and the peer's Y rotates back to B, while B went X, Y, Z along A0, A2, A3 | The derivation does not settle: the links the implied replacements join to lead A back from C(A2,B) to C(A0,B), which undoes the order of B's successors. Y → Z and what it joins to are implied and `unsettled-changes`; `head(C(A3,Y))` and `path(C(A3,Y), C(A3,Z))` are `conflict`, `changes(C(A3,Y), "peer")` lists Y → Z, received or implied. |
 
 **Tests:** [ordered successors][test-ordered].
 

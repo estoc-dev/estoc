@@ -8,7 +8,8 @@
  * all branches kept, every variant of an identity-conflicted ID
  * included so that no competing continuation can hide. Then contexts and conflicts over
  * that whole graph: competing changes of one endpoint in one context,
- * cycles, joins that would pair a DID with itself. Only then usable
+ * implied replacements the derivation does not settle, cycles, joins
+ * that would pair a DID with itself. Only then usable
  * continuity: the same closure again over unambiguous facts, admitting
  * no channel a conflict reaches. The positive graph says what
  * replacements the evidence shows; the usable graph says which of them
@@ -26,6 +27,8 @@ export type Side = Replaces;
 export type Conflict =
   /** two different changes of one endpoint claimed in one context, a saved decision counted whether or not it is confirmed yet */
   | { kind: "competing-changes"; side: Side; context: readonly Channel[]; changes: readonly { change: Change; facts: readonly FactId[] }[] }
+  /** replacements of superseded successors in one context that the complete changes imply in some derivations and not in others, so that neither their standing nor their absence is established */
+  | { kind: "unsettled-changes"; side: Side; context: readonly Channel[]; changes: readonly { change: Change; facts: readonly FactId[] }[] }
   /** links that lead back to a pair they left */
   | { kind: "cycle"; channels: readonly Channel[]; facts: readonly FactId[] }
   /** a join that would pair a DID with itself */
@@ -251,7 +254,7 @@ class Model implements Continuity {
       if (rotations === undefined) this.rotationsByContext.set(root, (rotations = []));
       rotations.push({ entry, successor: entry.fact.change.successor });
     }
-    const found = this.findConflicts({ local: [...claims.local, ...positive.implied.local], peer: [...claims.peer, ...positive.implied.peer] });
+    const found = this.findConflicts({ local: [...claims.local, ...positive.implied.local], peer: [...claims.peer, ...positive.implied.peer] }, positive.unsettled);
     this.domainConflicts = found.map(({ conflict }) => conflict);
     for (const { conflict, scope } of found) {
       for (const channel of scope) {
@@ -441,34 +444,42 @@ class Model implements Continuity {
    * Competing changes of one endpoint in one context: the peer's across
    * the local-only context, ours across the peer-only one, every fact
    * counted whatever its status, so that a saved decision not yet
-   * confirmed cannot hide a competing choice. Then cycles and refused joins. Each
+   * confirmed cannot hide a competing choice. Then the implied changes
+   * the derivation left unsettled, by context as well. Then cycles and refused joins. Each
    * conflict comes with its scope: the context and the successor pairs
    * the claims in that context name. A variant of the same ID claiming
    * something in another context is not in the scope, since it is a
    * different claim.
    */
-  private findConflicts(claims: Claims): { conflict: Conflict; scope: readonly Channel[] }[] {
+  private findConflicts(claims: Claims, unsettled: Claims): { conflict: Conflict; scope: readonly Channel[] }[] {
     const found: { conflict: Conflict; scope: readonly Channel[] }[] = [];
-    const competing = (side: Side) => {
-      for (const { claims: claimed, order } of successions(this.positive, side, claims[side])) {
-        if (order !== null) continue;
-        const changes = new Map<string, { change: Change; facts: FactId[] }>();
-        const successors: Channel[] = [];
-        for (const { id, at, successor } of claimed) {
-          const change: Change = successor === null ? { kind: "end" } : { kind: "rotate", successor };
-          const key = changeKey(change);
-          let group = changes.get(key);
-          if (group === undefined) changes.set(key, (group = { change, facts: [] }));
-          group.facts.push(id);
-          if (successor !== null) successors.push(side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid));
-        }
-        const listed = [...changes.values()].map(({ change, facts }) => ({ change, facts: sortedIds(facts) })).sort((a, b) => compareUtf8(changeKey(a.change), changeKey(b.change)));
-        const context = this.contextOf(claimed[0]!.at, side);
-        found.push({ conflict: { kind: "competing-changes", side, context, changes: listed }, scope: sortedChannels([...context, ...successors]) });
+    const report = (kind: "competing-changes" | "unsettled-changes", side: Side, claimed: readonly Claim[]) => {
+      const changes = new Map<string, { change: Change; facts: FactId[] }>();
+      const successors: Channel[] = [];
+      for (const { id, at, successor } of claimed) {
+        const change: Change = successor === null ? { kind: "end" } : { kind: "rotate", successor };
+        const key = changeKey(change);
+        let group = changes.get(key);
+        if (group === undefined) changes.set(key, (group = { change, facts: [] }));
+        group.facts.push(id);
+        if (successor !== null) successors.push(side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid));
       }
+      const listed = [...changes.values()].map(({ change, facts }) => ({ change, facts: sortedIds(facts) })).sort((a, b) => compareUtf8(changeKey(a.change), changeKey(b.change)));
+      const context = this.contextOf(claimed[0]!.at, side);
+      found.push({ conflict: { kind, side, context, changes: listed }, scope: sortedChannels([...context, ...successors]) });
     };
-    competing("peer");
-    competing("local");
+    for (const side of ["peer", "local"] as const) {
+      for (const { claims: claimed, order } of successions(this.positive, side, claims[side])) if (order === null) report("competing-changes", side, claimed);
+      const contexts = side === "peer" ? this.local : this.peer;
+      const byContext = new Map<string, Claim[]>();
+      for (const claim of unsettled[side]) {
+        const root = contexts.root(channelKey(claim.at));
+        let group = byContext.get(root);
+        if (group === undefined) byContext.set(root, (group = []));
+        group.push(claim);
+      }
+      for (const claimed of byContext.values()) report("unsettled-changes", side, claimed);
+    }
     for (const channels of this.positive.cycles()) {
       const members = new Set(channels.map(channelKey));
       const facts: FactId[] = [];
@@ -482,6 +493,7 @@ class Model implements Continuity {
   private factsOf(conflict: Conflict): readonly FactId[] {
     switch (conflict.kind) {
       case "competing-changes":
+      case "unsettled-changes":
         return sortedIds(conflict.changes.flatMap(({ facts }) => facts));
       case "cycle":
       case "identity-collision":
@@ -607,13 +619,18 @@ class Model implements Continuity {
     const contexts = side === "peer" ? this.local : this.peer;
     const root = contexts.root(channelKey(channel));
     const records: ChangeRecord[] = [];
+    const recorded = new Set<string>();
     for (const entry of this.all()) {
       if (entry.fact.kind !== kind || contexts.root(channelKey(entry.fact.at)) !== root) continue;
-      records.push(this.record(entry));
+      const record = this.record(entry);
+      records.push(record);
+      recorded.add([record.id, channelKey(record.at), changeKey(record.change)].join("\u0001"));
     }
     for (const { id, at, successor } of this.#implied[side]) {
       if (contexts.root(channelKey(at)) !== root || successor === null) continue;
-      records.push({ id, at, change: { kind: "rotate", successor }, to: side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid), status: this.status(id) });
+      const change: Change = { kind: "rotate", successor };
+      if (recorded.has([id, channelKey(at), changeKey(change)].join("\u0001"))) continue;
+      records.push({ id, at, change, to: side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid), status: this.status(id) });
     }
     return records.sort((a, b) => compareUtf8(a.id, b.id) || compareChannels(a.at, b.at));
   }
@@ -749,6 +766,7 @@ function changeIndexKey(side: Side, successor: Did): string {
 function firstChannelOf(conflict: Conflict): Channel {
   switch (conflict.kind) {
     case "competing-changes":
+    case "unsettled-changes":
       return conflict.context[0]!;
     case "cycle":
     case "identity-collision":

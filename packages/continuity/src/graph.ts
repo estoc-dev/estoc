@@ -388,14 +388,17 @@ const impliedKey = (implied: Implied): string =>
  * derivation starts from what the previous one implied, until one
  * implies the set it was given. A change implied along the way that the
  * complete claims do not imply is dropped, and what it blocked is
- * implied after all. Should the derivations alternate between sets
- * instead of settling, only the changes every set of the alternation
- * holds are implied. `implied` returns them. A candidate is
- * judged against the graph built without it and every candidate still
- * waiting, so nothing it derives can confirm it; the graph is rebuilt
- * until no candidate is admitted any more. The confirming facts of each
- * admitted candidate are returned with it. Candidates are told apart as
- * objects, since two variants of one fact ID are two candidates.
+ * implied after all. The derivations may instead alternate between
+ * sets, when what one set implies undoes the order it came from: then
+ * every change any set of the alternation holds is implied, so that no
+ * branch hides, and the ones not every set holds are `unsettled` as
+ * well. `implied` returns them all. A candidate is judged against the
+ * graph built without it and every candidate still waiting, so nothing
+ * it derives can confirm it; the graph is rebuilt until no candidate is
+ * admitted any more, and one admitted stays admitted while the implied
+ * changes settle around it. The confirming facts of each admitted
+ * candidate are returned with it. Candidates are told apart as objects,
+ * since two variants of one fact ID are two candidates.
  */
 export function closure<L extends Link>(
   peerLinks: readonly Link[],
@@ -403,7 +406,7 @@ export function closure<L extends Link>(
   claims: Claims,
   admits: (channel: Channel) => boolean,
   confirms: (graph: Graph, candidate: L) => readonly FactId[] | null
-): { graph: Graph; implied: Claims; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
+): { graph: Graph; implied: Claims; unsettled: Claims; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
   const admitted = new Map<L, readonly FactId[]>();
   const waiting = new Set(candidates);
   const assemble = (implied: Implied): Graph => {
@@ -424,18 +427,20 @@ export function closure<L extends Link>(
     for (const { side, claim } of implied.values()) result[side].push(claim);
     return result;
   };
-  const build = (): { graph: Graph; implied: Claims } => {
+  const build = (): { graph: Graph; implied: Claims; unsettled: Claims } => {
     let implied: Implied = new Map();
     const seen = new Map<string, Implied>([[impliedKey(implied), implied]]);
     for (;;) {
       const graph = assemble(implied);
       const next = derive(graph, implied);
       const key = impliedKey(next);
-      if (key === impliedKey(implied)) return { graph, implied: asClaims(implied) };
+      if (key === impliedKey(implied)) return { graph, implied: asClaims(implied), unsettled: { local: [], peer: [] } };
       if (seen.has(key)) {
         const alternation = [...seen.values()].slice([...seen.keys()].indexOf(key));
-        const held = new Map([...next].filter(([k, change]) => alternation.every((set) => set.has(k) && entryKey(k, set.get(k)!) === entryKey(k, change))));
-        return { graph: assemble(held), implied: asClaims(held) };
+        const every = new Map<string, Superseding>();
+        for (const set of alternation) for (const [k, change] of set) if (!every.has(k)) every.set(k, change);
+        const unsettled = new Map([...every].filter(([k]) => !alternation.every((set) => set.has(k))));
+        return { graph: assemble(every), implied: asClaims(every), unsettled: asClaims(unsettled) };
       }
       seen.set(key, next);
       implied = next;
