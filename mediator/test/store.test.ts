@@ -217,7 +217,11 @@ describe("SqliteStore", () => {
 
     const store = new SqliteStore(path);
     expect(await store.replicaState("did:example:replica")).toBe("active");
-    const removal = await store.removeReplica("did:example:account", "did:example:mediator", "r");
+    const removal = await store.removeReplica(
+      "did:example:account",
+      "did:example:mediator",
+      "did:example:replica"
+    );
     expect(removal.outcome).toBe("removed");
     store.close();
 
@@ -262,6 +266,42 @@ describe("SqliteStore", () => {
     expect(await reopened.isReplicaAccount("did:example:account")).toBe(true);
     expect(await reopened.isReplicaAccount("did:example:other")).toBe(true);
     reopened.close();
+    rmSync(dir, { recursive: true });
+  });
+
+  it("keeps the replicas enrolled under an ID, in their order and with what waits for them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const later = Date.now() + 60_000;
+    const old = new Database(path);
+    old.exec(`
+      ${REPLICA_TABLES_WITHOUT_PACKAGE_KINDS}
+      INSERT INTO replica_accounts VALUES ('did:example:account', 'm', 'did:example:mediator', 'long', 1);
+      INSERT INTO replicas VALUES
+        ('did:example:first', 'did:example:account', 'r1', 1, 'long', 'first grant', 1),
+        ('did:example:second', 'did:example:account', 'r2', 2, 'long', 'second grant', 2);
+      INSERT INTO replica_packages VALUES
+        ('p1', 'did:example:account', 'did:example:second', '1', 'own mail', 8, 1, ${later});
+      INSERT INTO replica_deliveries VALUES ('d1', 'p1', 'did:example:second');
+    `);
+    old.close();
+
+    const store = new SqliteStore(path);
+    const roster = await store.replicaRoster("did:example:account", "did:example:mediator", 0, null, 10);
+    expect(roster?.entries.map((entry) => [entry.ordinal, entry.grant])).toEqual([
+      [1, "first grant"],
+      [2, "second grant"],
+    ]);
+    expect(await store.deliveryCount("did:example:second")).toBe(1);
+    store.close();
+
+    const opened = new Database(path);
+    const { sql } = opened
+      .prepare("SELECT sql FROM sqlite_master WHERE name = 'replicas'")
+      .get() as { sql: string };
+    expect(sql).not.toContain("replica_id");
+    expect(opened.pragma("foreign_key_check")).toEqual([]);
+    opened.close();
     rmSync(dir, { recursive: true });
   });
 
@@ -370,7 +410,6 @@ describe("a store that read the old replica mail tables before another store reb
     const enrolled = await store.addReplica({
       accountDid: account,
       mediator,
-      replicaId: "former",
       replicaDid: "did:example:shared",
       replicaLongForm: "long",
       grant: "grant",
@@ -380,7 +419,7 @@ describe("a store that read the old replica mail tables before another store reb
 
     late.release();
     expect(await lateRead).toBe(1);
-    expect((await store.removeReplica(account, mediator, "former")).outcome).toBe("removed");
+    expect((await store.removeReplica(account, mediator, "did:example:shared")).outcome).toBe("removed");
     expect(await lateStore.deliveryCount("did:example:replica")).toBe(1);
     await lateStore.acknowledgeDeliveries("did:example:replica", []);
     lateStore.close();

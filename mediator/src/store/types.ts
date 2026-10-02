@@ -68,7 +68,6 @@ export interface ReplicaAddition {
   accountDid: string;
   /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
-  replicaId: string;
   replicaDid: string;
   replicaLongForm: string;
   grant: string;
@@ -76,10 +75,11 @@ export interface ReplicaAddition {
 }
 
 /**
- * `added` also answers an exact repeat, with the time of the first.
- * `unknown`: there is no such account. `conflict`: an ID or DID is already
- * bound otherwise, here or under ordinary mediation, to a removed replica
- * included, or the account is bound to another mediator DID.
+ * `added` also answers a replica the account already has active, with the
+ * time of the first, and keeps the first grant. `unknown`: there is no such
+ * account. `conflict`: the DID is already bound otherwise, here or under
+ * ordinary mediation, to a removed replica included, or the account is bound
+ * to another mediator DID.
  * `full`: the account is at its limit of replicas not removed.
  */
 export type AddReplicaOutcome =
@@ -104,7 +104,7 @@ export interface RosterPage {
 /**
  * `removed` also answers a repeat, with the time of the first. `unknown`: no
  * such account is bound to that mediator. `not-enrolled`: the account never
- * enrolled a replica under that ID.
+ * enrolled that DID.
  */
 export type RemoveOutcome =
   | { outcome: "removed"; removedTime: number }
@@ -260,10 +260,10 @@ export interface MediationStore {
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
    * Ends a replica's enrollment and drops what waited for it alone: its
-   * deliveries, and the mail forwarded to the replica itself. Its ID and DID
-   * stay bound, so neither is ever enrolled again.
+   * deliveries, and the mail forwarded to the replica itself. Its DID stays
+   * bound, so it is never enrolled again while the account exists.
    */
-  removeReplica(accountDid: string, mediator: string, replicaId: string): Promise<RemoveOutcome>;
+  removeReplica(accountDid: string, mediator: string, replicaDid: string): Promise<RemoveOutcome>;
   isReplicaAccount(did: string): Promise<boolean>;
   /** Null for a DID no account enrolled as a replica. */
   replicaState(did: string): Promise<"active" | "removed" | null>;

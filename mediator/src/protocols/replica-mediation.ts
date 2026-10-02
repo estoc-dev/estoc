@@ -95,9 +95,11 @@ export interface ReplicaAddBody {
   grant: string;
 }
 
-/** Also the answer to an exact repeat, which changes nothing and keeps the first time. */
+/**
+ * Also the answer to any grant naming a replica the account already has
+ * active, which changes nothing and keeps the first time and the first grant.
+ */
 export interface ReplicaAddedBody {
-  replica_id: string;
   replica_did: string;
   state: "active";
   added_time: number;
@@ -152,15 +154,16 @@ export interface ReplicasBody {
  * Ends one replica's enrollment. What waited for that replica alone is
  * dropped, mail forwarded to its own DID included, and nothing is queued for
  * or read by that DID afterwards; a reply already on its way is not recalled.
- * Neither its ID nor its DID can be added again.
+ * Its DID cannot be added again while the account exists.
  */
 export interface ReplicaRemoveBody {
-  replica_id: string;
+  /** The replica's did:peer:4, in either form. */
+  replica_did: string;
 }
 
 /** Also the answer to a repeat, which changes nothing and keeps the first time. */
 export interface ReplicaRemovedBody {
-  replica_id: string;
+  replica_did: string;
   state: "removed";
   removed_time: number;
 }
@@ -230,7 +233,7 @@ type Problem =
   | "account-refused"
   /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
-  /** The account added no replica under that ID. */
+  /** The account added no replica with that DID. */
   | "unknown-replica"
   /** A DID or ID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
@@ -412,7 +415,6 @@ export async function replicaAdd(
   const addition = await store.addReplica({
     accountDid: grant.account,
     mediator: grant.mediator,
-    replicaId: grant.replicaId,
     replicaDid: grant.replicaDid,
     replicaLongForm: grant.replicaLongForm,
     grant: control.body.grant as string,
@@ -430,7 +432,6 @@ export async function replicaAdd(
       return {
         type: REPLICA_ADDED,
         body: {
-          replica_id: grant.replicaId,
           replica_did: grant.replicaDid,
           state: "active",
           added_time: addition.addedTime,
@@ -543,13 +544,13 @@ export async function replicaRemove(
   if (sender === null) {
     return null;
   }
-  const control = controlOf<ReplicaRemoveBody>(incoming, context, ["replica_id"]);
-  if (control === null || typeof control.body.replica_id !== "string") {
+  const control = controlOf<ReplicaRemoveBody>(incoming, context, ["replica_did"]);
+  if (control === null || typeof control.body.replica_did !== "string") {
     return replicaProblem("invalid-message");
   }
 
-  const { replica_id } = control.body;
-  const removal = await store.removeReplica(control.account, control.mediator, replica_id);
+  const replica_did = canonicalDid(control.body.replica_did);
+  const removal = await store.removeReplica(control.account, control.mediator, replica_did);
   switch (removal.outcome) {
     case "unknown":
       return replicaProblem("unknown-account");
@@ -559,7 +560,7 @@ export async function replicaRemove(
       return {
         type: REPLICA_REMOVED,
         body: {
-          replica_id,
+          replica_did,
           state: "removed",
           removed_time: removal.removedTime,
         } satisfies ReplicaRemovedBody,

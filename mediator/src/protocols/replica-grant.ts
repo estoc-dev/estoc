@@ -41,7 +41,7 @@ export interface GrantPayload {
   mediator: string;
   /** The replica's did:peer:4, in its short form, and the long form it is cut from. */
   replica_did: string;
-  /** A UUIDv7. */
+  /** A UUIDv7 by which the account's own records name the replica; the mediator compares it with nothing. */
   replica_id: string;
   replica_long_form: string;
 }
@@ -59,7 +59,6 @@ export interface ReplicaGrant {
   account: string;
   /** In its short form when it is a did:peer:4, however the grant spelled it. */
   mediator: string;
-  replicaId: string;
   replicaDid: string;
   replicaLongForm: string;
 }
@@ -303,5 +302,5 @@ export async function verifyReplicaGrant(
     return null;
   }
 
-  return { account, mediator, replicaId, replicaDid, replicaLongForm };
+  return { account, mediator, replicaDid, replicaLongForm };
 }

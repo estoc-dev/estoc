@@ -339,7 +339,6 @@ describe("replica-add", () => {
 
     expect(reply?.type).toBe(REPLICA_ADDED);
     expect(reply?.body).toEqual({
-      replica_id: first.replicaId,
       replica_did: first.replica.did,
       state: "active",
       added_time: expect.any(Number),
@@ -359,13 +358,34 @@ describe("replica-add", () => {
     expect((await roster())?.body.entries).toHaveLength(1);
   });
 
-  it("compares the mediation ID a grant names with nothing, not even another grant's", async () => {
+  it("compares the IDs a grant names with nothing, not even another grant's", async () => {
     await registerAccount();
     const first = await enrollment();
-    const second = await enrollment(account, { mediation_id: uuidv7() });
+    const second = await enrollment(account, {
+      mediation_id: uuidv7(),
+      replica_id: first.replicaId,
+    });
 
     expect((await addReplica(first.grant))?.type).toBe(REPLICA_ADDED);
     expect((await addReplica(second.grant))?.type).toBe(REPLICA_ADDED);
+    expect((await roster())?.body.entries).toHaveLength(2);
+  });
+
+  it("answers another grant for a replica it has with the first addition, and keeps the first grant", async () => {
+    await registerAccount();
+    const first = await enrollment();
+    const original = await addReplica(first.grant);
+    const renamed = await enrollment(account, {
+      replica_did: first.replica.did,
+      replica_long_form: first.replica.longForm,
+    });
+
+    const again = await addReplica(renamed.grant);
+
+    expect(again?.body).toEqual(original?.body);
+    expect(((await roster())?.body.entries as { grant: string }[]).map((entry) => entry.grant)).toEqual([
+      first.grant,
+    ]);
   });
 
   it("enrolls a further replica in the same account", async () => {
@@ -657,21 +677,6 @@ describe("replica-add", () => {
   });
 
   describe("refuses a conflicting identity without changing anything", () => {
-    it("a replica ID bound to another DID, or a DID under another ID", async () => {
-      const first = await enrollment();
-      await addReplica(first.grant);
-
-      const sameId = await enrollment(account, { replica_id: first.replicaId });
-      const sameDid = await enrollment(account, {
-        replica_did: first.replica.did,
-        replica_long_form: first.replica.longForm,
-      });
-
-      await expectProblem(await addReplica(sameId.grant), "identity-conflict");
-      await expectProblem(await addReplica(sameDid.grant), "identity-conflict");
-      expect((await roster())?.body.entries).toHaveLength(1);
-    });
-
     it("a replica another account enrolled, or another account itself", async () => {
       const first = await enrollment();
       await addReplica(first.grant);
@@ -2321,7 +2326,7 @@ describe("replica-remove", () => {
   });
 
   const remove = (replica: Enrollment, speaker: Speaker = known(account)) =>
-    send(speaker, REPLICA_REMOVE, { replica_id: replica.replicaId });
+    send(speaker, REPLICA_REMOVE, { replica_did: replica.replica.did });
 
   const waiting = (replica: Enrollment) => store.deliveriesFor(replica.replica.did, 100);
 
@@ -2340,7 +2345,7 @@ describe("replica-remove", () => {
 
     expect(reply?.type).toBe(REPLICA_REMOVED);
     expect(reply?.body).toEqual({
-      replica_id: first.replicaId,
+      replica_did: first.replica.did,
       state: "removed",
       removed_time: now,
     });
@@ -2368,7 +2373,7 @@ describe("replica-remove", () => {
     ]);
   });
 
-  it("never enrolls the replica's ID or its DID again", async () => {
+  it("never enrolls the replica's DID again, and takes its ID for another", async () => {
     await remove(first);
     const sameDid = await enrollment(account, {
       replica_did: first.replica.did,
@@ -2383,9 +2388,9 @@ describe("replica-remove", () => {
 
     await expectProblem(await enroll(first.grant), "identity-conflict");
     await expectProblem(await enroll(sameDid.grant), "identity-conflict");
-    await expectProblem(await enroll(sameId.grant), "identity-conflict");
     await expectProblem(await enroll(elsewhere.grant, firstContact(other)), "identity-conflict");
     expect(await states()).toEqual(["removed", "active"]);
+    expect((await enroll(sameId.grant))?.type).toBe(REPLICA_ADDED);
   });
 
   it("makes room under the replica limit", async () => {
@@ -2484,7 +2489,7 @@ describe("replica-remove", () => {
       });
       const speaker = owner === account ? known(owner) : firstContact(owner);
       expect((await enroll(former.grant, speaker))?.type).toBe(REPLICA_ADDED);
-      return former;
+      return { ...former, replica: shared };
     };
 
     it("leaves the mail kept for the recipient to the replicas it waits for, whichever account enrolled it", async () => {
@@ -2505,7 +2510,7 @@ describe("replica-remove", () => {
       });
       await enroll(theirs.grant, firstContact(other));
 
-      const reply = await remove(theirs, known(other));
+      const reply = await remove({ ...theirs, replica: elsewhere.recipient }, known(other));
 
       expect(reply?.type).toBe(REPLICA_REMOVED);
       expect(await waiting(first)).toHaveLength(2);
@@ -2527,25 +2532,34 @@ describe("replica-remove", () => {
     });
   });
 
-  it("refuses an ID the account never enrolled, another account's included", async () => {
+  it("takes the replica in either spelling", async () => {
+    const reply = await send(known(account), REPLICA_REMOVE, {
+      replica_did: first.replica.longForm,
+    });
+
+    expect(reply?.body.replica_did).toBe(first.replica.did);
+    expect(await states()).toEqual(["removed", "active"]);
+  });
+
+  it("refuses a DID the account never enrolled, another account's included", async () => {
     const other = await peer4Agent(null);
     const theirs = await enrollment(other);
     await enroll(theirs.grant, firstContact(other));
 
     await expectProblem(await remove(theirs), "unknown-replica");
     await expectProblem(
-      await send(known(account), REPLICA_REMOVE, { replica_id: uuidv7() }),
+      await send(known(account), REPLICA_REMOVE, { replica_did: account.did }),
       "unknown-replica"
     );
     expect(await store.replicaState(theirs.replica.did)).toBe("active");
   });
 
-  it("refuses a body that is not exactly a replica ID", async () => {
+  it("refuses a body that is not exactly a replica DID", async () => {
     for (const body of [
       {},
-      { replica_id: 1 },
+      { replica_did: 1 },
       { replica_id: first.replicaId, replica_did: first.replica.did },
-      { replica_did: first.replica.did },
+      { replica_id: first.replicaId },
     ]) {
       await expectProblem(await send(known(account), REPLICA_REMOVE, body), "invalid-message");
     }
@@ -2673,7 +2687,6 @@ describe("account-delete", () => {
     await deleteAccount();
     const other = await peer4Agent(null);
     const moved = await enrollment(other, {
-      replica_id: first.replicaId,
       replica_did: first.replica.did,
       replica_long_form: first.replica.longForm,
     });
