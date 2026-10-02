@@ -7,9 +7,11 @@
  * grant, once, for every replica to read. That this replica was added
  * is this runtime's alone to know and is kept beside the vault, where
  * no snapshot carries it: a copy of the vault running elsewhere is
- * another replica and enrolls itself. Both requests answer a repeat as
- * they answered the first time, so a confirmation that was lost, or
- * never written, costs one more request and changes nothing.
+ * another replica and enrolls itself. While the account and the replica
+ * stand at the mediator, both requests answer a repeat as they answered
+ * the first time, so a confirmation that was lost, or never written,
+ * costs one more request and changes nothing. A replica the mediator
+ * has removed is refused for good: the runtime needs a new replica ID.
  */
 
 import { isJsonObject, type JsonValue, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
@@ -33,7 +35,7 @@ import { sameDid } from "./same-did.js";
  */
 export type Confirmations = Pick<LocalOptions, "get" | "set">;
 
-/** Confirmations kept for as long as the process lives: every restart asks the mediator again, which changes nothing there. */
+/** Confirmations kept for as long as the returned object is: whoever starts with a new one asks the mediator again, which changes nothing there. */
 export function transientConfirmations(): Confirmations {
   const kept = new Map<string, JsonValue>();
   return {
@@ -101,9 +103,11 @@ export interface Enrolled {
  * link's mediator, neither retired nor in conflict. Only the runtime's
  * own replica is ever added: another member's grant in the vault is
  * that member's to enroll with. Runs as the account's one procedure at
- * a time.
+ * a time. `proceed` is called before each request is begun and stops
+ * the enrollment there by throwing: what an answered request settled
+ * is recorded first.
  */
-export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<Enrolled> {
+export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId, proceed: () => void = () => {}): Promise<Enrolled> {
   return serially(runtime, mediationId, async () => {
     const steps: EnrollStep[] = [];
     const replicaId: ReplicaId = runtime.author;
@@ -115,6 +119,7 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
     fold = await scanVault(runtime.vault, keys);
     let mediation = accountOf(fold, mediationId);
     if (mediation.routingDid === null) {
+      proceed();
       const registered = await control(link, ACCOUNT_REGISTER, { mediation_id: mediationId }, ACCOUNT_REGISTERED);
       if (!echoes(registered, "account", mediation.me.did) || registered.body["mediation_id"] !== mediationId || !echoes(registered, "routing_did", mediation.mediatorDid)) {
         throw new MediatorRefused("account-registered names another account, arrangement or routing DID than the one asked for");
@@ -131,6 +136,7 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
     const key = replicaAddedKey(mediationId, replicaId);
     const kept = await confirmations.get(key);
     if (!(isJsonObject(kept) && kept["replicaDid"] === replica.did)) {
+      proceed();
       const added = await control(link, REPLICA_ADD, { grant: replica.grants[0] as string }, REPLICA_ADDED);
       if (added.body["replica_id"] !== replicaId || !echoes(added, "replica_did", replica.did) || added.body["state"] !== "active") {
         throw new MediatorRefused("replica-added names another replica than the one asked for, or one that is not active");

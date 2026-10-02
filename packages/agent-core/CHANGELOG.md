@@ -15,7 +15,10 @@
   runtime's local options serve (`AgentOptions.confirmations`): it is
   this runtime's knowledge and no vault event, and a replica whose
   confirmation is kept is not added again. A refusal or an answer
-  naming something else is `MediatorRefused` and records nothing.
+  naming something else is `MediatorRefused` and records nothing. `enroll`
+  takes a `proceed` called before each request is begun: an agent that
+  was closed begins none, and what an answered request settled is still
+  recorded.
 - **A connection enrolls a replica-mediation arrangement** (behaviour
   change): `Agent.connect` reconciles no recipients and picks up
   nothing over such an arrangement, whose account holds no queue, and

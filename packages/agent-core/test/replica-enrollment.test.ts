@@ -204,4 +204,57 @@ describe("a replica-mediation arrangement", () => {
     expect(sent(mediator, RECIPIENT_QUERY)).toBe(0);
     await p.runtime.close();
   });
+
+  it("records the registration answered after the agent closed, and begins no replica-add", async () => {
+    const mediator = await newMediator();
+    const p = await account(mediator);
+    const answered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const held: typeof fetch = async (...request) => {
+      const response = await (p.linkOptions.fetch as typeof fetch)(...request);
+      answered.resolve();
+      await released.promise;
+      return response;
+    };
+    const agent = await Agent.open(p, { didcomm, fetch: held, WebSocket: mediator.WebSocket, trace: p.trace });
+    const enrolling = agent.enroll(p.mediationId);
+    await answered.promise;
+    agent.close();
+    released.resolve();
+    await expect(enrolling).rejects.toThrow("the agent is closed");
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
+    expect((await fold(p)).mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
+    await expect(agent.enroll(p.mediationId)).rejects.toThrow("the agent is closed");
+    await p.runtime.close();
+  });
+
+  it("begins no replica-add for a connection its agent closed while it looked for the confirmation", async () => {
+    const mediator = await newMediator();
+    const p = await account(mediator);
+    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace };
+    const first = await Agent.open(p, options);
+    await first.enroll(p.mediationId);
+    first.close();
+    await selectMediation(p.runtime, p.keys, p.mediationId);
+
+    const asked = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const slow: Confirmations = {
+      get: async () => {
+        asked.resolve();
+        await released.promise;
+        return undefined;
+      },
+      set: async () => {},
+    };
+    const agent = await Agent.open(p, { ...options, confirmations: slow });
+    const connecting = agent.connect();
+    await asked.promise;
+    agent.close();
+    released.resolve();
+    const [connection] = await connecting;
+    expect(connection?.enrolled).toBeNull();
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
+    await p.runtime.close();
+  });
 });

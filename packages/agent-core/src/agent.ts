@@ -81,7 +81,7 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
   trace: AgentTrace;
-  /** where what a replica-mediation mediator confirmed is kept, the runtime's local options for one; left out, it is kept until the agent's process ends and asked for again after */
+  /** where what a replica-mediation mediator confirmed is kept, the runtime's local options for one; left out, it is kept by this agent alone, and the next one asks again */
   confirmations?: Confirmations;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
@@ -152,8 +152,7 @@ export interface Submitted extends Sent {
 interface Line {
   link: MediatorLink;
   pickup: Pickup;
-  /** whether the arrangement is a replica-mediation account */
-  replicas: boolean;
+  replicaMediation: boolean;
 }
 
 export class Agent {
@@ -255,11 +254,13 @@ export class Agent {
   /**
    * This runtime enrolled in a replica-mediation arrangement: its
    * account registered when the fold has no grant, its own replica
-   * added when no confirmation is kept. Throws what `enroll` throws.
+   * added when no confirmation is kept. Throws what `enroll` throws,
+   * and begins no request once the agent is closed.
    */
   async enroll(mediationId: MediationId): Promise<Enrolled> {
+    this.refuseClosed();
     const { link } = await this.lineOf(mediationId);
-    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
+    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => this.refuseClosed());
     this.connectionOf(mediationId).enrolled = enrolled;
     await this.localStateChanged();
     this.linesChanged();
@@ -419,8 +420,10 @@ export class Agent {
     try {
       const line = await this.lineOf(mediationId);
       const { link, pickup } = line;
-      if (line.replicas) {
-        const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
+      if (line.replicaMediation) {
+        const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => {
+          if (!stands()) throw new Error("the connection was given up");
+        });
         if (!stands()) return this.shown(connection);
         connection.enrolled = enrolled;
       } else {
@@ -563,7 +566,7 @@ export class Agent {
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const link = new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets: () => this.ring.secrets(), me: mediation.me.did, mediatorDid: mediation.mediatorDid, mediatorDoc, timeoutMs, log });
     const pickup = new Pickup(link, this.handleOf(mediationId), { log });
-    const line: Line = { link, pickup, replicas: mediation.profile !== null };
+    const line: Line = { link, pickup, replicaMediation: mediation.profile !== null };
     const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;
     this.wires.set(mediationId, line);
