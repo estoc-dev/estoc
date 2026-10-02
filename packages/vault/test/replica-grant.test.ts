@@ -179,6 +179,44 @@ describe("verifyReplicaGrant", () => {
     await expect(verifyReplicaGrant(keys, await signed(payloadOf(own), key, `${custom}#key-1`), custom)).rejects.toThrow(IdentityMismatch);
   });
 
+  it("signs under, and takes kid from, only a method whose type and encoding a mediator reads an Ed25519 key from", async () => {
+    const { authentication, keyAgreement } = await keys.mediationKeys(MEDIATION);
+    const jwk = { kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(authentication.publicKeyBytes()) };
+    const accountWith = (...methods: Record<string, unknown>[]) =>
+      encodeLongForm({
+        "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"],
+        verificationMethod: [...methods, { id: "#agreement", type: "Multikey", publicKeyMultibase: keyAgreement.publicKey }],
+        authentication: methods.map((method) => method["id"] as string),
+        keyAgreement: ["#agreement"],
+      }) as Did;
+    const multibase = (id: string, type: string) => ({ id, type, publicKeyMultibase: authentication.publicKey });
+
+    for (const readable of [multibase("#key", "Multikey"), multibase("#key", "Ed25519VerificationKey2020"), { id: "#key", type: "JsonWebKey2020", publicKeyJwk: jwk }]) {
+      const account = accountWith(readable);
+      const jws = await signReplicaGrant(keys, { ...mediation, me: { did: account } }, REPLICA);
+      await expect(verifyReplicaGrant(keys, jws, account)).resolves.toMatchObject({ kid: `${account}#key` });
+    }
+
+    for (const unreadable of [
+      multibase("#key", "JsonWebKey2020"),
+      multibase("#key", "Ed25519VerificationKey2018"),
+      multibase("#key", "UnknownKeyType"),
+      { id: "#key", type: "Multikey", publicKeyJwk: jwk },
+      { id: "#key", type: "Ed25519VerificationKey2020", publicKeyJwk: jwk },
+    ]) {
+      const account = accountWith(unreadable);
+      await expect(signReplicaGrant(keys, { ...mediation, me: { did: account } }, REPLICA)).rejects.toThrow(/no authentication method/);
+      const payload = { ...payloadOf(await signReplicaGrant(keys, mediation, REPLICA)), account: peerResolution(account).did };
+      await expect(verifyReplicaGrant(keys, await signed(payload, authentication, `${account}#key`), account)).rejects.toThrow(/no authentication method/);
+    }
+
+    const both = accountWith(multibase("#legacy", "Ed25519VerificationKey2018"), multibase("#key-1", "Multikey"));
+    const jws = await signReplicaGrant(keys, { ...mediation, me: { did: both } }, REPLICA);
+    expect(decodeProtectedHeader(jws).kid).toBe(`${both}#key-1`);
+    await expect(verifyReplicaGrant(keys, jws, both)).resolves.toEqual(readReplicaGrant(jws));
+    await expect(verifyReplicaGrant(keys, await signed(payloadOf(jws), authentication, `${both}#legacy`), both)).rejects.toThrow(/no authentication method/);
+  });
+
   it("refuses a replica the seed does not derive for that ID, or one that sends elsewhere than the grant's mediator", async () => {
     const account = (await keys.mediationKeys(MEDIATION)).authentication;
     const jws = await signReplicaGrant(keys, mediation, REPLICA);

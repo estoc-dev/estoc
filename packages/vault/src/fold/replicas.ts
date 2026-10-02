@@ -103,7 +103,7 @@ export function foldReplicas(set: VaultEventSet, options: ReplicaFoldOptions = {
 }
 
 /**
- * Each replica whose grants agree and whose arrangement has one creation, checked against the seed: did the
+ * Each replica whose grants agree and whose arrangement has one consistent creation, checked against the seed: did the
  * account that creation records sign every grant, and is the replica they name the one the seed derives?
  */
 export async function verifyReplicaGrants(keys: Keys, set: VaultEventSet): Promise<Map<ReplicaId, KeyCheck>> {

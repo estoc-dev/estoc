@@ -279,10 +279,16 @@ export function authorizedMethodIds(document: JsonObject, relationship: Verifica
   return [...ids];
 }
 
-/** The canonical public key of the method the document defines under an absolute ID. */
-export function methodPublicKey(document: JsonObject, id: DidUrl): PublicKey {
+/** The method the document defines under an absolute ID, as the exact retained entry. */
+export function definedMethod(document: JsonObject, id: DidUrl): JsonObject {
   const method = definedMethods(document, documentId(document)).get(id);
   if (method === undefined) throw new InvalidDidDocument(`the document defines no verification method ${id}`);
+  return method;
+}
+
+/** The canonical public key of the method the document defines under an absolute ID. */
+export function methodPublicKey(document: JsonObject, id: DidUrl): PublicKey {
+  const method = definedMethod(document, id);
   const multibase = method["publicKeyMultibase"];
   const jwk = method["publicKeyJwk"];
   const key = typeof multibase === "string" && jwk === undefined ? multibase : isJsonObject(jwk) && multibase === undefined ? jwk : null;

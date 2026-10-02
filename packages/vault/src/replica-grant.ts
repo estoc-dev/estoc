@@ -5,23 +5,25 @@
  * and every other holder of the seed takes the membership from it
  * without asking the mediator. It is a compact JWS whose protected
  * header is exactly `alg: EdDSA`, `typ` and a `kid` naming an
- * authentication method of the account, over the RFC 8785 text of
- * exactly the six members of `GrantPayload`.
+ * authentication method of the account that a mediator reads an
+ * Ed25519 key from, over the RFC 8785 text of exactly the six members
+ * of `GrantPayload`.
  *
  * Reading a grant checks its spelling only. The signature, that `kid`
  * is a method the account authorizes, and that the replica it names is
  * this seed's, are `verifyReplicaGrant`'s.
  */
 
-import { InvalidJson, canonicalText, isJsonObject } from "@estoc/event-store";
+import { InvalidJson, canonicalText, isJsonObject, type JsonObject } from "@estoc/event-store";
 import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 import { base64urlnopad } from "@scure/base";
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
 import { checkReplicaKeys, mintReplicaDid, type Keys, type LocalKey } from "./identity.js";
-import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl } from "./peer-document.js";
+import { authorizedMethodIds, definedMethod, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl } from "./peer-document.js";
+import { decodePublicKey } from "./public-key.js";
 import { isCompactJwt, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
-import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
+import type { Did, DidUrl, MediationId, PublicKey, ReplicaId } from "./types.js";
 
 export const REPLICA_GRANT_TYP = "estoc/replica-grant+jws";
 
@@ -122,6 +124,25 @@ export function sameBinding(a: ReplicaGrant, b: ReplicaGrant): boolean {
   return a.account === b.account && a.mediationId === b.mediationId && a.mediator === b.mediator && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
 }
 
+/** The method types a mediator reads an Ed25519 key from when the method spells it as a multibase value. */
+const MULTIBASE_SIGNING_TYPES: ReadonlySet<unknown> = new Set(["Multikey", "Ed25519VerificationKey2020"]);
+
+/**
+ * The Ed25519 key a mediator verifies a grant with when `kid` names
+ * this authentication method, or null when it would refuse the method:
+ * it reads a multibase value only under `Multikey` or
+ * `Ed25519VerificationKey2020` and a JWK only under `JsonWebKey2020`,
+ * so the same key under any other type signs grants no mediator takes.
+ */
+function signingKey(document: JsonObject, methodId: DidUrl): PublicKey | null {
+  if (!authorizedMethodIds(document, "authentication").includes(methodId)) return null;
+  const method = definedMethod(document, methodId);
+  const readable = method["publicKeyJwk"] === undefined ? MULTIBASE_SIGNING_TYPES.has(method["type"]) : method["type"] === "JsonWebKey2020";
+  if (!readable) return null;
+  const key = methodPublicKey(document, methodId);
+  return decodePublicKey(key).type === "Ed25519" ? key : null;
+}
+
 const publicJwk = (key: LocalKey) => ({ kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(key.publicKeyBytes()) });
 
 /** The arrangement a grant is signed for: what its `mediation.created` records. */
@@ -131,14 +152,15 @@ export type GrantingMediation = { mediationId: MediationId; mediatorDid: Did; me
  * The grant of one replica in a replica-mediation arrangement, signed
  * with the account key the seed derives for it. The replica's DID is
  * the one its ID and the arrangement's mediator give, and `kid` is the
- * method of the account's own document that carries the key, under the
- * long form, so that the grant verifies wherever it is carried.
+ * first method of the account's own document that a mediator reads the
+ * key from, under the long form, so that the grant verifies wherever it
+ * is carried.
  */
 export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation, replicaId: ReplicaId): Promise<string> {
   const account = peerResolution(mediation.me.did);
   const key = (await keys.mediationKeys(mediation.mediationId)).authentication;
-  const methodId = authorizedMethodIds(account.document, "authentication").find((id) => splitDidUrl(id)[0] === account.presentedDid && methodPublicKey(account.document, id) === key.publicKey);
-  if (methodId === undefined) throw new IdentityMismatch(`mediation ${mediation.mediationId} authorizes no authentication method carrying the key the seed derives`);
+  const methodId = authorizedMethodIds(account.document, "authentication").find((id) => splitDidUrl(id)[0] === account.presentedDid && signingKey(account.document, id) === key.publicKey);
+  if (methodId === undefined) throw new IdentityMismatch(`mediation ${mediation.mediationId} authorizes no authentication method a mediator reads the key the seed derives from`);
   const replica = await mintReplicaDid(keys, replicaId, mediation.mediatorDid);
   const payload: GrantPayload = {
     account: account.did,
@@ -157,8 +179,9 @@ export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation,
  * A grant against the seed and the account its arrangement's creation
  * records, by that record's long form: the grant's account is that
  * one, `kid` names, under either spelling of the account, a method its
- * document authorizes for authentication and that carries the account
- * key the seed derives for the grant's arrangement, the signature is
+ * document authorizes for authentication and that a mediator reads the
+ * account key the seed derives for the grant's arrangement from, the
+ * signature is
  * that key's, and the replica's document carries the keys the seed
  * derives for the replica's ID and sends to the grant's mediator
  * alone. `InvalidReplicaGrant`, `IdentityMismatch` or
@@ -173,8 +196,8 @@ export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Di
   if (signer !== account.did && signer !== account.presentedDid) throw new InvalidReplicaGrant("kid spells the account as its short form or its recorded long form");
   const methodId = `${account.presentedDid}${fragment}` as DidUrl;
   const key = (await keys.mediationKeys(grant.mediationId)).authentication;
-  if (!authorizedMethodIds(account.document, "authentication").includes(methodId) || methodPublicKey(account.document, methodId) !== key.publicKey) {
-    throw new IdentityMismatch(`kid names no authentication method of the account carrying the key the seed derives for mediation ${grant.mediationId}`);
+  if (signingKey(account.document, methodId) !== key.publicKey) {
+    throw new IdentityMismatch(`kid names no authentication method of the account a mediator reads the key the seed derives for mediation ${grant.mediationId} from`);
   }
   try {
     await compactVerify(jws, await importJWK(publicJwk(key), "EdDSA"), { algorithms: ["EdDSA"] });

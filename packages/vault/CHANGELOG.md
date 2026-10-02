@@ -15,7 +15,10 @@
   `signReplicaGrant`, `readReplicaGrant`, `verifyReplicaGrant` and
   `sameBinding` are the grant, which is at most `MAX_GRANT_JWS_CHARS`
   long and whose `kid` must name an authentication method of the account
-  document the arrangement's creation records. Membership is read from
+  document the arrangement's creation records, of a type and key
+  encoding a mediator reads an Ed25519 key from (`Multikey` or
+  `Ed25519VerificationKey2020` with a multibase value, `JsonWebKey2020`
+  with a JWK). Membership is read from
   that creation (`mediationCreations`) and does not follow the
   arrangement's routing grants or retirement. Nothing enrolls or picks up yet: this is
   the vault's side of the contract only. A reader older than this

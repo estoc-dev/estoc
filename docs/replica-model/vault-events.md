@@ -728,7 +728,11 @@ another DID.
 `grant` is the compact JWS the mediator's `replica-add` takes. Its protected
 header is exactly `alg: "EdDSA"`, `typ: "estoc/replica-grant+jws"` and `kid`,
 a DID URL naming an authentication method of the account under either spelling
-of the account DID. Its payload is the
+of the account DID. The method is one a mediator reads an Ed25519 key from:
+type `Multikey` or `Ed25519VerificationKey2020` with that key as its
+`publicKeyMultibase`, or type `JsonWebKey2020` with it as a public OKP
+`publicKeyJwk`. A signer chooses no other method, even one carrying the same
+key. Its payload is the
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly these
 string members:
 
@@ -983,7 +987,9 @@ one binding is a member of its arrangement when all of these hold:
 - the grant's `kid` spells the account as its short form or as exactly the
   long form that creation records, and its fragment names a method which that
   long form's document authorizes for authentication and which carries the
-  authentication key the seed derives for `mediation/<mediationId>/me`;
+  authentication key the seed derives for `mediation/<mediationId>/me` under
+  one of the [type and encoding pairs a grant's `kid` may name](#replica-created):
+  the same key under any other type is a grant no mediator takes;
 - the grant's signature verifies under that key; and
 - the replica's document carries the keys the seed derives for
   `replica/<replicaId>/me` and names that mediator as its only DIDComm service.
@@ -3172,4 +3178,4 @@ derivation requires a new vault version.
 
 - <a id="ve-160"></a> **VE-160.** replica.created has exactly replicaId, mediationId and grant, with empty roots. The grant's protected header is exactly alg EdDSA, the grant typ and a kid naming a method of the account; its payload is its own RFC 8785 text of exactly the six string members, with UUIDv7 IDs equal to the event's, a short-form account, a replica DID other than the account and that DID's long form, no DID over 8192 bytes and no more than 16384 characters in all. Anything else, a payload that is not I-JSON included, is an invalid payload and leaves the events around it readable.
 
-- <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.
+- <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives as a Multikey or Ed25519VerificationKey2020 multibase value or a JsonWebKey2020 JWK, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.
