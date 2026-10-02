@@ -12,7 +12,11 @@
  * arrangement's recipients with its mediator and picks up what it
  * holds, by the ordinary pickup of the account; a replica-mediation
  * arrangement is enrolled in instead and its addresses added to its
- * account, which holds no queue.
+ * account, which holds no queue: its mail waits for each replica, and
+ * is picked up, acknowledged and pushed under this runtime's own
+ * replica DID. An envelope naming that DID and no communication DID
+ * of the vault is no application mail and is acknowledged unopened,
+ * since no protocol addressed to a replica is supported.
  *
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
@@ -39,9 +43,9 @@
  * dispatching nothing.
  */
 
-import type { DIDDoc } from "@estoc/did-peer";
+import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
-import { requiredReceivingSet, scanVault, type Did, type DidId, type Keys, type MediationId } from "@estoc/vault";
+import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, type Did, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
 
 import { LiveInput, type LiveAction } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
@@ -50,7 +54,7 @@ import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
-import { Keyring } from "./keyring.js";
+import { Keyring, secretsOf } from "./keyring.js";
 import { MediatorLink } from "./link.js";
 import { establish, mediationOf, reconcile, watchUnknownRegistrations, type Established, type Reconciled } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
@@ -115,7 +119,7 @@ export interface Connection {
   /** why the last connection stopped short; null when it ran through */
   unreachable: string | null;
   reconciled: Reconciled | null;
-  /** this runtime's enrollment, for a replica-mediation arrangement: such a line reconciles and drains nothing, since its account holds no queue */
+  /** this runtime's enrollment, for a replica-mediation arrangement: such a line reconciles nothing, and what it drains is the replica's own queue */
   enrolled: Enrolled | null;
   /** the addresses the last connection had a replica-mediation account hold */
   recipients: RecipientsAdded | null;
@@ -153,10 +157,23 @@ export interface Submitted extends Sent {
   dispatched: Called;
 }
 
-interface Line {
+interface Inbox {
   link: MediatorLink;
   pickup: Pickup;
+}
+
+interface Line {
+  /** speaks as the arrangement's own DID: its account */
+  link: MediatorLink;
+  /**
+   * The account's own queue over `link`, for an ordinary arrangement.
+   * A replica-mediation account holds none: its mail is picked up as
+   * this runtime's replica, over a link of that DID, which there is
+   * none of until the vault has the replica's creation.
+   */
+  inbox: Inbox | null;
   replicaMediation: boolean;
+  linkAs: (me: string, secrets: () => Secret[]) => MediatorLink;
 }
 
 export class Agent {
@@ -205,9 +222,9 @@ export class Agent {
       didcomm,
       receipt: receiptOf(runtime, keys),
       acknowledge: async ({ mediationId, deliveryId }) => {
-        const line = lines.get(mediationId);
-        if (line === undefined) throw new Error(`no line to the mediator of ${mediationId}`);
-        await line.pickup.acknowledge([deliveryId]);
+        const inbox = lines.get(mediationId)?.inbox ?? null;
+        if (inbox === null) throw new Error(`no line to the mediator of ${mediationId}`);
+        await inbox.pickup.acknowledge([deliveryId]);
       },
       admit,
       maxWaiting,
@@ -354,7 +371,7 @@ export class Agent {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const { link } of this.wires.values()) link.closeSocket();
+    for (const { inbox } of this.wires.values()) inbox?.link.closeSocket();
     for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
     this.sockets.clear();
     this.dispatcher.close();
@@ -395,7 +412,7 @@ export class Agent {
   }
 
   private shown(connection: Connection): Connection {
-    return { ...connection, unknownRegistrations: [...connection.unknownRegistrations], live: this.wires.get(connection.mediationId)?.link.live ?? false };
+    return { ...connection, unknownRegistrations: [...connection.unknownRegistrations], live: this.wires.get(connection.mediationId)?.inbox?.link.live ?? false };
   }
 
   private connectionOf(mediationId: MediationId): Connection {
@@ -423,7 +440,7 @@ export class Agent {
     const stands = (): boolean => !this.closed && this.begun.get(mediationId) === attempt;
     try {
       const line = await this.lineOf(mediationId);
-      const { link, pickup } = line;
+      const { link } = line;
       if (line.replicaMediation) {
         const proceed = (): void => {
           if (!stands()) throw new Error("the connection was given up");
@@ -434,15 +451,19 @@ export class Agent {
         const recipients = await addRecipients(link, this.runtime, this.keys, this.confirmations, mediationId, proceed);
         if (!stands()) return this.shown(connection);
         connection.recipients = recipients;
+        await this.pickUpAs(mediationId, line, enrolled.replica);
+        if (!stands()) return this.shown(connection);
       } else {
         const reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
         if (!stands()) return this.shown(connection);
         connection.reconciled = reconciled;
-        const drained = await pickup.drain();
-        if (!stands()) return this.shown(connection);
-        connection.drained = drained;
-        if (this.keepsLive() && !link.live) this.openSocket(mediationId, line);
       }
+      const inbox = line.inbox;
+      if (inbox === null) throw new Error(`the arrangement ${mediationId} has no queue to pick up`);
+      const drained = await inbox.pickup.drain();
+      if (!stands()) return this.shown(connection);
+      connection.drained = drained;
+      if (this.keepsLive() && !inbox.link.live) this.openSocket(mediationId, inbox);
       connection.unreachable = null;
     } catch (err) {
       if (!stands()) return this.shown(connection);
@@ -462,7 +483,7 @@ export class Agent {
    * status of a socket that is gone says nothing of the one that
    * followed it.
    */
-  private openSocket(mediationId: MediationId, { link, pickup }: Line): void {
+  private openSocket(mediationId: MediationId, { link, pickup }: Inbox): void {
     const socket = Symbol();
     this.sockets.set(mediationId, socket);
     link.openSocket(
@@ -572,14 +593,33 @@ export class Agent {
     const mediatorDoc = await resolveDid(mediation.mediatorDid);
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
-    const link = new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets: () => this.ring.secrets(), me: mediation.me.did, mediatorDid: mediation.mediatorDid, mediatorDoc, timeoutMs, log });
-    const pickup = new Pickup(link, this.handleOf(mediationId), { log });
-    const line: Line = { link, pickup, replicaMediation: mediation.profile !== null };
+    const { mediatorDid } = mediation;
+    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log });
+    const link = linkAs(mediation.me.did, () => this.ring.secrets());
+    const replicaMediation = mediation.profile !== null;
+    const line: Line = { link, inbox: replicaMediation ? null : { link, pickup: new Pickup(link, this.handleOf(mediationId), { log }) }, replicaMediation, linkAs };
     const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;
     this.wires.set(mediationId, line);
     watchUnknownRegistrations(link, (unknown) => this.keepUnknown(mediationId, unknown));
     return line;
+  }
+
+  /**
+   * The line's queue made the replica's own, once: a link speaking as
+   * the replica's DID with that DID's keys alone, under both its
+   * spellings, since the mediator seals what it pushes to the short
+   * form. A replica's binding never changes, so neither does the link.
+   */
+  private async pickUpAs(mediationId: MediationId, line: Line, replica: Replica): Promise<void> {
+    if (line.inbox !== null) return;
+    const { did, longFormDid } = replica;
+    if (did === null || longFormDid === null) throw new Error(`the replica ${replica.replicaId} has no DID to pick up as`);
+    const { document } = peerResolution(longFormDid);
+    const secrets = secretsOf(await this.keys.replicaKeys(replica.replicaId), [longFormDid, did], { authentication: authorizedMethodIds(document, "authentication"), keyAgreement: authorizedMethodIds(document, "keyAgreement") });
+    if (line.inbox !== null) return;
+    const link = line.linkAs(longFormDid, () => secrets);
+    line.inbox = { link, pickup: new Pickup(link, this.handleOf(mediationId), { log: this.options.log }) };
   }
 
   /** The receiver's pickup handle: a delivery's local work done in its turn, before the mediator is told of it, and its calls run off the turn. */

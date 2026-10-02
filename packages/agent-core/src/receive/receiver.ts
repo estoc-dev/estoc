@@ -2,8 +2,10 @@
  * Every delivery this runtime is handed — an attachment the mediator
  * delivered, or an envelope posted straight to it — goes through one
  * gate before anything reaches the vault. The recipients it names
- * decide first: a delivery this vault may never open is terminal, one
- * waiting on something recoverable of this runtime's is held. It is
+ * decide first: a delivery this vault may never open is terminal, as
+ * is one naming this runtime's replica DID and no communication
+ * DID of the vault; one waiting on something recoverable of this
+ * runtime's is held. It is
  * then opened with the one key it may be opened with, its sender read
  * from what the vault holds and nothing else, and what the envelope
  * proves checked; what passes goes to the receipt, which records it as
@@ -373,7 +375,7 @@ export class Receiver {
     this.refuseClosed();
     const header = envelopeHeader(delivery.packed);
     if (header.kind !== "authcrypt" && header.kind !== "anoncrypt") return this.finish(key, delivery, `not an envelope encrypted to its recipients (${header.kind})`);
-    const recipients = classifyRecipients(fold, header.kids ?? []);
+    const recipients = classifyRecipients(fold, header.kids ?? [], this.runtime.author);
     if (recipients.verdict === "terminal") return this.finish(key, delivery, recipients.reason);
     if (recipients.verdict === "pending") return defer(recipients.reason, recipientWatch(recipients.waitingOn), fold);
     await this.ring.reload(fold);

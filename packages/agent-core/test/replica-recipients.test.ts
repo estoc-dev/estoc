@@ -8,6 +8,7 @@ import {
   Agent,
   RECIPIENT_ADD,
   REPLICA_ADD,
+  STATUS_REQUEST,
   Unregistered,
   Unusable,
   addRecipients,
@@ -205,7 +206,7 @@ describe("an address of a replica-mediation arrangement", () => {
   it("is added by the agent's connection after the enrollment, and by a disclosure through the agent", async () => {
     const mediator = await newMediator();
     const p = await party(mediator, 1, {}, undefined, PROFILE);
-    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options };
+    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
     const agent = await Agent.open(p, options);
     await agent.enroll(p.mediationId);
     await selectMediation(p.runtime, p.keys, p.mediationId);
@@ -216,7 +217,7 @@ describe("an address of a replica-mediation arrangement", () => {
     await agent.disclose(b.created.data.didId, { as: "direct" });
     expect(mediator.sharedRecipients.has(b.minted.did)).toBe(true);
     agent.close();
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, RECIPIENT_ADD, RECIPIENT_ADD]);
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, RECIPIENT_ADD, STATUS_REQUEST, RECIPIENT_ADD]);
     await p.runtime.close();
   });
 

@@ -22,10 +22,10 @@
   was closed begins none, and what an answered request settled is still
   recorded.
 - **A connection enrolls a replica-mediation arrangement** (behaviour
-  change): `Agent.connect` reconciles no recipients and picks up
-  nothing over such an arrangement, whose account holds no queue, and
-  reports the enrollment as `Connection.enrolled`. `establish` and
-  `reconcile` refuse one with `Unusable` before any request.
+  change): `Agent.connect` reconciles no recipients over such an
+  arrangement and reports the enrollment as `Connection.enrolled`.
+  `establish` and `reconcile` refuse one with `Unusable` before any
+  request.
 - **Replica-mediation recipients**: `addRecipients` sends one
   `recipient-add` for each communication DID bound to a route of a
   replica-mediation arrangement that may still receive, retired ones
@@ -41,6 +41,18 @@
   runtime's confirmations as a last argument and `DispatchOptions` a
   `confirmations`: an address of such an arrangement is disclosed, or
   first used as a sender, only once its account holds it.
+- **Replica-mediation pickup**: the account of a replica-mediation
+  arrangement holds no queue, so `Agent.connect` picks up, acknowledges
+  and keeps live delivery under this runtime's own replica DID, over a
+  second link to the mediator that holds that DID's keys alone, once
+  the enrollment and the recipients are done. Mail forwarded to one of
+  the account's addresses is received as any other.
+  `Connection.drained` and `Connection.live` report that queue and
+  socket. An envelope whose recipients name the replica DID and no
+  communication DID of the vault is terminal, unopened, and
+  acknowledged: no protocol addressed to a replica is supported, so it
+  leaves a discarded-delivery diagnostic and nothing in the vault. `classifyRecipients` takes the
+  runtime's replica ID to tell such an envelope.
 
 ## 0.20.0 — 2026-09-29
 
