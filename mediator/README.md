@@ -283,8 +283,10 @@ in the order it added them, each with its `state`: `active`, or `removed`
 with its `removed_time`. `cursor` is null to begin and then the previous
 `next_cursor`; `limit` is at most `max_membership_page`. One listing is the
 replicas added when it began, and its cursors hold for as long as the account
-exists. Deleting the account ends them: a cursor of a deleted account is
-`invalid-message`, also after its DID registered again.
+exists. Deleting the account ends them: while the DID has no account a
+listing is `unknown-account`, and once it registered again a cursor of the
+deleted account is `invalid-message`. A listing whose cursor is refused
+begins again from null.
 
 **`replica-remove`** ends the enrollment of the replica `replica_did` names,
 in either form. What waited for that

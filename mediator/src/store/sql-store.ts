@@ -273,7 +273,30 @@ export class SqlStore implements MediationStore {
     }
   }
 
+  /*
+   * Another store may align the same tables between the read and the batch,
+   * which then fails on a column that is already there, or already gone, and
+   * changes nothing. A failure after the tables changed is taken for that and
+   * what is left is worked out again; one with the tables as they were read
+   * is the database's own and is thrown.
+   */
   private async alignColumns(): Promise<void> {
+    let created = await this.alignedTables();
+    for (;;) {
+      try {
+        await this.align(created);
+        return;
+      } catch (error) {
+        const now = await this.alignedTables();
+        if ([...now].every(([table, sql]) => created.get(table) === sql)) {
+          throw error;
+        }
+        created = now;
+      }
+    }
+  }
+
+  private async alignedTables(): Promise<Map<string, string>> {
     const [found] = await this.driver.batch([
       {
         sql:
@@ -281,9 +304,12 @@ export class SqlStore implements MediationStore {
           "WHERE type = 'table' AND name IN ('messages', 'replicas', 'replica_accounts')",
       },
     ]);
-    const created = new Map(
+    return new Map(
       (found.rows as { name: string; sql: string }[]).map((row) => [row.name, row.sql])
     );
+  }
+
+  private async align(created: Map<string, string>): Promise<void> {
     await this.driver.batch([
       ...LATER_COLUMNS.filter(({ table, column }) => !created.get(table)?.includes(column)).map(
         ({ table, column, type }) => ({ sql: `ALTER TABLE ${table} ADD COLUMN ${column} ${type}` })

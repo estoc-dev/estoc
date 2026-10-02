@@ -460,3 +460,41 @@ describe("a store that read the old replica mail tables before another store reb
     rmSync(dir, { recursive: true });
   });
 });
+
+describe("two stores that both read tables from before registrations were named", () => {
+  it("each answer their first request, with the one registration the account was given", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const account = "did:example:account";
+    const mediator = "did:example:mediator";
+    const early = new SqliteStore(path);
+    await early.registerReplicaAccount({
+      accountDid: account,
+      accountLongForm: "long",
+      mediator,
+      create: true,
+    });
+    early.close();
+    const old = new Database(path);
+    old.exec("ALTER TABLE replica_accounts DROP COLUMN registration");
+    old.close();
+
+    const late = new HeldDriver(
+      path,
+      ([statement]) => statement.sql.includes("sqlite_master") && statement.sql.includes("'messages'")
+    );
+    const lateStore = new SqlStore(late);
+    const store = new SqlStore(new HeldDriver(path));
+    const lateRead = lateStore.replicaRoster(account, mediator, 0, null, 1);
+    await late.whenHeld();
+
+    const given = (await store.replicaRoster(account, mediator, 0, null, 1))?.registration;
+    expect(given).toEqual(expect.any(String));
+
+    late.release();
+    expect((await lateRead)?.registration).toBe(given);
+    lateStore.close();
+    store.close();
+    rmSync(dir, { recursive: true });
+  });
+});
