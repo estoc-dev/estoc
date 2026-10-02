@@ -5,7 +5,8 @@ import type { Secret } from "@estoc/did-peer";
 import bs58 from "bs58";
 import { base64urlToBytes } from "@estoc/did-peer";
 import type { DerivedIdentity } from "@estoc/keystore";
-import { readReplicaGrant } from "@estoc/vault";
+import { RECIPIENT_PROOF_TYP, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, splitDidUrl, type Did, type DidUrl } from "@estoc/vault";
+import { base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 
 import {
   ACCOUNT_REGISTER,
@@ -19,6 +20,8 @@ import {
   MESSAGES_RECEIVED,
   PLAIN_TYP,
   RECIPIENT,
+  RECIPIENT_ADD,
+  RECIPIENT_ADDED,
   RECIPIENT_QUERY,
   RECIPIENT_UPDATE,
   RECIPIENT_UPDATE_RESPONSE,
@@ -34,7 +37,8 @@ import { canonicalDid, sameDid } from "../src/same-did.js";
 /**
  * A mediator that lives inside the test: coordinate-mediation 3.0,
  * messagepickup 3.0 (HTTP and a fake WebSocket), routing 2.0 forward,
- * and the account-register and replica-add controls of replica-mediation.
+ * and the account-register, replica-add and recipient-add controls of
+ * replica-mediation.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -117,6 +121,21 @@ export class FakeSocket {
   }
 }
 
+/** Did `recipientDid`'s own authentication key sign `proof` for exactly this account and mediator? The key is read from `longForm`. */
+async function provesRecipient(proof: string, recipientDid: string, longForm: string, account: string, mediator: string): Promise<boolean> {
+  try {
+    const recipient = peerResolution(longForm as Did);
+    const { alg, typ, kid } = decodeProtectedHeader(proof);
+    if (recipient.did !== recipientDid || alg !== "EdDSA" || typ !== RECIPIENT_PROOF_TYP || canonicalDid(splitDidUrl(kid as DidUrl)[0]) !== recipientDid) return false;
+    const key = decodePublicKey(methodPublicKey(recipient.document, kid as DidUrl));
+    const { payload } = await compactVerify(proof, await importJWK({ kty: "OKP", crv: "Ed25519", x: base64url.encode(key.bytes) }, "EdDSA"));
+    const said = JSON.parse(new TextDecoder().decode(payload)) as Record<string, unknown>;
+    return Object.keys(said).sort().join() === "account,aud,recipient" && said["account"] === account && sameDid(said["aud"] as string, mediator) && said["recipient"] === recipientDid;
+  } catch {
+    return false;
+  }
+}
+
 export class FakeMediator {
   readonly did: string;
   readonly secrets: Secret[];
@@ -134,6 +153,10 @@ export class FakeMediator {
   readonly replicaAccounts = new Set<string>();
   /** the replicas added, by replica DID: the account and the grant each was added with */
   readonly replicas = new Map<string, { account: string; replicaDid: string; grant: string }>();
+  /** the communication DIDs replica-mediation accounts hold: recipient DID → account, both by short form */
+  readonly sharedRecipients = new Map<string, string>();
+  /** recipient DIDs every recipient-add of which is answered `quota` */
+  readonly refuseShared = new Set<string>();
   readonly queues = new Map<string, Queued[]>();
   private readonly sockets = new Map<string, FakeSocket>();
   /** every plaintext type the mediator handled, in order — for assertions */
@@ -303,6 +326,16 @@ export class FakeMediator {
         if (added !== undefined && added.account !== account) return this.refused(from as string, "identity-conflict", msg.id);
         this.replicas.set(grant.replicaDid, { account, replicaDid: grant.replicaDid, grant: jws });
         return this.reply(REPLICA_ADDED, from as string, { replica_did: grant.replicaDid, state: "active", added_time: 1 }, msg.id);
+      }
+      case RECIPIENT_ADD: {
+        const account = canonicalDid(from as string);
+        if (!this.replicaAccounts.has(account)) return this.refused(from as string, "unknown-account", msg.id);
+        const { recipient_did: recipient, resolution_material: longForm, proof } = msg.body as { recipient_did: string; resolution_material: string; proof: string };
+        if (!(await provesRecipient(proof, recipient, longForm, account, this.did))) return this.refused(from as string, "invalid-recipient", msg.id);
+        if (this.refuseShared.has(recipient)) return this.refused(from as string, "quota", msg.id);
+        if ((this.sharedRecipients.get(recipient) ?? account) !== account) return this.refused(from as string, "identity-conflict", msg.id);
+        this.sharedRecipients.set(recipient, account);
+        return this.reply(RECIPIENT_ADDED, from as string, { recipient_did: recipient, added_time: 1 }, msg.id);
       }
       case STATUS_REQUEST:
         return this.reply(STATUS, from as string, { message_count: this.queue(from as string).length }, msg.id);

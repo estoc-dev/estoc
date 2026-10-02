@@ -38,6 +38,8 @@ import { EntityConflict, UnknownEntity, Unregistered, Unusable, WrongMediator } 
 import type { MediatorLink } from "./link.js";
 import { mediationOf, reconcileNow, registered } from "./mediation.js";
 import { decide, serially } from "./procedure.js";
+import type { Confirmations } from "./replica-enrollment.js";
+import { addRecipientsNow, holds } from "./replica-recipients.js";
 
 export type RouteSpec = { kind: "mediated"; mediationId: MediationId } | { kind: "direct"; endpoint: string };
 
@@ -166,15 +168,17 @@ function requireLive(entity: LocalDidEntity): void {
 /**
  * `did.disclosed` for a live entity, and the invitation when it is an
  * `oob` one. A mediated address is reconciled with its mediator over
- * `link` first and refused unless the mediator holds it; a direct
- * address needs no link. The reconciliation and the commit run as the
+ * `link` first and refused unless the mediator holds it; one of a
+ * replica-mediation arrangement is added to its account instead, which
+ * needs the runtime's `confirmations`. A direct address needs neither.
+ * The reconciliation and the commit run as the
  * account's one procedure at a time, the reconciliation outside the
  * writer lock and the entity's liveness read again under it. An
  * invitation already recorded under the same `oobId` is republished:
  * its disclosure is returned and nothing written, so that a retry
  * after a lost result cannot record the one invitation twice.
  */
-export async function disclose(link: MediatorLink | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
+export async function disclose(link: MediatorLink | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure, confirmations: Confirmations | null = null): Promise<Disclosed> {
   const fold = await scanVault(runtime.vault, keys);
   const entity = didOf(fold, didId);
   requireLive(entity);
@@ -197,13 +201,19 @@ export async function disclose(link: MediatorLink | null, runtime: VaultRuntime,
     disclosed = await serially(runtime, mediationId, async () => {
       const current = await scanVault(runtime.vault, keys);
       requireLive(didOf(current, didId));
-      if (!registered(await reconcileNow(link, current, mediationId), created.did)) throw new Unregistered(created.did);
+      if (!(await heldByMediator(link, runtime, keys, current, mediationId, created.did, confirmations))) throw new Unregistered(created.did);
       return commit();
     });
   } else {
     disclosed = await commit();
   }
   return { disclosed, longFormDid: created.longFormDid, invitation: oobId === null ? null : invitationOf(created.longFormDid, oobId, goal) };
+}
+
+async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: Keys, fold: VaultFold, mediationId: MediationId, did: Did, confirmations: Confirmations | null): Promise<boolean> {
+  if (mediationOf(fold, mediationId).profile === null) return registered(await reconcileNow(link, fold, mediationId), did);
+  if (confirmations === null) throw new Unusable("mediation", mediationId, ["an address of a replica-mediation arrangement is disclosed with the runtime's confirmations"]);
+  return holds(await addRecipientsNow(link, runtime, keys, confirmations, mediationId), did);
 }
 
 function invitationDisclosureOf(fold: VaultFold, oobId: string, data: VaultData["did.disclosed"]): VaultEvent<"did.disclosed"> | null {

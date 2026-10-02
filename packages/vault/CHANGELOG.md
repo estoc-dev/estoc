@@ -24,6 +24,10 @@
   the vault's side of the contract only. A reader older than this
   version refuses a `mediation.created` carrying `profile` and keeps a
   `replica.created` unapplied.
+- **Recipient proof**: `signRecipientProof` signs, with a communication
+  DID's own authentication key, the compact JWS
+  (`RECIPIENT_PROOF_TYP`) that lets a replica-mediation account hold
+  that DID at one mediator.
 
 ## 0.4.0 — 2026-09-29
 

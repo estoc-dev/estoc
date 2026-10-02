@@ -26,6 +26,19 @@
   nothing over such an arrangement, whose account holds no queue, and
   reports the enrollment as `Connection.enrolled`. `establish` and
   `reconcile` refuse one with `Unusable` before any request.
+- **Replica-mediation recipients**: `addRecipients` sends one
+  `recipient-add` for each communication DID bound to a route of a
+  replica-mediation arrangement that may still receive, retired ones
+  included, carrying its long form and the proof it signs, and keeps
+  each confirmation in `Confirmations`, so a later run asks only for
+  what has none. It asks for nothing until this runtime's own replica
+  is confirmed added. A DID the mediator refuses is reported in
+  `RecipientsAdded.refused` and stops no other; nothing is ever taken
+  off the account. `Agent.connect` runs it after the enrollment and
+  reports it as `Connection.recipients`. `disclose` takes the
+  runtime's confirmations as a last argument and `DispatchOptions` a
+  `confirmations`: an address of such an arrangement is disclosed, or
+  first used as a sender, only once its account holds it.
 
 ## 0.20.0 — 2026-09-29
 

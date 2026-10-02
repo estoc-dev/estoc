@@ -47,8 +47,19 @@ export function transientConfirmations(): Confirmations {
 
 const replicaAddedKey = (mediationId: MediationId, replicaId: ReplicaId): string => `replica-mediation/replica-added/${mediationId}/${replicaId}`;
 
+/** Is the confirmation kept under `key` one whose `member` is `did`? */
+export async function confirmed(confirmations: Confirmations, key: string, member: string, did: Did): Promise<boolean> {
+  const kept = await confirmations.get(key);
+  return isJsonObject(kept) && kept[member] === did;
+}
+
+/** Has the mediator confirmed to this runtime that it added the replica, as `replicaDid`, to the arrangement? */
+export function replicaAdded(confirmations: Confirmations, mediationId: MediationId, replicaId: ReplicaId, replicaDid: Did): Promise<boolean> {
+  return confirmed(confirmations, replicaAddedKey(mediationId, replicaId), "replicaDid", replicaDid);
+}
+
 /** The replica-mediation arrangement as the fold has it, fit to be enrolled in: created, neither retired nor in conflict. */
-function accountOf(fold: VaultFold, mediationId: MediationId): Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> } {
+export function accountOf(fold: VaultFold, mediationId: MediationId): Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> } {
   const mediation = mediationOf(fold, mediationId);
   const faults =
     mediation.status === "conflict"
@@ -137,15 +148,13 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
 
     const replica = fold.replicas.replicas.get(replicaId);
     if (replica === undefined || replica.status !== "member" || replica.did === null) throw new Unusable("replica", replicaId, replica === undefined ? ["no creation"] : replica.faults.length > 0 ? replica.faults : [replica.status]);
-    const key = replicaAddedKey(mediationId, replicaId);
-    const kept = await confirmations.get(key);
-    if (!(isJsonObject(kept) && kept["replicaDid"] === replica.did)) {
+    if (!(await replicaAdded(confirmations, mediationId, replicaId, replica.did))) {
       proceed();
       const added = await control(link, REPLICA_ADD, { grant: replica.grants[0] as string }, REPLICA_ADDED);
       if (!echoes(added, "replica_did", replica.did) || added.body["state"] !== "active") {
         throw new MediatorRefused("replica-added names another replica than the one asked for, or one that is not active");
       }
-      await confirmations.set(key, { replicaDid: replica.did });
+      await confirmations.set(replicaAddedKey(mediationId, replicaId), { replicaDid: replica.did });
       steps.push("replica-added");
     }
     await link.observe("diag", "enroll", { mediationId, replicaId, replicaDid: replica.did, steps });
@@ -153,13 +162,13 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
   });
 }
 
-function echoes(reply: IMessage, member: string, did: string): boolean {
+export function echoes(reply: IMessage, member: string, did: string): boolean {
   const echoed = reply.body[member];
   return typeof echoed === "string" && sameDid(echoed, did);
 }
 
 /** One control and its reply; a problem-report, or any other answer, is the mediator refusing. */
-async function control(link: MediatorLink, type: string, body: Record<string, unknown>, expected: string): Promise<IMessage> {
+export async function control(link: MediatorLink, type: string, body: Record<string, unknown>, expected: string): Promise<IMessage> {
   const reply = await link.roundTrip(type, body);
   if (reply.type === expected) return reply;
   const name = type.slice(type.lastIndexOf("/") + 1);

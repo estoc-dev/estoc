@@ -11,7 +11,8 @@
  * who retries, completes or cancels it. Connecting reconciles each
  * arrangement's recipients with its mediator and picks up what it
  * holds, by the ordinary pickup of the account; a replica-mediation
- * arrangement is enrolled in instead, its account holding no queue.
+ * arrangement is enrolled in instead and its addresses added to its
+ * account, which holds no queue.
  *
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
@@ -56,6 +57,7 @@ import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./
 import { callPrivateAddress, decidePrivateAddress, type PrivateAddress } from "./privacy.js";
 import { STATUS } from "./protocol/mediation.js";
 import { enroll, transientConfirmations, type Confirmations, type Enrolled } from "./replica-enrollment.js";
+import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, recordOwed, type AfterReceipt, type Owed } from "./receive/after.js";
 import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
@@ -115,6 +117,8 @@ export interface Connection {
   reconciled: Reconciled | null;
   /** this runtime's enrollment, for a replica-mediation arrangement: such a line reconciles and drains nothing, since its account holds no queue */
   enrolled: Enrolled | null;
+  /** the addresses the last connection had a replica-mediation account hold */
+  recipients: RecipientsAdded | null;
   /**
    * Every registration a reconciliation over this line found at the
    * mediator that no DID of the vault accounts for, the first
@@ -168,7 +172,6 @@ export class Agent {
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
   private linesDue = false;
-  private readonly confirmations: Confirmations;
 
   /** Every manual procedure, each transport call of theirs through this agent's dispatcher. */
   readonly manual: Manual;
@@ -181,11 +184,11 @@ export class Agent {
     private readonly dispatcher: Dispatcher,
     private readonly receiver: Receiver,
     private readonly wires: Map<MediationId, Line>,
+    private readonly confirmations: Confirmations,
     /** what the open recorded of what the vault owed */
     readonly recovered: Owed
   ) {
     this.manual = manualProcedures(runtime, keys, dispatcher, options);
-    this.confirmations = options.confirmations ?? transientConfirmations();
   }
 
   /** The agent over an open runtime, with networking off; throws `ReceiverInUse` while another agent of the runtime is open. */
@@ -194,7 +197,8 @@ export class Agent {
     const recovered = await recordOwed(runtime, keys);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...options, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
+    const confirmations = options.confirmations ?? transientConfirmations();
+    const dispatcher = new Dispatcher(runtime, keys, { ...options, confirmations, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log } = options;
     let linesChanged = (): void => undefined;
     const receiver = new Receiver(runtime, keys, ring, {
@@ -212,7 +216,7 @@ export class Agent {
       log,
       changed: () => linesChanged(),
     });
-    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, recovered);
+    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, confirmations, recovered);
     linesChanged = () => agent.linesChanged();
     return agent;
   }
@@ -273,7 +277,7 @@ export class Agent {
     const created = didOf(fold, didId).created;
     const configured = created === null ? null : (routeOf(fold, created.boundRouteId).configured ?? null);
     const link = configured?.kind === "mediated" ? (await this.lineOf(configured.mediationId)).link : null;
-    return disclose(link, this.runtime, this.keys, didId, disclosure);
+    return disclose(link, this.runtime, this.keys, didId, disclosure, this.confirmations);
   }
 
   connections(): Connection[] {
@@ -395,7 +399,7 @@ export class Agent {
   }
 
   private connectionOf(mediationId: MediationId): Connection {
-    const connection: Connection = this.attempts.get(mediationId) ?? { mediationId, unreachable: null, reconciled: null, enrolled: null, unknownRegistrations: [], drained: null, live: false };
+    const connection: Connection = this.attempts.get(mediationId) ?? { mediationId, unreachable: null, reconciled: null, enrolled: null, recipients: null, unknownRegistrations: [], drained: null, live: false };
     this.attempts.set(mediationId, connection);
     return connection;
   }
@@ -421,11 +425,15 @@ export class Agent {
       const line = await this.lineOf(mediationId);
       const { link, pickup } = line;
       if (line.replicaMediation) {
-        const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => {
+        const proceed = (): void => {
           if (!stands()) throw new Error("the connection was given up");
-        });
+        };
+        const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, proceed);
         if (!stands()) return this.shown(connection);
         connection.enrolled = enrolled;
+        const recipients = await addRecipients(link, this.runtime, this.keys, this.confirmations, mediationId, proceed);
+        if (!stands()) return this.shown(connection);
+        connection.recipients = recipients;
       } else {
         const reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
         if (!stands()) return this.shown(connection);
