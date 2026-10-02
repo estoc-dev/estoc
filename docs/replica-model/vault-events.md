@@ -715,10 +715,15 @@ conflict rather than silently changing a DID.
 }
 ```
 
-This intent enrolls one replica in a replica-mediation arrangement. It is
-committed before the mediator is asked. It records membership, not that the
-mediator has enrolled the replica: what the mediator confirmed is runtime
-state, and no event repeats per attempt.
+This intent enrolls one replica in a replica-mediation arrangement. It MUST
+be committed before the first `replica-add` request for that binding. Creating
+an empty account with `account-register` does not require this intent to be
+committed first. Before registering the account, the client validates any
+existing local binding and the candidate grant; an invalid or conflicting
+candidate MUST NOT cause a network request. A failed account registration
+leaves a runtime with no prior replica binding free to choose another
+arrangement. The intent records membership, not remote acceptance: what the
+mediator confirmed is runtime state, and no event repeats per attempt.
 
 The replica's DID is a `did:peer:4` whose input document carries the two keys
 `replica/<replicaId>/me` derives and exactly one DIDComm service, the

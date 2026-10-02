@@ -275,8 +275,9 @@ export class Agent {
   /**
    * This runtime enrolled in a replica-mediation arrangement: its
    * account registered when the fold has no grant, its own replica
-   * added when no confirmation is kept. Throws what `enroll` throws,
-   * and begins no request once the agent is closed.
+   * added when no confirmation is kept; then the arrangement's
+   * connection. Throws what `enroll` throws, and begins no request
+   * once the agent is closed.
    */
   async enroll(mediationId: MediationId): Promise<Enrolled> {
     this.refuseClosed();
@@ -284,7 +285,7 @@ export class Agent {
     const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => this.refuseClosed());
     this.connectionOf(mediationId).enrolled = enrolled;
     await this.localStateChanged();
-    this.linesChanged();
+    await this.connectTo(mediationId);
     return enrolled;
   }
 

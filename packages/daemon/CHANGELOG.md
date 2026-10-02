@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- **A mediator can be arranged with as a replica-mediation account**:
+  `setMediator(mediatorDid, profile?)` given `"replica-mediation/1.0"`
+  makes the arrangement under that profile, enrolls this runtime in it
+  as a replica and selects it; with `null`, or no profile, it makes an
+  ordinary arrangement, granted as before. The arrangement that
+  already stands with the mediator under the profile asked for is the
+  one selected, so an ordinary arrangement made earlier is neither
+  converted nor reused for the other profile. A mediator that does not
+  offer replica-mediation refuses the enrollment and the call fails. A
+  backup restored into a fresh runtime enrolls that runtime as a replica
+  of its own at its first connection, and each replica picks up its own
+  copy of the account's mail. A runtime's files moved or copied as they
+  are keep its replica: the copy is the same replica until an identity
+  reset gives it another. Every runtime that receives a message answers
+  it on its own, so two runtimes of one vault live on such an
+  arrangement can each replace a private address and leave the peer no
+  channel to write to: until one runtime alone is made to answer, the
+  profile is for one live runtime at a time. Once its replica intent is
+  recorded, a runtime enrolls only in that arrangement.
+- What a replica-mediation mediator confirmed is kept in the runtime's
+  local options, so a reopened vault asks for none of it again.
+- A `MediationRecord` carries `profile`.
+
 ## 0.4.0 — 2026-09-29
 
 The daemon behind the API of `@estoc/daemon-api`, in place of the RPC of

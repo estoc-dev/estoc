@@ -5,14 +5,17 @@
 - **Replica-mediation enrollment**: `createMediation` takes a `profile`,
   and an arrangement created with `"replica-mediation/1.0"` is enrolled
   in with `enroll` (`Agent.enroll`) where an ordinary one is
-  established. `createReplica` records `replica.created` for the
-  runtime's own replica ID, the grant its account signs, before the
-  mediator is asked, and refuses with `Unusable` an arrangement whose
-  recorded grant does not make the runtime a member, so that no account
-  is registered for a replica that could not join it. `enroll` then sends `account-register` when the
+  established. `enroll` sends `account-register` when the
   arrangement has no grant, recording `mediation.granted` over a reply
-  that names the account and the mediator as its
-  routing DID, and `replica-add` for the runtime's own replica alone.
+  that names the account and the mediator as its routing DID; before
+  that request it refuses with `Unusable` or `EntityConflict` a
+  recorded grant that does not make the runtime a member of this
+  arrangement, so that no account is registered for a replica that
+  could not join it. Only once the account stands does `createReplica`
+  record `replica.created` for the runtime's own replica ID, the grant
+  its account signs, so a mediator that never registered the account
+  leaves the runtime free to enroll elsewhere; `replica-add` follows,
+  for the runtime's own replica alone.
   That the replica was added is kept in `Confirmations`, for which the
   runtime's local options serve (`AgentOptions.confirmations`): it is
   this runtime's knowledge and no vault event, and a replica whose
@@ -53,6 +56,11 @@
   acknowledged: no protocol addressed to a replica is supported, so it
   leaves a discarded-delivery diagnostic and nothing in the vault. `classifyRecipients` takes the
   runtime's replica ID to tell such an envelope.
+- **`Agent.enroll` connects** (behaviour change): like `Agent.establish`,
+  it goes on to the arrangement's connection once the enrollment is
+  through — the account's addresses added, the replica's queue picked up,
+  the socket opened — so a host that enrolls has nothing to connect by
+  itself.
 
 ## 0.20.0 — 2026-09-29
 

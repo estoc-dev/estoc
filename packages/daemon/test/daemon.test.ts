@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type ExecutionId, type MediationId, type MediationProfile, type MintedDid } from "@estoc/vault";
 
-import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
+import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
 import type { Hold, Lines, Phase, Snapshot, State } from "@estoc/daemon-api/contract";
 import { indexSnapshot } from "@estoc/daemon-api/views";
@@ -26,6 +26,7 @@ import { published } from "./snapshots.js";
 
 const BASIC_MESSAGE = "https://didcomm.org/basicmessage/2.0/message";
 const PASSPHRASE = "alice-passes-the-salt";
+const REPLICA_MEDIATION: MediationProfile = "replica-mediation/1.0";
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const BOB_PRIOR = "019b0000-0000-7000-8000-0000000000b1" as DidId;
 const LONG = 300_000;
@@ -111,12 +112,12 @@ function daemonOver(root: string, mediator?: FakeMediator, agentOptions: Partial
 
 const vaultFile = (root: string) => path.join(root, ".estoc", "vault.sqlite");
 
-async function person(mediator: FakeMediator, name: string): Promise<{ root: string; daemon: DaemonCore; heard: Told }> {
+async function person(mediator: FakeMediator, name: string, profile?: MediationProfile | null): Promise<{ root: string; daemon: DaemonCore; heard: Told }> {
   const root = await folder();
   const { daemon, heard } = daemonOver(root, mediator);
   await daemon.boot();
   await daemon.createIdentity(name, PASSPHRASE);
-  await daemon.setMediator(mediator.did);
+  await daemon.setMediator(mediator.did, profile);
   return { root, daemon, heard };
 }
 
@@ -683,7 +684,7 @@ describe("two copies of one runtime, both written to", () => {
     "asks the mediator nothing between the two merges: an address only the backup knows stays registered, and what waited there for it is received once the merge is over",
     async () => {
       const mediator = await newMediator();
-      const first = await person(mediator, "Alice");
+      const first = await person(mediator, "Alice", null);
       await first.daemon.close();
       const copy = await folder();
       await cp(path.join(first.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
@@ -750,6 +751,56 @@ describe("two copies of one runtime, both written to", () => {
     },
     LONG
   );
+});
+
+describe("a mediator set", () => {
+  it("is arranged with as an ordinary arrangement unless a replica-mediation account is asked for, and the arrangement that stands under a profile is the one selected again", async () => {
+    const mediator = await newMediator();
+    const alice = daemonOver(await folder(), mediator);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    const shown = () => alice.heard.snapshot().mediations.map(({ mediationId, profile, selected, usable }) => ({ mediationId, profile, selected, usable }));
+
+    const granted = await alice.daemon.setMediator(mediator.did);
+    expect(shown()).toEqual([{ mediationId: granted, profile: null, selected: true, usable: true }]);
+    expect([mediator.replicaAccounts.size, mediator.granted.size]).toEqual([0, 1]);
+
+    const enrolled = await alice.daemon.setMediator(mediator.did, REPLICA_MEDIATION);
+    expect(enrolled).not.toBe(granted);
+    expect(shown()).toEqual([
+      { mediationId: granted, profile: null, selected: false, usable: true },
+      { mediationId: enrolled, profile: REPLICA_MEDIATION, selected: true, usable: true },
+    ]);
+    expect([mediator.replicaAccounts.size, mediator.replicas.size, mediator.granted.size]).toEqual([1, 1, 1]);
+
+    expect(await alice.daemon.setMediator(mediator.did)).toBe(granted);
+    expect(await alice.daemon.setMediator(mediator.did, null)).toBe(granted);
+    expect(await alice.daemon.setMediator(mediator.did, REPLICA_MEDIATION)).toBe(enrolled);
+    expect(shown().map(({ selected }) => selected)).toEqual([false, true]);
+  });
+
+  it("is free to be another one, as a replica-mediation account, after the first refused to register the account, and is so still once reopened", async () => {
+    const refusing = await newMediator();
+    const mediator = await newMediator();
+    const root = await folder();
+    const alice = daemonOver(root, refusing);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    refusing.intercept = (msg) => {
+      if (msg.type === ACCOUNT_REGISTER) throw new Error("out of service");
+      return undefined;
+    };
+    await expect(alice.daemon.setMediator(refusing.did, REPLICA_MEDIATION)).rejects.toThrow();
+    expect(alice.heard.snapshot().mediations.filter(({ selected }) => selected)).toEqual([]);
+    await alice.daemon.close();
+
+    const reopened = daemonOver(root, mediator);
+    await reopened.daemon.boot();
+    await reopened.daemon.unlock(PASSPHRASE);
+    const enrolled = await reopened.daemon.setMediator(mediator.did, REPLICA_MEDIATION);
+    expect(reopened.heard.snapshot().mediations.filter(({ selected }) => selected)).toMatchObject([{ mediationId: enrolled, profile: REPLICA_MEDIATION, usable: true }]);
+    expect(mediator.replicas.size).toBe(1);
+  });
 });
 
 describe("a daemon whose mediator drops the socket", () => {
@@ -843,7 +894,7 @@ describe("two daemons over a mediator", () => {
     "waits, closing, for the answer a mediator owes it and asks nothing on that answer: the next daemon over the vault keeps what it registers",
     async () => {
       const mediator = await newMediator();
-      const { root, daemon, heard } = await person(mediator, "Alice");
+      const { root, daemon, heard } = await person(mediator, "Alice", null);
       await until("the first connection is through", () => heard.lines()?.connections[0]?.live === true);
 
       const query = holding(mediator, (message) => message.type === RECIPIENT_QUERY);
@@ -880,7 +931,7 @@ describe("two daemons over a mediator", () => {
     async () => {
       for (const handOn of ["close", "merge"] as const) {
         const mediator = await newMediator();
-        const original = await person(mediator, "Alice");
+        const original = await person(mediator, "Alice", null);
         const before = await original.daemon.exportBackup();
         await original.daemon.createInvitation();
         const newer = await original.daemon.exportBackup();
@@ -929,7 +980,7 @@ describe("two daemons over a mediator", () => {
     "waits as well for what the agent began on its own: the removal a retry has with the mediator lands before the next daemon registers",
     async () => {
       const mediator = await newMediator();
-      const original = await person(mediator, "Alice");
+      const original = await person(mediator, "Alice", null);
       const before = await original.daemon.exportBackup();
       await original.daemon.createInvitation();
       const newer = await original.daemon.exportBackup();
@@ -994,13 +1045,13 @@ describe("two daemons over a mediator", () => {
   );
 
   /** Alice and Bob, contacts of each other by an invitation of Alice's, their Pings through. */
-  async function acquainted(mediator: FakeMediator, options: Partial<NonNullable<DaemonHost["agentOptions"]>> = {}) {
+  async function acquainted(mediator: FakeMediator, options: Partial<NonNullable<DaemonHost["agentOptions"]>> = {}, profile?: MediationProfile | null) {
     const alice = await person(mediator, "Alice");
     const bobsRoot = await folder();
     const bob = { root: bobsRoot, ...daemonOver(bobsRoot, mediator, options) };
     await bob.daemon.boot();
     await bob.daemon.createIdentity("Bob", PASSPHRASE);
-    await bob.daemon.setMediator(mediator.did);
+    await bob.daemon.setMediator(mediator.did, profile);
     const { invitation } = await alice.daemon.createInvitation();
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
     await until("bob's Ping is acknowledged", () => bob.heard.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
@@ -1013,7 +1064,7 @@ describe("two daemons over a mediator", () => {
     "publishes what the dispatcher commits on its own timer, with no call of the UI's: the Ping a registration the mediator refused held up",
     async () => {
       const mediator = await newMediator();
-      const { alice, bob } = await acquainted(mediator, { retry: { firstWaitMs: 200 } });
+      const { alice, bob } = await acquainted(mediator, { retry: { firstWaitMs: 200 } }, null);
       const { invitation } = await alice.daemon.createInvitation();
       // Every registration asked about meanwhile is refused, the one the Ping's address needs among them: the dispatcher tries the Ping again on its own.
       let refusing = true;

@@ -1,4 +1,4 @@
-import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
+import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MediationProfile, MessageId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, TraceLevel } from "@estoc/agent-core";
 import type { Hold } from "@estoc/daemon-api/contract";
 
@@ -78,8 +78,14 @@ export interface Daemon {
   exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
 
-  /** An arrangement with `mediatorDid` created, selected and granted, and a route over it configured. */
-  setMediator(mediatorDid: string): Promise<MediationId>;
+  /**
+   * An arrangement with `mediatorDid` selected and a route over it
+   * configured: the one that stands with that mediator under `profile`,
+   * or one created under it. An ordinary arrangement, of the null
+   * profile and what is made when none is named, is granted; a
+   * replica-mediation one is enrolled in.
+   */
+  setMediator(mediatorDid: string, profile?: MediationProfile | null): Promise<MediationId>;
   /** A fresh DID on the selected arrangement's route, disclosed as an out-of-band invitation. */
   createInvitation(goal?: string): Promise<CreatedInvitation>;
   /** A fresh DID of ours toward the inviter, a contact that selects the pair, and a Ping under the invitation's ID. */

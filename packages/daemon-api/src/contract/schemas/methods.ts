@@ -85,7 +85,7 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   mergeBackup: { input: z.object({ backup: bytes }), result: mergeResult, errors: lifecycle, bytes: { input: ["backup"], result: [] } },
   explainedRestore: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
 
-  setMediator: { input: z.object({ mediatorDid: z.string() }), result: z.object({ mediationId }), errors: lifecycle, bytes: noBytes },
+  setMediator: { input: z.object({ mediatorDid: z.string(), profile: z.string().nullable().optional() }), result: z.object({ mediationId }), errors: lifecycle, bytes: noBytes },
   createInvitation: { input: z.object({ goal: z.string().optional() }), result: z.object({ didId, invitation }), errors: lifecycle, bytes: noBytes },
   acceptInvitation: { input: z.object({ invitation, petname }), result: contactReached, errors: dispatching, bytes: noBytes },
   addContactByDid: { input: z.object({ did: z.string(), petname }), result: contactReached, errors: dispatching, bytes: noBytes },
