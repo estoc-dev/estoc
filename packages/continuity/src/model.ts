@@ -88,14 +88,22 @@ export type ConfirmationResult =
   /** a conflict reaches the pair */
   | { status: "conflict"; facts: readonly FactId[] };
 
-/** A rotation or ending as it was claimed, `to` the successor pair it names or null for an ending. */
+/**
+ * A rotation or ending of an endpoint at a pair, `to` the successor
+ * pair or null for an ending. Mostly the change is the fact's own, at
+ * the pair the fact is at. Where the fact's change supersedes an
+ * earlier successor of the same endpoint, that successor's change to
+ * the later one is a record too, under the same ID, at the pair the
+ * superseded successor is replaced at.
+ */
 export type ChangeRecord = { id: FactId; at: Channel; change: Change; to: Channel | null; status: FactStatus };
 
 /**
  * A link of the positive graph: every rotation the evidence shows, and
  * every join two rotations imply, whether or not an operation may rely
- * on it. `derived` marks a join; `usable` marks a link the usable graph
- * has too.
+ * on it. `derived` marks a link no fact declares at its pair, a join or
+ * a superseded successor leading to the later one; `usable` marks a
+ * link the usable graph has too.
  */
 export type PositiveLink = { from: Channel; to: Channel; replaces: Side; support: readonly FactId[]; derived: boolean; usable: boolean };
 
@@ -132,7 +140,7 @@ export interface Continuity {
    * establish anyway does not block the head.
    */
   head(channel: Channel): HeadResult;
-  /** the changes of that side's endpoint across the channel's context, whatever their status; a supersession check reads these */
+  /** the changes of that side's endpoint across the channel's context, whatever their status, a successor's replacement by a later one included; a supersession check reads these */
   changes(channel: Channel, side: Side): readonly ChangeRecord[];
   /** one directed usable path from one pair to the other, preserving roles; alternative paths are not enumerated */
   path(from: Channel, to: Channel): PathResult;
@@ -183,6 +191,7 @@ class Model implements Continuity {
   private readonly endings: Entry[] = [];
   private readonly positive: Graph;
   private readonly positiveWaiting: ReadonlySet<FactId>;
+  readonly #implied: Claims;
   private readonly local: Contexts;
   private readonly peer: Contexts;
   /** the saved local rotations by the root of their positive peer-only context: the onward choices a head in that context must answer for */
@@ -230,6 +239,7 @@ class Model implements Continuity {
       (graph, link) => this.confirming(graph, link, positiveWriters, (entry) => this.positiveObservation(entry))
     );
     this.positive = positive.graph;
+    this.#implied = positive.implied;
     this.positiveWaiting = new Set([...positive.waiting].map((link) => link.id));
     for (const entry of this.all()) this.positive.vertex(entry.fact.at);
     this.local = new Contexts(this.positive, "local");
@@ -241,7 +251,7 @@ class Model implements Continuity {
       if (rotations === undefined) this.rotationsByContext.set(root, (rotations = []));
       rotations.push({ entry, successor: entry.fact.change.successor });
     }
-    const found = this.findConflicts(claims);
+    const found = this.findConflicts({ local: [...claims.local, ...positive.implied.local], peer: [...claims.peer, ...positive.implied.peer] });
     this.domainConflicts = found.map(({ conflict }) => conflict);
     for (const { conflict, scope } of found) {
       for (const channel of scope) {
@@ -430,8 +440,8 @@ class Model implements Continuity {
   /**
    * Competing changes of one endpoint in one context: the peer's across
    * the local-only context, ours across the peer-only one, every fact
-   * counted whatever its status, since a saved decision not yet
-   * confirmed is still a fork. Then cycles and refused joins. Each
+   * counted whatever its status, so that a saved decision not yet
+   * confirmed cannot hide a competing choice. Then cycles and refused joins. Each
    * conflict comes with its scope: the context and the successor pairs
    * the claims in that context name. A variant of the same ID claiming
    * something in another context is not in the scope, since it is a
@@ -601,7 +611,11 @@ class Model implements Continuity {
       if (entry.fact.kind !== kind || contexts.root(channelKey(entry.fact.at)) !== root) continue;
       records.push(this.record(entry));
     }
-    return records;
+    for (const { id, at, successor } of this.#implied[side]) {
+      if (contexts.root(channelKey(at)) !== root || successor === null) continue;
+      records.push({ id, at, change: { kind: "rotate", successor }, to: side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid), status: this.status(id) });
+    }
+    return records.sort((a, b) => compareUtf8(a.id, b.id) || compareChannels(a.at, b.at));
   }
 
   private record(entry: Entry): ChangeRecord {
@@ -672,7 +686,13 @@ class Model implements Continuity {
   }
 
   localDecisions(channel: Channel): readonly ChangeRecord[] {
-    return this.changes(channel, "local").filter((record) => record.at.localDid === channel.localDid);
+    const root = this.peer.root(channelKey(channel));
+    const records: ChangeRecord[] = [];
+    for (const entry of this.all()) {
+      if (entry.fact.kind !== "local-decision" || entry.fact.at.localDid !== channel.localDid || this.peer.root(channelKey(entry.fact.at)) !== root) continue;
+      records.push(this.record(entry));
+    }
+    return records;
   }
 
   conflicts(): readonly Conflict[] {

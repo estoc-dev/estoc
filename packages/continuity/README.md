@@ -136,15 +136,26 @@ depends on itself:
    Two different successors of one endpoint do not compete when the
    other party's own changes order the pairs they were claimed at. An
    address P rotated to X for the peer B, and to Y for B's successor B2,
-   is P, then X, then Y: the later successor was claimed only at pairs
-   the other party reached from every pair of the earlier one, never the
-   other way round, and the two share no pair. The superseded successor
-   then leads to the later one at the pair the later change was made at,
-   as a derived link whose support is both changes and the path between
-   them, so every pair of the relationship has the one head. The order
-   comes from the links alone, not from time. Successors claimed at one
-   pair, or at pairs no link orders, compete; an ending is ordered with
-   nothing and competes with any rotation in its context.
+   is P, then X, then Y: every pair the later successor was claimed at
+   is one the other party's links reach from every pair of the earlier
+   one, never the other way round, and the two share no pair. The
+   superseded successor then leads to the later one at each pair the
+   later change was made at, as a derived link whose support is both
+   changes and the path between them, so every pair of the relationship
+   has the one head. The order comes from the links alone, not from
+   time. Successors claimed at one pair, or at pairs no link orders,
+   compete; an ending is ordered with nothing and competes with any
+   rotation in its context.
+
+   That derived link is a change of the superseded successor X in its
+   own right, made at the pair it leaves, under the ID of the fact that
+   claimed Y there. It is ordered against X's other changes by the same
+   rule: a different successor of X claimed at that pair, or an ending
+   of X in that context, competes with it and the conflict reaches both
+   successors; the same successor claimed there only adds support; a
+   successor of X claimed at an earlier pair is superseded in turn, and
+   one claimed at a later pair supersedes Y. A join carries an existing
+   link to another pair and is not a change claimed there.
 4. **Usable graph.** The same closure again over unambiguous facts,
    admitting no channel a conflict reaches. The positive graph says what
    replacements the evidence shows; the usable graph says which of them
@@ -182,7 +193,10 @@ of its source is listed as missing, and a collided one is a conflict
 that outranks an ending.
 
 `changes(channel, side)` lists that side's changes across the channel's
-context with each fact's status. `path(from, to)` gives one directed
+context with each fact's status, among them the replacement of a
+superseded successor by the later one, under the later change's ID at
+the pair the successor is replaced at: a peer DID with any rotation
+listed has been replaced. `path(from, to)` gives one directed
 usable path preserving roles. `confirmation(localDid, peerDid)` lists
 the usable observations by which the peer, or a usable successor of it,
 wrote to exactly that local DID, each with one complete witness.

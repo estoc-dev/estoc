@@ -7,7 +7,9 @@
   order the pairs they were claimed at: the later one stands, and the
   superseded successor leads to it through a derived link. Successors
   claimed at one pair, at pairs no link orders, or beside an ending
-  still compete. The fact schema is unchanged; a snapshot of
+  still compete. The superseded successor's replacement is a change of
+  its own: `changes` lists it, and it competes with or is ordered
+  against that successor's other changes. The fact schema is unchanged; a snapshot of
   `estoc-continuity/1` is refused by `mergeFacts` as any other profile
   is, and holds the same facts under the new string.
 

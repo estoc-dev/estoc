@@ -372,6 +372,115 @@ describe("successors the other party's changes order", () => {
     });
   });
 
+  describe("a superseded successor's own changes", () => {
+    const first = observe("first", P_B);
+    const toX = decide("toX", P_B, "X", "first");
+    const moved = rotate("moved", P_B, "B2", "receipt-second");
+    const second = observe("second", P_B2, "moved", "receipt-second");
+    const toY = decide("toY", P_B2, "Y", "second");
+    const local = [first, toX, moved, second, toY];
+    const Y_B2 = C("Y", "B2");
+
+    const A0_B0 = C("A0", "B0");
+    const A1_B1 = C("A1", "B1");
+    const A1_B2 = C("A1", "B2");
+    const peer = [observe("o", A0_B0), decide("a0-a1", A0_B0, "A1", "o"), rotate("b0-b1", A0_B0, "B1"), rotate("b0-b2", C("A1", "B0"), "B2")];
+
+    it("lists its replacement among its changes, at the pair it is replaced at", () => {
+      const model = deriveContinuity(peer);
+      const replaced = { id: "b0-b2", at: A1_B1, change: { kind: "rotate", successor: "B2" }, to: A1_B2, status: { status: "usable", support: ["b0-b2"] } };
+      expect(model.changes(A1_B1, "peer")).toEqual([replaced]);
+      expect(model.changes(C("A0", "B1"), "peer")).toEqual([replaced]);
+      expect(model.changes(A1_B2, "peer")).toEqual([]);
+      expect(model.changes(C("A2", "B1"), "peer")).toEqual([]);
+      expect(deriveContinuity(local).changes(X_B, "local")).toMatchObject([{ id: "toY", at: X_B2, to: Y_B2 }]);
+      expect(deriveContinuity(local).localDecisions(X_B2)).toEqual([]);
+    });
+
+    it("compete with its replacement when they name another successor at the pair it is replaced at", () => {
+      const facts = [...peer, rotate("b1-b3", A1_B1, "B3")];
+      const model = deriveContinuity(facts);
+      expect(model.conflicts()).toEqual([
+        {
+          kind: "competing-changes",
+          side: "peer",
+          context: [C("A0", "B1"), A1_B1],
+          changes: [
+            { change: { kind: "rotate", successor: "B2" }, facts: ["b0-b2"] },
+            { change: { kind: "rotate", successor: "B3" }, facts: ["b1-b3"] },
+          ],
+        },
+      ]);
+      for (const channel of [A0_B0, A1_B1, A1_B2, C("A1", "B3")]) expect(model.head(channel).status).toBe("conflict");
+      expect(model.path(A1_B1, A1_B2).status).toBe("conflict");
+      expect(model.path(A1_B1, C("A1", "B3")).status).toBe("conflict");
+      expect(model.status("b1-b3")).toMatchObject({ status: "conflict" });
+      expect(model.status("b0-b2")).toMatchObject({ status: "conflict" });
+      sameWhateverTheOrder(facts, [A0_B0, A1_B1, A1_B2]);
+
+      const ours = deriveContinuity([...local, observe("third", X_B2), decide("toZ", X_B2, "Z", "third")]);
+      expect(ours.conflicts()).toMatchObject([{ kind: "competing-changes", side: "local", context: [X_B, X_B2], changes: [{ facts: ["toY"] }, { facts: ["toZ"] }] }]);
+      expect(ours.head(P_B)).toEqual({ status: "conflict", facts: ["toY", "toZ"] });
+    });
+
+    it("compete with its replacement when it ends in the context it is replaced in", () => {
+      const model = deriveContinuity([...peer, peerEnd("end", A1_B1)]);
+      expect(model.conflicts()).toMatchObject([{ kind: "competing-changes", side: "peer", changes: [{ change: { kind: "end" }, facts: ["end"] }, { change: { kind: "rotate", successor: "B2" }, facts: ["b0-b2"] }] }]);
+      expect(model.head(A1_B1).status).toBe("conflict");
+      expect(model.head(A1_B2).status).toBe("conflict");
+
+      const ours = deriveContinuity([...local, localEnd("end", X_B2)]);
+      expect(ours.conflicts()).toMatchObject([{ kind: "competing-changes", side: "local" }]);
+      expect(ours.head(P_B)).toEqual({ status: "conflict", facts: ["end", "toY"] });
+    });
+
+    it("add support when they name the same successor at that pair", () => {
+      const model = deriveContinuity([...peer, rotate("b1-b2", A1_B1, "B2")]);
+      expect(model.conflicts()).toEqual([]);
+      expect(model.head(A0_B0)).toEqual({ status: "head", channel: A1_B2, support: ["a0-a1", "b0-b1", "b0-b2", "b1-b2", "o"] });
+      expect(model.history(A0_B0).links).toContainEqual({ from: A1_B1, to: A1_B2, replaces: "peer", support: ["a0-a1", "b0-b1", "b0-b2", "b1-b2", "o"], derived: false, usable: true });
+    });
+
+    it("are superseded with it when made at an earlier pair", () => {
+      const facts = [...local, observe("early", X_B), decide("toZ", X_B, "Z", "early")];
+      const model = deriveContinuity(facts);
+      expect(model.conflicts()).toEqual([]);
+      for (const channel of [P_B, X_B, C("Z", "B"), C("Z", "B2")]) expect(model.head(channel)).toMatchObject({ status: "head", channel: Y_B2 });
+      expect(deriveContinuity([...facts].reverse()).head(P_B)).toEqual(model.head(P_B));
+    });
+
+    it("supersede its replacement when made at a later pair", () => {
+      const facts = [...local, rotate("again", P_B2, "B3"), observe("late", C("X", "B3")), decide("toZ", C("X", "B3"), "Z", "late")];
+      const model = deriveContinuity(facts);
+      expect(model.conflicts()).toEqual([]);
+      for (const channel of [P_B, X_B, X_B2, Y_B2, C("Y", "B3")]) expect(model.head(channel)).toMatchObject({ status: "head", channel: C("Z", "B3") });
+      expect(model.changes(Y_B2, "local")).toMatchObject([{ id: "toZ", at: C("Y", "B3"), to: C("Z", "B3") }]);
+      expect(deriveContinuity([...facts].reverse()).head(P_B)).toEqual(model.head(P_B));
+    });
+  });
+
+  describe("a successor claimed at several pairs", () => {
+    const converging = [rotate("b1-b3", C("P", "B1"), "B3"), rotate("b2-b3", P_B2, "B3"), observe("o1", C("P", "B1")), observe("o2", P_B2), observe("o3", C("P", "B3"))];
+
+    it("competes with one claimed at a pair that does not reach every one of them", () => {
+      const model = deriveContinuity([...converging, decide("x", C("P", "B1"), "X", "o1"), decide("y2", P_B2, "Y", "o2"), decide("y3", C("P", "B3"), "Y", "o3")]);
+      expect(model.conflicts()).toMatchObject([{ kind: "competing-changes", side: "local", changes: [{ facts: ["x"] }, { facts: ["y2", "y3"] }] }]);
+      expect(model.head(C("P", "B1"))).toEqual({ status: "conflict", facts: ["x", "y2", "y3"] });
+    });
+
+    it("supersedes one claimed at pairs that each reach every one of them", () => {
+      const model = deriveContinuity([...converging, decide("x1", C("P", "B1"), "X", "o1"), decide("x2", P_B2, "X", "o2"), decide("y3", C("P", "B3"), "Y", "o3")]);
+      expect(model.conflicts()).toEqual([]);
+      for (const channel of [C("P", "B1"), P_B2, C("X", "B1")]) expect(model.head(channel)).toMatchObject({ status: "head", channel: C("Y", "B3") });
+    });
+
+    it("competes the same way when the peer's successors were received at them", () => {
+      const ours = [observe("w1", C("A1", "P")), observe("w2", C("A2", "P")), decide("a1-a3", C("A1", "P"), "A3", "w1"), decide("a2-a3", C("A2", "P"), "A3", "w2")];
+      const model = deriveContinuity([...ours, rotate("x", C("A1", "P"), "X"), rotate("y2", C("A2", "P"), "Y"), rotate("y3", C("A3", "P"), "Y")]);
+      expect(model.conflicts()).toMatchObject([{ kind: "competing-changes", side: "peer", changes: [{ facts: ["x"] }, { facts: ["y2", "y3"] }] }]);
+    });
+  });
+
   it("competes when the other party's changes fork, so that no order holds", () => {
     const facts = [
       observe("o", P_B),

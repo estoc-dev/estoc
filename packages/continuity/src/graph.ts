@@ -15,7 +15,7 @@ export interface Edge {
   readonly to: Channel;
   readonly replaces: Replaces;
   readonly support: Set<FactId>;
-  /** derived by a join rather than declared by a fact at `from` */
+  /** derived from other links, by a join or by one successor superseding another, rather than declared by a fact at `from` */
   derived: boolean;
 }
 
@@ -243,7 +243,11 @@ export class Graph {
   }
 }
 
-/** A change of one endpoint as a fact claims it at a pair: its successor, or null for an ending. */
+/**
+ * A change of one endpoint at a pair: its successor, or null for an
+ * ending. A fact claims it there, or the fact's change supersedes the
+ * endpoint there and the claim is implied.
+ */
 export interface Claim {
   readonly id: FactId;
   readonly at: Channel;
@@ -271,8 +275,9 @@ const moved = (channel: Channel, side: Replaces, successor: Did): Channel => (si
  * The claims of `side` by context, each context with the order of its
  * successors. Two different successors of one endpoint are ordered when
  * the other party's own changes order the pairs they were claimed at:
- * the later successor was claimed only at pairs the other party reached
- * from every pair of the earlier one, and never the other way round.
+ * every pair the later successor was claimed at is one the other party
+ * reached from every pair of the earlier one, and never the other way
+ * round.
  * The order comes from the links alone, so every replica holding the
  * same facts finds the same one. Claims at one pair, or at pairs no
  * link orders, compete.
@@ -307,7 +312,7 @@ export function successions(graph: Graph, side: Replaces, claims: readonly Claim
     const precedes = (a: Did, b: Did): boolean => {
       const before = pairsOf.get(a)!;
       const after = pairsOf.get(b)!;
-      return before.every((from) => after.some((to) => later(from, to))) && !after.some((from) => before.some((to) => channelKey(from) === channelKey(to) || later(from, to)));
+      return before.every((from) => after.every((to) => later(from, to))) && !after.some((from) => before.some((to) => channelKey(from) === channelKey(to) || later(from, to)));
     };
     const rank = new Map<Did, number>(successors.map((successor) => [successor, 0]));
     for (const a of successors) {
@@ -322,16 +327,24 @@ export function successions(graph: Graph, side: Replaces, claims: readonly Claim
   });
 }
 
+export interface Superseding {
+  readonly link: { readonly from: Channel; readonly to: Channel; readonly support: readonly FactId[] };
+  readonly side: Replaces;
+  /** the change of the superseded successor the link stands for, under the ID of the fact whose change supersedes it */
+  readonly claim: Claim;
+}
+
 /**
  * The link from each superseded successor to the one that supersedes
  * it, at every pair the superseding change was made at: where one
  * endpoint went from P to X and, further along the other party's
  * changes, from P to Y, X leads to Y. Only changes the graph already
  * holds as links imply one, and the support of the implied link is
- * theirs and that of the path between them.
+ * theirs and that of the path between them. Each is a change of the
+ * superseded successor in its own right, made at that pair.
  */
-function superseding(graph: Graph, claims: Claims): { from: Channel; to: Channel; replaces: Replaces; support: readonly FactId[] }[] {
-  const implied: { from: Channel; to: Channel; replaces: Replaces; support: readonly FactId[] }[] = [];
+function superseding(graph: Graph, claims: Claims): Superseding[] {
+  const implied: Superseding[] = [];
   for (const side of ["local", "peer"] as const) {
     for (const { claims: group, order } of successions(graph, side, claims[side])) {
       if (order === null) continue;
@@ -349,7 +362,8 @@ function superseding(graph: Graph, claims: Claims): { from: Channel; to: Channel
             if (superseded === undefined || between === undefined) continue;
             const from = moved(claim.at, side, before);
             if (from.localDid === from.peerDid) break;
-            implied.push({ from, to: made.to, replaces: side, support: sortedIds([...superseded.support, ...made.support, ...between.flatMap((edge) => [...edge.support])]) });
+            const support = sortedIds([...superseded.support, ...made.support, ...between.flatMap((edge) => [...edge.support])]);
+            implied.push({ link: { from, to: made.to, support }, side, claim: { id: claim.id, at: from, successor: after } });
             break;
           }
         }
@@ -359,9 +373,14 @@ function superseding(graph: Graph, claims: Claims): { from: Channel; to: Channel
   return implied;
 }
 
+const claimKey = (side: Replaces, claim: Claim): string => [side, claim.id, channelKey(claim.at), claim.successor].join("\u0001");
+
 /**
  * The least graph over the given links, the candidates `confirms`
- * admits and the links superseded successors imply. A candidate is
+ * admits and the links superseded successors imply. An implied change
+ * is ordered against the other changes of its endpoint as a claimed one
+ * is, so it may supersede in turn or compete; `implied` returns those
+ * of the final graph. A candidate is
  * judged against the graph built without it and every candidate still
  * waiting, so nothing it derives can confirm it; the graph is rebuilt
  * until no candidate is admitted any more. The confirming facts of each
@@ -374,7 +393,7 @@ export function closure<L extends Link>(
   claims: Claims,
   admits: (channel: Channel) => boolean,
   confirms: (graph: Graph, candidate: L) => readonly FactId[] | null
-): { graph: Graph; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
+): { graph: Graph; implied: Claims; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
   const admitted = new Map<L, readonly FactId[]>();
   const waiting = new Set(candidates);
   const build = () => {
@@ -382,28 +401,40 @@ export function closure<L extends Link>(
     for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.id]);
     for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.id, ...support]);
     graph.close();
-    for (let weight = -1; weight !== graph.weight(); ) {
+    const found = new Map<string, Superseding>();
+    const known = (): Claims => {
+      const all = { local: [...claims.local], peer: [...claims.peer] };
+      for (const { side, claim } of found.values()) all[side].push(claim);
+      return all;
+    };
+    for (let weight = -1, size = -1; weight !== graph.weight() || size !== found.size; ) {
       weight = graph.weight();
-      for (const link of superseding(graph, claims)) graph.add(link.from, link.to, link.replaces, link.support, true);
+      size = found.size;
+      for (const change of superseding(graph, known())) {
+        found.set(claimKey(change.side, change.claim), change);
+        graph.add(change.link.from, change.link.to, change.side, change.link.support, true);
+      }
       graph.close();
     }
-    return graph;
+    const implied: Record<Replaces, Claim[]> = { local: [], peer: [] };
+    for (const { side, claim } of found.values()) implied[side].push(claim);
+    return { graph, implied };
   };
-  let graph = build();
+  let built = build();
   for (;;) {
     let progressed = false;
     for (const link of waiting) {
       if (admitted.has(link)) continue;
-      const support = confirms(graph, link);
+      const support = confirms(built.graph, link);
       if (support === null) continue;
       admitted.set(link, support);
       progressed = true;
     }
     if (!progressed) break;
-    graph = build();
+    built = build();
   }
   for (const link of admitted.keys()) waiting.delete(link);
-  return { graph, admitted, waiting };
+  return { ...built, admitted, waiting };
 }
 
 /** Union-find over channel keys: the contexts one kind of edge connects. */

@@ -3,7 +3,8 @@
 Starting from an oriented DID pair, this guide puts test inputs, derivation and
 query results side by side. Read the [README](../README.md) and
 [public types](../src/model.ts) for the API and integration contract. Test links
-point to the fixed source revision used to check these examples.
+point to the test files beside this guide; the examples describe profile
+`estoc-continuity/2`.
 
 Start with [both parties rotating and joining](#join), then explore
 [contexts](#contexts), [ambiguous evidence](#ambiguity) and
@@ -18,6 +19,7 @@ Start with [both parties rotating and joining](#join), then explore
 | `d1` | A `local-decision`: a local rotation or ending decision the host has saved. |
 | `o1` | An `address-observed` fact: an authenticated receipt from the peer to an **exact local DID**. |
 | Dashed `join` edge | An edge derived from the two sides' rotations. It can be usable without another receipt. |
+| Dashed `superseded` edge | An edge derived from two successors of one endpoint that the other party's changes order: the earlier successor leads to the later one. |
 | Dashed `diagnostic` edge | An edge retained to explain history or ambiguity. It cannot serve as a usable path. |
 | `support` | Fact IDs supporting the asserted links or an individual confirmation, rather than a complete snapshot. |
 
@@ -236,8 +238,9 @@ and time select no successor.
 | Boundary | Result and reason |
 | --- | --- |
 | Two distinct IDs both declare B0 → B1 | More support, with no additional successor or fork. |
-| p1 is at C(A0,B0), p2 is at C(A1,B0), and a local link connects the pairs | Different successors still compete in the same B0 context. |
-| Remove that local connection, with no other context connection between the pairs | Sharing B0 alone does not establish this competition across pairs. |
+| p1 is at C(A0,B0), p2 is at C(A1,B0), and the local link A0 → A1 leads from the first pair to the second | No competition: [the local change orders them](#ordered), B1 then B2. |
+| p1 is at C(A1,B0), p2 is at C(A2,B0), and the pairs are connected only through a local fork A0 → A1, A0 → A2 | Neither pair leads to the other, so the successors compete, as the forked local changes do. |
+| Remove every local connection between the pairs | Sharing B0 alone relates the two claims in no way: no competition and no order. |
 | Save both A0 → A1 and A0 → A2 at one pair, before any observation arrives | Already `competing-changes`: missing confirmation does not erase a saved fork. |
 | Add a proof-free observation to a conflicted context | It cannot restore usable continuation through the conflict. |
 | Another disconnected relationship also uses B0 | It keeps its own usable head. |
@@ -269,6 +272,45 @@ example has predecessor confirmation. Endpoint collision is distinct from
 **Tests:** [repeated carriers][test-peer], [competing changes][test-competition],
 [observations][test-observations].
 
+<a id="ordered"></a>
+
+## Successors the other party's changes order
+
+A0 rotates to A1 while the peer's B0 rotates twice: to B1 as received by A0,
+and to B2 as received by A1. The local link from C(A0,B0) to C(A1,B0) leads
+from the pair of the first claim to the pair of the second, so the claims have
+an order that every replica holding these facts finds: B1, then B2.
+
+```mermaid
+flowchart LR
+    C00["C(A0,B0)"] -->|"p1: B0 → B1"| C01["C(A0,B1)"]
+    C00 -->|"d1: A0 → A1"| C10["C(A1,B0)"]
+    C10 -->|"p2: B0 → B2"| C12["C(A1,B2)<br/>head"]
+    C01 -. "join: local" .-> C11["C(A1,B1)"]
+    C10 -. "join: peer" .-> C11
+    C11 -. "superseded: B1 → B2" .-> C12
+```
+
+The superseded successor leads to the later one at the pair the later change
+was made at. That edge is `derived: true`; its support is p1, p2 and the path
+between their pairs. `changes(C(A1,B1), "peer")` lists it under p2's ID, at
+C(A1,B1), so a host that asks whether B1 has been replaced gets the same answer
+it gets for B0.
+
+| Boundary | Result and reason |
+| --- | --- |
+| The same shape with the sides swapped: P → X for B, P → Y for B's successor B2 | X then Y; every pair of the relationship has the head C(Y,B2). |
+| A third successor claimed further along the other party's changes | Ordered after the second; each superseded successor leads to the next. |
+| The later successor is claimed at several pairs | Every one of them must be reached from every pair of the earlier successor. A pair that is not, even beside one that is, leaves the two competing. |
+| The later decision is saved but not confirmed yet | No conflict; `head` is `unresolved` until its source arrives. |
+| The superseded B1 rotates to B3 at C(A1,B1), where it is replaced | `competing-changes` in B1's context between B2, under p2's ID, and B3; the scope includes C(A1,B2) and C(A1,B3). |
+| B1 rotates to B2 at C(A1,B1) | The same change, more support; the edge is no longer derived. |
+| B1 ends in the context it is replaced in | The ending competes with the replacement. |
+| B1 rotates to B3 at C(A0,B1), before the local change | B3 is superseded with it: B1, B3, then B2 by the same order. |
+| An ending of the endpoint itself beside either rotation | Ordered with nothing; it competes as before. |
+
+**Tests:** [ordered successors][test-ordered].
+
 <a id="merge"></a>
 
 ## Merge converges even when a head is withdrawn
@@ -276,8 +318,8 @@ example has predecessor confirmation. Endpoint collision is distinct from
 ```mermaid
 flowchart LR
     A["replica A<br/>o0 + d1 + p1<br/>head = C(A1,B1)"] --> M["Union retains every fact"]
-    B["replica B<br/>o0 + p2<br/>p2 at C(A1,B0): B0 → B2"] --> M
-    M --> R["Both replicas see the same conflict<br/>p1 and p2 compete in one B0 context"]
+    B["replica B<br/>o0 + p2<br/>p2 at C(A0,B0): B0 → B2"] --> M
+    M --> R["Both replicas see the same conflict<br/>p1 and p2 compete at one pair"]
 ```
 
 Learning more facts can withdraw a previously usable head. The result still
@@ -370,7 +412,7 @@ choice for A1. The query must account for that choice before returning a head.
 | Also add usable `scope: C(A1,B0) → C(A1,B1)` | `unresolved`, waiting `[w]`, missing `[missing]` | Its scope is established; the exact source is still missing. |
 | Then supply `missing`, an observation from B0 to A1 | `head C(A2,B1)` | Both scope and confirmation prerequisites are satisfied. |
 | Without adding scope, independently establish A1 → A2 at C(A1,B1) using a new observation | `head C(A2,B1)` | The same onward change has usable support; w remains provenance. |
-| Instead save A1 → A3 at C(A1,B1) | `conflict` | It competes with w's A1 → A2. |
+| Instead save A1 → A3 at C(A1,B0), w's own pair | `conflict` | It competes with w's A1 → A2. |
 
 This explains why `status(fact)` and `head(pair)` can return different statuses.
 The former describes the fact's own prerequisites; the latter also accounts for
@@ -608,22 +650,23 @@ ACK policy. Those decisions remain with the host that uses the results.
 | How can replicas converge to a conflict? | [Merge](#merge) | Merge laws; identity and equality; compatibility; convergence and monotonicity. |
 | Which inputs are rejected between a token and a fact? | [Proofs](#proofs) | Inspect; precheck; verify; bind; create. |
 
-[test-peer]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L30
-[test-local]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L74
-[test-join]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L153
-[test-competition]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L203
-[test-ending]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L275
-[test-observations]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L319
-[test-identity]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L357
-[test-ending-scope]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L438
-[test-covered]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L463
-[test-onward]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L497
-[test-dependencies]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L528
-[test-convergence]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/model.test.ts#L599
-[test-graph]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/graph.test.ts#L6
-[test-merge]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/merge.test.ts#L16
-[test-equality]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/merge.test.ts#L60
-[test-compatibility]: https://github.com/estoc-net/estoc/blob/38212acdeb4a88ecfacf070fca880ae81329505b/packages/continuity/test/merge.test.ts#L91
+[test-peer]: ../test/model.test.ts
+[test-local]: ../test/model.test.ts
+[test-join]: ../test/model.test.ts
+[test-competition]: ../test/model.test.ts
+[test-ordered]: ../test/model.test.ts
+[test-ending]: ../test/model.test.ts
+[test-observations]: ../test/model.test.ts
+[test-identity]: ../test/model.test.ts
+[test-ending-scope]: ../test/model.test.ts
+[test-covered]: ../test/model.test.ts
+[test-onward]: ../test/model.test.ts
+[test-dependencies]: ../test/model.test.ts
+[test-convergence]: ../test/model.test.ts
+[test-graph]: ../test/graph.test.ts
+[test-merge]: ../test/merge.test.ts
+[test-equality]: ../test/merge.test.ts
+[test-compatibility]: ../test/merge.test.ts
 [test-inspect]: https://github.com/estoc-net/estoc/blob/e655214d9fd220bdd3445e68f800427c114a6390/packages/continuity/test/from-prior.test.ts#L74
 [test-precheck]: https://github.com/estoc-net/estoc/blob/e655214d9fd220bdd3445e68f800427c114a6390/packages/continuity/test/from-prior.test.ts#L94
 [test-verify]: https://github.com/estoc-net/estoc/blob/e655214d9fd220bdd3445e68f800427c114a6390/packages/continuity/test/from-prior.test.ts#L184

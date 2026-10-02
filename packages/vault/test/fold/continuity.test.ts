@@ -7,6 +7,7 @@ import { describe, expect, it, test } from "vitest";
 import {
   AUTHENTICATION_METHOD,
   VaultEventSet,
+  admissionDrafts,
   anonymousMessageId,
   authorizedMethodIds,
   checkVault,
@@ -352,6 +353,39 @@ describe("conflicts", () => {
     for (const start of [channel(a0, b0), channel(a1, b0), channel(a0, b1), channel(a1, b1)]) expect(c.head(start)).toEqual(channel(a1, b2));
     expect(c.superseded(channel(a0, b0))).toBe(true);
     expectSameOverEveryOrder(across.scene, vault.checks);
+  });
+
+  test("a peer successor that a later one superseded gets no new admission at any local address of the relationship, the later successor and an unrelated channel keep theirs, and a change of its own where it was replaced is a conflict", async () => {
+    const { scene, keys, peerKeys, a0, a1, a2, b0, b1, b2, b3 } = await vaults();
+    const waiting = (local: Local, peer: Peer) => receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), admitted: false });
+    const source = proofFreeReceipt(scene, a0, b0);
+    await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a1, b0, b2);
+    const refused = [waiting(a0, b1), waiting(a1, b1), waiting(a1, b0)];
+    const eligible = [waiting(a1, b2), waiting(a2, b1)];
+    let vault = await fold(scene, keys);
+    let c = vault.continuity;
+    expect(c.conflicts).toEqual([]);
+    expect([channel(a0, b1), channel(a1, b1), channel(a1, b0), channel(a1, b2), channel(a2, b1)].map((at) => c.superseded(at))).toEqual([true, true, true, false, false]);
+    for (const event of refused) {
+      expect(vault.dispositions.disposition(event.cid)).toEqual({ status: "ignored-superseded" });
+      expect(vault.dispositions.candidate(event.cid)?.eligibility).toEqual({ status: "refused", because: "the peer has replaced its DID" });
+    }
+    for (const event of eligible) expect(vault.dispositions.candidate(event.cid)?.eligibility).toMatchObject({ status: "eligible" });
+    expect(admissionDrafts(vault).map((draft) => draft.data.sourceEventCid).sort()).toEqual(eligible.map((event) => event.cid).sort());
+    expectSameOverEveryOrder(scene, vault.checks);
+
+    const onward = await receiptCarryingProof(scene, peerKeys, a1, b1, b3);
+    vault = await fold(scene, keys);
+    c = vault.continuity;
+    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b1), channel(a1, b1)].sort(compareChannels) }, channels: [channel(a0, b1), channel(a1, b1), channel(a1, b2), channel(a1, b3)].sort(compareChannels) }]);
+    expect(c.status(onward.cid)).toMatchObject({ status: "conflict" });
+    for (const start of [channel(a0, b0), channel(a1, b1), channel(a1, b2), channel(a1, b3)]) expect(c.head(start)).toBeNull();
+    expect(c.ackPath(channel(a1, b1), channel(a1, b2))).toBe(false);
+    expect(c.ackPath(channel(a1, b1), channel(a1, b3))).toBe(false);
+    for (const at of [channel(a1, b2), channel(a1, b3)]) expect(vault.views.channel(at).send.status).toBe("closed");
+    expectSameOverEveryOrder(scene, vault.checks);
   });
 
   test("a cycle of replacements grants nothing, and a join that would pair a DID with itself is refused as an identity collision", async () => {
