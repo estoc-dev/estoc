@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- **Replica-mediation enrollment**: `createMediation` takes a `profile`,
+  and an arrangement created with `"replica-mediation/1.0"` is enrolled
+  in with `enroll` (`Agent.enroll`) where an ordinary one is
+  established. `createReplica` records `replica.created` for the
+  runtime's own replica ID, the grant its account signs, before the
+  mediator is asked. `enroll` then sends `account-register` when the
+  arrangement has no grant, recording `mediation.granted` over a reply
+  that names the account, the arrangement and the mediator as its
+  routing DID, and `replica-add` for the runtime's own replica alone.
+  That the replica was added is kept in `Confirmations`, for which the
+  runtime's local options serve (`AgentOptions.confirmations`): it is
+  this runtime's knowledge and no vault event, and a replica whose
+  confirmation is kept is not added again. A refusal or an answer
+  naming something else is `MediatorRefused` and records nothing.
+- **A connection enrolls a replica-mediation arrangement** (behaviour
+  change): `Agent.connect` reconciles no recipients and picks up
+  nothing over such an arrangement, whose account holds no queue, and
+  reports the enrollment as `Connection.enrolled`. `establish` and
+  `reconcile` refuse one with `Unusable` before any request.
+
 ## 0.20.0 — 2026-09-29
 
 - **A receipt allocates no ordinal** (behaviour change): the observation

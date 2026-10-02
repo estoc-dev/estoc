@@ -14,7 +14,7 @@
 import { v7 as uuidv7 } from "uuid";
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { mediationKeyName, mintMediationDid, scanVault, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { mediationKeyName, mintMediationDid, scanVault, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type MediationProfile, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import type { IMessage } from "./protocol/didcomm.js";
 import { MEDIATE_GRANT, MEDIATE_REQUEST, RECIPIENT, RECIPIENT_QUERY, RECIPIENT_UPDATE, RECIPIENT_UPDATE_RESPONSE } from "./protocol/mediation.js";
@@ -36,9 +36,18 @@ export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediatio
  * there, and a ritual run as one and recorded against the other would
  * grant, register and disclose under the wrong one.
  */
-function toward(link: MediatorLink, mediation: Mediation): void {
+export function toward(link: MediatorLink, mediation: Mediation): void {
   if (mediation.mediatorDid !== null && !sameDid(mediation.mediatorDid, link.mediatorDid)) throw new WrongMediator(mediation.mediatorDid, link.mediatorDid);
   if (mediation.me !== null && !sameDid(mediation.me.did, link.me)) throw new WrongAccount(mediation.me.did, link.me);
+}
+
+/**
+ * Coordinate Mediation is for an ordinary account alone: the mediator
+ * keeps an arrangement of another profile apart from those accounts,
+ * and its recipients are not registered this way.
+ */
+function ordinary(mediation: Mediation): void {
+  if (mediation.profile !== null) throw new Unusable("mediation", mediation.mediationId, [`a ${mediation.profile} arrangement takes no coordinate-mediation request`]);
 }
 
 /**
@@ -46,15 +55,19 @@ function toward(link: MediatorLink, mediation: Mediation): void {
  * vault-controlled identity toward the mediator, minted from the
  * arrangement's own key name. Committed before any network request.
  * The same ID again returns the creation already recorded when it
- * says the same, and refuses one that says otherwise.
+ * says the same, and refuses one that says otherwise. With `profile`
+ * the arrangement is an account of that protocol at the mediator, and
+ * is `enroll`ed there, not `establish`ed.
  */
-export async function createMediation(runtime: VaultRuntime, keys: Keys, mediatorDid: Did, mediationId = uuidv7() as MediationId): Promise<VaultEvent<"mediation.created">> {
+export async function createMediation(runtime: VaultRuntime, keys: Keys, mediatorDid: Did, mediationId = uuidv7() as MediationId, profile?: MediationProfile): Promise<VaultEvent<"mediation.created">> {
   const me = await mintMediationDid(keys, mediationId);
-  const data = { mediationId, mediatorDid, me: { keyName: mediationKeyName(mediationId), did: me.longFormDid } };
+  const data = { mediationId, mediatorDid, me: { keyName: mediationKeyName(mediationId), did: me.longFormDid }, ...(profile === undefined ? {} : { profile }) };
   const { fold, events } = await decide(runtime, keys, (fold) => {
     const existing = fold.mediations.mediations.get(mediationId);
     if (existing === undefined) return [vaultDraft("mediation.created", data)];
-    if (existing.mediatorDid !== data.mediatorDid || existing.me?.did !== data.me.did) throw new EntityConflict("mediation", mediationId, existing.faults.join("; ") || "another mediator or identity");
+    if (existing.mediatorDid !== data.mediatorDid || existing.me?.did !== data.me.did || existing.profile !== (profile ?? null)) {
+      throw new EntityConflict("mediation", mediationId, existing.faults.join("; ") || "another mediator, identity or profile");
+    }
     return [];
   });
   return (events[0] as VaultEvent<"mediation.created"> | undefined) ?? (fold.set.of("mediation.created").find((event) => event.data.mediationId === mediationId) as VaultEvent<"mediation.created">);
@@ -80,6 +93,7 @@ export async function establish(link: MediatorLink, runtime: VaultRuntime, keys:
   let fold = await scanVault(runtime.vault, keys);
   let mediation = mediationOf(fold, mediationId);
   toward(link, mediation);
+  ordinary(mediation);
   if (mediation.status === "conflict" || mediation.status === "retired" || mediation.me === null) {
     throw new Unusable("mediation", mediationId, [...mediation.faults, ...(mediation.retired === null ? [] : [`retired: ${mediation.retired}`]), ...(mediation.me === null ? ["no creation"] : [])]);
   }
@@ -159,6 +173,7 @@ export function reconcile(link: MediatorLink, runtime: VaultRuntime, keys: Keys,
 export async function reconcileNow(link: MediatorLink, fold: VaultFold, mediationId: MediationId): Promise<Reconciled> {
   const mediation = mediationOf(fold, mediationId);
   toward(link, mediation);
+  ordinary(mediation);
   if (mediation.status !== "usable") throw new Unusable("mediation", mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
   const desired = fold.routes.desiredRecipients.filter((recipient) => recipient.mediationId === mediationId).map((recipient) => recipient.did);
   const held = await queryRecipients(link);
