@@ -94,8 +94,8 @@ describe("enrolling", () => {
     const first = await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId);
     expect(first.steps).toEqual(["replica-created", "account-registered", "replica-added"]);
     expect(first.mediation).toMatchObject({ status: "usable", routingDid: mediator.did });
-    expect(mediator.replicaAccounts.get(canonicalDid(p.created.data.me.did))).toBe(p.mediationId);
-    expect(mediator.replicas.get(p.runtime.author)).toMatchObject({ replicaDid: first.replica.did, grant: first.replica.grants[0] });
+    expect(mediator.replicaAccounts.has(canonicalDid(p.created.data.me.did))).toBe(true);
+    expect(mediator.replicas.get(first.replica.did as Did)).toMatchObject({ replicaDid: first.replica.did, grant: first.replica.grants[0] });
     const asked = mediator.seenTypes.length;
     expect((await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).steps).toEqual([]);
     expect(mediator.seenTypes).toHaveLength(asked);
@@ -146,7 +146,7 @@ describe("enrolling", () => {
     expect(enrolled.steps).toEqual(["replica-created", "replica-added"]);
     expect(enrolled.replica.replicaId).toBe(second.runtime.author);
     expect(sent(mediator, ACCOUNT_REGISTER)).toBe(1);
-    expect([...mediator.replicas.keys()].sort()).toEqual([first.runtime.author, second.runtime.author].sort());
+    expect([...mediator.replicas.keys()].sort()).toEqual((await fold(second)).replicas.members(first.mediationId).map((replica) => replica.did).sort());
     expect((await fold(second)).replicas.members(first.mediationId)).toHaveLength(2);
     await first.runtime.close();
     await second.runtime.close();
@@ -156,17 +156,17 @@ describe("enrolling", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     const confirmations = transientConfirmations();
-    mediator.intercept = (msg, from) => (msg.type === ACCOUNT_REGISTER ? mediator.reply(`${ACCOUNT_REGISTER}ed`, from as string, { account: canonicalDid(from as string), mediation_id: p.mediationId, routing_did: "did:web:elsewhere.example" }, msg.id) : undefined);
+    mediator.intercept = (msg, from) => (msg.type === ACCOUNT_REGISTER ? mediator.reply(`${ACCOUNT_REGISTER}ed`, from as string, { account: canonicalDid(from as string), routing_did: "did:web:elsewhere.example" }, msg.id) : undefined);
     await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toBeInstanceOf(MediatorRefused);
     expect((await fold(p)).mediations.mediations.get(p.mediationId)?.routingDid).toBeNull();
 
-    mediator.intercept = (msg, from) => (msg.type === REPLICA_ADD ? mediator.reply(`${REPLICA_ADD}ed`, from as string, { replica_id: p.runtime.author, replica_did: canonicalDid(from as string), state: "active" }, msg.id) : undefined);
+    mediator.intercept = (msg, from) => (msg.type === REPLICA_ADD ? mediator.reply(`${REPLICA_ADD}ed`, from as string, { replica_did: canonicalDid(from as string), state: "active" }, msg.id) : undefined);
     await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toBeInstanceOf(MediatorRefused);
 
     mediator.intercept = null;
     mediator.replicaAccounts.clear();
     await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toThrow("replica-add was refused: e.estoc.replica-mediation.unknown-account");
-    mediator.replicaAccounts.set(canonicalDid(p.created.data.me.did), p.mediationId);
+    mediator.replicaAccounts.add(canonicalDid(p.created.data.me.did));
     expect((await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).steps).toEqual(["replica-added"]);
     await p.runtime.close();
   });

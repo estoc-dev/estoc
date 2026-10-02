@@ -130,9 +130,9 @@ export class FakeMediator {
   protectSender = false;
   /** seal every reply and frame as the mediator's short form, the other spelling of the same DID */
   answerAsShortForm = false;
-  /** replica-mediation accounts by their short form, each with the arrangement it registered */
-  readonly replicaAccounts = new Map<string, string>();
-  /** the replicas added, by replica ID: the account and the grant each was added with */
+  /** replica-mediation accounts, by their short form */
+  readonly replicaAccounts = new Set<string>();
+  /** the replicas added, by replica DID: the account and the grant each was added with */
   readonly replicas = new Map<string, { account: string; replicaDid: string; grant: string }>();
   readonly queues = new Map<string, Queued[]>();
   private readonly sockets = new Map<string, FakeSocket>();
@@ -290,23 +290,19 @@ export class FakeMediator {
       }
       case ACCOUNT_REGISTER: {
         const account = canonicalDid(from as string);
-        const mediationId = (msg.body as { mediation_id: string }).mediation_id;
-        const registered = this.replicaAccounts.get(account);
-        if (registered !== undefined && registered !== mediationId) return this.refused(from as string, "identity-conflict", msg.id);
-        this.replicaAccounts.set(account, mediationId);
-        return this.reply(ACCOUNT_REGISTERED, from as string, { account, mediation_id: mediationId, routing_did: this.did, registered_time: 1, limits: {} }, msg.id);
+        this.replicaAccounts.add(account);
+        return this.reply(ACCOUNT_REGISTERED, from as string, { account, routing_did: this.did, registered_time: 1, limits: {} }, msg.id);
       }
       case REPLICA_ADD: {
         const account = canonicalDid(from as string);
-        const mediationId = this.replicaAccounts.get(account);
-        if (mediationId === undefined) return this.refused(from as string, "unknown-account", msg.id);
+        if (!this.replicaAccounts.has(account)) return this.refused(from as string, "unknown-account", msg.id);
         const jws = (msg.body as { grant: string }).grant;
         const grant = readReplicaGrant(jws);
-        if (grant.account !== account || grant.mediationId !== mediationId || !sameDid(grant.mediator, this.did)) return this.refused(from as string, "invalid-grant", msg.id);
-        const added = this.replicas.get(grant.replicaId);
-        if (added !== undefined && (added.account !== account || added.replicaDid !== grant.replicaDid)) return this.refused(from as string, "identity-conflict", msg.id);
-        this.replicas.set(grant.replicaId, { account, replicaDid: grant.replicaDid, grant: jws });
-        return this.reply(REPLICA_ADDED, from as string, { replica_id: grant.replicaId, replica_did: grant.replicaDid, state: "active", added_time: 1 }, msg.id);
+        if (grant.account !== account || !sameDid(grant.mediator, this.did)) return this.refused(from as string, "invalid-grant", msg.id);
+        const added = this.replicas.get(grant.replicaDid);
+        if (added !== undefined && added.account !== account) return this.refused(from as string, "identity-conflict", msg.id);
+        this.replicas.set(grant.replicaDid, { account, replicaDid: grant.replicaDid, grant: jws });
+        return this.reply(REPLICA_ADDED, from as string, { replica_did: grant.replicaDid, state: "active", added_time: 1 }, msg.id);
       }
       case STATUS_REQUEST:
         return this.reply(STATUS, from as string, { message_count: this.queue(from as string).length }, msg.id);

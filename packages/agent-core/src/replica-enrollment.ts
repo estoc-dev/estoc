@@ -123,9 +123,9 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
     let mediation = accountOf(fold, mediationId);
     if (mediation.routingDid === null) {
       proceed();
-      const registered = await control(link, ACCOUNT_REGISTER, { mediation_id: mediationId }, ACCOUNT_REGISTERED);
-      if (!echoes(registered, "account", mediation.me.did) || registered.body["mediation_id"] !== mediationId || !echoes(registered, "routing_did", mediation.mediatorDid)) {
-        throw new MediatorRefused("account-registered names another account, arrangement or routing DID than the one asked for");
+      const registered = await control(link, ACCOUNT_REGISTER, {}, ACCOUNT_REGISTERED);
+      if (!echoes(registered, "account", mediation.me.did) || !echoes(registered, "routing_did", mediation.mediatorDid)) {
+        throw new MediatorRefused("account-registered names another account or routing DID than the one asked for");
       }
       const routingDid = mediation.mediatorDid;
       const decided = await decide(runtime, keys, (fold) => (accountOf(fold, mediationId).routingDid === null ? [vaultDraft("mediation.granted", { mediationId, routingDid })] : []));
@@ -141,7 +141,7 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
     if (!(isJsonObject(kept) && kept["replicaDid"] === replica.did)) {
       proceed();
       const added = await control(link, REPLICA_ADD, { grant: replica.grants[0] as string }, REPLICA_ADDED);
-      if (added.body["replica_id"] !== replicaId || !echoes(added, "replica_did", replica.did) || added.body["state"] !== "active") {
+      if (!echoes(added, "replica_did", replica.did) || added.body["state"] !== "active") {
         throw new MediatorRefused("replica-added names another replica than the one asked for, or one that is not active");
       }
       await confirmations.set(key, { replicaDid: replica.did });

@@ -11,7 +11,7 @@
   recorded grant does not make the runtime a member, so that no account
   is registered for a replica that could not join it. `enroll` then sends `account-register` when the
   arrangement has no grant, recording `mediation.granted` over a reply
-  that names the account, the arrangement and the mediator as its
+  that names the account and the mediator as its
   routing DID, and `replica-add` for the runtime's own replica alone.
   That the replica was added is kept in `Confirmations`, for which the
   runtime's local options serve (`AgentOptions.confirmations`): it is
