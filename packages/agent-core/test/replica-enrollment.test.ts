@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { readReplicaGrant, scanVault, type Did, type MediationId, type MediationProfile, type VaultFold } from "@estoc/vault";
+import { readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type MediationProfile, type VaultFold } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
@@ -24,6 +24,7 @@ import {
   transientConfirmations,
   type Confirmations,
 } from "../src/index.js";
+import { decide } from "../src/procedure.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, freshVault, newMediator, party, type Party } from "./helpers.js";
 
@@ -60,6 +61,20 @@ describe("creating a replica", () => {
     await createReplica(p.runtime, p.keys, p.mediationId);
     const second = await createMediation(p.runtime, p.keys, mediator.did as Did, undefined, PROFILE);
     await expect(createReplica(p.runtime, p.keys, second.data.mediationId)).rejects.toBeInstanceOf(EntityConflict);
+    await p.runtime.close();
+  });
+
+  it("refuses the arrangement whose recorded grant makes the runtime no member, and enrolling asks the mediator nothing", async () => {
+    const mediator = await newMediator();
+    const p = await account(mediator);
+    const elsewhere = canonicalDid((await createMediation(p.runtime, p.keys, mediator.did as Did)).data.me.did) as Did;
+    const grant = await signReplicaGrant(p.keys, { mediationId: p.mediationId, mediatorDid: elsewhere, me: p.created.data.me }, p.runtime.author);
+    await decide(p.runtime, p.keys, () => [vaultDraft("replica.created", { replicaId: p.runtime.author, mediationId: p.mediationId, grant })]);
+    expect((await fold(p)).replicas.replicas.get(p.runtime.author)?.status).toBe("conflict");
+    await expect(createReplica(p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    const link = new MediatorLink(p.linkOptions);
+    await expect(enroll(link, p.runtime, p.keys, transientConfirmations(), p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();
   });
 
@@ -208,19 +223,21 @@ describe("a replica-mediation arrangement", () => {
   it("records the registration answered after the agent closed, and begins no replica-add", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const answered = Promise.withResolvers<void>();
-    const released = Promise.withResolvers<void>();
+    let answered = (): void => undefined;
+    const answeredOnce = new Promise<void>((resolve) => (answered = resolve));
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => (release = resolve));
     const held: typeof fetch = async (...request) => {
       const response = await (p.linkOptions.fetch as typeof fetch)(...request);
-      answered.resolve();
-      await released.promise;
+      answered();
+      await released;
       return response;
     };
     const agent = await Agent.open(p, { didcomm, fetch: held, WebSocket: mediator.WebSocket, trace: p.trace });
     const enrolling = agent.enroll(p.mediationId);
-    await answered.promise;
+    await answeredOnce;
     agent.close();
-    released.resolve();
+    release();
     await expect(enrolling).rejects.toThrow("the agent is closed");
     expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
     expect((await fold(p)).mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
@@ -237,21 +254,23 @@ describe("a replica-mediation arrangement", () => {
     first.close();
     await selectMediation(p.runtime, p.keys, p.mediationId);
 
-    const asked = Promise.withResolvers<void>();
-    const released = Promise.withResolvers<void>();
+    let asked = (): void => undefined;
+    const askedOnce = new Promise<void>((resolve) => (asked = resolve));
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => (release = resolve));
     const slow: Confirmations = {
       get: async () => {
-        asked.resolve();
-        await released.promise;
+        asked();
+        await released;
         return undefined;
       },
       set: async () => {},
     };
     const agent = await Agent.open(p, { ...options, confirmations: slow });
     const connecting = agent.connect();
-    await asked.promise;
+    await askedOnce;
     agent.close();
-    released.resolve();
+    release();
     const [connection] = await connecting;
     expect(connection?.enrolled).toBeNull();
     expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);

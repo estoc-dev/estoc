@@ -7,7 +7,9 @@
   in with `enroll` (`Agent.enroll`) where an ordinary one is
   established. `createReplica` records `replica.created` for the
   runtime's own replica ID, the grant its account signs, before the
-  mediator is asked. `enroll` then sends `account-register` when the
+  mediator is asked, and refuses with `Unusable` an arrangement whose
+  recorded grant does not make the runtime a member, so that no account
+  is registered for a replica that could not join it. `enroll` then sends `account-register` when the
   arrangement has no grant, recording `mediation.granted` over a reply
   that names the account, the arrangement and the mediator as its
   routing DID, and `replica-add` for the runtime's own replica alone.

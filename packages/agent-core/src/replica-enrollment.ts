@@ -70,7 +70,9 @@ function accountOf(fold: VaultFold, mediationId: MediationId): Mediation & { med
  * account signs for the runtime's own replica ID. Committed before the
  * mediator is asked. A replica ID is one arrangement's for good, since
  * its DID names that arrangement's mediator; the grant already recorded
- * for this arrangement is returned as it is.
+ * for this arrangement is returned as it is. One recorded that does not
+ * make the runtime a member is refused here, before the mediator is
+ * asked for an account no replica of this runtime could join.
  */
 export async function createReplica(runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<VaultEvent<"replica.created">> {
   const replicaId: ReplicaId = runtime.author;
@@ -79,6 +81,7 @@ export async function createReplica(runtime: VaultRuntime, keys: Keys, mediation
     const existing = fold.replicas.replicas.get(replicaId);
     if (existing === undefined) return [vaultDraft("replica.created", { replicaId, mediationId, grant: await signReplicaGrant(keys, mediation, replicaId) })];
     if (existing.mediationId !== mediationId) throw new EntityConflict("replica", replicaId, existing.faults.join("; ") || `enrolled in mediation ${existing.mediationId}`);
+    if (existing.status !== "member") throw new Unusable("replica", replicaId, existing.faults.length > 0 ? existing.faults : [existing.status]);
     return [];
   });
   return (events[0] as VaultEvent<"replica.created"> | undefined) ?? (fold.set.of("replica.created").find((event) => event.data.replicaId === replicaId) as VaultEvent<"replica.created">);
