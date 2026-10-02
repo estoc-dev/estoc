@@ -124,15 +124,14 @@ export function sameBinding(a: ReplicaGrant, b: ReplicaGrant): boolean {
   return a.account === b.account && a.mediationId === b.mediationId && a.mediator === b.mediator && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
 }
 
-/** The method types a mediator reads an Ed25519 key from when the method spells it as a multibase value. */
 const MULTIBASE_SIGNING_TYPES: ReadonlySet<unknown> = new Set(["Multikey", "Ed25519VerificationKey2020"]);
 
 /**
  * The Ed25519 key a mediator verifies a grant with when `kid` names
  * this authentication method, or null when it would refuse the method:
- * it reads a multibase value only under `Multikey` or
- * `Ed25519VerificationKey2020` and a JWK only under `JsonWebKey2020`,
- * so the same key under any other type signs grants no mediator takes.
+ * a mediator reads a key only under the method types it supports for
+ * the key's encoding, so the same key under any other type signs
+ * grants no mediator takes.
  */
 function signingKey(document: JsonObject, methodId: DidUrl): PublicKey | null {
   if (!authorizedMethodIds(document, "authentication").includes(methodId)) return null;
