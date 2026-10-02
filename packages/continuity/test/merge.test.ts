@@ -94,7 +94,7 @@ describe("compatibility", () => {
   });
 
   it("refuses a profile it does not implement rather than dropping unknown fields", () => {
-    const newer = { ...snapshot([{ ...p1, extra: 1 } as unknown as ContinuityFact]), profileVersion: "estoc-continuity/2" };
+    const newer = { ...snapshot([{ ...p1, extra: 1 } as unknown as ContinuityFact]), profileVersion: "estoc-continuity/3" };
     expect(() => mergeFacts(A, newer)).toThrow(IncompatibleSnapshot);
     expect(() => mergeFacts(newer, A)).toThrow(IncompatibleSnapshot);
   });
@@ -140,7 +140,7 @@ describe("compatibility", () => {
   });
 
   it("validates a snapshot's shape before merging anything", () => {
-    expect(() => mergeFacts(A, { identityNamespace: "alice", profileVersion: "estoc-continuity/1", facts: "p1" } as unknown as FactSnapshot)).toThrow(IncompatibleSnapshot);
-    expect(() => mergeFacts(A, { identityNamespace: "", profileVersion: "estoc-continuity/1", facts: [] })).toThrow(IncompatibleSnapshot);
+    expect(() => mergeFacts(A, { identityNamespace: "alice", profileVersion: "estoc-continuity/2", facts: "p1" } as unknown as FactSnapshot)).toThrow(IncompatibleSnapshot);
+    expect(() => mergeFacts(A, { identityNamespace: "", profileVersion: "estoc-continuity/2", facts: [] })).toThrow(IncompatibleSnapshot);
   });
 });

@@ -52,7 +52,7 @@ export type AddressObservation = Readonly<{
 export type ContinuityFact = PeerTransition | LocalDecision | AddressObservation;
 
 /** The fact schema, normalization, proof rules and derivation rules this package implements. */
-export const PROFILE_VERSION = "estoc-continuity/1";
+export const PROFILE_VERSION = "estoc-continuity/2";
 
 /**
  * The facts of one logical local identity. Facts may repeat an ID with

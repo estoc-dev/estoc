@@ -474,7 +474,7 @@ remains in the inventory and its owning fold; failure to project it is not
 evidence that no such record exists. Unrelated channels do not inherit a
 record's fault merely by sharing a DID.
 
-Use `PROFILE_VERSION = "estoc-continuity/1"` and proof profile
+Use `PROFILE_VERSION = "estoc-continuity/2"` and proof profile
 `FROM_PRIOR_PROFILE = "estoc-from-prior/1"`. A snapshot's `identityNamespace`
 is the vault's immutable anchor DID, never its replica ID. Use the following
 stable fact IDs; evidence references are the source event CIDs. These strings

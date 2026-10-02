@@ -129,8 +129,22 @@ depends on itself:
    cycles, joins that would pair a DID with itself, and repeated IDs
    with different values. Every saved local decision counts toward
    competition whether or not it is confirmed yet: two saved successors
-   of one predecessor are a fork either way. A conflict's scope is its
-   context and the successors the claims in that context name.
+   of one predecessor at one pair are a fork either way. A conflict's
+   scope is its context and the successors the claims in that context
+   name.
+
+   Two different successors of one endpoint do not compete when the
+   other party's own changes order the pairs they were claimed at. An
+   address P rotated to X for the peer B, and to Y for B's successor B2,
+   is P, then X, then Y: the later successor was claimed only at pairs
+   the other party reached from every pair of the earlier one, never the
+   other way round, and the two share no pair. The superseded successor
+   then leads to the later one at the pair the later change was made at,
+   as a derived link whose support is both changes and the path between
+   them, so every pair of the relationship has the one head. The order
+   comes from the links alone, not from time. Successors claimed at one
+   pair, or at pairs no link orders, compete; an ending is ordered with
+   nothing and competes with any rotation in its context.
 4. **Usable graph.** The same closure again over unambiguous facts,
    admitting no channel a conflict reaches. The positive graph says what
    replacements the evidence shows; the usable graph says which of them

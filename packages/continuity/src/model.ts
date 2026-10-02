@@ -16,7 +16,7 @@
  */
 
 import { changeKey, channelKey, channelOf, compareChannels, compareUtf8, sortedChannels, sortedIds, successorChannel } from "./facts.js";
-import { closure, Contexts, Graph, type Edge, type Link, type Replaces } from "./graph.js";
+import { closure, Contexts, Graph, successions, type Claim, type Claims, type Edge, type Link, type Replaces } from "./graph.js";
 import { bucketsOf } from "./merge.js";
 import type { AddressObservation, Change, Channel, ContinuityFact, Did, FactId, LocalDecision, PeerTransition } from "./types.js";
 
@@ -219,10 +219,13 @@ class Model implements Continuity {
       if (entry.fact.kind !== "address-observed" && entry.fact.change.kind === "end") this.endings.push(entry);
     }
 
+    const claims = this.claims();
+
     const positiveWriters = this.writersOf((entry) => this.positiveObservation(entry));
     const positive = closure(
       this.peerLinks(() => true),
       this.candidates((entry) => entry.standing.kind === "ok"),
+      claims,
       EVERY_CHANNEL,
       (graph, link) => this.confirming(graph, link, positiveWriters, (entry) => this.positiveObservation(entry))
     );
@@ -238,7 +241,7 @@ class Model implements Continuity {
       if (rotations === undefined) this.rotationsByContext.set(root, (rotations = []));
       rotations.push({ entry, successor: entry.fact.change.successor });
     }
-    const found = this.findConflicts();
+    const found = this.findConflicts(claims);
     this.domainConflicts = found.map(({ conflict }) => conflict);
     for (const { conflict, scope } of found) {
       for (const channel of scope) {
@@ -253,6 +256,7 @@ class Model implements Continuity {
     const usable = closure(
       this.peerLinks((entry) => this.usableTransition(entry)),
       this.candidates((entry) => this.usableCandidate(entry)),
+      claims,
       (channel) => !this.affected(channel),
       (graph, link) => this.confirming(graph, link, this.usableWriters, (entry) => this.usableObservation(entry))
     );
@@ -297,6 +301,16 @@ class Model implements Continuity {
     if (target.at.localDid !== fact.at.localDid) return { kind: "invalid", because: `its carried transition ${ref} was received by ${target.at.localDid}, not by ${fact.at.localDid}` };
     if (target.change.successor !== fact.at.peerDid) return { kind: "invalid", because: `its carried transition ${ref} names the successor ${target.change.successor}, not ${fact.at.peerDid}` };
     return { kind: "ok" };
+  }
+
+  /** Every change a fact claims, whatever the fact's status: a saved decision not yet confirmed still takes part in the order of its context. */
+  private claims(): Claims {
+    const claims: Record<Replaces, Claim[]> = { local: [], peer: [] };
+    for (const { fact } of this.all()) {
+      if (fact.kind === "address-observed") continue;
+      claims[fact.kind === "peer-transition" ? "peer" : "local"].push({ id: fact.id, at: fact.at, successor: fact.change.kind === "rotate" ? fact.change.successor : null });
+    }
+    return claims;
   }
 
   private peerLinks(admits: (entry: Entry) => boolean): Link[] {
@@ -423,28 +437,23 @@ class Model implements Continuity {
    * something in another context is not in the scope, since it is a
    * different claim.
    */
-  private findConflicts(): { conflict: Conflict; scope: readonly Channel[] }[] {
+  private findConflicts(claims: Claims): { conflict: Conflict; scope: readonly Channel[] }[] {
     const found: { conflict: Conflict; scope: readonly Channel[] }[] = [];
     const competing = (side: Side) => {
-      const kind = side === "peer" ? "peer-transition" : "local-decision";
-      const contexts = side === "peer" ? this.local : this.peer;
-      const byContext = new Map<string, { channel: Channel; successors: Channel[]; changes: Map<string, { change: Change; facts: FactId[] }> }>();
-      for (const entry of this.all()) {
-        if (entry.fact.kind !== kind) continue;
-        const root = contexts.root(channelKey(entry.fact.at));
-        let group = byContext.get(root);
-        if (group === undefined) byContext.set(root, (group = { channel: entry.fact.at, successors: [], changes: new Map() }));
-        const key = changeKey(entry.fact.change);
-        let change = group.changes.get(key);
-        if (change === undefined) group.changes.set(key, (change = { change: entry.fact.change, facts: [] }));
-        change.facts.push(entry.fact.id);
-        const to = successorChannel(entry.fact);
-        if (to !== null) group.successors.push(to);
-      }
-      for (const { channel, successors, changes } of byContext.values()) {
-        if (changes.size < 2) continue;
+      for (const { claims: claimed, order } of successions(this.positive, side, claims[side])) {
+        if (order !== null) continue;
+        const changes = new Map<string, { change: Change; facts: FactId[] }>();
+        const successors: Channel[] = [];
+        for (const { id, at, successor } of claimed) {
+          const change: Change = successor === null ? { kind: "end" } : { kind: "rotate", successor };
+          const key = changeKey(change);
+          let group = changes.get(key);
+          if (group === undefined) changes.set(key, (group = { change, facts: [] }));
+          group.facts.push(id);
+          if (successor !== null) successors.push(side === "peer" ? channelOf(at.localDid, successor) : channelOf(successor, at.peerDid));
+        }
         const listed = [...changes.values()].map(({ change, facts }) => ({ change, facts: sortedIds(facts) })).sort((a, b) => compareUtf8(changeKey(a.change), changeKey(b.change)));
-        const context = this.contextOf(channel, side);
+        const context = this.contextOf(claimed[0]!.at, side);
         found.push({ conflict: { kind: "competing-changes", side, context, changes: listed }, scope: sortedChannels([...context, ...successors]) });
       }
     };

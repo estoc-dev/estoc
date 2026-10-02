@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Profile `estoc-continuity/2`. Two different successors of one endpoint
+  in one context no longer compete when the other party's own changes
+  order the pairs they were claimed at: the later one stands, and the
+  superseded successor leads to it through a derived link. Successors
+  claimed at one pair, at pairs no link orders, or beside an ending
+  still compete. The fact schema is unchanged; a snapshot of
+  `estoc-continuity/1` is refused by `mergeFacts` as any other profile
+  is, and holds the same facts under the new string.
+
 ## 0.1.0 — 2026-09-29
 
 The continuity domain: a pure model of oriented DID pairs under rotation

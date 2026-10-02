@@ -5,8 +5,8 @@
  * the edges came in. Nothing here knows what a fact is beyond its ID.
  */
 
-import { channelKey, compareChannels, sortedIds } from "./facts.js";
-import type { Channel, FactId } from "./types.js";
+import { channelKey, compareChannels, compareUtf8, sortedIds } from "./facts.js";
+import type { Channel, Did, FactId } from "./types.js";
 
 export type Replaces = "local" | "peer";
 
@@ -154,6 +154,13 @@ export class Graph {
     for (const edges of this.out.values()) yield* edges.values();
   }
 
+  /** The number of edges and of the facts supporting them: it grows whenever the graph does. */
+  weight(): number {
+    let weight = 0;
+    for (const edge of this.edges()) weight += 1 + edge.support.size;
+    return weight;
+  }
+
   /**
    * Every channel forward edges of the given kind reach from `start`,
    * `start` included, each by one shortest path: breadth first over
@@ -236,18 +243,135 @@ export class Graph {
   }
 }
 
+/** A change of one endpoint as a fact claims it at a pair: its successor, or null for an ending. */
+export interface Claim {
+  readonly id: FactId;
+  readonly at: Channel;
+  readonly successor: Did | null;
+}
+
+export type Claims = Readonly<Record<Replaces, readonly Claim[]>>;
+
+/** The claims of one side in one context, and the order of their successors when they have one. */
+export interface Succession {
+  readonly claims: readonly Claim[];
+  /**
+   * The successors from the first superseded to the one that stands,
+   * null when the claims compete. A single change is its own order. An
+   * ending is ordered with nothing.
+   */
+  readonly order: readonly Did[] | null;
+}
+
+const other = (side: Replaces): Replaces => (side === "local" ? "peer" : "local");
+
+const moved = (channel: Channel, side: Replaces, successor: Did): Channel => (side === "local" ? { localDid: successor, peerDid: channel.peerDid } : { localDid: channel.localDid, peerDid: successor });
+
 /**
- * The least graph over the given links and the candidates `confirms`
- * admits. A candidate is judged against the graph built without it and
- * every candidate still waiting, so nothing it derives can confirm it;
- * the graph is rebuilt until no candidate is admitted any more. The
- * confirming facts of each admitted candidate are returned with it.
- * Candidates are told apart as objects, since two variants of one fact
- * ID are two candidates.
+ * The claims of `side` by context, each context with the order of its
+ * successors. Two different successors of one endpoint are ordered when
+ * the other party's own changes order the pairs they were claimed at:
+ * the later successor was claimed only at pairs the other party reached
+ * from every pair of the earlier one, and never the other way round.
+ * The order comes from the links alone, so every replica holding the
+ * same facts finds the same one. Claims at one pair, or at pairs no
+ * link orders, compete.
+ */
+export function successions(graph: Graph, side: Replaces, claims: readonly Claim[]): Succession[] {
+  const contexts = new Contexts(graph, other(side));
+  const byContext = new Map<string, Claim[]>();
+  for (const claim of claims) {
+    const root = contexts.root(channelKey(claim.at));
+    let group = byContext.get(root);
+    if (group === undefined) byContext.set(root, (group = []));
+    group.push(claim);
+  }
+  const reaches = new Map<string, Reach>();
+  const later = (from: Channel, to: Channel): boolean => {
+    const key = channelKey(from);
+    if (key === channelKey(to)) return false;
+    let reach = reaches.get(key);
+    if (reach === undefined) reaches.set(key, (reach = graph.reach(from, other(side))));
+    return reach.has(to);
+  };
+  return [...byContext.values()].map((group) => {
+    const pairsOf = new Map<Did | null, Channel[]>();
+    for (const claim of group) {
+      const pairs = pairsOf.get(claim.successor);
+      if (pairs === undefined) pairsOf.set(claim.successor, [claim.at]);
+      else pairs.push(claim.at);
+    }
+    if (pairsOf.size === 1) return { claims: group, order: group[0]!.successor === null ? [] : [group[0]!.successor] };
+    if (pairsOf.has(null)) return { claims: group, order: null };
+    const successors = [...pairsOf.keys()] as Did[];
+    const precedes = (a: Did, b: Did): boolean => {
+      const before = pairsOf.get(a)!;
+      const after = pairsOf.get(b)!;
+      return before.every((from) => after.some((to) => later(from, to))) && !after.some((from) => before.some((to) => channelKey(from) === channelKey(to) || later(from, to)));
+    };
+    const rank = new Map<Did, number>(successors.map((successor) => [successor, 0]));
+    for (const a of successors) {
+      for (const b of successors) {
+        if (a === b || compareUtf8(a, b) > 0) continue;
+        if (precedes(a, b)) rank.set(b, rank.get(b)! + 1);
+        else if (precedes(b, a)) rank.set(a, rank.get(a)! + 1);
+        else return { claims: group, order: null };
+      }
+    }
+    return { claims: group, order: successors.sort((a, b) => rank.get(a)! - rank.get(b)!) };
+  });
+}
+
+/**
+ * The link from each superseded successor to the one that supersedes
+ * it, at every pair the superseding change was made at: where one
+ * endpoint went from P to X and, further along the other party's
+ * changes, from P to Y, X leads to Y. Only changes the graph already
+ * holds as links imply one, and the support of the implied link is
+ * theirs and that of the path between them.
+ */
+function superseding(graph: Graph, claims: Claims): { from: Channel; to: Channel; replaces: Replaces; support: readonly FactId[] }[] {
+  const implied: { from: Channel; to: Channel; replaces: Replaces; support: readonly FactId[] }[] = [];
+  for (const side of ["local", "peer"] as const) {
+    for (const { claims: group, order } of successions(graph, side, claims[side])) {
+      if (order === null) continue;
+      for (let next = 1; next < order.length; next++) {
+        const before = order[next - 1]!;
+        const after = order[next]!;
+        const earlier = group.filter((claim) => claim.successor === before).sort((a, b) => compareChannels(a.at, b.at));
+        for (const claim of group) {
+          if (claim.successor !== after) continue;
+          const made = graph.edge(claim.at, moved(claim.at, side, after));
+          if (made === undefined) continue;
+          for (const prior of earlier) {
+            const superseded = graph.edge(prior.at, moved(prior.at, side, before));
+            const between = superseded === undefined ? undefined : graph.reach(prior.at, other(side), claim.at).pathTo(claim.at);
+            if (superseded === undefined || between === undefined) continue;
+            const from = moved(claim.at, side, before);
+            if (from.localDid === from.peerDid) break;
+            implied.push({ from, to: made.to, replaces: side, support: sortedIds([...superseded.support, ...made.support, ...between.flatMap((edge) => [...edge.support])]) });
+            break;
+          }
+        }
+      }
+    }
+  }
+  return implied;
+}
+
+/**
+ * The least graph over the given links, the candidates `confirms`
+ * admits and the links superseded successors imply. A candidate is
+ * judged against the graph built without it and every candidate still
+ * waiting, so nothing it derives can confirm it; the graph is rebuilt
+ * until no candidate is admitted any more. The confirming facts of each
+ * admitted candidate are returned with it. Candidates are told apart as
+ * objects, since two variants of one fact ID are two candidates.
  */
 export function closure<L extends Link>(
   peerLinks: readonly Link[],
   candidates: readonly L[],
+  claims: Claims,
   admits: (channel: Channel) => boolean,
   confirms: (graph: Graph, candidate: L) => readonly FactId[] | null
 ): { graph: Graph; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
@@ -258,6 +382,11 @@ export function closure<L extends Link>(
     for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.id]);
     for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.id, ...support]);
     graph.close();
+    for (let weight = -1; weight !== graph.weight(); ) {
+      weight = graph.weight();
+      for (const link of superseding(graph, claims)) graph.add(link.from, link.to, link.replaces, link.support, true);
+      graph.close();
+    }
     return graph;
   };
   let graph = build();

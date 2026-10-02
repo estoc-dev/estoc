@@ -287,7 +287,7 @@ describe("a join", () => {
     expectSameOverEveryOrder(scene, vault.checks, [channel(a0, b2)]);
   });
 
-  it("reuses the decision throughout its peer-only context: a second successor from the same predecessor competes, extending the successor needs its own confirmation", async () => {
+  it("reuses the decision throughout its peer-only context: extending the successor needs its own confirmation, and a second successor chosen for the peer's successor supersedes the first", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = await vaults();
     const source = proofFreeReceipt(scene, a0, b0);
     const first = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
@@ -306,39 +306,22 @@ describe("a join", () => {
     expect(vault.continuity.head(channel(a0, b0))).toEqual(channel(a2, b1));
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const competing = await rotation(scene, keys, { from: a0, peer: b1, to: a2, source: carrier });
+    const later = await rotation(scene, keys, { from: a0, peer: b1, to: a2, source: carrier });
     vault = await fold(scene, keys);
     const c = vault.continuity;
-    expect(c.conflicts).toEqual([
-      {
-        conflict: {
-          kind: "competing-changes",
-          side: "local",
-          context: [channel(a0, b0), channel(a0, b1)].sort(compareChannels),
-          changes: [
-            { change: { kind: "rotate", successor: a1.did }, facts: [`decision:${first.cid}`] },
-            { change: { kind: "rotate", successor: a2.did }, facts: [`decision:${competing.cid}`] },
-          ].sort((x, y) => (x.change.successor < y.change.successor ? -1 : 1)),
-        },
-        channels: [channel(a0, b0), channel(a0, b1), channel(a1, b0), channel(a2, b1)].sort(compareChannels),
-      },
-    ]);
-    expect(c.decisionsIn(channel(a0, b1)).map((d) => d.event)).toEqual([first, competing]);
-    for (const event of [first, carrier, extension, competing]) expect(c.status(event.cid)).toMatchObject({ status: "conflict" });
-    expect(c.witness(carrier.cid)).toMatchObject({ status: "conflict" });
-    expect(c.witness(source.cid)).toEqual({ status: "complete" });
+    expect(c.conflicts).toEqual([]);
+    expect(c.decisionsIn(channel(a0, b1)).map((d) => d.event)).toEqual([first, later]);
+    for (const event of [first, extension, later]) expect(c.status(event.cid)).toEqual({ status: "verified" });
     for (const start of [channel(a0, b0), channel(a0, b1), channel(a1, b0), channel(a1, b1), channel(a2, b1)]) {
-      expect(c.head(start)).toBeNull();
-      expect(c.conflicted(start)).toBe(true);
+      expect(c.head(start)).toEqual(channel(a2, b1));
+      expect(c.conflicted(start)).toBe(false);
     }
-    expect(c.confirmedBy(a0.did, b0.did)).toBeNull();
-    expect(c.ackPath(channel(a0, b0), channel(a1, b1))).toBe(false);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 });
 
 describe("conflicts", () => {
-  test("competing peer successors in one local-only context, straight from one pair or across a local link, mask every channel involved and choose no winner", async () => {
+  test("competing peer successors at one pair mask every channel involved and choose no winner; a successor received by the local successor supersedes the one the predecessor received", async () => {
     const direct = await vaults();
     const one = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b1);
     const two = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b2);
@@ -364,11 +347,9 @@ describe("conflicts", () => {
     const late = await receiptCarryingProof(across.scene, across.peerKeys, across.a1, across.b0, across.b2);
     vault = await fold(across.scene, across.keys);
     c = vault.continuity;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0), channel(a1, b0)].sort(compareChannels) } }]);
-    expect(c.conflicted(channel(a1, b2))).toBe(true);
-    expect(c.status(late.cid)).toMatchObject({ status: "conflict" });
-    expect(c.head(channel(a0, b0))).toBeNull();
-    expect(c.head(channel(a1, b0))).toBeNull();
+    expect(c.conflicts).toEqual([]);
+    expect(c.status(late.cid)).toMatchObject({ status: "verified" });
+    for (const start of [channel(a0, b0), channel(a1, b0), channel(a0, b1), channel(a1, b1)]) expect(c.head(start)).toEqual(channel(a1, b2));
     expect(c.superseded(channel(a0, b0))).toBe(true);
     expectSameOverEveryOrder(across.scene, vault.checks);
   });
