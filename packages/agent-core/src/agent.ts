@@ -14,9 +14,9 @@
  * arrangement is enrolled in instead and its addresses added to its
  * account, which holds no queue: its mail waits for each replica, and
  * is picked up, acknowledged and pushed under this runtime's own
- * replica DID. What is sealed to that DID itself is no application
- * mail and is acknowledged unopened, since no protocol between
- * replicas is supported.
+ * replica DID. An envelope naming that DID and no communication DID
+ * of the vault is no application mail and is acknowledged unopened,
+ * since no protocol addressed to a replica is supported.
  *
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
@@ -157,7 +157,6 @@ export interface Submitted extends Sent {
   dispatched: Called;
 }
 
-/** Where an arrangement's mail is picked up, and live delivery kept. */
 interface Inbox {
   link: MediatorLink;
   pickup: Pickup;
@@ -174,7 +173,6 @@ interface Line {
    */
   inbox: Inbox | null;
   replicaMediation: boolean;
-  /** another link to the same mediator, speaking as `me` with `secrets` */
   linkAs: (me: string, secrets: () => Secret[]) => MediatorLink;
 }
 

@@ -1,6 +1,6 @@
 import { Message } from "@estoc/didcomm-node";
 import type { IMessage } from "@estoc/didcomm-node";
-import { encodeLongForm, longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
+import { encodeLongForm, longToShort, resolveDIDCommDoc, resolveShortForm, toDIDCommDIDDoc } from "@estoc/did-peer";
 import type { Secret } from "@estoc/did-peer";
 import bs58 from "bs58";
 import { base64urlToBytes } from "@estoc/did-peer";
@@ -259,7 +259,7 @@ export class FakeMediator {
     const replica = this.replicas.get(inbox);
     if (replica === undefined) return socket.deliver(await this.pack(msg, inbox));
     const longForm = readReplicaGrant(replica.grant).replicaLongForm;
-    const document = JSON.parse(JSON.stringify(await resolveDIDCommDoc(longForm)).replaceAll(longForm, inbox)) as Awaited<ReturnType<typeof resolveDIDCommDoc>>;
+    const document = toDIDCommDIDDoc(resolveShortForm(longForm));
     const [packed] = await new Message(msg).pack_encrypted(inbox, this.did, null, { resolve: async (did: string) => (did === inbox ? document : resolveDIDCommDoc(did)) }, secretsResolverFor(this.secrets), { forward: false });
     socket.deliver(packed);
   }

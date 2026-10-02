@@ -38,12 +38,13 @@ export type Recipients =
  * without claiming why.
  *
  * A key of the replica DID `replicaId` has at its mediator is no key
- * to open application mail with: what is sealed to it is one replica
- * speaking to another, and no protocol between replicas is spoken
- * here. An envelope with no communication DID of this vault among its
- * recipients and that replica DID among them is terminal as such,
- * unopened: nothing it could hold, and no failure to open it, would
- * end it otherwise.
+ * to open application mail with, and no protocol addressed to a
+ * replica is supported here. An envelope whose recipient list names a
+ * key-agreement method of that replica DID and no communication DID of
+ * this vault is terminal as such, unopened: the list is read without
+ * being verified, so nothing is claimed of who sealed the envelope or
+ * to which key, and nothing it could hold, and no failure to open it,
+ * would end it otherwise.
  */
 export function classifyRecipients(fold: VaultFold, kids: readonly string[], replicaId?: ReplicaId): Recipients {
   if (kids.length === 0) return { verdict: "terminal", reason: "the envelope names no recipient key" };
@@ -80,12 +81,11 @@ export function classifyRecipients(fold: VaultFold, kids: readonly string[], rep
     }
   }
   if (pending.length > 0) return { verdict: "pending", reason: pending.join("; "), waitingOn: [...waitingOn] };
-  if (!anyOfOurs && toReplica) return { verdict: "terminal", reason: `the envelope is sealed to this runtime's own replica DID ${replica?.did}, and no protocol between replicas is supported; the delivery was discarded` };
+  if (!anyOfOurs && toReplica) return { verdict: "terminal", reason: `the envelope names a key-agreement method of this runtime's own replica DID ${replica?.did} and no communication DID of this vault, and no protocol addressed to a replica is supported; the delivery was discarded` };
   if (!anyOfOurs) return { verdict: "terminal", reason: `local recipient material is unavailable for ${kids.join(", ")}; the delivery was discarded` };
   return { verdict: "terminal", reason: refused.join("; ") };
 }
 
-/** The replica's DID and what follows it in the `id` of each key-agreement method of its document; null unless the fold has the replica a member of its arrangement. */
 function replicaMethods(fold: VaultFold, replicaId: ReplicaId): { did: Did; keyAgreement: string[] } | null {
   const replica = fold.replicas.replicas.get(replicaId);
   if (replica === undefined || replica.status !== "member" || replica.did === null || replica.longFormDid === null) return null;

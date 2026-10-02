@@ -48,10 +48,10 @@
   the enrollment and the recipients are done. Mail forwarded to one of
   the account's addresses is received as any other.
   `Connection.drained` and `Connection.live` report that queue and
-  socket. An envelope sealed to the replica DID and to no communication
-  DID of the vault is terminal, unopened, and acknowledged: no protocol
-  between replicas is supported, so it leaves a discarded-delivery
-  diagnostic and nothing in the vault. `classifyRecipients` takes the
+  socket. An envelope whose recipients name the replica DID and no
+  communication DID of the vault is terminal, unopened, and
+  acknowledged: no protocol addressed to a replica is supported, so it
+  leaves a discarded-delivery diagnostic and nothing in the vault. `classifyRecipients` takes the
   runtime's replica ID to tell such an envelope.
 
 ## 0.20.0 — 2026-09-29

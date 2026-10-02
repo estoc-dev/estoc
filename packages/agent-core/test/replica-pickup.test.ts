@@ -105,7 +105,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     expect(alice.agent.connections()).toMatchObject([{ live: true }]);
   });
 
-  test("what is sealed to the replica's own DID is acknowledged unopened, leaving a diagnostic and nothing in the vault", async () => {
+  test("an envelope naming only the replica's own DID is acknowledged unopened, leaving a diagnostic and nothing in the vault", async () => {
     const mediator = await newMediator();
     const alice = await enrolled(mediator);
     const { bob } = await peer(mediator);
@@ -121,8 +121,8 @@ describe("the mail of a replica-mediation arrangement", () => {
     expect(mediator.queues.get(alice.replica.did)).toEqual([]);
     await alice.agent.settled();
     expect(alice.inbounds.map((inbound) => inbound.received)).toMatchObject([
-      { outcome: "terminal", reason: expect.stringMatching(/no protocol between replicas is supported/) },
-      { outcome: "terminal", reason: expect.stringMatching(/no protocol between replicas is supported/) },
+      { outcome: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) },
+      { outcome: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) },
     ]);
     expect(alice.agent.discardedDeliveries()).toHaveLength(2);
     expect(alice.agent.waitingDeliveries()).toEqual([]);
@@ -143,7 +143,7 @@ describe("an envelope naming a key of the runtime's replica DID", () => {
     const own = alice.runtime.author;
 
     for (const kids of [[replicaKid], [shortKid], [stranger, replicaKid]]) {
-      expect(classifyRecipients(fold, kids, own)).toMatchObject({ verdict: "terminal", reason: expect.stringMatching(/no protocol between replicas is supported/) });
+      expect(classifyRecipients(fold, kids, own)).toMatchObject({ verdict: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) });
     }
     expect(classifyRecipients(fold, [replicaKid, addressKid], own)).toMatchObject({ verdict: "eligible", kid: addressKid });
     expect(classifyRecipients(fold, [replicaKid])).toMatchObject({ verdict: "terminal", reason: expect.stringMatching(/local recipient material is unavailable/) });

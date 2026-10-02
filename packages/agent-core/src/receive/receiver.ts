@@ -3,7 +3,7 @@
  * delivered, or an envelope posted straight to it — goes through one
  * gate before anything reaches the vault. The recipients it names
  * decide first: a delivery this vault may never open is terminal, as
- * is one sealed to this runtime's replica DID and to no communication
+ * is one naming this runtime's replica DID and no communication
  * DID of the vault; one waiting on something recoverable of this
  * runtime's is held. It is
  * then opened with the one key it may be opened with, its sender read
