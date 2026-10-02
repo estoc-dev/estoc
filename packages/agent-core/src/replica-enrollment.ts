@@ -10,8 +10,9 @@
  * another replica and enrolls itself. While the account and the replica
  * stand at the mediator, both requests answer a repeat as they answered
  * the first time, so a confirmation that was lost, or never written,
- * costs one more request and changes nothing. A replica the mediator
- * has removed is refused for good: the runtime needs a new replica ID.
+ * costs one more request and changes nothing. While the account exists,
+ * a replica DID the mediator has removed cannot be added again: joining
+ * that account once more needs a new replica ID.
  */
 
 import { isJsonObject, type JsonValue, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
