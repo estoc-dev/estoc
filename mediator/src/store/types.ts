@@ -96,6 +96,11 @@ export interface RosterEntry {
 }
 
 export interface RosterPage {
+  /**
+   * Names this registration of the account: one that is deleted and
+   * registered again under the same DID has another.
+   */
+  registration: string;
   /** How many replicas the account has enrolled, the removed ones included. */
   size: number;
   entries: RosterEntry[];
@@ -138,6 +143,8 @@ export interface RecipientPlace {
 }
 
 export interface SharedRecipientPage {
+  /** As in a roster page. */
+  registration: string;
   recipients: RecipientPlace[];
   /** Whether the account holds recipients after these. */
   more: boolean;
@@ -252,8 +259,8 @@ export interface MediationStore {
   registerReplicaAccount(account: ReplicaAccount): Promise<RegisterAccountOutcome>;
   /**
    * Deletes the account with everything kept for it: its replicas, the
-   * removed ones included, its shared recipients and its mail. Every DID and
-   * ID it bound is free again. False, and nothing deleted, without such an
+   * removed ones included, its shared recipients and its mail. Every DID it
+   * bound is free again. False, and nothing deleted, without such an
    * account bound to `mediator`.
    */
   deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean>;

@@ -235,7 +235,7 @@ type Problem =
   | "unknown-account"
   /** The account added no replica with that DID. */
   | "unknown-replica"
-  /** A DID or ID in the request is already bound otherwise, here or under ordinary mediation. */
+  /** A DID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
   /** Pickup asked by the account DID: only its replicas hold queues. */
   | "replica-required"
@@ -441,14 +441,17 @@ export async function replicaAdd(
 }
 
 /**
- * Where a listing stands: the account it is of, how many replicas the roster
- * held when the listing began, and the last one already returned. Adding
- * only appends and a removed replica keeps its place, so the first `through`
- * replicas are the same roster for as long as the account lives and a listing
- * never expires.
+ * Where a listing stands: the account it is of and which registration of
+ * it, how many replicas the roster held when the listing began, and the last
+ * one already returned. Adding only appends and a removed replica keeps its
+ * place, so the first `through` replicas are the same roster for as long as
+ * that registration lives. An account deleted and registered again counts
+ * its replicas from one again, which the numbers alone would not tell from
+ * the roster the listing began on.
  */
 interface Cursor {
   account: string;
+  registration: string;
   through: number;
   after: number;
 }
@@ -468,9 +471,10 @@ function cursorMembers(text: string, count: number): unknown[] | null {
 }
 
 function readCursor(text: string): Cursor | null {
-  const [account, through, after] = cursorMembers(text, 3) ?? [];
+  const [account, registration, through, after] = cursorMembers(text, 4) ?? [];
   if (
     typeof account !== "string" ||
+    typeof registration !== "string" ||
     !Number.isSafeInteger(through) ||
     !Number.isSafeInteger(after) ||
     (after as number) < 1 ||
@@ -478,7 +482,7 @@ function readCursor(text: string): Cursor | null {
   ) {
     return null;
   }
-  return { account, through: through as number, after: after as number };
+  return { account, registration, through: through as number, after: after as number };
 }
 
 export async function replicaList(
@@ -516,7 +520,7 @@ export async function replicaList(
     return replicaProblem("unknown-account");
   }
   const through = cursor?.through ?? roster.size;
-  if (through > roster.size) {
+  if ((cursor !== null && cursor.registration !== roster.registration) || through > roster.size) {
     return replicaProblem("invalid-message");
   }
 
@@ -531,7 +535,9 @@ export async function replicaList(
         removed_time: entry.removedTime,
       })),
       next_cursor:
-        last < through ? writeCursor([control.account, through, last]) : null,
+        last < through
+          ? writeCursor([control.account, roster.registration, through, last])
+          : null,
     } satisfies ReplicasBody,
   };
 }
@@ -657,20 +663,27 @@ export async function recipientAdd(
 }
 
 /**
- * Where a listing of recipients stands: the account it is of and the last
- * recipient already returned, by the place the store orders it at.
+ * Where a listing of recipients stands: the account it is of, which
+ * registration of it, and the last recipient already returned, by the place
+ * the store orders it at.
  */
 interface RecipientCursor {
   account: string;
+  registration: string;
   after: RecipientPlace;
 }
 
 function readRecipientCursor(text: string): RecipientCursor | null {
-  const [account, addedAt, did] = cursorMembers(text, 3) ?? [];
-  if (typeof account !== "string" || !Number.isSafeInteger(addedAt) || typeof did !== "string") {
+  const [account, registration, addedAt, did] = cursorMembers(text, 4) ?? [];
+  if (
+    typeof account !== "string" ||
+    typeof registration !== "string" ||
+    !Number.isSafeInteger(addedAt) ||
+    typeof did !== "string"
+  ) {
     return null;
   }
-  return { account, after: { addedAt: addedAt as number, did } };
+  return { account, registration, after: { addedAt: addedAt as number, did } };
 }
 
 export async function recipientList(
@@ -706,6 +719,9 @@ export async function recipientList(
   if (page === null) {
     return replicaProblem("unknown-account");
   }
+  if (cursor !== null && cursor.registration !== page.registration) {
+    return replicaProblem("invalid-message");
+  }
   const last = page.recipients.at(-1);
   return {
     type: RECIPIENTS,
@@ -716,7 +732,7 @@ export async function recipientList(
       })),
       next_cursor:
         page.more && last !== undefined
-          ? writeCursor([control.account, last.addedAt, last.did])
+          ? writeCursor([control.account, page.registration, last.addedAt, last.did])
           : null,
     } satisfies RecipientsBody,
   };

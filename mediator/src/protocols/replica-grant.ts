@@ -256,7 +256,7 @@ function servedBy(doc: DIDDoc, mediator: string): boolean {
  * What `jws` grants, once `accountDoc`'s own authentication key has signed
  * it and everything it names holds together; null otherwise. The replica it
  * names must be able to act as one: it will sign in with an Ed25519 key and
- * be sealed to on an X25519 one, and enrollment is for life. Whether the
+ * be sealed to on an X25519 one. Whether the
  * account and mediator are the ones the request came from and went to is
  * the caller's to compare.
  */

@@ -231,6 +231,39 @@ describe("SqliteStore", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("tells apart the registrations of accounts made before registrations were named", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const old = new Database(path);
+    old.exec(`
+      CREATE TABLE replica_accounts (
+        did TEXT PRIMARY KEY,
+        mediator TEXT NOT NULL,
+        long_form TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO replica_accounts VALUES
+        ('did:example:first', 'did:example:mediator', 'long', 1000),
+        ('did:example:second', 'did:example:mediator', 'long', 1000);
+    `);
+    old.close();
+    const registrationOf = async (store: SqliteStore, did: string) =>
+      (await store.replicaRoster(did, "did:example:mediator", 0, null, 1))?.registration;
+
+    const store = new SqliteStore(path);
+    const first = await registrationOf(store, "did:example:first");
+    const second = await registrationOf(store, "did:example:second");
+    expect(first).toEqual(expect.any(String));
+    expect(second).toEqual(expect.any(String));
+    expect(second).not.toBe(first);
+    store.close();
+
+    const reopened = new SqliteStore(path);
+    expect(await registrationOf(reopened, "did:example:first")).toBe(first);
+    reopened.close();
+    rmSync(dir, { recursive: true });
+  });
+
   it("keeps the accounts registered under a mediation ID, and registers more without one", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
     const path = join(dir, "mediator.db");

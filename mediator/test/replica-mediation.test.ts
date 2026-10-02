@@ -2683,6 +2683,50 @@ describe("account-delete", () => {
     expect(await store.deliveriesFor(first.replica.did, 100)).toHaveLength(1);
   });
 
+  it("is asked again by a request sealed before the DID registered again, which deletes the new account", async () => {
+    const request = plaintext(ACCOUNT_DELETE, {}, {
+      from: account.longForm,
+      to: [mediator.did],
+      return_route: "all",
+    });
+    const sealed = await account.ctx.packEncrypted(request, mediator.did);
+    const repeat = async () => {
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "content-type": ENCRYPTED },
+        body: sealed,
+      });
+      return (await account.ctx.unpack(await res.text())).message;
+    };
+
+    expect((await repeat()).type).toBe(ACCOUNT_DELETED);
+    await expectProblem(await repeat(), "unknown-account");
+    await registerAccount();
+    await addReplica(first.grant);
+
+    expect((await repeat()).type).toBe(ACCOUNT_DELETED);
+    expect(await store.isReplicaAccount(account.did)).toBe(false);
+    expect(await store.replicaState(first.replica.did)).toBeNull();
+  });
+
+  it("ends the listings begun before it, also once the DID holds as much again", async () => {
+    await add(await addition());
+    const ofReplicas = (await roster(known(account), 1))?.body.next_cursor as string;
+    const ofRecipients = (await recipients(known(account), 1))?.body.next_cursor as string;
+    expect([ofReplicas, ofRecipients]).toEqual([expect.any(String), expect.any(String)]);
+
+    await deleteAccount();
+    await enroll((await enrollment()).grant);
+    await enroll((await enrollment()).grant);
+    await add(await addition());
+    await add(await addition());
+
+    await expectProblem(await roster(known(account), 1, ofReplicas), "invalid-message");
+    await expectProblem(await recipients(known(account), 1, ofRecipients), "invalid-message");
+    expect((await roster())?.body.entries).toHaveLength(2);
+    expect((await recipients())?.body.entries).toHaveLength(2);
+  });
+
   it("frees its replicas and its recipients for any other binding", async () => {
     await deleteAccount();
     const other = await peer4Agent(null);

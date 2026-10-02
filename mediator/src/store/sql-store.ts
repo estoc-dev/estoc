@@ -160,7 +160,8 @@ const SCHEMA = [
      did          TEXT PRIMARY KEY,
      mediator     TEXT NOT NULL,
      long_form    TEXT NOT NULL,
-     created_at   INTEGER NOT NULL
+     created_at   INTEGER NOT NULL,
+     registration TEXT NOT NULL
    )`,
   REPLICAS,
   `CREATE TABLE IF NOT EXISTS replica_recipients (
@@ -183,12 +184,16 @@ const SCHEMA = [
  * keep NULL in both halves of the package key: NULLs never collide in a
  * unique index, so that mail stays deliverable and simply has no retry to
  * match. A replica enrolled before removal existed is active, which NULL says.
+ * An account registered before registrations were told apart is given its
+ * own as the column arrives.
  */
 const LATER_COLUMNS = [
   { table: "messages", column: "next_did", type: "TEXT" },
   { table: "messages", column: "forward_id", type: "TEXT" },
   { table: "replicas", column: "removed_at", type: "INTEGER" },
+  { table: "replica_accounts", column: "registration", type: "TEXT" },
 ];
+const NEW_REGISTRATION = "lower(hex(randomblob(16)))";
 /* Columns an older database still has, NOT NULL, and nothing writes any more. */
 const FORMER_COLUMNS = [{ table: "replica_accounts", column: "mediation_id" }];
 const MESSAGE_KEY_INDEX =
@@ -287,6 +292,9 @@ export class SqlStore implements MediationStore {
         ({ table, column }) => ({ sql: `ALTER TABLE ${table} DROP COLUMN ${column}` })
       ),
       { sql: MESSAGE_KEY_INDEX },
+      {
+        sql: `UPDATE replica_accounts SET registration = ${NEW_REGISTRATION} WHERE registration IS NULL`,
+      },
     ]);
   }
 
@@ -535,8 +543,8 @@ export class SqlStore implements MediationStore {
     const [, accounts] = await this.batch([
       {
         sql:
-          "INSERT INTO replica_accounts (did, mediator, long_form, created_at) " +
-          `SELECT ?, ?, ?, ? WHERE ? = 1 AND ${NOT_ORDINARY} ` +
+          "INSERT INTO replica_accounts (did, mediator, long_form, created_at, registration) " +
+          `SELECT ?, ?, ?, ?, ${NEW_REGISTRATION} WHERE ? = 1 AND ${NOT_ORDINARY} ` +
           "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?)) " +
           `AND ${NOT_SHARED_RECIPIENT} ` +
           "ON CONFLICT (did) DO NOTHING",
@@ -751,7 +759,7 @@ export class SqlStore implements MediationStore {
       "account_did = (SELECT did FROM replica_accounts WHERE did = ? AND mediator = ?)";
     const [bound, count, page] = await this.batch([
       {
-        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
+        sql: "SELECT registration FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
       {
@@ -767,11 +775,13 @@ export class SqlStore implements MediationStore {
       },
     ]);
 
-    if (bound.rows.length === 0) {
+    const held = (bound.rows as { registration: string }[])[0];
+    if (held === undefined) {
       return null;
     }
     const size = (count.rows as { n: number }[])[0].n;
     return {
+      registration: held.registration,
       size,
       entries: (
         page.rows as {
@@ -889,7 +899,7 @@ export class SqlStore implements MediationStore {
   ): Promise<SharedRecipientPage | null> {
     const [account, page] = await this.batch([
       {
-        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
+        sql: "SELECT registration FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: [accountDid, mediator],
       },
       {
@@ -900,12 +910,17 @@ export class SqlStore implements MediationStore {
         params: [accountDid, after?.addedAt ?? -1, after?.did ?? "", limit + 1],
       },
     ]);
-    if (account.rows.length === 0) {
+    const held = (account.rows as { registration: string }[])[0];
+    if (held === undefined) {
       return null;
     }
 
     const rows = page.rows as { did: string; addedAt: number }[];
-    return { recipients: rows.slice(0, limit), more: rows.length > limit };
+    return {
+      registration: held.registration,
+      recipients: rows.slice(0, limit),
+      more: rows.length > limit,
+    };
   }
 
   async sharedRecipientMaterial(did: string): Promise<string | null> {

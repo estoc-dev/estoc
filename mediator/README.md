@@ -257,8 +257,12 @@ bound nowhere, so each can be bound again under either protocol, and a
 forward to one is refused. Pickup by the account DID or by a replica it had
 is not answered, as for any DID the mediator does not know. A reply or a push
 already on its way when the deletion lands may still arrive. A repeat is
-`unknown-account`. The DID can register again as a new account, which starts
-with no replica and no recipient.
+`unknown-account` for as long as the DID stays unregistered. The DID can
+register again as a new account, which starts with no replica and no
+recipient. The request names only the DID, so it deletes whichever account
+that DID has when it arrives: one sealed before the DID registered again
+still deletes the new account. An account that earlier requests must not
+reach takes a new DID.
 
 **`replica-add`** enrolls one replica in the account. `grant` is a compact
 JWS signed by one of the account's authentication keys (header exactly
@@ -278,7 +282,9 @@ nothing forwarded before it.
 in the order it added them, each with its `state`: `active`, or `removed`
 with its `removed_time`. `cursor` is null to begin and then the previous
 `next_cursor`; `limit` is at most `max_membership_page`. One listing is the
-replicas added when it began, and its cursors never expire.
+replicas added when it began, and its cursors hold for as long as the account
+exists. Deleting the account ends them: a cursor of a deleted account is
+`invalid-message`, also after its DID registered again.
 
 **`replica-remove`** ends the enrollment of the replica `replica_did` names,
 in either form. What waited for that
@@ -308,7 +314,8 @@ not stand is `invalid-recipient`, a DID bound otherwise is
 `cursor` is null to begin and then the previous `next_cursor`; `limit` is at
 most `max_membership_page`. A listing gives every recipient the account
 holds from its first page to its last exactly once; one added or removed in
-between may be in it or not. Its cursors never expire.
+between may be in it or not. Its cursors hold for as long as the account
+exists, as those of `replica-list` do.
 
 **`recipient-remove`** stops routing the DID. Mail already kept for it stays
 this account's: it still waits for its replicas, is still counted, and
