@@ -81,9 +81,9 @@ export interface Daemon {
   /**
    * An arrangement with `mediatorDid` selected and a route over it
    * configured: the one that stands with that mediator under `profile`,
-   * or one created under it. A replica-mediation arrangement, which is
-   * what is made when no profile is named, is enrolled in; an ordinary
-   * one, of the null profile, is granted.
+   * or one created under it. An ordinary arrangement, of the null
+   * profile and what is made when none is named, is granted; a
+   * replica-mediation one is enrolled in.
    */
   setMediator(mediatorDid: string, profile?: MediationProfile | null): Promise<MediationId>;
   /** A fresh DID on the selected arrangement's route, disclosed as an out-of-band invitation. */

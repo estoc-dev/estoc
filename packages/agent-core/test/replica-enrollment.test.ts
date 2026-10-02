@@ -92,7 +92,7 @@ describe("enrolling", () => {
     const p = await account(mediator);
     const confirmations = p.runtime.local.options;
     const first = await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId);
-    expect(first.steps).toEqual(["replica-created", "account-registered", "replica-added"]);
+    expect(first.steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     expect(first.mediation).toMatchObject({ status: "usable", routingDid: mediator.did });
     expect(mediator.replicaAccounts.has(canonicalDid(p.created.data.me.did))).toBe(true);
     expect(mediator.replicas.get(first.replica.did as Did)).toMatchObject({ replicaDid: first.replica.did, grant: first.replica.grants[0] });
@@ -104,16 +104,32 @@ describe("enrolling", () => {
     await p.runtime.close();
   });
 
-  test("a mediator out of reach leaves the intents recorded and every step to retry", async () => {
+  test("a mediator out of reach leaves the arrangement recorded, the runtime's replica bound to nothing, and every step to retry", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     p.offline.reason = "no route to host";
     await expect(enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).rejects.toThrow(/no route to host/);
     const left = await fold(p);
     expect(left.mediations.mediations.get(p.mediationId)?.status).toBe("pending");
-    expect(left.replicas.replicas.get(p.runtime.author)?.status).toBe("member");
+    expect(left.replicas.replicas.has(p.runtime.author)).toBe(false);
     p.offline.reason = null;
-    expect((await enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).steps).toEqual(["account-registered", "replica-added"]);
+    expect((await enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
+    await p.runtime.close();
+  });
+
+  test("an account registered and the enrollment stopped there is taken up from the grant, the replica recorded before it is added", async () => {
+    const mediator = await newMediator();
+    const p = await account(mediator);
+    let asked = 0;
+    const stopping = (): void => {
+      if (asked++ > 0) throw new Error("stopped");
+    };
+    await expect(enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId, stopping)).rejects.toThrow("stopped");
+    const left = await fold(p);
+    expect(left.mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
+    expect(left.replicas.replicas.get(p.runtime.author)?.status).toBe("member");
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
+    expect((await enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).steps).toEqual(["replica-added"]);
     await p.runtime.close();
   });
 
@@ -202,7 +218,7 @@ describe("a replica-mediation arrangement", () => {
     const p = await account(mediator);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
     const agent = await Agent.open(p, options);
-    expect((await agent.enroll(p.mediationId)).steps).toEqual(["replica-created", "account-registered", "replica-added"]);
+    expect((await agent.enroll(p.mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     await selectMediation(p.runtime, p.keys, p.mediationId);
     const [connection] = await agent.connect();
     expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, reconciled: null, drained: { acked: 0, ended: "empty" }, live: false });

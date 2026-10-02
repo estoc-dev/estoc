@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- **A mediator is arranged with as a replica-mediation account**
-  (behaviour change): `setMediator(mediatorDid, profile?)` makes the
-  arrangement under `"replica-mediation/1.0"` when no profile is named,
-  enrolls this runtime in it as a replica and selects it; `null` asks for
-  an ordinary arrangement, granted as before. The arrangement that
+- **A mediator can be arranged with as a replica-mediation account**:
+  `setMediator(mediatorDid, profile?)` given `"replica-mediation/1.0"`
+  makes the arrangement under that profile, enrolls this runtime in it
+  as a replica and selects it; with `null`, or no profile, it makes an
+  ordinary arrangement, granted as before. The arrangement that
   already stands with the mediator under the profile asked for is the
   one selected, so an ordinary arrangement made earlier is neither
   converted nor reused for the other profile. A mediator that does not
@@ -15,7 +15,13 @@
   of its own at its first connection, and each replica picks up its own
   copy of the account's mail. A runtime's files moved or copied as they
   are keep its replica: the copy is the same replica until an identity
-  reset gives it another.
+  reset gives it another. Every runtime that receives a message answers
+  it on its own, so two runtimes of one vault live on such an
+  arrangement can each replace a private address and leave the peer no
+  channel to write to: until one runtime alone is made to answer, the
+  profile is for one live runtime at a time. A runtime's replica is
+  bound to the first arrangement whose account the mediator registered,
+  and enrolls in no other.
 - What a replica-mediation mediator confirmed is kept in the runtime's
   local options, so a reopened vault asks for none of it again.
 - A `MediationRecord` carries `profile`.

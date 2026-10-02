@@ -10,7 +10,7 @@ import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
 import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type ExecutionId, type MediationId, type MediationProfile, type MintedDid } from "@estoc/vault";
 
-import { PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
+import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_QUERY, RECIPIENT_UPDATE, decide } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
 import type { Hold, Lines, Phase, Snapshot, State } from "@estoc/daemon-api/contract";
 import { indexSnapshot } from "@estoc/daemon-api/views";
@@ -26,6 +26,7 @@ import { published } from "./snapshots.js";
 
 const BASIC_MESSAGE = "https://didcomm.org/basicmessage/2.0/message";
 const PASSPHRASE = "alice-passes-the-salt";
+const REPLICA_MEDIATION: MediationProfile = "replica-mediation/1.0";
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const BOB_PRIOR = "019b0000-0000-7000-8000-0000000000b1" as DidId;
 const LONG = 300_000;
@@ -753,28 +754,52 @@ describe("two copies of one runtime, both written to", () => {
 });
 
 describe("a mediator set", () => {
-  it("is arranged with as a replica-mediation account unless an ordinary arrangement is asked for, and the arrangement that stands under a profile is the one selected again", async () => {
+  it("is arranged with as an ordinary arrangement unless a replica-mediation account is asked for, and the arrangement that stands under a profile is the one selected again", async () => {
     const mediator = await newMediator();
     const alice = daemonOver(await folder(), mediator);
     await alice.daemon.boot();
     await alice.daemon.createIdentity("Alice", PASSPHRASE);
     const shown = () => alice.heard.snapshot().mediations.map(({ mediationId, profile, selected, usable }) => ({ mediationId, profile, selected, usable }));
 
-    const enrolled = await alice.daemon.setMediator(mediator.did);
-    expect(shown()).toEqual([{ mediationId: enrolled, profile: "replica-mediation/1.0", selected: true, usable: true }]);
-    expect([mediator.replicaAccounts.size, mediator.replicas.size, mediator.granted.size]).toEqual([1, 1, 0]);
+    const granted = await alice.daemon.setMediator(mediator.did);
+    expect(shown()).toEqual([{ mediationId: granted, profile: null, selected: true, usable: true }]);
+    expect([mediator.replicaAccounts.size, mediator.granted.size]).toEqual([0, 1]);
 
-    const granted = await alice.daemon.setMediator(mediator.did, null);
-    expect(granted).not.toBe(enrolled);
+    const enrolled = await alice.daemon.setMediator(mediator.did, REPLICA_MEDIATION);
+    expect(enrolled).not.toBe(granted);
     expect(shown()).toEqual([
-      { mediationId: enrolled, profile: "replica-mediation/1.0", selected: false, usable: true },
-      { mediationId: granted, profile: null, selected: true, usable: true },
+      { mediationId: granted, profile: null, selected: false, usable: true },
+      { mediationId: enrolled, profile: REPLICA_MEDIATION, selected: true, usable: true },
     ]);
-    expect([mediator.replicaAccounts.size, mediator.granted.size]).toEqual([1, 1]);
+    expect([mediator.replicaAccounts.size, mediator.replicas.size, mediator.granted.size]).toEqual([1, 1, 1]);
 
-    expect(await alice.daemon.setMediator(mediator.did)).toBe(enrolled);
+    expect(await alice.daemon.setMediator(mediator.did)).toBe(granted);
     expect(await alice.daemon.setMediator(mediator.did, null)).toBe(granted);
+    expect(await alice.daemon.setMediator(mediator.did, REPLICA_MEDIATION)).toBe(enrolled);
     expect(shown().map(({ selected }) => selected)).toEqual([false, true]);
+  });
+
+  it("is free to be another one, as a replica-mediation account, after the first refused to register the account, and is so still once reopened", async () => {
+    const refusing = await newMediator();
+    const mediator = await newMediator();
+    const root = await folder();
+    const alice = daemonOver(root, refusing);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    refusing.intercept = (msg) => {
+      if (msg.type === ACCOUNT_REGISTER) throw new Error("out of service");
+      return undefined;
+    };
+    await expect(alice.daemon.setMediator(refusing.did, REPLICA_MEDIATION)).rejects.toThrow();
+    expect(alice.heard.snapshot().mediations.filter(({ selected }) => selected)).toEqual([]);
+    await alice.daemon.close();
+
+    const reopened = daemonOver(root, mediator);
+    await reopened.daemon.boot();
+    await reopened.daemon.unlock(PASSPHRASE);
+    const enrolled = await reopened.daemon.setMediator(mediator.did, REPLICA_MEDIATION);
+    expect(reopened.heard.snapshot().mediations.filter(({ selected }) => selected)).toMatchObject([{ mediationId: enrolled, profile: REPLICA_MEDIATION, usable: true }]);
+    expect(mediator.replicas.size).toBe(1);
   });
 });
 
@@ -1222,7 +1247,7 @@ describe("two daemons over a mediator", () => {
       expect(await alice.daemon.publicDid()).toEqual(handedOut);
       expect(alice.heard.snapshot().dids.filter((did) => did.disclosures.length > 0)).toMatchObject([{ didId: handedOut.didId, longFormDid: handedOut.did, live: true, disclosures: [{ as: "direct" }] }]);
       expect(alice.heard.snapshot().invitations).toEqual([]);
-      expect(mediator.sharedRecipients.has(alice.heard.snapshot().dids[0]!.did!)).toBe(true);
+      expect(mediator.recipients.has(alice.heard.snapshot().dids[0]!.did!)).toBe(true);
 
       await expect(alice.daemon.addContactByDid(handedOut.did, "me")).rejects.toThrow("an address of your own");
       await expect(bob.daemon.addContactByDid("not a did", "Alice")).rejects.toThrow(/not a DID/);

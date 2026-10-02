@@ -99,7 +99,7 @@ async function person(at: Mediator, name: string): Promise<Running> {
   const running = daemonAt(at, await folder());
   await running.daemon.boot();
   await running.daemon.createIdentity(name, PASSPHRASE);
-  await running.daemon.setMediator(at.did);
+  await running.daemon.setMediator(at.did, "replica-mediation/1.0");
   return running;
 }
 
