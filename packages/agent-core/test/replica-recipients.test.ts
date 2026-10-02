@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 
-import { scanVault, type Did, type DidId, type MediationProfile, type MessageId, type MintedDid } from "@estoc/vault";
+import { encodeLongForm, longToShort } from "@estoc/did-peer";
+import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MediationProfile, type MessageId, type MintedDid } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
@@ -115,6 +116,52 @@ describe("adding recipients", () => {
     mediator.refuseShared.clear();
     expect((await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId)).added).toEqual([a.did]);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(3);
+    await p.runtime.close();
+  });
+
+  test("an address whose document names no method a proof is signed under stops no other, and is not held", async () => {
+    const mediator = await newMediator();
+    const p = await enrolled(mediator);
+    const sound = await createDid(p.runtime, p.keys, await ensureRoute(p.runtime, p.keys, p.mediationId));
+    const didId = "019b0000-0000-7000-8000-0000000000d1" as DidId;
+    const input = inputDocumentOf(await p.keys.didKeys(didId), mediator.did);
+    (input.verificationMethod as { type: string }[])[0]!.type = "Ed25519VerificationKey2018";
+    const longFormDid = encodeLongForm(input);
+    const unsigned = longToShort(longFormDid) as Did;
+    await p.runtime.vault.commit([], [vaultDraft("did.created", { didId, did: unsigned, longFormDid: longFormDid as Did, boundRouteId: sound.created.data.boundRouteId })]);
+    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.get(didId)).toMatchObject({ identity: "verified" });
+
+    const recipients = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+    expect(recipients.wanted).toEqual([sound.minted.did, unsigned].sort());
+    expect(recipients.added).toEqual([sound.minted.did]);
+    expect(recipients.refused).toEqual([{ did: unsigned, because: expect.stringMatching(/authentication method/) }]);
+    expect(holds(recipients, unsigned)).toBe(false);
+    expect([...mediator.sharedRecipients.keys()]).toEqual([sound.minted.did]);
+    expect((await disclose(p.link, p.runtime, p.keys, sound.created.data.didId, { as: "oob" }, p.confirmations)).invitation?.from).toBe(sound.minted.longFormDid);
+    await expect(disclose(p.link, p.runtime, p.keys, didId, { as: "oob" }, p.confirmations)).rejects.toBeInstanceOf(Unregistered);
+    await p.runtime.close();
+  });
+
+  test("a run given up while a proof is being signed begins no request for it", async () => {
+    const mediator = await newMediator();
+    const p = await enrolled(mediator);
+    const a = await address(p);
+    let signing = false;
+    let givenUp = false;
+    const keys = Object.assign(Object.create(p.keys) as typeof p.keys, {
+      didKeys: async (didId: DidId) => {
+        if (signing) givenUp = true;
+        return p.keys.didKeys(didId);
+      },
+    });
+    const proceed = (): void => {
+      if (givenUp) throw new Error("given up");
+      signing = true;
+    };
+    await expect(addRecipients(p.link, p.runtime, keys, p.confirmations, p.mediationId, proceed)).rejects.toThrow("given up");
+    expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
+    expect(mediator.sharedRecipients.size).toBe(0);
+    expect((await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId)).added).toEqual([a.did]);
     await p.runtime.close();
   });
 

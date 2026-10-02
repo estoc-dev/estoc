@@ -31,8 +31,11 @@ import { sameDid } from "./same-did.js";
  * Where a runtime keeps what its mediator confirmed to it: its local
  * options, which outlive a reopen and every commit. The local cache
  * would not do, since it is emptied whenever the vault accepts an
- * event. A confirmation is kept under the replica ID it was for, so
- * the one a runtime takes at an identity reset finds none.
+ * event. That a replica was added is kept under its replica ID, so
+ * the one a runtime takes at an identity reset finds none. That a
+ * recipient was added is kept under the arrangement and the DID
+ * entity, since the account holds it for every replica: it stays for
+ * as long as the runtime's local options do.
  */
 export type Confirmations = Pick<LocalOptions, "get" | "set">;
 
@@ -47,7 +50,6 @@ export function transientConfirmations(): Confirmations {
 
 const replicaAddedKey = (mediationId: MediationId, replicaId: ReplicaId): string => `replica-mediation/replica-added/${mediationId}/${replicaId}`;
 
-/** Is the confirmation kept under `key` one whose `member` is `did`? */
 export async function confirmed(confirmations: Confirmations, key: string, member: string, did: Did): Promise<boolean> {
   const kept = await confirmations.get(key);
   return isJsonObject(kept) && kept[member] === did;

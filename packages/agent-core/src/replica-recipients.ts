@@ -11,12 +11,12 @@
  * Nothing is added before the mediator confirmed this runtime's own
  * replica. A mediator hands mail for a shared address to the replicas
  * the account has when the mail arrives, and to no replica added
- * later, so an address held before this replica is one whose mail this
- * runtime never sees.
+ * later, so mail that reached an address before this replica was added
+ * is mail this runtime never sees.
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, signRecipientProof, type Did, type DidId, type Keys, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
+import { IdentityMismatch, scanVault, signRecipientProof, type Did, type DidId, type Keys, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
 
 import { RECIPIENT_ADD, RECIPIENT_ADDED } from "./protocol/replica-mediation.js";
 import { MediatorRefused, Unusable } from "./errors.js";
@@ -50,7 +50,7 @@ export interface RecipientsAdded {
   wanted: Did[];
   /** those this run asked for and the mediator confirmed */
   added: Did[];
-  /** those the mediator would not add, and what it said: each is asked for again by the next run */
+  /** those not added, and why: what the mediator said in refusing, or why no proof could be signed for the DID. Each is tried again by the next run */
   refused: { did: Did; because: string }[];
 }
 
@@ -63,11 +63,12 @@ export function holds(recipients: RecipientsAdded, did: Did): boolean {
  * One recipient-add for each DID the account is to hold that has no
  * confirmation kept. Needs a replica-mediation arrangement toward the
  * link's mediator, its account registered and this runtime's replica
- * confirmed added. A DID the mediator refuses stops none of the others;
- * a request that gets no answer throws, and leaves what was confirmed
+ * confirmed added. A DID the mediator refuses, or one whose document
+ * names no method to sign a proof under, stops none of the others; a
+ * request that gets no answer throws, and leaves what was confirmed
  * before it confirmed. Runs as the account's one procedure at a time.
- * `proceed` is called before each request is begun and stops the run
- * there by throwing.
+ * `proceed` is called before each proof is signed and again before its
+ * request is begun, and stops the run there by throwing.
  */
 export function addRecipients(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId, proceed: () => void = () => {}): Promise<RecipientsAdded> {
   return serially(runtime, mediationId, () => addRecipientsNow(link, runtime, keys, confirmations, mediationId, proceed));
@@ -93,10 +94,11 @@ export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime
     proceed();
     try {
       const proof = await signRecipientProof(keys, created, mediation.me.did, mediation.mediatorDid);
+      proceed();
       const answer = await control(link, RECIPIENT_ADD, { recipient_did: created.did, resolution_material: created.longFormDid, proof }, RECIPIENT_ADDED);
       if (!echoes(answer, "recipient_did", created.did)) throw new MediatorRefused("recipient-added names another recipient than the one asked for");
     } catch (err) {
-      if (!(err instanceof MediatorRefused)) throw err;
+      if (!(err instanceof MediatorRefused || err instanceof IdentityMismatch)) throw err;
       refused.push({ did: created.did, because: err.message });
       continue;
     }

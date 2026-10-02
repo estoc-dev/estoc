@@ -5,8 +5,8 @@
  * header is exactly `alg: EdDSA`, `typ` and a `kid` naming an
  * authentication method of the DID that a mediator reads an Ed25519
  * key from, over the RFC 8785 text of exactly `account`, `aud` and
- * `recipient`. It names no request and no time: the binding it allows
- * is permanent and adding it again changes nothing, so one proof
+ * `recipient`. It names no request and no time, and allows only that
+ * recipient to be added to that account at that mediator, so one proof
  * serves every retry.
  */
 

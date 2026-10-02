@@ -32,9 +32,11 @@
   included, carrying its long form and the proof it signs, and keeps
   each confirmation in `Confirmations`, so a later run asks only for
   what has none. It asks for nothing until this runtime's own replica
-  is confirmed added. A DID the mediator refuses is reported in
-  `RecipientsAdded.refused` and stops no other; nothing is ever taken
-  off the account. `Agent.connect` runs it after the enrollment and
+  is confirmed added. A DID the mediator refuses, or one whose document
+  names no authentication method a proof is signed under, is reported
+  in `RecipientsAdded.refused` and stops no other; nothing is ever
+  taken off the account. Its `proceed` is called before each proof is
+  signed and again before its request is begun. `Agent.connect` runs it after the enrollment and
   reports it as `Connection.recipients`. `disclose` takes the
   runtime's confirmations as a last argument and `DispatchOptions` a
   `confirmations`: an address of such an arrangement is disclosed, or
