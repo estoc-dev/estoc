@@ -154,13 +154,6 @@ export class Graph {
     for (const edges of this.out.values()) yield* edges.values();
   }
 
-  /** The number of edges and of the facts supporting them: it grows whenever the graph does. */
-  weight(): number {
-    let weight = 0;
-    for (const edge of this.edges()) weight += 1 + edge.support.size;
-    return weight;
-  }
-
   /**
    * Every channel forward edges of the given kind reach from `start`,
    * `start` included, each by one shortest path: breadth first over
@@ -375,12 +368,29 @@ function superseding(graph: Graph, claims: Claims): Superseding[] {
 
 const claimKey = (side: Replaces, claim: Claim): string => [side, claim.id, channelKey(claim.at), claim.successor].join("\u0001");
 
+type Implied = ReadonlyMap<string, Superseding>;
+
+const entryKey = (key: string, { link }: Superseding): string => [key, ...link.support].join("\u0001");
+
+/** One string per set of implied changes, the same for the same changes with the same support however they were found. */
+const impliedKey = (implied: Implied): string =>
+  [...implied]
+    .map(([key, change]) => entryKey(key, change))
+    .sort()
+    .join("\u0002");
+
 /**
- * The least graph over the given links, the candidates `confirms`
- * admits and the links superseded successors imply. An implied change
- * is ordered against the other changes of its endpoint as a claimed one
- * is, so it may supersede in turn or compete; `implied` returns those
- * of the final graph. A candidate is
+ * The graph over the given links, the candidates `confirms` admits and
+ * the links superseded successors imply. An implied change is ordered
+ * against the other changes of its endpoint as a claimed one is, so it
+ * may supersede in turn or compete. The implied changes are the ones
+ * the complete claims, declared and implied together, imply: each
+ * derivation starts from what the previous one implied, until one
+ * implies the set it was given. A change implied along the way that the
+ * complete claims do not imply is dropped, and what it blocked is
+ * implied after all. Should the derivations alternate between sets
+ * instead of settling, only the changes every set of the alternation
+ * holds are implied. `implied` returns them. A candidate is
  * judged against the graph built without it and every candidate still
  * waiting, so nothing it derives can confirm it; the graph is rebuilt
  * until no candidate is admitted any more. The confirming facts of each
@@ -396,29 +406,40 @@ export function closure<L extends Link>(
 ): { graph: Graph; implied: Claims; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
   const admitted = new Map<L, readonly FactId[]>();
   const waiting = new Set(candidates);
-  const build = () => {
+  const assemble = (implied: Implied): Graph => {
     const graph = new Graph(admits);
     for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.id]);
     for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.id, ...support]);
+    for (const { side, link } of implied.values()) graph.add(link.from, link.to, side, link.support, true);
     graph.close();
-    const found = new Map<string, Superseding>();
-    const known = (): Claims => {
-      const all = { local: [...claims.local], peer: [...claims.peer] };
-      for (const { side, claim } of found.values()) all[side].push(claim);
-      return all;
-    };
-    for (let weight = -1, size = -1; weight !== graph.weight() || size !== found.size; ) {
-      weight = graph.weight();
-      size = found.size;
-      for (const change of superseding(graph, known())) {
-        found.set(claimKey(change.side, change.claim), change);
-        graph.add(change.link.from, change.link.to, change.side, change.link.support, true);
+    return graph;
+  };
+  const derive = (graph: Graph, implied: Implied): Implied => {
+    const all = { local: [...claims.local], peer: [...claims.peer] };
+    for (const { side, claim } of implied.values()) all[side].push(claim);
+    return new Map(superseding(graph, all).map((change) => [claimKey(change.side, change.claim), change]));
+  };
+  const asClaims = (implied: Implied): Claims => {
+    const result: Record<Replaces, Claim[]> = { local: [], peer: [] };
+    for (const { side, claim } of implied.values()) result[side].push(claim);
+    return result;
+  };
+  const build = (): { graph: Graph; implied: Claims } => {
+    let implied: Implied = new Map();
+    const seen = new Map<string, Implied>([[impliedKey(implied), implied]]);
+    for (;;) {
+      const graph = assemble(implied);
+      const next = derive(graph, implied);
+      const key = impliedKey(next);
+      if (key === impliedKey(implied)) return { graph, implied: asClaims(implied) };
+      if (seen.has(key)) {
+        const alternation = [...seen.values()].slice([...seen.keys()].indexOf(key));
+        const held = new Map([...next].filter(([k, change]) => alternation.every((set) => set.has(k) && entryKey(k, set.get(k)!) === entryKey(k, change))));
+        return { graph: assemble(held), implied: asClaims(held) };
       }
-      graph.close();
+      seen.set(key, next);
+      implied = next;
     }
-    const implied: Record<Replaces, Claim[]> = { local: [], peer: [] };
-    for (const { side, claim } of found.values()) implied[side].push(claim);
-    return { graph, implied };
   };
   let built = build();
   for (;;) {

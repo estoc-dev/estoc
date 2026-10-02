@@ -17,6 +17,7 @@ import {
   foldVaultChecked,
   methodPublicKey,
   type Channel,
+  type DidId,
   type Keys,
   type MessageHash,
   type ReadObject,
@@ -385,6 +386,42 @@ describe("conflicts", () => {
     expect(c.ackPath(channel(a1, b1), channel(a1, b2))).toBe(false);
     expect(c.ackPath(channel(a1, b1), channel(a1, b3))).toBe(false);
     for (const at of [channel(a1, b2), channel(a1, b3)]) expect(vault.views.channel(at).send.status).toBe("closed");
+    expectSameOverEveryOrder(scene, vault.checks);
+  });
+
+  test("a replacement the complete changes do not imply is not implied: a successor's onward channel is the same whether the competing change of its predecessor was received or implied", async () => {
+    const { scene, keys, peerKeys, a0, a1, b0: p, b1: x, b2: y, b3: u } = await vaults();
+    const v = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b04" as DidId);
+    const w = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b05" as DidId);
+    const source = proofFreeReceipt(scene, a0, p);
+    await rotation(scene, keys, { from: a0, peer: p, to: a1, source });
+    await receiptCarryingProof(scene, peerKeys, a0, p, x);
+    await receiptCarryingProof(scene, peerKeys, a1, p, y);
+    await receiptCarryingProof(scene, peerKeys, a0, x, u);
+    await receiptCarryingProof(scene, peerKeys, a1, x, v);
+    const onward = await receiptCarryingProof(scene, peerKeys, a1, u, w);
+    proofFreeReceipt(scene, a1, u);
+    const pending = receipt(scene, { local: a1, peer: w, resolution: resolved(scene, a1.didId, w), admitted: false });
+    const look = (vault: VaultFold) => ({
+      conflicts: vault.continuity.conflicts.map(({ conflict }) => ({ kind: conflict.kind, context: conflict.kind === "competing-changes" ? conflict.context : [] })),
+      changesOfU: vault.continuity.model.changes(channel(a1, u), "peer").map((change) => (change.change.kind === "rotate" ? change.change.successor : null)),
+      onward: vault.continuity.status(onward.cid),
+      ackPath: vault.continuity.ackPath(channel(a1, u), channel(a1, w)),
+      send: vault.views.channel(channel(a1, w)).send.status,
+      eligibility: vault.dispositions.candidate(pending.cid)?.eligibility.status,
+    });
+    const implied = look(await fold(scene, keys));
+    expect(implied).toEqual({
+      conflicts: [{ kind: "competing-changes", context: [channel(a0, x), channel(a1, x)].sort(compareChannels) }],
+      changesOfU: [w.did],
+      onward: { status: "verified" },
+      ackPath: true,
+      send: "open",
+      eligibility: "eligible",
+    });
+    await receiptCarryingProof(scene, peerKeys, a1, x, y);
+    const vault = await fold(scene, keys);
+    expect(look(vault)).toEqual(implied);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 

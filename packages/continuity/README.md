@@ -156,6 +156,17 @@ depends on itself:
    successor of X claimed at an earlier pair is superseded in turn, and
    one claimed at a later pair supersedes Y. A join carries an existing
    link to another pair and is not a change claimed there.
+
+   The implied changes are the ones the complete changes, claimed and
+   implied together, order. Each derivation starts from what the
+   previous one implied, until one implies the set it was given: a
+   change implied along the way that the complete changes do not order,
+   say because the change that implied it has come to compete with
+   another at its pair, is not implied, and whatever it would have
+   superseded or competed with is judged without it. The answers are
+   therefore the same whether a competing change was claimed or implied. Should the
+   derivations alternate between sets instead of settling, only the
+   changes every set of the alternation holds are implied.
 4. **Usable graph.** The same closure again over unambiguous facts,
    admitting no channel a conflict reaches. The positive graph says what
    replacements the evidence shows; the usable graph says which of them

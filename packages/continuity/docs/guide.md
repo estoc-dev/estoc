@@ -302,12 +302,13 @@ it gets for B0.
 | The same shape with the sides swapped: P → X for B, P → Y for B's successor B2 | X then Y; every pair of the relationship has the head C(Y,B2). |
 | A third successor claimed further along the other party's changes | Ordered after the second; each superseded successor leads to the next. |
 | The later successor is claimed at several pairs | Every one of them must be reached from every pair of the earlier successor. A pair that is not, even beside one that is, leaves the two competing. |
-| The later decision is saved but not confirmed yet | No conflict; `head` is `unresolved` until its source arrives. |
+| The later decision is saved but not confirmed yet | No conflict; `head(C(P,B))`, the pair the decisions leave, is `unresolved` until its source arrives, while the earlier successor's pair C(X,B2) keeps its head. |
 | The superseded B1 rotates to B3 at C(A1,B1), where it is replaced | `competing-changes` in B1's context between B2, under p2's ID, and B3; the scope includes C(A1,B2) and C(A1,B3). |
 | B1 rotates to B2 at C(A1,B1) | The same change, more support; the edge is no longer derived. |
 | B1 ends in the context it is replaced in | The ending competes with the replacement. |
 | B1 rotates to B3 at C(A0,B1), before the local change | B3 is superseded with it: B1, B3, then B2 by the same order. |
 | An ending of the endpoint itself beside either rotation | Ordered with nothing; it competes as before. |
+| The superseded X had rotated to U at C(A0,X) and to V at C(A1,X), where P's Y replaces it | X's U, V and the implied Y compete. U → V, which X's own changes alone would imply, is not implied: the complete changes do not order it. U's own onward change at C(A1,U) stands, exactly as when X → Y was received at C(A1,X). |
 
 **Tests:** [ordered successors][test-ordered].
 

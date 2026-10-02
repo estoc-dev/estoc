@@ -9,7 +9,10 @@
   claimed at one pair, at pairs no link orders, or beside an ending
   still compete. The superseded successor's replacement is a change of
   its own: `changes` lists it, and it competes with or is ordered
-  against that successor's other changes. The fact schema is unchanged; a snapshot of
+  against that successor's other changes. Only the changes the complete
+  changes, claimed and implied together, order are implied; one implied
+  along the way that they do not order is dropped, so the answers are
+  the same whether a competing change was claimed or implied. The fact schema is unchanged; a snapshot of
   `estoc-continuity/1` is refused by `mergeFacts` as any other profile
   is, and holds the same facts under the new string.
 

@@ -459,6 +459,94 @@ describe("successors the other party's changes order", () => {
     });
   });
 
+  describe("a replacement the complete changes do not imply", () => {
+    const A0_P = C("A0", "P");
+    const A1_X = C("A1", "X");
+    const A1_U = C("A1", "U");
+    const A1_W = C("A1", "W");
+    const peer = [
+      observe("o", A0_P),
+      decide("a0-a1", A0_P, "A1", "o"),
+      rotate("p-x", A0_P, "X"),
+      rotate("p-y", C("A1", "P"), "Y"),
+      rotate("x-u", C("A0", "X"), "U"),
+      rotate("x-v", A1_X, "V"),
+      rotate("u-w", A1_U, "W"),
+      observe("independent", A1_U),
+    ];
+    const atU = (model: Continuity) => ({
+      conflicts: model.conflicts(),
+      changes: model.changes(A1_U, "peer"),
+      head: model.head(A1_W),
+      path: model.path(A1_U, A1_W),
+      onward: model.status("u-w"),
+      links: model.history(A1_U).links.filter((link) => link.from.localDid === "A1" && link.from.peerDid === "U"),
+    });
+
+    it("is not implied: the replacement of X's successor U fails once X's own change and its implied one compete, and U's onward change stands", () => {
+      const model = deriveContinuity(peer);
+      expect(model.conflicts()).toEqual([
+        {
+          kind: "competing-changes",
+          side: "peer",
+          context: [C("A0", "X"), A1_X],
+          changes: [
+            { change: { kind: "rotate", successor: "U" }, facts: ["x-u"] },
+            { change: { kind: "rotate", successor: "V" }, facts: ["x-v"] },
+            { change: { kind: "rotate", successor: "Y" }, facts: ["p-y"] },
+          ],
+        },
+      ]);
+      expect(model.history(A1_U).links.filter((link) => link.from.localDid === "A1" && link.from.peerDid === "U")).toEqual([{ from: A1_U, to: A1_W, replaces: "peer", support: ["u-w"], derived: false, usable: true }]);
+      expect(model.changes(A1_U, "peer")).toMatchObject([{ id: "u-w", at: A1_U }]);
+      expect(model.head(A1_W)).toEqual({ status: "head", channel: A1_W, support: [] });
+      expect(model.path(A1_U, A1_W)).toMatchObject({ status: "path", support: ["u-w"] });
+      expect(model.status("u-w")).toEqual({ status: "usable", support: ["u-w"] });
+      expect(atU(deriveContinuity([...peer].reverse()))).toEqual(atU(model));
+    });
+
+    it("gives the same answers whether the competing change of X was received or implied", () => {
+      const implied = atU(deriveContinuity(peer));
+      const received = atU(deriveContinuity([...peer, rotate("x-y", A1_X, "Y")]));
+      expect(received).toEqual({ ...implied, conflicts: [{ ...implied.conflicts[0], changes: [{ change: { kind: "rotate", successor: "U" }, facts: ["x-u"] }, { change: { kind: "rotate", successor: "V" }, facts: ["x-v"] }, { change: { kind: "rotate", successor: "Y" }, facts: ["p-y", "x-y"] }] }] });
+    });
+
+    it("frees what it would have competed with: U's own successors are ordered once the replacement that failed is gone, usable or not", () => {
+      const facts = [...peer.filter((fact) => fact.id !== "u-w" && fact.id !== "independent"), rotate("u-z", C("A0", "U"), "Z"), rotate("u-w", A1_U, "W")];
+      const model = deriveContinuity(facts);
+      expect(model.conflicts()).toMatchObject([{ kind: "competing-changes", side: "peer", context: [C("A0", "X"), A1_X] }]);
+      const links = model.history(A1_U).links;
+      expect(links.filter((link) => link.from.peerDid === "U" && link.to.peerDid === "V")).toEqual([]);
+      expect(links).toContainEqual({ from: C("A1", "Z"), to: A1_W, replaces: "peer", support: ["a0-a1", "o", "p-x", "u-w", "u-z", "x-u"], derived: true, usable: false });
+      expect(model.changes(C("A1", "Z"), "peer")).toMatchObject([{ id: "u-w", at: C("A1", "Z"), to: A1_W }]);
+      expect(atU(deriveContinuity([...facts].reverse()))).toEqual(atU(model));
+    });
+
+    it("is not implied on the local side either", () => {
+      const ours = [
+        rotate("b0-b1", C("P", "B0"), "B1"),
+        observe("o0", C("P", "B0")),
+        observe("o1", C("P", "B1")),
+        decide("p-x", C("P", "B0"), "X", "o0"),
+        decide("p-y", C("P", "B1"), "Y", "o1"),
+        observe("ox0", C("X", "B0")),
+        observe("ox1", C("X", "B1")),
+        decide("x-u", C("X", "B0"), "U", "ox0"),
+        decide("x-v", C("X", "B1"), "V", "ox1"),
+        observe("ou1", C("U", "B1")),
+        decide("u-w", C("U", "B1"), "W", "ou1"),
+      ];
+      const implied = deriveContinuity(ours);
+      expect(implied.conflicts()).toMatchObject([{ kind: "competing-changes", side: "local", context: [C("X", "B0"), C("X", "B1")], changes: [{ facts: ["x-u"] }, { facts: ["x-v"] }, { facts: ["p-y"] }] }]);
+      const fromU = (model: Continuity) => model.history(C("U", "B1")).links.filter((link) => link.from.localDid === "U" && link.from.peerDid === "B1");
+      expect(fromU(implied)).toMatchObject([{ from: C("U", "B1"), to: C("W", "B1"), replaces: "local", derived: false, usable: true }]);
+      expect(implied.path(C("U", "B1"), C("W", "B1")).status).toBe("path");
+      const received = deriveContinuity([...ours, decide("x-y", C("X", "B1"), "Y", "ox1")]);
+      expect(fromU(received)).toEqual(fromU(implied));
+      expect(received.path(C("U", "B1"), C("W", "B1"))).toEqual(implied.path(C("U", "B1"), C("W", "B1")));
+    });
+  });
+
   describe("a successor claimed at several pairs", () => {
     const converging = [rotate("b1-b3", C("P", "B1"), "B3"), rotate("b2-b3", P_B2, "B3"), observe("o1", C("P", "B1")), observe("o2", P_B2), observe("o3", C("P", "B3"))];
 
