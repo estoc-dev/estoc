@@ -10,7 +10,8 @@
  * notification an earlier input still earns, is listed for the user,
  * who retries, completes or cancels it. Connecting reconciles each
  * arrangement's recipients with its mediator and picks up what it
- * holds, by the ordinary pickup of the account.
+ * holds, by the ordinary pickup of the account; a replica-mediation
+ * arrangement is enrolled in instead, its account holding no queue.
  *
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
@@ -54,6 +55,7 @@ import { establish, mediationOf, reconcile, watchUnknownRegistrations, type Esta
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
 import { callPrivateAddress, decidePrivateAddress, type PrivateAddress } from "./privacy.js";
 import { STATUS } from "./protocol/mediation.js";
+import { enroll, transientConfirmations, type Confirmations, type Enrolled } from "./replica-enrollment.js";
 import { afterReceipt, recordOwed, type AfterReceipt, type Owed } from "./receive/after.js";
 import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
@@ -79,6 +81,8 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
   trace: AgentTrace;
+  /** where what a replica-mediation mediator confirmed is kept, the runtime's local options for one; left out, it is kept by this agent alone, and the next one asks again */
+  confirmations?: Confirmations;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
   /** told the lines, whole, once they changed — a connection made or dropped, a pickup ended, a delivery come to wait or discarded — and once for every change of one turn */
@@ -109,6 +113,8 @@ export interface Connection {
   /** why the last connection stopped short; null when it ran through */
   unreachable: string | null;
   reconciled: Reconciled | null;
+  /** this runtime's enrollment, for a replica-mediation arrangement: such a line reconciles and drains nothing, since its account holds no queue */
+  enrolled: Enrolled | null;
   /**
    * Every registration a reconciliation over this line found at the
    * mediator that no DID of the vault accounts for, the first
@@ -146,6 +152,7 @@ export interface Submitted extends Sent {
 interface Line {
   link: MediatorLink;
   pickup: Pickup;
+  replicaMediation: boolean;
 }
 
 export class Agent {
@@ -161,6 +168,7 @@ export class Agent {
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
   private linesDue = false;
+  private readonly confirmations: Confirmations;
 
   /** Every manual procedure, each transport call of theirs through this agent's dispatcher. */
   readonly manual: Manual;
@@ -177,6 +185,7 @@ export class Agent {
     readonly recovered: Owed
   ) {
     this.manual = manualProcedures(runtime, keys, dispatcher, options);
+    this.confirmations = options.confirmations ?? transientConfirmations();
   }
 
   /** The agent over an open runtime, with networking off; throws `ReceiverInUse` while another agent of the runtime is open. */
@@ -240,6 +249,22 @@ export class Agent {
     await this.localStateChanged();
     await this.connectTo(mediationId);
     return established;
+  }
+
+  /**
+   * This runtime enrolled in a replica-mediation arrangement: its
+   * account registered when the fold has no grant, its own replica
+   * added when no confirmation is kept. Throws what `enroll` throws,
+   * and begins no request once the agent is closed.
+   */
+  async enroll(mediationId: MediationId): Promise<Enrolled> {
+    this.refuseClosed();
+    const { link } = await this.lineOf(mediationId);
+    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => this.refuseClosed());
+    this.connectionOf(mediationId).enrolled = enrolled;
+    await this.localStateChanged();
+    this.linesChanged();
+    return enrolled;
   }
 
   /** `disclose` over the line of the arrangement the DID's route is on. */
@@ -370,7 +395,7 @@ export class Agent {
   }
 
   private connectionOf(mediationId: MediationId): Connection {
-    const connection: Connection = this.attempts.get(mediationId) ?? { mediationId, unreachable: null, reconciled: null, unknownRegistrations: [], drained: null, live: false };
+    const connection: Connection = this.attempts.get(mediationId) ?? { mediationId, unreachable: null, reconciled: null, enrolled: null, unknownRegistrations: [], drained: null, live: false };
     this.attempts.set(mediationId, connection);
     return connection;
   }
@@ -393,14 +418,23 @@ export class Agent {
     this.begun.set(mediationId, attempt);
     const stands = (): boolean => !this.closed && this.begun.get(mediationId) === attempt;
     try {
-      const { link, pickup } = await this.lineOf(mediationId);
-      const reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
-      if (!stands()) return this.shown(connection);
-      connection.reconciled = reconciled;
-      const drained = await pickup.drain();
-      if (!stands()) return this.shown(connection);
-      connection.drained = drained;
-      if (this.keepsLive() && !link.live) this.openSocket(mediationId, { link, pickup });
+      const line = await this.lineOf(mediationId);
+      const { link, pickup } = line;
+      if (line.replicaMediation) {
+        const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => {
+          if (!stands()) throw new Error("the connection was given up");
+        });
+        if (!stands()) return this.shown(connection);
+        connection.enrolled = enrolled;
+      } else {
+        const reconciled = await reconcile(link, this.runtime, this.keys, mediationId);
+        if (!stands()) return this.shown(connection);
+        connection.reconciled = reconciled;
+        const drained = await pickup.drain();
+        if (!stands()) return this.shown(connection);
+        connection.drained = drained;
+        if (this.keepsLive() && !link.live) this.openSocket(mediationId, line);
+      }
       connection.unreachable = null;
     } catch (err) {
       if (!stands()) return this.shown(connection);
@@ -532,7 +566,7 @@ export class Agent {
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const link = new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets: () => this.ring.secrets(), me: mediation.me.did, mediatorDid: mediation.mediatorDid, mediatorDoc, timeoutMs, log });
     const pickup = new Pickup(link, this.handleOf(mediationId), { log });
-    const line: Line = { link, pickup };
+    const line: Line = { link, pickup, replicaMediation: mediation.profile !== null };
     const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;
     this.wires.set(mediationId, line);

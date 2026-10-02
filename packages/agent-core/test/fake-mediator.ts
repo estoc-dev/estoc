@@ -5,8 +5,11 @@ import type { Secret } from "@estoc/did-peer";
 import bs58 from "bs58";
 import { base64urlToBytes } from "@estoc/did-peer";
 import type { DerivedIdentity } from "@estoc/keystore";
+import { readReplicaGrant } from "@estoc/vault";
 
 import {
+  ACCOUNT_REGISTER,
+  ACCOUNT_REGISTERED,
   DELIVERY,
   DELIVERY_REQUEST,
   FORWARD,
@@ -19,15 +22,19 @@ import {
   RECIPIENT_QUERY,
   RECIPIENT_UPDATE,
   RECIPIENT_UPDATE_RESPONSE,
+  REPLICA_ADD,
+  REPLICA_ADDED,
   STATUS,
   STATUS_REQUEST,
   secretsResolverFor,
 } from "../src/index.js";
 import { didOf } from "../src/protocol/didcomm.js";
+import { canonicalDid, sameDid } from "../src/same-did.js";
 
 /**
  * A mediator that lives inside the test: coordinate-mediation 3.0,
- * messagepickup 3.0 (HTTP and a fake WebSocket), routing 2.0 forward.
+ * messagepickup 3.0 (HTTP and a fake WebSocket), routing 2.0 forward,
+ * and the account-register and replica-add controls of replica-mediation.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -123,6 +130,10 @@ export class FakeMediator {
   protectSender = false;
   /** seal every reply and frame as the mediator's short form, the other spelling of the same DID */
   answerAsShortForm = false;
+  /** replica-mediation accounts, by their short form */
+  readonly replicaAccounts = new Set<string>();
+  /** the replicas added, by replica DID: the account and the grant each was added with */
+  readonly replicas = new Map<string, { account: string; replicaDid: string; grant: string }>();
   readonly queues = new Map<string, Queued[]>();
   private readonly sockets = new Map<string, FakeSocket>();
   /** every plaintext type the mediator handled, in order — for assertions */
@@ -207,6 +218,10 @@ export class FakeMediator {
     } as IMessage;
   }
 
+  private refused(to: string, code: string, thid: string): IMessage {
+    return this.reply(PROBLEM_REPORT, to, { code: `e.estoc.replica-mediation.${code}` }, thid);
+  }
+
   private queue(account: string): Queued[] {
     let q = this.queues.get(account);
     if (q === undefined) {
@@ -272,6 +287,22 @@ export class FakeMediator {
           return { ...u, result: "success" };
         });
         return this.reply(RECIPIENT_UPDATE_RESPONSE, from as string, { updated }, msg.id);
+      }
+      case ACCOUNT_REGISTER: {
+        const account = canonicalDid(from as string);
+        this.replicaAccounts.add(account);
+        return this.reply(ACCOUNT_REGISTERED, from as string, { account, routing_did: this.did, registered_time: 1, limits: {} }, msg.id);
+      }
+      case REPLICA_ADD: {
+        const account = canonicalDid(from as string);
+        if (!this.replicaAccounts.has(account)) return this.refused(from as string, "unknown-account", msg.id);
+        const jws = (msg.body as { grant: string }).grant;
+        const grant = readReplicaGrant(jws);
+        if (grant.account !== account || !sameDid(grant.mediator, this.did)) return this.refused(from as string, "invalid-grant", msg.id);
+        const added = this.replicas.get(grant.replicaDid);
+        if (added !== undefined && added.account !== account) return this.refused(from as string, "identity-conflict", msg.id);
+        this.replicas.set(grant.replicaDid, { account, replicaDid: grant.replicaDid, grant: jws });
+        return this.reply(REPLICA_ADDED, from as string, { replica_did: grant.replicaDid, state: "active", added_time: 1 }, msg.id);
       }
       case STATUS_REQUEST:
         return this.reply(STATUS, from as string, { message_count: this.queue(from as string).length }, msg.id);

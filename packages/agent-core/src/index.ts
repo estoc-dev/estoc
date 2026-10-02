@@ -11,6 +11,7 @@
 
 export * from "./protocol/spec.js";
 export * from "./protocol/mediation.js";
+export * from "./protocol/replica-mediation.js";
 export { BASIC_MESSAGE } from "./protocol/basicmessage.js";
 export { PROFILE, REQUEST_PROFILE, announcedName } from "./protocol/user-profile.js";
 export {
@@ -69,6 +70,7 @@ export { Pickup, type Delivered, type Drained, type Fate, type Handle, type Pick
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "./same-did.js";
 export { createMediation, establish, mediationOf, reconcile, reconcileNow, registered, selectMediation, watchUnknownRegistrations, type EstablishStep, type Established, type Reconciled } from "./mediation.js";
+export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export {
   configureRoute,
   createDid,

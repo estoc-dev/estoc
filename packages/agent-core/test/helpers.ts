@@ -18,6 +18,7 @@ import {
   type DidId,
   type EventReference,
   type MediationId,
+  type MediationProfile,
   type MintedDid,
   type PublicKey,
   type VaultEvent,
@@ -95,9 +96,9 @@ export interface Party extends Fresh {
 }
 
 /** A vault with a mediation created toward `mediator` (not yet granted), its ring loaded, and a link over it. */
-export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver()): Promise<Party> {
+export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver(), profile?: MediationProfile): Promise<Party> {
   const fresh = await freshVault(fill, `party ${fill}`, driver);
-  const created = await createMediation(fresh.runtime, fresh.keys, mediator.did as Did);
+  const created = await createMediation(fresh.runtime, fresh.keys, mediator.did as Did, undefined, profile);
   const fold = await scanVault(fresh.runtime.vault, fresh.keys);
   const ring = await Keyring.load(fresh.keys, fold);
   const trace = await AgentTrace.open(fresh.runtime.local);
