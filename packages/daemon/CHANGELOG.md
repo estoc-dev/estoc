@@ -19,9 +19,8 @@
   it on its own, so two runtimes of one vault live on such an
   arrangement can each replace a private address and leave the peer no
   channel to write to: until one runtime alone is made to answer, the
-  profile is for one live runtime at a time. A runtime's replica is
-  bound to the first arrangement whose account the mediator registered,
-  and enrolls in no other.
+  profile is for one live runtime at a time. Once its replica intent is
+  recorded, a runtime enrolls only in that arrangement.
 - What a replica-mediation mediator confirmed is kept in the runtime's
   local options, so a reopened vault asks for none of it again.
 - A `MediationRecord` carries `profile`.

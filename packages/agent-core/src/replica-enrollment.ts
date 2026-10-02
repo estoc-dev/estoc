@@ -9,9 +9,9 @@
  * and a mediator that never registered the account must not hold the
  * runtime to itself. That the account exists is recorded as the
  * arrangement's grant, once, for every replica to read. That this
- * replica was added is this runtime's alone to know and is kept beside the vault, where
- * no snapshot carries it: a copy of the vault running elsewhere is
- * another replica and enrolls itself. While the account and the replica
+ * replica was added is this runtime's alone to know and is kept beside
+ * the vault, where no snapshot carries it: a copy of the vault running
+ * elsewhere is another replica and enrolls itself. While the account and the replica
  * stand at the mediator, both requests answer a repeat as they answered
  * the first time, so a confirmation that was lost, or never written,
  * costs one more request and changes nothing. While the account exists,
@@ -83,13 +83,7 @@ export function accountOf(fold: VaultFold, mediationId: MediationId): Mediation 
   return mediation as Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> };
 }
 
-/**
- * The grant the fold lacks for the replica to be a member of the
- * arrangement, or null when it already is one. A replica ID is one
- * arrangement's for good, since its DID names that arrangement's
- * mediator: one recorded for another arrangement, or recorded and not
- * making the runtime a member, is refused.
- */
+/** The grant the replica still needs to be a member of the arrangement, signed and not recorded; null when it is one already. */
 async function grantWanted(fold: VaultFold, keys: Keys, mediationId: MediationId, replicaId: ReplicaId): Promise<string | null> {
   const mediation = accountOf(fold, mediationId);
   const existing = fold.replicas.replicas.get(replicaId);
