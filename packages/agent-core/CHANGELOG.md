@@ -53,6 +53,11 @@
   acknowledged: no protocol addressed to a replica is supported, so it
   leaves a discarded-delivery diagnostic and nothing in the vault. `classifyRecipients` takes the
   runtime's replica ID to tell such an envelope.
+- **`Agent.enroll` connects** (behaviour change): like `Agent.establish`,
+  it goes on to the arrangement's connection once the enrollment is
+  through — the account's addresses added, the replica's queue picked up,
+  the socket opened — so a host that enrolls has nothing to connect by
+  itself.
 
 ## 0.20.0 — 2026-09-29
 

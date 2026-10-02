@@ -217,7 +217,7 @@ describe("an address of a replica-mediation arrangement", () => {
     await agent.disclose(b.created.data.didId, { as: "direct" });
     expect(mediator.sharedRecipients.has(b.minted.did)).toBe(true);
     agent.close();
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, RECIPIENT_ADD, STATUS_REQUEST, RECIPIENT_ADD]);
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, STATUS_REQUEST, RECIPIENT_ADD, STATUS_REQUEST, RECIPIENT_ADD]);
     await p.runtime.close();
   });
 

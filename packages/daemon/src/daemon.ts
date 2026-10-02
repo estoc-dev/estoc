@@ -15,6 +15,7 @@ import {
   type ContactId,
   type Did,
   type DidId,
+  type MediationProfile,
   type VaultDraft,
   type VaultFold,
 } from "@estoc/vault";
@@ -94,6 +95,7 @@ const BUSY_RETRY_MS = 2000;
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
+const REPLICA_MEDIATION_PROFILE: MediationProfile = "replica-mediation/1.0";
 const SCAN = { effectTypes: effectTypesOf(BUILT_IN_HANDLERS) };
 
 /**
@@ -385,6 +387,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           },
           didcomm: await host.didcomm(),
           trace,
+          confirmations: runtime.local.options,
           log: whileAttached(log),
           onLines: tellLines,
         }
@@ -853,12 +856,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         }
       }),
 
-    setMediator: (mediatorDid) =>
+    setMediator: (mediatorDid, profile = REPLICA_MEDIATION_PROFILE) =>
       act(async (agent, { runtime, keys }) => {
         const fold = await scanVault(runtime.vault, keys, SCAN);
-        const existing = [...fold.mediations.mediations.values()].find((mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && sameDid(mediation.mediatorDid, mediatorDid));
-        const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did)).data.mediationId;
-        await agent.establish(mediationId);
+        const existing = [...fold.mediations.mediations.values()].find(
+          (mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && mediation.profile === profile && sameDid(mediation.mediatorDid, mediatorDid)
+        );
+        const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did, undefined, profile ?? undefined)).data.mediationId;
+        if (profile === null) await agent.establish(mediationId);
+        else await agent.enroll(mediationId);
         await selectMediation(runtime, keys, mediationId);
         await ensureRoute(runtime, keys, mediationId);
         return mediationId;

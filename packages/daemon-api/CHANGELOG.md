@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `setMediator` takes an optional `profile`: left out, the daemon makes
+  the arrangement as a replica-mediation account (`"replica-mediation/1.0"`),
+  which is what a daemon of this version does for a view that names none;
+  `null` asks for an ordinary arrangement. A profile the daemon does not
+  know is `InvalidArgument`.
+- A `MediationRecord` may carry `profile`: the profile its arrangement
+  was created under, null for an ordinary one, absent from a daemon that
+  does not say.
+
 ## 0.1.0 — 2026-09-29
 
 The contract between an Estoc daemon and its views, as one package a

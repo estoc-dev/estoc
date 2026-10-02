@@ -216,7 +216,7 @@ describe("a replica-mediation arrangement", () => {
     expect(forgetful.connections()[0]?.enrolled?.steps).toEqual(["replica-added"]);
     forgetful.close();
     expect(mediator.seenTypes.filter((type) => type !== STATUS_REQUEST)).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, REPLICA_ADD]);
-    expect(sent(mediator, STATUS_REQUEST)).toBe(3);
+    expect(sent(mediator, STATUS_REQUEST)).toBe(4);
     await p.runtime.close();
   });
 
@@ -273,7 +273,7 @@ describe("a replica-mediation arrangement", () => {
     release();
     const [connection] = await connecting;
     expect(connection?.enrolled).toBeNull();
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
+    expect(mediator.seenTypes.filter((type) => type === ACCOUNT_REGISTER || type === REPLICA_ADD)).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
     await p.runtime.close();
   });
 });

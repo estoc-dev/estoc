@@ -7,5 +7,9 @@
   "include": [
     "src",
     "test"
+  ],
+  // It imports the mediator's sources, which are written to the mediator's own compiler options.
+  "exclude": [
+    "test/mediator.test.ts"
   ]
 }

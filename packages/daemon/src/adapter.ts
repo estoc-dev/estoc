@@ -12,7 +12,7 @@ import { NoTarget, Unusable, type Content, type Invitation as DomainInvitation }
 import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, Limits, Lines, MessageId, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type MethodHandlers, type Session, type Transport } from "@estoc/daemon-api/wire";
 import { DamagedHistory } from "@estoc/event-store";
-import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference } from "@estoc/vault";
+import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference, type MediationProfile } from "@estoc/vault";
 
 import type { CompletionWord, DispatchWord, Outcome, SendResult } from "./api.js";
 import { InvalidChannelId, channelIdOf, channelOf } from "./channels.js";
@@ -76,6 +76,16 @@ function didOf(presented: string): Did {
   } catch (error) {
     throw invalid(error);
   }
+}
+
+const PROFILES: readonly MediationProfile[] = ["replica-mediation/1.0"];
+
+/** The profile a view named: left out it is the daemon's to choose, and null is an ordinary arrangement. */
+function profileOf(presented: string | null | undefined): MediationProfile | null | undefined {
+  if (presented === undefined || presented === null) return presented;
+  const profile = PROFILES.find((known) => known === presented);
+  if (profile === undefined) throw invalid(new Error(`unknown mediation profile ${JSON.stringify(presented)}`));
+  return profile;
 }
 
 /** The pair two DIDs name, each canonical, for a channel ID of a pair no record has shown yet. */
@@ -164,7 +174,7 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       return null;
     }),
 
-    setMediator: guarded(async ({ mediatorDid }) => ({ mediationId: spelled(await core.setMediator(didOf(mediatorDid))) })),
+    setMediator: guarded(async ({ mediatorDid, profile }) => ({ mediationId: spelled(await core.setMediator(didOf(mediatorDid), profileOf(profile))) })),
     createInvitation: guarded(async ({ goal }) => {
       const { didId, invitation } = await core.createInvitation(goal);
       return { didId: spelled(didId), invitation };
