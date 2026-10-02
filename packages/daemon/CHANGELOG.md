@@ -11,9 +11,11 @@
   one selected, so an ordinary arrangement made earlier is neither
   converted nor reused for the other profile. A mediator that does not
   offer replica-mediation refuses the enrollment and the call fails. A
-  vault restored or copied to another runtime enrolls that runtime as a
-  replica of its own at its first connection, and each replica picks up
-  its own copy of the account's mail.
+  backup restored into a fresh runtime enrolls that runtime as a replica
+  of its own at its first connection, and each replica picks up its own
+  copy of the account's mail. A runtime's files moved or copied as they
+  are keep its replica: the copy is the same replica until an identity
+  reset gives it another.
 - What a replica-mediation mediator confirmed is kept in the runtime's
   local options, so a reopened vault asks for none of it again.
 - A `MediationRecord` carries `profile`.
