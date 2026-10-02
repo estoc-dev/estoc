@@ -37,8 +37,9 @@ import { canonicalDid, sameDid } from "../src/same-did.js";
 /**
  * A mediator that lives inside the test: coordinate-mediation 3.0,
  * messagepickup 3.0 (HTTP and a fake WebSocket), routing 2.0 forward,
- * and the account-register, replica-add and recipient-add controls of
- * replica-mediation.
+ * and of replica-mediation the account-register, replica-add and
+ * recipient-add controls, the fan-out of a shared address's mail to the
+ * account's replicas and each replica's own pickup.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -245,6 +246,24 @@ export class FakeMediator {
     return this.reply(PROBLEM_REPORT, to, { code: `e.estoc.replica-mediation.${code}` }, thid);
   }
 
+  /** The queue a pickup sender reads: a replica's own under its short form, whichever spelling it sealed with; an ordinary account's under the DID it sealed as. */
+  private inboxOf(from: string): string {
+    const canonical = canonicalDid(from);
+    return this.replicas.has(canonical) ? canonical : from;
+  }
+
+  /** A frame for a replica is sealed to its short form, which resolves from the long form its grant carried. */
+  private async push(inbox: string, msg: IMessage): Promise<void> {
+    const socket = this.sockets.get(inbox);
+    if (socket === undefined) return;
+    const replica = this.replicas.get(inbox);
+    if (replica === undefined) return socket.deliver(await this.pack(msg, inbox));
+    const longForm = readReplicaGrant(replica.grant).replicaLongForm;
+    const document = JSON.parse(JSON.stringify(await resolveDIDCommDoc(longForm)).replaceAll(longForm, inbox)) as Awaited<ReturnType<typeof resolveDIDCommDoc>>;
+    const [packed] = await new Message(msg).pack_encrypted(inbox, this.did, null, { resolve: async (did: string) => (did === inbox ? document : resolveDIDCommDoc(did)) }, secretsResolverFor(this.secrets), { forward: false });
+    socket.deliver(packed);
+  }
+
   private queue(account: string): Queued[] {
     let q = this.queues.get(account);
     if (q === undefined) {
@@ -252,6 +271,16 @@ export class FakeMediator {
       this.queues.set(account, q);
     }
     return q;
+  }
+
+  /** Where mail forwarded to `next` waits: an ordinary recipient's account, a replica's own queue, or one copy under an ID of its own for every replica the shared address's account has now. */
+  private inboxesFor(next: string): string[] {
+    const ordinary = this.recipients.get(next);
+    if (ordinary !== undefined) return [ordinary];
+    const canonical = canonicalDid(next);
+    if (this.replicas.has(canonical)) return [canonical];
+    const account = this.sharedRecipients.get(canonical);
+    return account === undefined ? [] : [...this.replicas.values()].filter((replica) => replica.account === account).map((replica) => replica.replicaDid);
   }
 
   private deliveryFor(account: string, items: Queued[]): IMessage {
@@ -269,19 +298,18 @@ export class FakeMediator {
     switch (msg.type) {
       case FORWARD: {
         const next = (msg.body as { next?: string }).next;
-        const account = next === undefined ? undefined : this.recipients.get(next);
-        if (account === undefined) {
+        const inboxes = next === undefined ? [] : this.inboxesFor(next);
+        if (inboxes.length === 0 && !this.sharedRecipients.has(canonicalDid(next ?? ""))) {
           throw new Error(`forward for unknown recipient ${next}`);
         }
         const attachments = (msg.attachments ?? []) as { data: { json?: unknown } }[];
-        const items: Queued[] = attachments.map((a) => ({
-          id: crypto.randomUUID(),
-          packed: JSON.stringify(a.data.json),
-        }));
-        this.queue(account).push(...items);
-        const socket = this.sockets.get(account);
-        if (socket !== undefined) {
-          socket.deliver(await this.pack(this.deliveryFor(account, items), account));
+        for (const inbox of inboxes) {
+          const items: Queued[] = attachments.map((a) => ({
+            id: crypto.randomUUID(),
+            packed: JSON.stringify(a.data.json),
+          }));
+          this.queue(inbox).push(...items);
+          await this.push(inbox, this.deliveryFor(inbox, items));
         }
         return null;
       }
@@ -338,20 +366,19 @@ export class FakeMediator {
         return this.reply(RECIPIENT_ADDED, from as string, { recipient_did: recipient, added_time: 1 }, msg.id);
       }
       case STATUS_REQUEST:
-        return this.reply(STATUS, from as string, { message_count: this.queue(from as string).length }, msg.id);
-      case DELIVERY_REQUEST: {
-        const limit = (msg.body as { limit?: number }).limit ?? 10;
-        const items = this.queue(from as string).slice(0, limit);
-        if (items.length === 0) {
-          return this.reply(STATUS, from as string, { message_count: 0 }, msg.id);
-        }
-        return { ...this.deliveryFor(from as string, items), thid: msg.id } as IMessage;
-      }
+      case DELIVERY_REQUEST:
       case MESSAGES_RECEIVED: {
-        const ids = new Set((msg.body as { message_id_list: string[] }).message_id_list);
-        const q = this.queue(from as string);
-        this.queues.set(from as string, q.filter((item) => !ids.has(item.id)));
-        return this.reply(STATUS, from as string, { message_count: this.queue(from as string).length }, msg.id);
+        if (this.replicaAccounts.has(canonicalDid(from as string))) return this.refused(from as string, "replica-required", msg.id);
+        const inbox = this.inboxOf(from as string);
+        if (msg.type === MESSAGES_RECEIVED) {
+          const ids = new Set((msg.body as { message_id_list: string[] }).message_id_list);
+          this.queues.set(inbox, this.queue(inbox).filter((item) => !ids.has(item.id)));
+        }
+        if (msg.type === DELIVERY_REQUEST) {
+          const items = this.queue(inbox).slice(0, (msg.body as { limit?: number }).limit ?? 10);
+          if (items.length > 0) return { ...this.deliveryFor(from as string, items), thid: msg.id } as IMessage;
+        }
+        return this.reply(STATUS, from as string, { message_count: this.queue(inbox).length }, msg.id);
       }
       case LIVE_DELIVERY_CHANGE:
         return this.reply(STATUS, from as string, { live_delivery: (msg.body as { live_delivery: boolean }).live_delivery }, msg.id);
@@ -374,7 +401,7 @@ export class FakeMediator {
   async handleWs(socket: FakeSocket, text: string): Promise<void> {
     const { msg, from } = await this.unpack(text);
     if (msg.type === LIVE_DELIVERY_CHANGE && from !== null) {
-      this.sockets.set(from, socket);
+      this.sockets.set(this.inboxOf(from), socket);
     }
     const reply = await this.dispatch(msg, from);
     if (reply !== null) {

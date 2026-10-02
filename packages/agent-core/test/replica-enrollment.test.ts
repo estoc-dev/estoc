@@ -10,8 +10,8 @@ import {
   Keyring,
   MediatorLink,
   MediatorRefused,
-  RECIPIENT_QUERY,
   REPLICA_ADD,
+  STATUS_REQUEST,
   Unusable,
   WrongAccount,
   canonicalDid,
@@ -197,15 +197,15 @@ describe("a replica-mediation arrangement", () => {
     await p.runtime.close();
   });
 
-  it("is enrolled in by the agent's connection, which reconciles and picks up nothing, and by a later agent only where no confirmation was kept", async () => {
+  it("is enrolled in by the agent's connection, which reconciles nothing, and by a later agent only where no confirmation was kept", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options };
+    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
     const agent = await Agent.open(p, options);
     expect((await agent.enroll(p.mediationId)).steps).toEqual(["replica-created", "account-registered", "replica-added"]);
     await selectMediation(p.runtime, p.keys, p.mediationId);
     const [connection] = await agent.connect();
-    expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, reconciled: null, drained: null, live: false });
+    expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, reconciled: null, drained: { acked: 0, ended: "empty" }, live: false });
     expect(connection?.enrolled?.steps).toEqual([]);
     agent.close();
 
@@ -215,8 +215,8 @@ describe("a replica-mediation arrangement", () => {
     const forgetful = await Agent.start(p, { ...options, confirmations: undefined });
     expect(forgetful.connections()[0]?.enrolled?.steps).toEqual(["replica-added"]);
     forgetful.close();
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, REPLICA_ADD]);
-    expect(sent(mediator, RECIPIENT_QUERY)).toBe(0);
+    expect(mediator.seenTypes.filter((type) => type !== STATUS_REQUEST)).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, REPLICA_ADD]);
+    expect(sent(mediator, STATUS_REQUEST)).toBe(3);
     await p.runtime.close();
   });
 

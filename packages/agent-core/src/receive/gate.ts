@@ -8,7 +8,7 @@
  */
 
 import { base64urlToUtf8, isPeerDID4, isShortForm } from "@estoc/did-peer";
-import { splitDidUrl, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type VaultFold } from "@estoc/vault";
+import { authorizedMethodIds, peerResolution, splitDidUrl, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type ReplicaId, type VaultFold } from "@estoc/vault";
 
 import type { Unpacked } from "../protocol/didcomm.js";
 import { authorizedKeys } from "../evidence.js";
@@ -36,18 +36,31 @@ export type Recipients =
  * key of this vault at all, which is told apart so that a vault
  * restored to before one of its DIDs was created shows what it lacks
  * without claiming why.
+ *
+ * A key of the replica DID `replicaId` has at its mediator is no key
+ * to open application mail with: what is sealed to it is one replica
+ * speaking to another, and no protocol between replicas is spoken
+ * here. An envelope with no communication DID of this vault among its
+ * recipients and that replica DID among them is terminal as such,
+ * unopened: nothing it could hold, and no failure to open it, would
+ * end it otherwise.
  */
-export function classifyRecipients(fold: VaultFold, kids: readonly string[]): Recipients {
+export function classifyRecipients(fold: VaultFold, kids: readonly string[], replicaId?: ReplicaId): Recipients {
   if (kids.length === 0) return { verdict: "terminal", reason: "the envelope names no recipient key" };
   const refused: string[] = [];
   const pending: string[] = [];
   const waitingOn = new Set<DidId>();
+  const replica = replicaId === undefined ? null : replicaMethods(fold, replicaId);
   let anyOfOurs = false;
+  let toReplica = false;
   for (const kid of new Set(kids)) {
     const [did, reference] = splitDidUrl(kid);
     const didId = fold.routes.entityOfDid(did);
     const entity = didId === null ? undefined : fold.routes.dids.get(didId);
-    if (didId === null || entity === undefined || entity.created === null) continue;
+    if (didId === null || entity === undefined || entity.created === null) {
+      if (replica !== null && sameDid(did, replica.did) && replica.keyAgreement.includes(reference)) toReplica = true;
+      continue;
+    }
     anyOfOurs = true;
     const named = (ids: readonly DidUrl[]): boolean => ids.some((id) => splitDidUrl(id)[1] === reference);
     if (!named(entity.methodIds.keyAgreement)) {
@@ -67,8 +80,17 @@ export function classifyRecipients(fold: VaultFold, kids: readonly string[]): Re
     }
   }
   if (pending.length > 0) return { verdict: "pending", reason: pending.join("; "), waitingOn: [...waitingOn] };
+  if (!anyOfOurs && toReplica) return { verdict: "terminal", reason: `the envelope is sealed to this runtime's own replica DID ${replica?.did}, and no protocol between replicas is supported; the delivery was discarded` };
   if (!anyOfOurs) return { verdict: "terminal", reason: `local recipient material is unavailable for ${kids.join(", ")}; the delivery was discarded` };
   return { verdict: "terminal", reason: refused.join("; ") };
+}
+
+/** The replica's DID and what follows it in the `id` of each key-agreement method of its document; null unless the fold has the replica a member of its arrangement. */
+function replicaMethods(fold: VaultFold, replicaId: ReplicaId): { did: Did; keyAgreement: string[] } | null {
+  const replica = fold.replicas.replicas.get(replicaId);
+  if (replica === undefined || replica.status !== "member" || replica.did === null || replica.longFormDid === null) return null;
+  const { document } = peerResolution(replica.longFormDid);
+  return { did: replica.did, keyAgreement: authorizedMethodIds(document, "keyAgreement").map((id) => splitDidUrl(id)[1]) };
 }
 
 /** What the outer protected header says of the sender: the key it names, and the `apu` that must repeat it. Null where the header has none, as under an anonymous seal. */
