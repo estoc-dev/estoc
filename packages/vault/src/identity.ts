@@ -2,7 +2,7 @@
  * The vault's own keys and communication DIDs. One seed derives every
  * key by name: the anchor that is the vault's identity, the two keys of
  * each communication-DID entity and the one key name of each mediation
- * arrangement. Each name derives an Ed25519 key and, separately under
+ * arrangement and of each replica. Each name derives an Ed25519 key and, separately under
  * the keystore's own domain, an X25519 key; a key-agreement use takes
  * the latter, never a conversion of the former. Nothing derived
  * is stored: a recorded `did.created` is checked by reading its own
@@ -17,10 +17,10 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { base64urlnopad } from "@scure/base";
 
 import { IdentityMismatch, InvalidPublicKey, Locked } from "./errors.js";
-import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName } from "./ids.js";
+import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName, replicaKeyName } from "./ids.js";
 import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl, type PeerResolution } from "./peer-document.js";
 import { canonicalPublicKey } from "./public-key.js";
-import type { Did, DidId, KeyName, MediationId, PublicKey, VaultData } from "./types.js";
+import type { Did, DidId, KeyName, MediationId, PublicKey, ReplicaId, VaultData } from "./types.js";
 
 /** An OKP private key as RFC 8037 spells it. */
 export type OkpPrivateJwk = { kty: "OKP"; crv: "Ed25519" | "X25519"; x: string; d: string };
@@ -38,7 +38,7 @@ export interface LocalKey {
   sign(data: Uint8Array): Promise<Uint8Array>;
 }
 
-/** The two keys of a communication-DID entity, or the two keys a mediation arrangement's one name derives. */
+/** The two keys of a communication-DID entity, or the two keys the one name of a mediation arrangement or of a replica derives. */
 export type DidKeys = { authentication: LocalKey; keyAgreement: LocalKey };
 
 function localKey(name: KeyName, type: "Ed25519" | "X25519", publicKey: Uint8Array, privateKey: Uint8Array): LocalKey {
@@ -114,6 +114,12 @@ export class Keys {
     const name = mediationKeyName(mediationId);
     return { authentication: await this.signing(name), keyAgreement: await this.agreement(name) };
   }
+
+  /** The DIDComm identity of one replica: the two keys its one name derives. */
+  async replicaKeys(replicaId: ReplicaId): Promise<DidKeys> {
+    const name = replicaKeyName(replicaId);
+    return { authentication: await this.signing(name), keyAgreement: await this.agreement(name) };
+  }
 }
 
 /** Where a communication DID's document sends its traffic: a mediator's routing DID, or a direct HTTPS or WSS endpoint. */
@@ -161,6 +167,11 @@ export async function mintDid(keys: Keys, didId: DidId, route: RouteTarget): Pro
 /** The DID a mediation arrangement is known to its mediator by: no service, its mail is picked up. */
 export async function mintMediationDid(keys: Keys, mediationId: MediationId): Promise<LocalDid> {
   return localDidOf(inputDocumentOf(await keys.mediationKeys(mediationId), null));
+}
+
+/** The DID a replica picks up its mail under at one mediator: its service is that mediator, so another mediator is another DID. */
+export async function mintReplicaDid(keys: Keys, replicaId: ReplicaId, mediatorDid: Did): Promise<LocalDid> {
+  return localDidOf(inputDocumentOf(await keys.replicaKeys(replicaId), mediatorDid));
 }
 
 export function routeServiceUri(route: RouteTarget): string {
@@ -213,6 +224,14 @@ export async function checkDidKeys(keys: Keys, didId: DidId, resolution: PeerRes
 export async function checkMediationKeys(keys: Keys, mediationId: MediationId, resolution: PeerResolution): Promise<void> {
   const entity = `mediation ${mediationId}`;
   const { authentication, keyAgreement } = await keys.mediationKeys(mediationId);
+  holdsKey(resolution, "authentication", authentication, entity);
+  holdsKey(resolution, "keyAgreement", keyAgreement, entity);
+}
+
+/** A replica's document against the seed: its methods must carry the two keys the replica's name derives. */
+export async function checkReplicaKeys(keys: Keys, replicaId: ReplicaId, resolution: PeerResolution): Promise<void> {
+  const entity = `replica ${replicaId}`;
+  const { authentication, keyAgreement } = await keys.replicaKeys(replicaId);
   holdsKey(resolution, "authentication", authentication, entity);
   holdsKey(resolution, "keyAgreement", keyAgreement, entity);
 }

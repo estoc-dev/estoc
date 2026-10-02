@@ -93,18 +93,19 @@ in a vault client, adopt the relevant contracts in
 - Keep one local writer per runtime database. Copy/restore must create a fresh
   author and replica DID; transport enrollment must not rewrite historical
   authors or enable concurrent application execution by itself.
-- Revise the single-seed rule in vault events that key names do not encode a
-  replica. Reserve `replica/<replicaId>/me` explicitly for incarnation identity;
-  communication DID entity keys keep their existing meanings and names.
-- Add the candidate `profile: "replica-mediation/1.0"` discriminator to
-  `mediation.created` and require fresh mediation/account identities. Define
-  native `registered` as the source of `mediation.granted` for that profile;
-  the returned routing DID is the addressed mediator DID. Existing untagged
-  records remain ordinary mediation and cannot authorize replica membership.
-  The current closed schemas must be revised before the new profile is enabled.
+- Adopted in [vault events](../vault-events.md#single-seed):
+  `replica/<replicaId>/me` is reserved for incarnation identity; communication
+  DID entity keys keep their existing meanings and names.
+- Adopted in [vault events](../vault-events.md#mediation-created): the
+  `profile: "replica-mediation/1.0"` discriminator of `mediation.created`
+  with fresh mediation/account identities, the mediator's account registration
+  as the source of `mediation.granted` for that profile with the addressed
+  mediator DID as routing DID, and [`replica.created`](../vault-events.md#replica-created).
+  Untagged records remain ordinary mediation and cannot authorize replica
+  membership.
 - Implement independent account state and authorization for replica mediation.
-  Account-authenticated registration creates the account and first replica
-  atomically without a prior mediation grant. Ordinary accounts, their recipient
+  Account-authenticated `account-register` creates the account without a prior
+  mediation grant, and `replica-add` then enrolls each replica on its grant. Ordinary accounts, their recipient
   bindings, queues and ACK domains remain separate; old addresses/mail are not
   automatically moved into the new account. Replica DIDs remain pickup principals.
 - Each client registers only its own saved grant and durably records the verified

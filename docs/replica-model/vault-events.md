@@ -164,13 +164,20 @@ Reserved names are:
 | --- | --- |
 | `anchor` | immutable vault identity anchor |
 | `mediation/<id>/me` | DIDComm identity for one mediation arrangement |
+| `replica/<replicaId>/me` | DIDComm identity of one replica toward the mediator of a replica-mediation arrangement |
 | `did/<id>/authentication` | signing/authentication key for one communication DID entity |
 | `did/<id>/key-agreement` | DIDComm key-agreement key for one communication DID entity |
 
 In `did/...` names, `<id>` is the DID entity ID. Version 4 defines exactly
 one authentication key and one key-agreement key per communication DID
-entity. Key names are never renamed or reused. They do not encode a contact,
-replica, domain owner or process location.
+entity. Key names are never renamed or reused. A `did/...` or `mediation/...`
+name does not encode a contact, replica, domain owner or process location.
+
+A `replica/...` name is the one name that says which replica holds it: it
+derives the DID under which that replica alone picks up mail
+([`replica.created`](#replica-created)). No payload field carries it. Every
+`localKeyName` is a `did/...` or `mediation/...` name, so what arrives at a
+replica's own DID never becomes a portable observation.
 
 Changing a communication DID's keys or embedded service creates another
 `did:peer:4` entity. A local `did.rotationSelected` under
@@ -197,7 +204,9 @@ event.author = local replica_id
 
 Phase 1 has exactly one active writer. The runtime may execute in an end-user
 application or on a server; its location does not change event semantics.
-There is no creation event or separate host identity.
+Authorship needs no creation event or separate host identity. A
+[`replica.created`](#replica-created) records only that a replica is enrolled
+in a replica-mediation arrangement.
 
 A portable restore mints a new replica ID unless it is an exact move and the
 old writer is permanently stopped. If two writable copies share an author,
@@ -613,8 +622,17 @@ This intent creates the stable vault-controlled identity for one mediation
 arrangement. `me.keyName` MUST use the arrangement ID and `me.did` MUST match the
 seed-derived key.
 
-Repeating the same arrangement ID with different values is an integrity
-conflict. A new attempt against the same mediator uses a new ID.
+`profile` is OPTIONAL. Without it the arrangement is an ordinary Coordinate
+Mediation account. Its only value is `"replica-mediation/1.0"`: the arrangement
+is an account of the mediator's replica-mediation protocol, whose mail each
+replica picks up under its own DID. Such an arrangement records `me.did` as a
+`did:peer:4` long form, uses a mediation ID and account no ordinary arrangement
+has used, and is never an ordinary arrangement retagged. `null` and every other
+value are invalid. A reader that does not know the member refuses the payload
+and so has no such arrangement, instead of treating it as an ordinary one.
+
+Repeating the same arrangement ID with different values, `profile` included, is
+an integrity conflict. A new attempt against the same mediator uses a new ID.
 
 <a id="mediation-granted"></a>
 
@@ -632,7 +650,10 @@ conflict. A new attempt against the same mediator uses a new ID.
 ```
 
 This is the durable observation that the mediator granted the arrangement
-and returned `routingDid`.
+and returned `routingDid`. For a replica-mediation arrangement it is the
+observation of the mediator's `account-registered` reply, recorded once, and
+`routingDid` equals the arrangement's `mediatorDid`; any other value is a
+conflict.
 
 More than one distinct routing DID for one arrangement ID is a conflict. The
 runtime MUST NOT guess which grant is authoritative; it establishes a new
@@ -677,6 +698,61 @@ Retirement is terminal for the arrangement ID. A procedure SHOULD retire or
 replace every live route that depends on it first. If a retired mediation is
 still referenced by a live route, the fold reports a routing configuration
 conflict rather than silently changing a DID.
+
+<a id="replica-created"></a>
+
+#### `replica.created`
+
+```json
+{
+  "type": "replica.created",
+  "roots": [],
+  "data": {
+    "replicaId": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
+    "mediationId": "019b2a51-118f-7e46-b31b-c63cd090c92c",
+    "grant": "<compact JWS>"
+  }
+}
+```
+
+This intent enrolls one replica in a replica-mediation arrangement. It is
+committed before the mediator is asked. It records membership, not that the
+mediator has enrolled the replica: what the mediator confirmed is runtime
+state, and no event repeats per attempt.
+
+The replica's DID is a `did:peer:4` whose input document carries the two keys
+`replica/<replicaId>/me` derives and exactly one DIDComm service, the
+arrangement's `mediatorDid`. The same replica at another mediator is therefore
+another DID.
+
+`grant` is the compact JWS the mediator's `replica-add` takes. Its protected
+header is exactly `alg: "EdDSA"`, `typ: "estoc/replica-grant+jws"` and `kid`,
+a DID URL naming an authentication method of the account under either spelling
+of the account DID. The method is one a mediator reads an Ed25519 key from:
+type `Multikey` or `Ed25519VerificationKey2020` with that key as its
+`publicKeyMultibase`, or type `JsonWebKey2020` with it as a public OKP
+`publicKeyJwk`. A signer chooses no other method, even one carrying the same
+key. Its payload is the
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly these
+string members:
+
+| member | value |
+| --- | --- |
+| `account` | the short form of the arrangement's `me.did` |
+| `mediation_id` | the arrangement ID |
+| `mediator` | the arrangement's `mediatorDid` |
+| `replica_id` | the replica ID, a canonical UUIDv7 |
+| `replica_did` | the short form of the replica's DID, never the account |
+| `replica_long_form` | the long form of `replica_did` |
+
+The whole compact JWS is at most 16384 characters, its two separators
+included: a mediator refuses a longer one unread. Every DID a grant carries is
+also at most 8192 UTF-8 bytes, which alone does not keep the JWS within its
+limit. A signer returns no grant over either limit. `replicaId` and
+`mediationId` MUST equal the grant's. A payload whose grant is not spelled this
+way, a payload that is not I-JSON included, is invalid; whether its `kid`, its
+signature and its replica hold is the
+[fold's](#mediation-fold).
 
 <a id="did-identity-and-keys"></a>
 
@@ -875,7 +951,8 @@ For each mediation ID:
 - one consistent `mediation.granted` makes it usable;
 - any `mediation.retired` makes it terminal; and
 - conflicting create or grant values make it unusable and visible as a
-  conflict.
+  conflict, as does a replica-mediation arrangement granted a routing DID
+  other than its mediator.
 
 The preferred mediation is the latest `mediation.selected`. If it is missing,
 ungranted, retired or conflicted, preferred is null and policy must select
@@ -896,6 +973,34 @@ mediations stop receipt; temporary unavailability does not erase dependencies.
 The active runtime reconciles recipients and drains account-scoped pickup on
 every reachable mediation in this set. A hosted runtime receives no special
 ownership.
+
+For each replica ID, grants equal in `account`, `mediation_id`, `mediator`,
+`replica_id` and `replica_long_form` are one binding, whatever `kid` each was
+signed under and whoever authored the events. Different bindings for one
+replica ID are a conflict; no canonical-order winner is chosen. A replica with
+one binding is a member of its arrangement when all of these hold:
+
+- the arrangement has one consistent creation naming the replica-mediation
+  profile;
+- the grant's `account` is the short form of that creation's `me.did` and its
+  `mediator` equals `mediatorDid`;
+- the grant's `kid` spells the account as its short form or as exactly the
+  long form that creation records, and its fragment names a method which that
+  long form's document authorizes for authentication and which carries the
+  authentication key the seed derives for `mediation/<mediationId>/me` under
+  one of the [type and encoding pairs a grant's `kid` may name](#replica-created):
+  the same key under any other type is a grant no mediator takes;
+- the grant's signature verifies under that key; and
+- the replica's document carries the keys the seed derives for
+  `replica/<replicaId>/me` and names that mediator as its only DIDComm service.
+
+A missing creation or an unavailable seed leaves the replica pending; a failed
+condition, disagreeing creations included, makes it a conflict. Membership is
+read from the creation and the grant alone: it needs no `mediation.granted`, is
+not changed by a missing, contradicting or disallowed routing grant, is not
+ended by the arrangement's retirement, and says nothing of what the mediator
+holds. Whether the arrangement can carry mail remains the mediation fold's: a
+member of a conflicted or retired arrangement receives nothing through it. A writer enrolls only the member whose replica ID is its own.
 
 <a id="143-route-did-and-key-fold"></a>
 
@@ -2621,6 +2726,8 @@ author remain unchanged.
   link or retire addresses used by unrelated channels.
 - The phase-1 mediator stores only encrypted inner DIDComm envelopes and
   routing/account-delivery metadata. It does not receive a replica ID.
+- The mediator of a replica-mediation arrangement is given each enrolled
+  replica's ID and DID in its grant and can group them under the account.
 - The mediator may observe its account DID, recipient DID and method,
   ciphertext size, arrival, pickup, ACK, expiry, IP and traffic timing. It is
   not sent a contact ID.
@@ -3062,3 +3169,13 @@ derivation requires a new vault version.
 - <a id="ve-156"></a> **VE-156.** delivery.failed has exactly messageId and one of expired or cancelled, with empty roots. Additional fields, including packageId or scope, and unknown codes are invalid. An expired failure for an intent with null expiresTime is invalid and terminates nothing; explicit cancellation remains valid. Either valid code terminates its consistent intent without preparation evidence and blocks preparation/dispatch regardless of preparation import order. Termination releases the message's envelope contribution but preserves content. An independently complete submission still takes precedence.
 
 - <a id="ve-157"></a> **VE-157.** New rotation allocation commits its UUIDv7 did.created and did.rotationSelected atomically. A crash exposes both or neither; recovery of an uncertain commit reuses the committed successor/decision instead of allocating a second DID. Import of the decision without its creation remains pending until exact evidence arrives. No crash prefix alone permits disclosure or dispatch.
+
+### Replica-mediation membership (VE-158–VE-161)
+
+- <a id="ve-158"></a> **VE-158.** mediation.created without profile is an ordinary arrangement. Its only profile value is "replica-mediation/1.0", with me.did a did:peer:4 long form; null and other values are invalid. Creations of one arrangement that differ only in profile disagree. A replica-mediation arrangement granted a routing DID other than its mediatorDid is a conflict.
+
+- <a id="ve-159"></a> **VE-159.** replica/<replicaId>/me derives a replica's DID with its mediator as the only DIDComm service: the same replica ID and mediator give the same DID, another mediator or replica ID another DID. No payload field accepts a replica key name.
+
+- <a id="ve-160"></a> **VE-160.** replica.created has exactly replicaId, mediationId and grant, with empty roots. The grant's protected header is exactly alg EdDSA, the grant typ and a kid naming a method of the account; its payload is its own RFC 8785 text of exactly the six string members, with UUIDv7 IDs equal to the event's, a short-form account, a replica DID other than the account and that DID's long form, no DID over 8192 bytes and no more than 16384 characters in all. Anything else, a payload that is not I-JSON included, is an invalid payload and leaves the events around it readable.
+
+- <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives as a Multikey or Ed25519VerificationKey2020 multibase value or a JsonWebKey2020 JWK, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.

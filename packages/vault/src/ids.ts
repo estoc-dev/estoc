@@ -17,7 +17,7 @@ import type { FactId } from "@estoc/continuity";
 
 import { InvalidIdentifier } from "./errors.js";
 import { isMintedId } from "./syntax.js";
-import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, WireMessageId } from "./types.js";
+import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
 export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid"] as const;
 
@@ -160,4 +160,14 @@ export function didKeyName(did: DidId, role: DidKeyRole): KeyName {
 /** The name of the DIDComm identity key of one mediation arrangement. */
 export function mediationKeyName(mediation: MediationId): KeyName {
   return `mediation/${nonEmpty(mediation, "mediation ID")}/me` as KeyName;
+}
+
+/**
+ * The name of the DIDComm identity key of one replica: the address a
+ * mediator delivers that one writer's mail to. It is the only name that
+ * says which replica holds it, and no event payload carries it.
+ */
+export function replicaKeyName(replica: ReplicaId): KeyName {
+  if (!isMintedId(replica)) throw new InvalidIdentifier("a replica ID is a canonical UUIDv7");
+  return `replica/${replica}/me` as KeyName;
 }

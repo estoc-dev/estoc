@@ -1,4 +1,5 @@
-import type { Event, JsonObject } from "@estoc/event-store";
+import { canonicalText, type Event, type JsonObject } from "@estoc/event-store";
+import { base64urlnopad } from "@scure/base";
 import { describe, expect, it, test } from "vitest";
 
 import {
@@ -58,6 +59,13 @@ const LOCAL = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd";
 const PEER = "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP";
 const PEER_LONG = `${PEER}:z2PeerDocument`;
 const WEB = "did:web:bob.example";
+const REPLICA = "019b2a43-4a56-7c0f-862f-194c0c4124a0";
+const REPLICA_SHORT = "did:peer:4zQmDevice";
+const GRANT_HEADER = { alg: "EdDSA", typ: "estoc/replica-grant+jws", kid: `${LONG}#key-1` };
+const GRANT_PAYLOAD = { account: SHORT, mediation_id: MEDIATION, mediator: "did:web:mediator.example", replica_did: REPLICA_SHORT, replica_id: REPLICA, replica_long_form: `${REPLICA_SHORT}:z2DeviceDocument` };
+/** A compact JWS over the text given, signed by nobody: the schema reads a grant's spelling, not its signature. */
+const jwsOf = (header: unknown, payload: string) => `${base64urlnopad.encode(encoder.encode(JSON.stringify(header)))}.${base64urlnopad.encode(encoder.encode(payload))}.c2ln`;
+const grantOf = (payload: Record<string, unknown> = GRANT_PAYLOAD, header: Record<string, unknown> = GRANT_HEADER) => jwsOf(header, canonicalText(payload));
 const PURE_ACK = "https://estoc.dev/distributed-delivery/1.0#pure-ack";
 
 type Data<T extends VaultEventType> = VaultData[T];
@@ -110,6 +118,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   "mediation.granted": [{ mediationId: MEDIATION, routingDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" } as Data<"mediation.granted">, []],
   "mediation.selected": [{ mediationId: MEDIATION } as Data<"mediation.selected">, []],
   "mediation.retired": [{ mediationId: MEDIATION, because: "replaced" } as Data<"mediation.retired">, []],
+  "replica.created": [{ replicaId: REPLICA, mediationId: MEDIATION, grant: grantOf() } as Data<"replica.created">, []],
   "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG, boundRouteId: ROUTE } as Data<"did.created">, []],
   "route.configured": [{ routeId: ROUTE, kind: "mediated", mediationId: MEDIATION, endpoint: null } as Data<"route.configured">, []],
   "route.retired": [{ routeId: ROUTE, because: "replaced" } as Data<"route.retired">, []],
@@ -205,7 +214,7 @@ const IN_DATA = ALL["message.in"][0] as MessageIn;
 describe("readVaultEvent", () => {
   it("knows exactly the version-4 types", () => {
     expect([...VAULT_EVENT_TYPES].sort()).toEqual(Object.keys(ALL).sort());
-    expect(VAULT_EVENT_TYPES).toHaveLength(28);
+    expect(VAULT_EVENT_TYPES).toHaveLength(29);
     expect(isVaultEventType("message.out")).toBe(true);
     expect(isVaultEventType("relationship.bound")).toBe(false);
     expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-4 event type/);
@@ -306,6 +315,42 @@ describe("rules between members", () => {
   test("mediation.created names the arrangement's own key", () => {
     const data = ALL["mediation.created"][0] as Loose;
     rejects("mediation.created", { ...data, me: { keyName: KEY, did: SHORT } }, [], /me\.keyName is the arrangement's own key/);
+  });
+
+  test("mediation.created may name the replica-mediation profile and nothing else, for an account recorded by its did:peer:4 long form", () => {
+    const data = ALL["mediation.created"][0] as Loose;
+    accepts("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: "replica-mediation/1.0" });
+    rejects("mediation.created", { ...data, profile: "replica-mediation/1.0" }, [], /recorded in its long form/);
+    rejects("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: null }, [], /profile must be one of "replica-mediation\/1\.0"/);
+    rejects("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: "replica-mediation/2.0" }, [], /profile/);
+  });
+
+  test("replica.created carries a grant spelled as one, for the replica and the arrangement it names", () => {
+    const created = (grant: string) => ({ replicaId: REPLICA, mediationId: MEDIATION, grant });
+    accepts("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, kid: `${SHORT}#key-1` })));
+    rejects("replica.created", { ...created(grantOf()), replicaId: "019b2a43-4a56-7c0f-862f-194c0c4124a1" }, [], /replicaId and mediationId are the grant's own/);
+    rejects("replica.created", { ...created(grantOf()), mediationId: "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" }, [], /replicaId and mediationId are the grant's own/);
+    rejects("replica.created", created("not a jws"), [], /grant: a grant is a compact JWS/);
+    rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, alg: "ES256" })), [], /protected header/);
+    rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, typ: "JWT" })), [], /protected header/);
+    rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, jku: "https://keys.example" })), [], /protected header/);
+    rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, kid: `${PEER}#key-1` })), [], /kid names a method of the account/);
+    rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, kid: SHORT })), [], /kid names a method of the account/);
+    rejects("replica.created", created(jwsOf(GRANT_HEADER, JSON.stringify(GRANT_PAYLOAD, null, 1))), [], /its own RFC 8785 text/);
+    rejects("replica.created", created(jwsOf(GRANT_HEADER, `\ufeff${canonicalText(GRANT_PAYLOAD)}`)), [], /JSON text/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, iat: "1" })), [], /the payload has exactly/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_id: 7 })), [], /every payload member is a string/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, account: LONG })), [], /account is a did:peer:4 short form/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, mediation_id: IN })), [], /canonical UUIDv7/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, mediator: "mediator.example" })), [], /mediator is a DID/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_did: SHORT, replica_long_form: LONG })), [], /other than the account/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_long_form: PEER_LONG })), [], /the long form of replica_did/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_long_form: `${REPLICA_SHORT}:z${"2".repeat(8192)}` })), [], /at most 8192 bytes/);
+  });
+
+  test("no payload names a replica's key: what a replica's own address receives is not the vault's to record", () => {
+    rejects("peer.resolved", { ...(ALL["peer.resolved"][0] as Loose), localKeyName: `replica/${REPLICA}/me` }, [DOC], /localKeyName must be a vault key name/);
+    rejects("message.in", { ...IN_DATA, localKeyName: `replica/${REPLICA}/me` }, [BODY, PHOTO], /localKeyName must be a vault key name/);
   });
 
   test("a DID entity is minted, never derived: a UUIDv5 is refused wherever an entity ID is named", () => {

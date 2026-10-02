@@ -1,7 +1,7 @@
 {
   "name": "@estoc/vault",
   "version": "0.4.0",
-  "description": "What the events of an .estoc vault mean (docs/replica-model): the identifiers, the schema of every event type and of the stored message, the vault's keys, DIDs and rotation proofs, the evidence kept of peers, the folds that read an event set into channels, contacts, invitations, inbound and outbound messages, and the procedures — over any @estoc/event-store.",
+  "description": "What the events of an .estoc vault mean (docs/replica-model): the identifiers, the schema of every event type and of the stored message, the vault's keys, DIDs and rotation proofs, the evidence kept of peers, the folds that read an event set into channels, contacts, invitations, inbound and outbound messages, and the procedures \u2014 over any @estoc/event-store.",
   "license": "Apache-2.0",
   "author": "merely",
   "repository": {
@@ -45,12 +45,12 @@
     "@noble/hashes": "^1.8.0",
     "@scure/base": "^1.2.0",
     "ipaddr.js": "^2.5.0",
+    "jose": "^6.0.0",
     "multiformats": "^14.0.5",
     "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
-    "jose": "^6.0.0",
     "typescript": "~5.8.0",
     "vitest": "^3.2.7"
   }
