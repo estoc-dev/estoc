@@ -35,7 +35,7 @@ export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 export interface GrantPayload {
   /** The account's did:peer:4, in its short form. */
   account: string;
-  /** A UUIDv7 the account keeps for as long as it lives here. */
+  /** A UUIDv7 by which the account's own records name this arrangement; the mediator compares it with nothing. */
   mediation_id: string;
   /** The mediator DID the replica's document names as its service. */
   mediator: string;
@@ -57,7 +57,6 @@ const GRANT_FIELDS: (keyof GrantPayload)[] = [
 
 export interface ReplicaGrant {
   account: string;
-  mediationId: string;
   /** In its short form when it is a did:peer:4, however the grant spelled it. */
   mediator: string;
   replicaId: string;
@@ -304,5 +303,5 @@ export async function verifyReplicaGrant(
     return null;
   }
 
-  return { account, mediationId, mediator, replicaId, replicaDid, replicaLongForm };
+  return { account, mediator, replicaId, replicaDid, replicaLongForm };
 }

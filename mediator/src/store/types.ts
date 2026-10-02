@@ -44,7 +44,6 @@ export interface ReplicaAccount {
   accountDid: string;
   /** What resolves the account DID later. */
   accountLongForm: string;
-  mediationId: string;
   /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
   /** Whether an absent account may be created. */
@@ -52,10 +51,10 @@ export interface ReplicaAccount {
 }
 
 /**
- * `registered` also answers an exact repeat, with the time of the first.
+ * `registered` also answers a repeat, with the time of the first.
  * `refused`: the account is absent and may not be created. `conflict`: the
  * DID is already bound otherwise, here or under ordinary mediation, or the
- * account is bound to another mediation ID or mediator DID.
+ * account is bound to another mediator DID.
  */
 export type RegisterAccountOutcome =
   | { outcome: "registered"; registeredTime: number }
@@ -67,7 +66,6 @@ export type RegisterAccountOutcome =
  */
 export interface ReplicaAddition {
   accountDid: string;
-  mediationId: string;
   /** The mediator DID the account is bound to, in short form when it is a did:peer:4. */
   mediator: string;
   replicaId: string;
@@ -81,7 +79,7 @@ export interface ReplicaAddition {
  * `added` also answers an exact repeat, with the time of the first.
  * `unknown`: there is no such account. `conflict`: an ID or DID is already
  * bound otherwise, here or under ordinary mediation, to a removed replica
- * included, or the account is bound to another mediation ID or mediator DID.
+ * included, or the account is bound to another mediator DID.
  * `full`: the account is at its limit of replicas not removed.
  */
 export type AddReplicaOutcome =
@@ -256,9 +254,9 @@ export interface MediationStore {
    * Deletes the account with everything kept for it: its replicas, the
    * removed ones included, its shared recipients and its mail. Every DID and
    * ID it bound is free again. False, and nothing deleted, without such an
-   * account under that mediation ID bound to `mediator`.
+   * account bound to `mediator`.
    */
-  deleteReplicaAccount(accountDid: string, mediator: string, mediationId: string): Promise<boolean>;
+  deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean>;
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
    * Ends a replica's enrollment and drops what waited for it alone: its

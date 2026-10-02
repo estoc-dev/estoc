@@ -18,7 +18,7 @@ import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
 import { REPLICA_MEDIATION_PROTOCOL } from "./discover-features.js";
 import { PROBLEM_REPORT } from "./problem-report.js";
 import { verifyRecipientProof } from "./recipient-proof.js";
-import { canonicalDid, provenDid, UUID_V7, verifyReplicaGrant } from "./replica-grant.js";
+import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
  * replica-mediation/1.0 — https://estoc.dev/replica-mediation/1.0
@@ -61,17 +61,13 @@ export const RECIPIENT_REMOVED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-remove
  * Creates the account of the sending DID, a did:peer:4 that names itself by
  * its long form here; the mediator keeps that form, and later controls may
  * name the account by the short one. The account starts with no replica and
- * no recipient.
+ * no recipient. The body is empty: the sender is all the request says.
  */
-export interface AccountRegisterBody {
-  /** A UUIDv7 the account keeps for as long as it lives here; its grants carry the same one. */
-  mediation_id: string;
-}
+export type AccountRegisterBody = Record<never, never>;
 
-/** Also the answer to an exact repeat, which changes nothing and keeps the first time. */
+/** Also the answer to a repeat, which changes nothing and keeps the first time. */
 export interface AccountRegisteredBody {
   account: string;
-  mediation_id: string;
   /** The mediator DID the request addressed: where senders forward the account's mail. */
   routing_did: string;
   /** Seconds since the epoch, as are all times here. */
@@ -84,19 +80,13 @@ export interface AccountRegisteredBody {
  * recipients and its mail. Nothing of it is remembered, so its DIDs and IDs
  * are free for any binding, its replicas are strangers to pickup, and a
  * repeat finds no account. The sender names itself by its long form, which
- * the mediator no longer keeps by the time it seals the reply.
+ * the mediator no longer keeps by the time it seals the reply. The body is
+ * empty.
  */
-export interface AccountDeleteBody {
-  /**
-   * The ID the account registered with. A request kept from an earlier
-   * registration of the same DID names another and deletes nothing.
-   */
-  mediation_id: string;
-}
+export type AccountDeleteBody = Record<never, never>;
 
 export interface AccountDeletedBody {
   account: string;
-  mediation_id: string;
 }
 
 /** Enrolls the replica a grant names in the sending account. */
@@ -238,7 +228,7 @@ type Problem =
   | "invalid-recipient"
   /** The sender is no did:peer:4, or has no account and this mediator creates none. */
   | "account-refused"
-  /** No account of the sender is bound to the mediator DID it addressed, or to the mediation ID it named. */
+  /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
   /** The account added no replica under that ID. */
   | "unknown-replica"
@@ -333,9 +323,8 @@ export async function accountRegister(
   if (sender === null) {
     return null;
   }
-  const control = controlOf<AccountRegisterBody>(incoming, context, ["mediation_id"]);
-  const mediationId = control?.body.mediation_id;
-  if (control === null || typeof mediationId !== "string" || !UUID_V7.test(mediationId)) {
+  const control = controlOf<AccountRegisterBody>(incoming, context, []);
+  if (control === null) {
     return replicaProblem("invalid-message");
   }
   if (isMediatorOwnDid(control.account, ctx.dids)) {
@@ -351,7 +340,6 @@ export async function accountRegister(
   const registration = await store.registerReplicaAccount({
     accountDid: control.account,
     accountLongForm,
-    mediationId,
     mediator: control.mediator,
     create: config.openRegistration,
   });
@@ -366,7 +354,6 @@ export async function accountRegister(
         type: ACCOUNT_REGISTERED,
         body: {
           account: control.account,
-          mediation_id: mediationId,
           routing_did: control.addressed,
           registered_time: registration.registeredTime,
           limits: replicaLimits(config),
@@ -383,18 +370,17 @@ export async function accountDelete(
   if (sender === null) {
     return null;
   }
-  const control = controlOf<AccountDeleteBody>(incoming, context, ["mediation_id"]);
-  if (control === null || typeof control.body.mediation_id !== "string" || !isLongForm(sender)) {
+  const control = controlOf<AccountDeleteBody>(incoming, context, []);
+  if (control === null || !isLongForm(sender)) {
     return replicaProblem("invalid-message");
   }
 
-  const { mediation_id } = control.body;
-  if (!(await store.deleteReplicaAccount(control.account, control.mediator, mediation_id))) {
+  if (!(await store.deleteReplicaAccount(control.account, control.mediator))) {
     return replicaProblem("unknown-account");
   }
   return {
     type: ACCOUNT_DELETED,
-    body: { account: control.account, mediation_id } satisfies AccountDeletedBody,
+    body: { account: control.account } satisfies AccountDeletedBody,
   };
 }
 
@@ -425,7 +411,6 @@ export async function replicaAdd(
 
   const addition = await store.addReplica({
     accountDid: grant.account,
-    mediationId: grant.mediationId,
     mediator: grant.mediator,
     replicaId: grant.replicaId,
     replicaDid: grant.replicaDid,

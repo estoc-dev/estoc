@@ -147,7 +147,6 @@ const SCHEMA = [
    )`,
   `CREATE TABLE IF NOT EXISTS replica_accounts (
      did          TEXT PRIMARY KEY,
-     mediation_id TEXT NOT NULL,
      mediator     TEXT NOT NULL,
      long_form    TEXT NOT NULL,
      created_at   INTEGER NOT NULL
@@ -190,6 +189,8 @@ const LATER_COLUMNS = [
   { table: "messages", column: "forward_id", type: "TEXT" },
   { table: "replicas", column: "removed_at", type: "INTEGER" },
 ];
+/* Columns an older database still has, NOT NULL, and nothing writes any more. */
+const FORMER_COLUMNS = [{ table: "replica_accounts", column: "mediation_id" }];
 const MESSAGE_KEY_INDEX =
   "CREATE UNIQUE INDEX IF NOT EXISTS messages_package " +
   "ON messages(owner_did, next_did, forward_id)";
@@ -233,7 +234,7 @@ export class SqlStore implements MediationStore {
       this.ready = this.ensure
         ? this.dropOldBlobTables()
             .then(() => this.driver.batch(SCHEMA.map((sql) => ({ sql }))))
-            .then(() => this.addLaterColumns())
+            .then(() => this.alignColumns())
             .then(() => this.rebuildReplicaMail())
         : Promise.resolve();
       this.ready.catch(() => {
@@ -266,12 +267,12 @@ export class SqlStore implements MediationStore {
     }
   }
 
-  private async addLaterColumns(): Promise<void> {
+  private async alignColumns(): Promise<void> {
     const [found] = await this.driver.batch([
       {
         sql:
           "SELECT name, sql FROM sqlite_master " +
-          "WHERE type = 'table' AND name IN ('messages', 'replicas')",
+          "WHERE type = 'table' AND name IN ('messages', 'replicas', 'replica_accounts')",
       },
     ]);
     const created = new Map(
@@ -280,6 +281,9 @@ export class SqlStore implements MediationStore {
     await this.driver.batch([
       ...LATER_COLUMNS.filter(({ table, column }) => !created.get(table)?.includes(column)).map(
         ({ table, column, type }) => ({ sql: `ALTER TABLE ${table} ADD COLUMN ${column} ${type}` })
+      ),
+      ...FORMER_COLUMNS.filter(({ table, column }) => created.get(table)?.includes(column)).map(
+        ({ table, column }) => ({ sql: `ALTER TABLE ${table} DROP COLUMN ${column}` })
       ),
       { sql: MESSAGE_KEY_INDEX },
     ]);
@@ -482,7 +486,6 @@ export class SqlStore implements MediationStore {
   async registerReplicaAccount({
     accountDid,
     accountLongForm,
-    mediationId,
     mediator,
     create,
   }: ReplicaAccount): Promise<RegisterAccountOutcome> {
@@ -490,14 +493,13 @@ export class SqlStore implements MediationStore {
     const [, accounts] = await this.batch([
       {
         sql:
-          "INSERT INTO replica_accounts (did, mediation_id, mediator, long_form, created_at) " +
-          `SELECT ?, ?, ?, ?, ? WHERE ? = 1 AND ${NOT_ORDINARY} ` +
+          "INSERT INTO replica_accounts (did, mediator, long_form, created_at) " +
+          `SELECT ?, ?, ?, ? WHERE ? = 1 AND ${NOT_ORDINARY} ` +
           "AND NOT EXISTS (SELECT 1 FROM replicas WHERE replica_did IN (?, ?)) " +
           `AND ${NOT_SHARED_RECIPIENT} ` +
           "ON CONFLICT (did) DO NOTHING",
         params: [
           accountDid,
-          mediationId,
           mediator,
           accountLongForm,
           Date.now(),
@@ -509,18 +511,16 @@ export class SqlStore implements MediationStore {
         ],
       },
       {
-        sql: "SELECT mediation_id, mediator, created_at FROM replica_accounts WHERE did = ?",
+        sql: "SELECT mediator, created_at FROM replica_accounts WHERE did = ?",
         params: [accountDid],
       },
     ]);
 
-    const held = (
-      accounts.rows as { mediation_id: string; mediator: string; created_at: number }[]
-    )[0];
+    const held = (accounts.rows as { mediator: string; created_at: number }[])[0];
     if (held === undefined) {
       return { outcome: create ? "conflict" : "refused" };
     }
-    return held.mediation_id === mediationId && held.mediator === mediator
+    return held.mediator === mediator
       ? { outcome: "registered", registeredTime: Math.floor(held.created_at / 1000) }
       : { outcome: "conflict" };
   }
@@ -529,19 +529,14 @@ export class SqlStore implements MediationStore {
    * One transaction, so a fan-out or an enrollment lands wholly before the
    * deletion, and goes with the account, or finds no account at all.
    */
-  async deleteReplicaAccount(
-    accountDid: string,
-    mediator: string,
-    mediationId: string
-  ): Promise<boolean> {
-    const key = [accountDid, mediator, mediationId];
+  async deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean> {
+    const key = [accountDid, mediator];
     const held =
-      "account_did = (SELECT did FROM replica_accounts " +
-      "WHERE did = ? AND mediator = ? AND mediation_id = ?)";
+      "account_did = (SELECT did FROM replica_accounts WHERE did = ? AND mediator = ?)";
 
     const [bound] = await this.batch([
       {
-        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ? AND mediation_id = ?",
+        sql: "SELECT 1 AS one FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: key,
       },
       {
@@ -555,7 +550,7 @@ export class SqlStore implements MediationStore {
       { sql: `DELETE FROM replica_recipients WHERE ${held}`, params: key },
       { sql: `DELETE FROM replicas WHERE ${held}`, params: key },
       {
-        sql: "DELETE FROM replica_accounts WHERE did = ? AND mediator = ? AND mediation_id = ?",
+        sql: "DELETE FROM replica_accounts WHERE did = ? AND mediator = ?",
         params: key,
       },
     ]);
@@ -565,7 +560,6 @@ export class SqlStore implements MediationStore {
   /* One transaction; the rows read back afterwards say which of the outcomes it was. */
   async addReplica({
     accountDid,
-    mediationId,
     mediator,
     replicaId,
     replicaDid,
@@ -583,8 +577,7 @@ export class SqlStore implements MediationStore {
           "INSERT INTO replicas " +
           "(replica_did, account_did, replica_id, ordinal, long_form, grant_jws, registered_at) " +
           `SELECT ?, ?, ?, ${enrolled} + 1, ?, ?, ? ` +
-          "WHERE EXISTS (SELECT 1 FROM replica_accounts " +
-          "WHERE did = ? AND mediation_id = ? AND mediator = ?) " +
+          "WHERE EXISTS (SELECT 1 FROM replica_accounts WHERE did = ? AND mediator = ?) " +
           `AND ${NOT_ORDINARY} ` +
           "AND NOT EXISTS (SELECT 1 FROM replica_accounts WHERE did = ?) " +
           `AND ${NOT_SHARED_RECIPIENT} ` +
@@ -599,7 +592,6 @@ export class SqlStore implements MediationStore {
           grant,
           Math.floor(Date.now() / 1000),
           accountDid,
-          mediationId,
           mediator,
           ...replica,
           ...replica,
@@ -611,7 +603,7 @@ export class SqlStore implements MediationStore {
         ],
       },
       {
-        sql: "SELECT mediation_id, mediator FROM replica_accounts WHERE did = ?",
+        sql: "SELECT mediator FROM replica_accounts WHERE did = ?",
         params: [accountDid],
       },
       {
@@ -626,11 +618,11 @@ export class SqlStore implements MediationStore {
       },
     ]);
 
-    const held = (accounts.rows as { mediation_id: string; mediator: string }[])[0];
+    const held = (accounts.rows as { mediator: string }[])[0];
     if (held === undefined) {
       return { outcome: "unknown" };
     }
-    if (held.mediation_id !== mediationId || held.mediator !== mediator) {
+    if (held.mediator !== mediator) {
       return { outcome: "conflict" };
     }
 

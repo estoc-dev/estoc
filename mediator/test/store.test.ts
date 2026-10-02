@@ -227,6 +227,44 @@ describe("SqliteStore", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("keeps the accounts registered under a mediation ID, and registers more without one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const old = new Database(path);
+    old.exec(`
+      CREATE TABLE replica_accounts (
+        did TEXT PRIMARY KEY,
+        mediation_id TEXT NOT NULL,
+        mediator TEXT NOT NULL,
+        long_form TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO replica_accounts VALUES ('did:example:account', 'm', 'did:example:mediator', 'long', 1000);
+    `);
+    old.close();
+    const registration = {
+      accountLongForm: "long",
+      mediator: "did:example:mediator",
+      create: true,
+    };
+
+    const store = new SqliteStore(path);
+    expect(
+      await store.registerReplicaAccount({ ...registration, accountDid: "did:example:account" })
+    ).toEqual({ outcome: "registered", registeredTime: 1 });
+    expect(
+      (await store.registerReplicaAccount({ ...registration, accountDid: "did:example:other" }))
+        .outcome
+    ).toBe("registered");
+    store.close();
+
+    const reopened = new SqliteStore(path);
+    expect(await reopened.isReplicaAccount("did:example:account")).toBe(true);
+    expect(await reopened.isReplicaAccount("did:example:other")).toBe(true);
+    reopened.close();
+    rmSync(dir, { recursive: true });
+  });
+
   it("keeps the replica mail queued before a package recorded what its recipient was", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
     const path = join(dir, "mediator.db");
@@ -331,7 +369,6 @@ describe("a store that read the old replica mail tables before another store reb
     expect(await store.removeSharedRecipient(account, mediator, "did:example:shared")).toBe("removed");
     const enrolled = await store.addReplica({
       accountDid: account,
-      mediationId: "m",
       mediator,
       replicaId: "former",
       replicaDid: "did:example:shared",

@@ -227,8 +227,8 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 
 | Request | Body | Reply | Body |
 | --- | --- | --- | --- |
-| `account-register` | `mediation_id` | `account-registered` | `account`, `mediation_id`, `routing_did`, `registered_time`, `limits` |
-| `account-delete` | `mediation_id` | `account-deleted` | `account`, `mediation_id` |
+| `account-register` | — | `account-registered` | `account`, `routing_did`, `registered_time`, `limits` |
+| `account-delete` | — | `account-deleted` | `account` |
 | `replica-add` | `grant` | `replica-added` | `replica_id`, `replica_did`, `state`, `added_time` |
 | `replica-list` | `cursor`, `limit` | `replicas` | `entries` (`grant`, `state`, `added_time`, `removed_time`), `next_cursor` |
 | `replica-remove` | `replica_id` | `replica-removed` | `replica_id`, `state`, `removed_time` |
@@ -239,36 +239,35 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 **`account-register`** creates the account of the DID that sends it, with no
 replica and no recipient yet. No mediate-request comes before it, and every
 other control answers `unknown-account` until it has succeeded. The sender
-names itself by its long form here. `mediation_id` is a UUIDv7 the account
-chooses, and the account is bound to it and to the mediator DID the request
-addressed for as long as it exists; another name of the same deployment is
-another mediator.
+names itself by its long form here, and the body is empty. The account is
+bound to the mediator DID the request addressed for as long as it exists;
+another name of the same deployment is another mediator.
 The reply's `routing_did` is that mediator DID, where senders forward the
-account's mail, and `limits` is what the mediator holds the account to. An
-exact repeat answers as the first time did, also where
+account's mail, and `limits` is what the mediator holds the account to. A
+repeat answers as the first time did, also where
 `MEDIATOR_OPEN_REGISTRATION` is `false`; there a DID without an account is
 answered `account-refused`.
 
 **`account-delete`** deletes the account and everything kept for it: its
 replicas, the removed ones included, its recipients and its mail. The sender
 names itself by its long form, since the mediator no longer holds it when it
-seals the reply, and `mediation_id` is the one the account registered with;
-any other is `unknown-account` and deletes nothing. The mediator remembers
+seals the reply, and the body is empty. The mediator remembers
 nothing of a deleted account. Its DID, its replicas' and its recipients' are
 bound nowhere, so each can be bound again under either protocol, and a
 forward to one is refused. Pickup by the account DID or by a replica it had
 is not answered, as for any DID the mediator does not know. A reply or a push
 already on its way when the deletion lands may still arrive. A repeat is
-`unknown-account`. The DID can register again as a new account, with a new
-`mediation_id`, which no grant of the deleted one names.
+`unknown-account`. The DID can register again as a new account, which starts
+with no replica and no recipient.
 
 **`replica-add`** enrolls one replica in the account. `grant` is a compact
 JWS signed by one of the account's authentication keys (header exactly
 `alg: EdDSA`, `typ: estoc/replica-grant+jws`, `kid`) over the
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly
 `account`, `mediation_id`, `mediator`, `replica_id`, `replica_did` and
-`replica_long_form`. The two ids are UUIDv7, and `mediation_id` and
-`mediator` are the ones the account registered with. The replica's document
+`replica_long_form`. The two ids are UUIDv7. `mediator` is the one the
+account registered with; `mediation_id` is the account's own name for the
+arrangement, which the mediator compares with nothing. The replica's document
 must name that mediator as its service and hold Ed25519 authentication and
 X25519 key-agreement keys. An exact repeat answers as the first time did. A
 replica added later receives nothing forwarded before it.
