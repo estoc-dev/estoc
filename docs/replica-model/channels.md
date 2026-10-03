@@ -1,6 +1,6 @@
 # Channels, continuity and operation evidence
 
-Status: **phase 1; continuity integration, application admission and rotation restrictions specified, implementation pending**. This document owns channel identity, invitations,
+Status: **phase 1, implemented**. This document owns channel identity, invitations,
 the vault evidence adapter and operation eligibility. The
 [`@estoc/continuity` API and host contract](../../packages/continuity/README.md)
 own proof and graph semantics; this document specifies their application use. Storage
@@ -193,7 +193,7 @@ no invitation state and grants none. No event records who used an invitation,
 and nothing a peer sends under one takes it from the next. An invitation is
 available while its disclosed DID is live on a route that may deliver, and
 unavailable once the DID or its route ended or while one of them waits on
-something that may recover; [the invitation fold](vault-events.md#invitation-fold)
+something that may recover; [the invitation fold](../../packages/vault/src/fold/invitations.ts)
 owns that view. An `oobId` that distinct disclosures carry, once histories
 that each disclosed it are merged, is unavailable under every one of them and
 handed out again under none; the DIDs and their receipts are as they were.
@@ -500,7 +500,7 @@ host evidence is still unresolved in the inventory. Before successor allocation,
 inspect those records as well as `localDecisions()`; a pending saved choice
 cannot be mistaken for permission to allocate another successor.
 
-**Proof boundary.** Use `inspectFromPrior` only to locate issuer material, then
+**Proof boundary.** Use `precheckFromPrior` to refuse what can never verify and to locate issuer material, then
 `verifyFromPrior` with the retained issuer long form and `bindFromPrior` with
 the exact original token, receipt reference, authenticated sender and local
 recipient. The bound rotation yields the two same-receipt facts above. Proof
@@ -511,15 +511,14 @@ returned token before dependent work. Import never trusts a cached verified type
 Decoding success is not profile validation. Document-independent failures must
 be distinguishable from missing issuer material, including malformed claims,
 unsupported JOSE headers/time claims and canonical sender/subject mismatch.
-Keep that validation in the shared package boundary. If its public API does
-not expose the necessary precheck, extend and test the package API before
-completing the adapter; do not create another JWT parser in vault or agent-core.
-The current `inspectFromPrior` already rejects `exp`, `nbf`, non-integer `iat`
-and invalid `b64`/`crit` use. The remaining document-independent precheck needs
-to validate `alg`, optional `typ`, canonical equivalence of the DID in `kid`
-with `iss`, distinct canonical `sub` and `iss`, and canonical `sub` against the
-authenticated sender. These checks still do not verify a signature or key
-authorization; those require the issuer document and shared verifier.
+That validation lives in the shared package:
+`precheckFromPrior(token, { authenticatedSender })` applies every rule of
+the profile that needs no issuer document, from the JOSE header and time
+claims to the canonical DIDs in `kid`, `iss` and `sub` and the canonical
+`sub` against the authenticated sender, and a token it refuses is invalid
+without waiting for material. Do not create another JWT parser in vault or
+agent-core. The precheck verifies no signature or key authorization; those
+require the issuer document, `verifyFromPrior` and `bindFromPrior`.
 
 Phase 1 supports **rotations only** and has no application relationship-ended
 state. Retain otherwise
@@ -718,7 +717,7 @@ pending; invalid source/proof evidence grants no effective admission.
 
 Then compare claims across effective admissions. Contradictory admitted claims
 remain admitted, with a separate logical-input conflict that suppresses affected
-application use under [vault events](vault-events.md#inbound-message-and-execution-fold).
+application use under [the inbound fold](../../packages/vault/src/fold/inbound.ts).
 Competing verified continuity likewise remains a separate conflict checked by
 each consumer. Neither conflict chooses a winning admission by event order or
 repeatedly removes/re-adds admissions. Independently committed operation and
@@ -990,83 +989,3 @@ Sender policy alone cannot constrain an external peer. Cross-channel reuse of
 a wire ID is not a channel-local duplicate, and this profile provides no
 cross-channel exactly-once guarantee. Protocols needing business idempotency
 must define an authenticated application operation ID and its own rules.
-
-<a id="required-conformance-cases"></a>
-
-## 9. Required conformance cases
-
-These cases include host policy and integration behavior. Passing the package's
-own model/proof tests alone does not establish application conformance.
-
-- <a id="ch-1"></a> **CH-1.** A channel is an ordered local/peer canonical DID pair, independent of keys, routes and contacts. Local sending and peer receipt share that pair; reversing local/peer roles selects a different vault-local view.
-- <a id="ch-2"></a> **CH-2.** First authenticated receipt commits and pickup-ACKs without invitation state, continuity history or a contact.
-- <a id="ch-3"></a> **CH-3.** A valid retained proof with complete authenticated source and endpoints derives its link without an earlier predecessor-channel message. Invitation state cannot make it pending-history; recovering required evidence adds no receipt or stored graph event.
-- <a id="ch-4"></a> **CH-4.** A recovered peer supersession refuses new old-peer input through its local-only context while preserving channel receipt and previous decisions.
-- <a id="ch-5"></a> **CH-5.** Complete independent local/peer links at one exact predecessor pair justify their diagonal join without synthetic observations; unrelated shared DIDs justify nothing.
-- <a id="ch-6"></a> **CH-6.** Observations with the same sender/recipient/wire-ID triple, equal intent and authorized keys share one execution. Another channel has another execution.
-- <a id="ch-7"></a> **CH-7.** Contradictory independently admitted intent with complete source witnesses suppresses new effects; previously submitted IDs and outcomes remain unchanged.
-- <a id="ch-8"></a> **CH-8.** Unknown policy, missing verification evidence and invalid continuity leave receipts intact and grant no effects.
-- <a id="ch-9"></a> **CH-9.** A retained channel denial applies independently of contact membership; deleting a contact alone grants or revokes no cryptographic authority.
-- <a id="ch-10"></a> **CH-10.** Crash after receipt or a concrete intent/result preserves each committed fact; reopen recomputes proof verification and pending-work views without appending events for verification or dispatching old work.
-- <a id="ch-12"></a> **CH-12.** Missing recoverable local receive material waits without pickup ACK; current-sender authentication uses locally available numalgo-4 material. Definitive envelope/authentication rejection pickup-ACKs without an observation. Missing predecessor proof material is never a pre-receipt wait.
-- <a id="ch-14"></a> **CH-14.** A peer link applies only in its validated channel/local-continuation context and does not replace the peer in unrelated public-DID channels.
-- <a id="ch-15"></a> **CH-15.** Earlier source evidence, intents and results survive ordinary rotation and later extensions; contradictory identity evidence or same-end successors suppress new work without rewriting identity.
-- <a id="ch-16"></a> **CH-16.** Retained retired recipient keys can drain eligible routes; new sending and disclosure obey retirement.
-- <a id="ch-17"></a> **CH-17.** An incomplete consistent sibling cannot create another same-channel execution or erase a complete witness. Cross-channel observations never merge executions.
-- <a id="ch-18"></a> **CH-18.** Recovery uses retained authentication evidence without fresh resolution of a saved receipt; new network deliveries authenticate afresh.
-- <a id="ch-19"></a> **CH-19.** Intent freezes its oriented channel; rotation never retargets a queued, prepared or submitted message. A replaced sender or peer recipient prohibits new preparation/dispatch, including manual retry; sending on a successor needs a new ID.
-- <a id="ch-20"></a> **CH-20.** Commit the fixed package before transport. Crashes immediately before the call and after transport acceptance both reopen without automatic submission or proof of whether the call occurred.
-- <a id="ch-21"></a> **CH-21.** Initial send and manual retry use the committed package exactly, even if it has never been sent. Missing bytes defer; changing package or channel requires a new message ID.
-- <a id="ch-22"></a> **CH-22.** Import, restore, replica change, duplicate pickup and missing ACK never dispatch an old intent or regenerate an automatic response for sending.
-- <a id="ch-23"></a> **CH-23.** Submitted or terminal messages cannot retry. Deliberate new sends get new IDs and do not establish that the original was undelivered.
-- <a id="ch-24"></a> **CH-24.** Missing submission grants no automatic recovery sending; incomplete exact references remain pending, and conflicting prepared packages prevent sending without selecting an event-order winner.
-- <a id="ch-25"></a> **CH-25.** Renaming or merging contacts and changing their channel sets changes no message/execution ID, ACK authorization, verification evidence, denials or invitations.
-- <a id="ch-26"></a> **CH-26.** A successor-channel ACK needs a verified role-preserving path to the exact outbound; general connectivity or shared display membership is insufficient.
-- <a id="ch-27"></a> **CH-27.** Swapping sender and recipient with the same wire ID produces different inbound/execution identities; changing either endpoint also changes those identities.
-- <a id="ch-28"></a> **CH-28.** A cyclic proof/rotation-confirmation dependency grants no continuity authority.
-- <a id="ch-29"></a> **CH-29.** Learning a missing graph link after independent channel executions never merges or replays those executions.
-- <a id="ch-36"></a> **CH-36.** The phase-1 adapter authenticates a carrier without resolving its predecessor. Receipt commits and pickup-ACKs with the exact original from_prior; UI shows pending-proof and no verified peer continuity or application effect. Proof failure never changes the authenticated source used for ingress limits.
-- <a id="ch-37"></a> **CH-37.** Deriving the issuer document from the original JWT and verifying its link need no earlier predecessor-channel message. A valid signature with a missing required source/endpoint/rotation record shows pending-history for that path; restoring it completes the path through local recomputation.
-- <a id="ch-38"></a> **CH-38.** A malformed string-valued carried JWT, wrong sub or complete failed signature check shows invalid while preserving authenticated receipt and pickup ACK. A valid short-form issuer without a matching retained peer.resolved document stays pending-proof, even when its long form appears only in message.out.recipientDid or another carrier's JWT. Tampered envelope integrity or mismatched current-sender/recipient evidence still fails the receive gate and creates no message.in.
-
-- <a id="ch-39"></a> **CH-39.** Importing missing proof/history updates verification status, links and eligible ACK projections without a new observation, input identity or automatic reply/notification dispatch.
-- <a id="ch-40"></a> **CH-40.** Rebuilding from receipts with their original JWTs, retained immutable issuer material and local decisions yields the same graph and verification statuses in any import order. No consumer references a link/status projection row as an event.
-- <a id="ch-41"></a> **CH-41.** A local rotation decision fixes fromDidId, canonical peerDid, toDidId, nullable sourceEventCid and fromPrior, and survives a crash before any outbound exists. A manual decision still fixes its peer with a null source; another peer sharing the old local DID cannot inherit it. Later preparation reuses its exact successor and JWT; merely preparing a package cannot select a competing rotation.
-- <a id="ch-42"></a> **CH-42.** A link supported by one independently authenticated and verified carrier survives an invalid or incomplete sibling. That sibling cannot borrow the first carrier's authentication or proof result; missing required material remains pending and each JWT is verified independently.
-- <a id="ch-43"></a> **CH-43.** An unassigned channel supports receipt, sending and continuity without a contact. Contact creation is a separate product decision.
-- <a id="ch-44"></a> **CH-44.** Two channels sharing a peer DID but using different local DIDs can be selected independently for a contact. Selection does not globally associate that peer DID's channels.
-- <a id="ch-45"></a> **CH-45.** Newly verified continuity may extend a contact's derived history or eligible send choices without changing contact.channelsSet. Missing/conflicting evidence changes only the affected view or eligibility; no stable chain ID or automatic send is created.
-- <a id="ch-46"></a> **CH-46.** Contact and block selectors compare both canonical localDid and peerDid. The same peer at another local DID stays separate; successor blocking follows every directed path of the least positive closure from the selected pair, conflicted continuity included, and grants no authority by that traversal.
-
-- <a id="ch-48"></a> **CH-48.** Missing exact local-DID or peer-resolution evidence leaves a source-derived pair pending. Another event, contact selector or shared key cannot substitute for that evidence; restoring it derives the same pair without changing saved message identities.
-- <a id="ch-49"></a> **CH-49.** An admitted complete live source may produce a policy-permitted automatic intent, its valid fixed-channel package and a local rotation with independent exact-address confirmation. Import validates their own source, endpoints and proof and never dispatches them.
-- <a id="ch-51"></a> **CH-51.** An application may derive channel-scoped display data from an admitted complete source and readable non-erased content under its protocol and display policy. Missing authentication or required proof prevents a verified claim; derived data creates no contact, changes no petname and grants no dispatch action.
-- <a id="ch-52"></a> **CH-52.** An admitted complete authenticated ACK or Report Problem carrier can be attributed to its exact outbound through a valid same-channel or role-preserving successor path and the required ID/thread match. An unrelated peer knowing the ID cannot supply attribution. These observations neither establish submission nor authorize retry.
-- <a id="ch-53"></a> **CH-53.** Republishing an invitation reuses its disclosure; distinct disclosures with the same non-null oobId are an entity conflict, and republishing under that ID is refused.
-- <a id="ch-55"></a> **CH-55.** A selected C(A0,B0) with verified local and peer replacements defaults to the unique joined head C(A1,B1), including when contact.useDid still names A0. No ineligible head, conflict or cycle falls back to a predecessor. Explicit pre-rotation sends, queued preparation and manual retries on replaced endpoints are refused. Old-peer receipt still commits and pickup-ACKs, but no new admission, ACK attribution, profile update or reply is allowed. Previously admitted history and recorded submissions remain, and import order never retargets an intent.
-
-- <a id="ch-56"></a> **CH-56.** Repeated rotation work reuses the decision from the same local predecessor throughout its verified peer-only context. After (A0,B0) selects A1, a valid B0-to-B1 carrier cannot select A2 or another notification; new sends default to C(A1,B1). Supersession of source B0 prevents creating a missing notification; replacement of its fixed peer recipient prevents dispatch of an existing one. Source-free decisions also obey endpoint restrictions. Extending A1 needs independent admitted exact-address confirmation. Successor allocation and its decision commit atomically; later competing evidence exposes a conflict without choosing a winner.
-
-- <a id="ch-57"></a> **CH-57.** B0 sends an admitted chat/ACK, then a verified B0-to-B1 proof is learned. A later B0 chat/ACK is stored and pickup-ACKed but stays ignored-superseded: no chat notification, profile update, ACK attribution/timing, address confirmation or response. Prior admitted history remains. The sender's earlier created_time/iat does not bypass the restriction.
-- <a id="ch-58"></a> **CH-58.** Crash after receipt but before message.admitted produces no application effect. Recovery with a newly known replacement leaves that old source ignored; without supersession and with complete current evidence it commits admission now, never dispatch. Required evidence arriving during normal operation triggers the same ordered reconciliation without restart or redelivery; missing evidence for one candidate does not block unrelated admissions. Crash after admission preserves accepted history. Uncertain commits are resolved before another admission or application effect.
-- <a id="ch-59"></a> **CH-59.** message.admitted has exactly non-null sourceEventCid referencing message.in and empty roots. Missing exact evidence stays pending; invalid source/proof evidence prevents effective admission; admitted-intent conflict is exposed separately and grants no application authority. Multiple admissions of one source are idempotent. An admitted duplicate cannot authorize a late duplicate's headers or change ACK timing through that unadmitted duplicate. A conflicting unadmitted old-peer payload cannot poison admitted chat or ACK history; conflicting independent admissions do expose an application conflict.
-- <a id="ch-60"></a> **CH-60.** Every permutation of the same event union yields the same admissions, accepted history and current restrictions. Importing a rotation never fabricates a receipt cutoff or deletes a valid prior admission. A valid admission from independently run history remains evidence, without claiming the other runtime knew the rotation or undoing effects already sent.
-- <a id="ch-61"></a> **CH-61.** A proof pending for issuer material does not admit its carrier, even with complete current-sender authentication. If material never arrives, the carrier remains diagnostic indefinitely; invalid proof is refused and neither case falls back to a new relationship. Restoring the material derives continuity independently of admission; new admission/effects recheck the full graph. Unadmitted old-peer input cannot newly confirm a local address; admitted historical confirmation remains available without introducing a self-supporting rotation cycle.
-- <a id="ch-62"></a> **CH-62.** A restored snapshot without an admission does not prove historical acceptance. Reconciliation can only admit currently eligible sources now; unadmitted superseded sources remain ignored diagnostics and supply no chat/profile/ACK state. Known replacements forbid manual old-address sends within their context; a deliberate new relationship at an unrelated local DID remains possible without inheriting old authority, while a verified local successor cannot bypass the restriction; missing rotation history is an explicit rollback limitation, not reconstructed from a seed, UUID or wall clock. Erasure retains admission metadata but restores no content.
-- <a id="ch-63"></a> **CH-63.** A queued or prepared old-endpoint intent cannot dispatch or retry once its endpoint is replaced, including manual actions. Its fixed bytes and history remain. A transport call authorized before replacement may complete and record its actual outcome; no subsequent call is authorized. Independent contexts sharing the DID remain usable.
-- <a id="ch-64"></a> **CH-64.** Validation of committed rotation, automatic outbound, package and submission records with complete evidence preserves their derived local links, fixed intents/packages and submitted state regardless of whether source admissions are available, even after peer supersession. Missing exact authentication/proof/confirmation references still defer those records. They supply no chat/profile/ACK admission and cannot authorize a new source-derived decision or intent without an admitted source.
-- <a id="ch-65"></a> **CH-65.** Source/proof invalidity takes precedence over a saved admission. Otherwise an effective admission stays admitted after denial, supersession or an independently admitted intent conflict; that conflict separately blocks application use. Without effective admission, verified supersession precedes pending-admission. Denial alone leaves an unadmitted source pending with a denial blocker, including a late ACK for a pre-block outbound; an ACK admitted before blocking retains its attribution. Competing B0-to-B1 and B0-to-B2 proofs block new admission of those proof-carrying sources, but do not by themselves block an otherwise eligible proof-free source from B1 in its own channel.
-- <a id="ch-66"></a> **CH-66.** In one pickup batch, an eligible B0 chat followed by a verified B0-to-B1 carrier completes receipt and admission before the rotation receipt commits, preserving the chat as admitted history. Reverse pickup order leaves the B0 chat ignored-superseded. Parallel decryption cannot change that result. A replacement imported before the chat's admission still blocks it; a crash after its receipt but before admission follows current-policy recovery rather than reconstructing batch order.
-
-- <a id="ch-67"></a> **CH-67.** Rebuilding or restoring the same source inventory yields identical CID-derived fact IDs, event-CID evidence references, anchor namespace and profile, despite different replica IDs or event enumeration. A carrier produces a transition and observation with the same receipt reference; another carrier's proof cannot complete it. Changed source bytes form a different event and cannot retarget an existing admission or saved decision; if the exact referenced CID is absent, those prerequisites stay missing.
-- <a id="ch-69"></a> **CH-69.** The full projection rebuilds a saved local rotation and its join using a predecessor observation without admission. That observation alone cannot confirm an address for new work. A qualifying admitted observation may use a witness whose support includes unadmitted historical evidence; do not require admission for every support fact or filter the model per consumer.
-- <a id="ch-70"></a> **CH-70.** A first-contact pair with no facts returns no-evidence and is a default-send candidate after ownership, peer-evidence, route and policy checks, without a synthetic receipt or confirmation. An unconfirmed saved rotation stays unresolved without predecessor fallback; two different saved successors conflict before confirmation. An unprojected saved decision also prevents another allocation.
-- <a id="ch-71"></a> **CH-71.** With two competing peer successors, otherwise valid proof-free input in its own channel may gain admission despite the model's conflicted observation status. A previously admitted same-channel ACK with complete source/target evidence remains attributable without path(c,c). A cross-channel ACK needing that conflicted path is not attributable, and no new send bypasses the conflict.
-- <a id="ch-72"></a> **CH-72.** The adapter accepts a valid long-form issuer with an equivalent short-form kid and a short-form subject matching the authenticated long-form sender, with original JWT bytes unchanged. It accepts absent typ and JWT/application/jwt case variants, and rejects exp, nbf, unsupported critical headers and unauthorized keys under the package profile.
-- <a id="ch-73"></a> **CH-73.** Without issuer material, document-independent malformed claims/profile headers remain invalid, including an unsupported alg or typ, a kid DID unequal to iss, equal canonical sub/iss, or canonical sub unequal to the authenticated sender. A well-formed unresolved issuer remains pending-proof. Successful inspection alone cannot establish profile validity. Evidence recovery verifies and binds the exact saved token without replaying the receive action.
-- <a id="ch-74"></a> **CH-74.** Two pending receipts with the same logical input and contradictory intent are reconciled in canonical event order. The second sees the first newly committed or transactionally staged admission and gains none. Crash or uncertain commit before publication authorizes no dependent ACK projection or effect; recovery reads committed admissions before proceeding.
-- <a id="ch-75"></a> **CH-75.** Concurrent direct deliveries with different transport keys share the pickup receipt/admission sequence. A later rotation receipt cannot commit ahead of an earlier delivery's admission decision through a separate lock. Network completion of pickup ACK or automatic output does not hold that sequence; separately imported evidence still applies before admission.
-- <a id="ch-76"></a> **CH-76.** Import a replacement after verification but before an operation commit. The captured revision cannot authorize the operation: revalidate and refold against the changed inventory. Dependency damage or repair invalidates affected verification/projection caches even without a new event. A fresh projection never revives withdrawn facts by unioning its old cache.
-- <a id="ch-77"></a> **CH-77.** Shared host policy gates user send, preparation, first dispatch and manual retry at both fixed endpoints. No daemon/app flag enables pre-rotation bypass. Preserve the intent, package, wire ID and actual in-flight/submitted outcome when a later rotation removes eligibility.
-- <a id="ch-78"></a> **CH-78.** Otherwise receivable ending tokens, including a valid signed-audience ending and an unbound basic ending, remain unsupported-proof diagnostics in this application revision. They create no graph ending, admission, channel block, DID retirement or confirmation; anonymous receipt supplies no channel.
-- <a id="ch-79"></a> **CH-79.** Daemon/app accepted conversation, profile and ACK views use the same effective admissions and source validation as the runtime. Raw pending/refused/ignored receipts remain separately inspectable. Open, restore, import and evidence recovery refresh those views and missing admissions without minting LiveInput/LiveAction or sending historical ACKs, replies or notifications.

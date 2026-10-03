@@ -1,7 +1,7 @@
 # The Estoc SQLite vault, version 4
 
 <!-- suite-navigation:start -->
-[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)
+[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
 Status: **phase 1, implemented** — schema 2, CID-keyed events. SQLite is the sole persistent vault and portable
@@ -10,8 +10,8 @@ backup format.
 The capitalized requirement words in this document have their BCP 14 meanings.
 [event-store.md](event-store.md) owns the API and event semantics;
 [dasl-objects.md](dasl-objects.md) owns CID identity and object verification;
-[vault-events.md](vault-events.md) owns payloads, folds and held roots. This
-file owns SQLite storage and recovery, not a second implementation of SQLite's
+[vault-events.md](vault-events.md) owns payloads and held roots, and the folds
+over them are code. This file owns SQLite storage and recovery, not a second implementation of SQLite's
 transaction or version-management machinery.
 
 <!-- reading-guide:start -->
@@ -344,7 +344,7 @@ before seed/anchor verification. After any migration, validate the current schem
 and metadata again. Then unlock or obtain the seed and verify its anchor before
 application data writes or identity use. Validate control and reconstruct
 committed retention and unfinished work under
-[VE §13.1](vault-events.md#open-the-writable-full-runtime) before GC or workers.
+[the agent's open](../../packages/agent-core/src/identity.ts) before GC or workers.
 
 An inspector makes no application writes or new local IDs and rejects a runtime
 that requires schema migration. If read-only access cannot perform needed
@@ -562,140 +562,3 @@ the complete runtime is closed/recovered into a standalone transferable database
 Destination ownership excludes old handles. A stale recovery copy restored after
 later source writes must refresh both IDs and invalidate checkpoints. Portable
 restore always uses fresh IDs; two writable clones are not an exact move.
-
-<a id="required-conformance-cases"></a>
-
-## 13. Required conformance cases
-
-Test observable correctness across the implementation's supported ownership,
-read and maintenance strategies.
-
-<a id="schema-and-identity"></a>
-
-### Schema and identity (SQ-1–SQ-9)
-
-1. <a id="sq-1"></a> Native/browser drivers exchange identical portable logical values.
-2. <a id="sq-2"></a> Unsupported versions, non-SQLite inputs and extra portable schema fail.
-3. <a id="sq-3"></a> Create refuses existing destinations; open never implicitly creates.
-4. <a id="sq-4"></a> Wrong seed/anchor fails before application data writes or identity use;
-    a completed schema migration is the only permitted earlier application write.
-5. <a id="sq-5"></a> Rewrap interruption leaves the complete old or new wrapper.
-6. <a id="sq-6"></a> Reopen preserves local IDs; restore renews them; malformed control fails.
-7. <a id="sq-7"></a> Cache clearing preserves identity/data; no private keys are persisted.
-8. <a id="sq-8"></a> Independent recovery material derives the same anchor after runtime loss.
-9. <a id="sq-9"></a> A supported migration is atomic and never executes source instructions.
-    Runtime open checks application/format IDs, supported versions and the existing
-    schema's runtime/ready metadata before migration; portable or unready files
-    fail without migration. It completes migration before current-schema validation
-    and seed unlock; failure exposes no partially upgraded normal runtime.
-
-<a id="events-and-transactions"></a>
-
-### Events and transactions (SQ-10–SQ-18)
-
-10. <a id="sq-10"></a> Five-field canonical envelopes hash to their row CIDs and
-    agree with indexed fields; invalid envelopes or mismatched CIDs fail.
-11. <a id="sq-11"></a> Import unions events by verified CID, with exact duplicates once;
-    a current-author fork still aborts the whole import.
-12. <a id="sq-12"></a> Large batches preserve ES timestamp/CID/order and atomicity
-    rules, including repeated return values with one stored row per CID.
-13. <a id="sq-13"></a> Process/worker termination never exposes a partial accepted commit.
-14. <a id="sq-14"></a> Late new CIDs appear in deltas; exact duplicates from append
-    or ingest allocate no position; empty filtered deltas advance tokens.
-    Portable inspection rejects every `changes` call with `UnsupportedOperation`
-    and allocates no local IDs, positions or tokens.
-15. <a id="sq-15"></a> Driver integers round-trip exactly or fail before acceptance.
-16. <a id="sq-16"></a> Scans/deltas use a fixed cut and exact primitive filter semantics.
-    CID equality composes with every other filter. A CID absent from the delta
-    interval yields no match without preventing an empty delta's frontier advance.
-17. <a id="sq-17"></a> Direct folds and any optional caches agree after imports and erasures.
-18. <a id="sq-18"></a> Uncertain commit stops work; recovery reconciles before any retry.
-
-<a id="objects-and-ownership"></a>
-
-### Objects and ownership (SQ-19–SQ-28)
-
-19. <a id="sq-19"></a> Empty and arbitrarily chunked inputs preserve exact CIDs and bytes.
-20. <a id="sq-20"></a> Missing chunks, wrong sizes/hashes and exceeded limits fail explicitly.
-21. <a id="sq-21"></a> Preparation is invisible; unused supplied objects fail full commit.
-22. <a id="sq-22"></a> Repair waits for or cancels affected readers before replacing bytes.
-    A full commit publishes supplied repairs with its events in one transaction;
-    failed validation or rollback leaves the old bytes and known damage unchanged.
-23. <a id="sq-23"></a> GC preserves held roots and atomically deletes selected unheld objects.
-    Known object damage alone does not block it; held objects retain their known
-    damage state, while damaged unheld objects are deleted.
-24. <a id="sq-24"></a> Each read completes unchanged or explicitly fails/cancels during writes or maintenance.
-    An ordinary serialized commit can complete without a paused consumer resuming.
-25. <a id="sq-25"></a> A failed lazy hash or interrupted read never reports successful completion.
-26. <a id="sq-26"></a> A second owner is excluded, including during offline inspection.
-27. <a id="sq-27"></a> Close stops old handles and ends database access before releasing ownership.
-28. <a id="sq-28"></a> Storage/event damage never becomes an empty complete vault.
-    On event damage, the application explains stopped writes and snapshot-only
-    history recovery, including the absence of recovery without a usable snapshot.
-
-<a id="backup-import-and-restore"></a>
-
-### Backup, import and restore (SQ-29–SQ-40)
-
-29. <a id="sq-29"></a> Export contains the exact keystore row, every event CID/envelope and exactly held objects
-    at its selected cut.
-30. <a id="sq-30"></a> Excluded local/unheld sentinel bytes never enter the fresh portable file.
-31. <a id="sq-31"></a> Rewrap/erase/GC cannot mix the export cut. Final read-only validation
-    and delivery hold no operation lock; runtime mutations can proceed without
-    changing that immutable file.
-32. <a id="sq-32"></a> Output opens without sidecars; incomplete/cancelled output is not success.
-    After the destination writer closes, the final file passes full portable
-    source validation on read-only reopen; later cleanup cannot modify it.
-33. <a id="sq-33"></a> Stable-source validation rejects hostile schema and malformed values.
-    Portable inspection checks application ID, encoding and schema version before
-    interpreting schema, and metadata format/kind/readiness and semantic version
-    before interpreting payloads.
-    Portable inspection rejects views, triggers or other forbidden schema before
-    querying application data, including when only reading metadata.
-34. <a id="sq-34"></a> Restore unlocks the real wrapper and reconstructs state with fresh IDs;
-    pending message dispatch remains manual. Before enabling new user sends or
-    manual dispatch, explain missing local DIDs, unknown-short-form senders,
-    missing continuity and visible forks caused by competing post-restore
-    rotations, including those triggered by queued input. The seed alone does
-    not recover lost local addresses. An affected fork has no default send head
-    or authority through conflicted continuity; phase 1 has no branch-resolution
-    operation. Explain the possible need to establish an independent channel
-    from a fresh local DID, which leaves the old fork intact. Pickup,
-    recipient addition and local projection recovery do not wait for this explanation.
-    Discarded deliveries with unknown recipient mappings or unknown short-form
-    senders have bounded visible diagnostics without authenticated peer attribution;
-    an address the account holds that the restored vault has no record of stays
-    held, its mail discarded at that gate.
-35. <a id="sq-35"></a> Import preserves target wrapper/local IDs and is idempotent.
-    For the same two complete inputs without a current-author fork, successful
-    A+B and B+A yield equal event and held-object inventories: every event CID
-    and exact envelope, including conflicting domain facts, and held evidence
-    objects. Target wrappers and local IDs remain local to each target.
-    No source event is rewritten or selected as a same-ID winner.
-36. <a id="sq-36"></a> A fork, or any `requiredRoots` member with neither verified source
-    bytes nor sound accepted target bytes, aborts without semantic writes. Check
-    both roots retained by newly accepted source events in the union and roots
-    held by the union but not by the target before import.
-    Exercise two complete inputs with different event CIDs for the two intents
-    and no current-author fork: the target has outbound `M`, prepared package `P`
-    with envelope `E`, and valid `delivery.submitted(M, P)`; `E` was released and
-    collected. The source has a different `message.out` intent for `M` and all its held bytes,
-    but no `P` or `E`. The union's intent conflict makes the existing target
-    package retain `E` again, so import rejects before publication and preserves
-    the target. Swap source and target and require the same rejection, now with
-    the newly accepted source package retaining `E`.
-    A source reference the union fold does not hold requires no bytes, including
-    erased references and envelopes released by submission or termination.
-    An otherwise-valid import succeeds when an unrelated root
-    was already held by the target and remains held in the union, no newly
-    accepted event retains it, and its bytes are absent or known damaged with
-    no source bytes available; that root remains absent or damaged.
-37. <a id="sq-37"></a> Import fills absent union-held objects and repairs known-damaged
-    ones whenever the verified source has their bytes, including when all events
-    are duplicates. It does not revive erasures or require unrelated target-only
-    damage to be repairable. Reusing target objects does not rehash them. After
-    reopen, forgotten damage does not select an object for repair; detecting it
-    again permits repair when the object is union-held and source bytes exist.
-38. <a id="sq-38"></a> Interrupted construction is unpublished or complete, never implicit creation.
-39. <a id="sq-39"></a> Exact move requires a stopped source; stale copies refresh local identity.
-40. <a id="sq-40"></a> Large-object and output limits are exercised on each supported platform.

@@ -1,7 +1,7 @@
 # The Estoc DASL object profile, version 1
 
 <!-- suite-navigation:start -->
-[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)
+[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
 Status: **phase 1, object profile implemented**. The version-4 vault retains this
@@ -295,52 +295,3 @@ provenance or safety. Do not execute raw content or fetch its embedded links.
 Hash exact accepted bytes locally, rather than trusting a CID column, server
 claim or HTTP digest. Bound object/read sizes and temporary
 space and report exceeded limits explicitly.
-
-<a id="required-conformance-cases"></a>
-
-## 12. Required conformance cases
-
-<a id="object-identity-verification-and-streaming-do-1-do-7"></a>
-
-### Identity, verification and streaming (DO-1–DO-7)
-
-1. <a id="do-1"></a> One-shot and arbitrarily chunked input produce the same CID/bytes.
-2. <a id="do-2"></a> Empty input reproduces the vector and round-trips.
-3. <a id="do-3"></a> Noncanonical CIDs and every unsupported codec/hash are rejected.
-4. <a id="do-4"></a> A changed payload byte fails acceptance without exposing partial data.
-5. <a id="do-5"></a> Native/browser SQLite and memory semantic references agree on identity/bytes.
-6. <a id="do-6"></a> Internal extent boundaries do not change CID or output.
-7. <a id="do-7"></a> Large-object acceptance, reads and export use bounded memory.
-
-<a id="commit-roots-collection-and-damage-do-8-do-16"></a>
-
-### Roots, collection and damage (DO-8–DO-16)
-
-8. <a id="do-8"></a> Bad supplied bytes or missing reused roots abort the whole commit.
-9. <a id="do-9"></a> A CID only in event data creates no retention edge.
-10. <a id="do-10"></a> A CID only inside object bytes creates no edge or fetch.
-11. <a id="do-11"></a> Collection preserves every held root, including known damaged
-    objects, whose reads and presence checks still fail after collection. Damaged
-    unheld objects are deleted and included in `removed`; neither form of object
-    damage alone fails the pass. Deleted CIDs subsequently report absence, even
-    if damage diagnostics remain.
-12. <a id="do-12"></a> Commit interruption accepts all new objects/events or none.
-13. <a id="do-13"></a> Broken chunks, lengths or hashes are reported as damage.
-    Known damage makes `has`, `stat`, `open` and `read` fail explicitly; `list`
-    fails instead of yielding or silently omitting the damaged CID. Verified
-    replacement under [section 6.2](#putobject) restores normal read, presence and
-    listing results. Invalid replacement bytes or rollback leave the old bytes
-    and known damage unchanged.
-14. <a id="do-14"></a> Private objects are never implicitly published through RASL.
-15. <a id="do-15"></a> BDASL/BLAKE3 identifiers are rejected.
-16. <a id="do-16"></a> A failed lazy hash fails the stream before successful completion.
-
-<a id="durability-and-collection-recovery-do-17-do-21"></a>
-
-### Durability and collection (DO-17–DO-21)
-
-17. <a id="do-17"></a> Successful primitive acceptance survives restart; partial bytes never accept.
-18. <a id="do-18"></a> Collection cannot overlap a full commit's root checks and publication.
-19. <a id="do-19"></a> GC computes roots after taking the operation lock and holds it through deletion.
-20. <a id="do-20"></a> Reopen recovers committed retention before GC.
-21. <a id="do-21"></a> Discarding preparation cannot remove committed data; unheld bytes need no age clock.
