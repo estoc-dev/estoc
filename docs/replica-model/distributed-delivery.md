@@ -369,7 +369,7 @@ For an innermost plaintext `M`, define:
 ```
 
 Values are copied from `M`. Absent thread values are null. Body and attachments
-use the closed normalization in [vault-events.md section 8](vault-events.md#stored-message-document). The semantic
+use the closed normalization in [vault-events.md section 7](vault-events.md#stored-message-document). The semantic
 projection contains no implementation-selected attachment metadata.
 
 It excludes:
@@ -701,7 +701,7 @@ Anonymous and mediator-control input have no application execution.
 Validate each source with its own recipient/key mapping and immutable
 authentication document under [the channel evidence fold](../../packages/vault/src/fold/channels.ts).
 Equal intent within one sender/recipient/wire-ID input shares one execution;
-disagreement follows [the conflict rules](vault-events.md#duplicate-transition-and-conflict-rules).
+disagreement is [the inbound fold](../../packages/vault/src/fold/inbound.ts)'s conflict.
 Continuity links never merge inputs from different channels.
 
 <a id="execution-id-and-immutable-transcript"></a>

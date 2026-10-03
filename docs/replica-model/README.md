@@ -3,7 +3,7 @@
 Status: **version 4, phase 1**. The packages under [`packages/`](../../packages/)
 implement it and their tests are the evidence; the folds over the vault's
 events and the procedures that append them are specified by that code, see
-[vault events section 13](vault-events.md#folds-and-procedures).
+[vault events section 11](vault-events.md#folds-and-procedures).
 Phase 1 has one active writable full vault runtime, seven
 specifications. SQLite is the sole persistent vault and portable interchange
 format. This guide is informative; linked specification sections define requirements.
@@ -82,7 +82,7 @@ and boundary cases. This app revision supports rotations only, not endings.
 | Implement application state | [Identifier vocabulary](vault-events.md#identifier-and-reference-vocabulary) → [schemas](vault-events.md#reading-guide) → [folds and procedures](vault-events.md#folds-and-procedures) |
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](relationships.md#ordinary-sending-and-birth-selection) → [package preparation](distributed-delivery.md#preparing-a-package) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
-| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [evidence](vault-events.md#receipt-and-relationship-evidence) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
+| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Back up or recover | [Recovery material](vault-sqlite.md#recovery-material-and-product-requirement) → [export](vault-sqlite.md#snapshot-and-export) → [restore/import](vault-sqlite.md#restore-and-import) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
 
 <a id="rule-ownership"></a>
@@ -118,10 +118,10 @@ receive gate, the private-address policy and retry are code.
 | Inbound/execution IDs | [DD identity](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Content/intent/plaintext normalization | [DD hashes](distributed-delivery.md#canonical-projections-and-hashes), [VE stored content](vault-events.md#stored-message-document) | [VE package](vault-events.md#message-prepared) |
 | ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [VE ACK witness](vault-events.md#delivery-acknowledged) |
-| Complete witnesses | [VE witnesses](vault-events.md#complete-observation-witnesses) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
+| Complete witnesses | [continuity fold](../../packages/vault/src/fold/continuity.ts), [inbound fold](../../packages/vault/src/fold/inbound.ts) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
 | Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
 | Invitations | [VE disclosure](vault-events.md#did-disclosed), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
-| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/contact-commands.ts), [application views](vault-events.md#application-message-views) |
+| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
 
@@ -133,7 +133,7 @@ The seven documents above are the complete phase-1 contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
-[vault events section 13](vault-events.md#folds-and-procedures)).
+[vault events section 11](vault-events.md#folds-and-procedures)).
 Multi-replica mediation, network vault synchronization and mutable channel
 DIDs have only [deferred design notes](deferred/README.md). Those notes
 reserve no phase-1 fields, error codes, key names or extension APIs; future

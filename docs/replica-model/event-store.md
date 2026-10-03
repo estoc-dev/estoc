@@ -257,7 +257,7 @@ input order.
 
 Domain payloads may use UUIDv7 entity/operation IDs, deterministic UUIDv5 IDs or
 protocol-defined strings. The generic store does not validate those fields.
-Outbound IDs follow [VE §9.1](vault-events.md#ids); inbound observation, wire and
+Outbound IDs follow [VE §8.1](vault-events.md#ids); inbound observation, wire and
 execution identities follow [DD §9](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity).
 
 <a id="eventstore"></a>
@@ -434,7 +434,7 @@ are in [SQ §7](vault-sqlite.md#local-state-and-projections).
 
 [dasl-objects.md](dasl-objects.md) owns the object API, raw identity, verification
 and collection semantics. Only the vault runtime computes held roots under
-[VE §12.3](vault-events.md#held-roots); callers cannot supply a keep set.
+[VE §10.2](vault-events.md#held-roots); callers cannot supply a keep set.
 
 <a id="metadata-and-local-state"></a>
 

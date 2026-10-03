@@ -1,302 +1,86 @@
 # @estoc/vault
 
-What the events of an `.estoc` vault mean: the code form of the
-[replica model](../../docs/replica-model/README.md)'s
-[vault events](../../docs/replica-model/vault-events.md),
-[channels](../../docs/replica-model/channels.md),
-[relationship policy](../../docs/replica-model/relationships.md) and
+What the events of an `.estoc` vault mean, as a library over
+`@estoc/event-store`: the identifiers, the schema of every event type,
+the vault's own keys and DIDs, the evidence it keeps of its peers, the
+folds that read an event set into what the vault knows, and the
+decisions a writer takes over that fold before it commits. No storage,
+no agent, no protocol: `@estoc/event-store` holds the events and
+`@estoc/agent-core` runs on them.
+
+The payload schemas, the deterministic identifiers and the stored
+formats are the [replica model](../../docs/replica-model/README.md)'s:
+[vault events](../../docs/replica-model/vault-events.md) for the
+payloads and the retention contract,
+[channels](../../docs/replica-model/channels.md) for channel identity
+and the channel payloads, and
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
-over `@estoc/event-store`, and nothing more than the meaning: no
-storage, no agent, no protocol. What is here is the identifier
-vocabulary (`types.ts`: one nominal type per kind of value a payload
-names, over the validated string it serializes as, and the channel, an
-ordered pair of a local and a peer DID), the deterministic
-identifiers (`ids.ts`: the UUIDv5 namespaces derived from the URL
-namespace, an inbound observation by its canonical sender, recipient and
-wire ID or, anonymous, by the decrypting local key, an execution from
-the same three, an effect key over the tagged execution and effect type
-and the automatic message ID it names, a channel's key and the order a
-set of channels is kept in, the reserved keystore names) and the canonical public-key value
-(`public-key.ts`: the did:key encoding of the complete type-tagged key
-as base58btc multibase, from a JWK or from its base58btc multibase form,
-Ed25519 and X25519 raw, the Weierstrass curves as compressed points that
-`@noble/curves` has verified lie on the curve; `agreementKey` is the key
-as one that agrees keys, of a type DIDComm v2 runs ECDH over and, for
-X25519, not a low-order point, which `@noble/curves` refuses as every
-shared secret with it is zero; `@scure/base` does the
-base58btc and base64url, `multiformats` the multicodec prefix), the event
-schemas (`schema.ts`: `readVaultEvent` / `readVaultDraft` / `vaultDraft`
-accept an event of one of the version-4 types — the closed member set
-of its payload, each member's type, nullability and spelling, the rules
-between members such as a package naming its sender entity's
-key-agreement key, an automatic effect's key being its tuple's and a
-contact's channel selection sorted by its pair encoding, and the `roots` the type retains — or throw
-`InvalidPayload`; what a schema cannot see, whether a referenced event
-exists or a JWT verifies, is the folds' and the runtime's, never inferred
-here), the stored message document (`document.ts`: `storeMessage`
-normalizes a DIDComm `body` and `attachments` into the closed stored
-form with its payload objects and roots, `readStoredDocument` reads that
-form back, `wireAttachment` puts a descriptor back on the wire only from
-a payload of the stored byte count that is, for JSON, already canonical)
-and the projections (`projection.ts`: `readPlaintext` takes a plaintext
-apart into intent, stored content and addressing, `semanticProjection`
-and `intentProjection` return the projection objects, `intentHash` and
-`plaintextHash` compute the hashes the events carry over the intent
-projection and the exact plaintext, `wirePlaintext` is the inverse of `readPlaintext`, and
-`requestsAck` reads whether `please_ack` requests the current message's
-receipt, by `""` or its own wire ID, without rewriting the array), the keys
-and communication DIDs (`identity.ts`: `Keys` opens over
-a seed only once it derives the recorded anchor, or `unlock`s the
-wrapped seed with the passphrase, and derives each named key on demand,
-an Ed25519 key and the keystore's own X25519 key per name, the latter for key agreement;
-`mintDid` builds a communication DID's numalgo-4 input document from
-the entity's two keys and its route, `mintMediationDid` a mediation
-arrangement's from the two keys its one name derives, `mintReplicaDid` a
-replica's from the keys of `replica/<replicaId>/me` with its mediator as
-the only service; `checkDidCreated` and
-`checkMediationCreated` hold a recorded entity against the seed by
-reading its own document back, so another serialization of the same
-keys and route is the same entity), the retained peer document
-(`peer-document.ts`: `peerResolution` reads a validated long form's
-raw bytes as strict JSON, refuses what the method forbids, and returns
-the fixed retained representation as object, RFC 8785 bytes and raw
-CID; `canonicalDidOf` is the DID folds compare by; `authorizedMethodIds`,
-`methodPublicKey` and `didcommServiceUris` read any retained document's
-relationships, keys and DIDComm endpoints) and the `from_prior` proof
-(`from-prior.ts`, over `@estoc/continuity/from-prior`, which owns the
-profile, the parsing, the precheck, the signature and the receipt
-binding: `signFromPrior` signs a local rotation through the package with
-the key the seed derives for the predecessor entity, under the method
-its own document gives that key, and `issuerLongFormOf` finds the long
-form a carried proof verifies against, the issuer's own spelling or the
-one a verified retained `peer.resolved` of a short-form issuer holds;
-what a proof means for a channel is the continuity fold's), the replica
-grant (`replica-grant.ts`: `signReplicaGrant` signs, with the account key
-of a replica-mediation arrangement, the compact JWS that binds one replica
-ID and DID to the account, the arrangement and its mediator, which is what
-the mediator enrolls the replica on and what `replica.created` records;
-`readReplicaGrant` reads a grant's spelling, its length limits included,
-and `verifyReplicaGrant` holds its `kid`, its signature and its replica
-against the seed and the account document the arrangement's creation
-records), and the first
-folds (`fold/`: `VaultEventSet` reads every event once against its
-schema and hands a type's events out in canonical order and a typed
-reference's target as present, missing or mismatched; `foldAuthors` and
-`foldLabel`; `foldMediations`, each arrangement's consistent creation,
-one grant, retirement and conflicts, and the preferred one;
-`foldReplicas`, each replica's one binding and whether it is a member of
-its replica-mediation arrangement, read from the arrangement's creation
-(`mediationCreations`) whatever its routing grants say;
-`foldDids`, each local
-DID entity's consistent record, own document, the route its document names and the arrangement that routes it, disclosures,
-retirement, faults and liveness, the key-name and spelling reverse maps,
-the desired mediator recipients and each entity's receipt eligibility;
-`requiredReceivingSet`; `heldRoots` / `foldErasures` / `readState`,
-what collection must keep — every root an accepted event retains, a
-message's until its erasure releases it, a prepared envelope until
-its message is submitted or terminated — and how a root reads, erased
-before absent. Every fold is a pure function of the event set, checked
-by shuffling; what needs the seed, whether an entity's document carries
-the keys its ID derives, is `verifyDidKeys` / `verifyMediationKeys`
-beside the fold, whose verdicts are handed back in, `foldWithSeed`
-doing both in one motion, and what needs the retained documents,
-whether a resolution's snapshot is its document's, is
-`verifyResolutions` (`fold/evidence.ts`, `resolvedDocumentOf` reading
-the document a resolution names); until the seed has confirmed an
-entity it is pending, never live, and until a snapshot has been checked
-what rests on it is deferred, never applied), the raw channel
-evidence (`fold/channels.ts`: `foldSources`, each `message.in` with the
-local entity its key belongs to, the channel its actual endpoints form
-and its standing — complete, incomplete while evidence is missing or
-the seed has not yet confirmed the local entity, conflict when evidence
-contradicts it, the entity is in conflict or the peer key selected
-agrees no keys or is on another curve than the entity's own
-key-agreement key, each contradiction looked for as soon as what it
-needs is here and always reported over an absence; `foldCarriers`, each source that brought a `from_prior`: the
-package's precheck refuses, before any document, what the profile
-decides on its own — the algorithm, the media type, a `kid` of another
-DID, a subject that is the issuer or not the authenticated sender, a
-validity window — an ending is set aside as `unsupported`, a proof
-whose signature the checks beside the fold verified is bound to its
-receipt, and a bound proof on a complete carrier is the peer
-transition and the observation of the successor, both facts of that
-one receipt; `foldDecisions`, each `did.rotationSelected` checked
-against its own fields and source into a local-decision fact, pending
-while evidence may still arrive, in conflict when its source can never
-be positive — anonymous, from another peer or at another key than the
-predecessor's, its authentication contradicted, its proof refused —
-each refusal made on the fields it needs, not held for the entities'
-creations; `foldChannelEvidence` runs the three and says which sources
-are `positive`, the ones the continuity facts are projected from; the
-signatures are `verifyProofs` beside the fold, each carried or frozen
-proof against the long form its issuer presents or a verified
-resolution retains), the continuity (`fold/continuity.ts`:
-`projectFacts` turns the evidence into `@estoc/continuity` facts under
-IDs every replica derives from the same event CIDs — the observation
-of a complete proof-free receipt, the transition and observation of a
-bound proof, the decision of a `did.rotationSelected` that passes its
-own checks, naming its source's observation — and `foldContinuity`
-hands them to the package's `deriveContinuity`, which owns the links,
-the joins, the contexts, the conflicts, the heads, the paths and the
-confirmation; the fold reads that model beside the evidence's own
-verdicts: each carrier's and decision's `status`, `unsupported` for an
-ending, what each source `witness`es, a proof-free receipt on its own
-authentication alone, whether a channel is `conflicted` — a conflict
-reaches it or what lies ahead of it — or `superseded` in its
-local-only context, its `head`, the channel itself when no fact
-mentions it and none while a replacement ahead waits, conflicts or is
-not unique, the admitted observation a local DID is `confirmedBy`
-toward a peer for new work — the model confirms by every usable one,
-and a saved decision rests on those — the
-role-preserving `ackPath` from an outbound to a carrier, the denials
-that cover a channel through the history and the decisions of a
-peer-only context whether or not they are projected; the package's
-`model` is exposed for what those do not summarize), the
-admissions (`admission/model.ts`: `foldAdmissions` reads each
-`message.admitted`, the runtime's acceptance of one exact observation
-for application use, against its source — `effective` when the source
-is positive evidence on its own, `pending` while the source or its evidence is
-still to arrive, `invalid` for good — and says which observations are
-`admitted`; `foldDispositions` gives every observation its
-disposition, `refused` for good, `admitted`, `ignored-superseded` once
-the peer moved on without one, or `pending-admission` with what stands
-in the way, and lists the `candidates` no effective or pending
-admission names, in canonical event order, each `eligible`, `deferred`
-for evidence, `refused` by current policy — the peer's replacement, the
-channel's denial, a conflict in the continuity its proof needs, a
-contradiction of the intent its input admitted — or `invalid`, for the
-runtime to walk when it records admissions, the fold recording none;
-`admission/record.ts` is that walk: `reconcileAdmissions` records the
-admissions the observations are owed, in canonical event order and
-round by round under the lock, each round the first eligible candidate
-of each input and the fold read again over the extended set before the
-next, so that a consistent duplicate is admitted after the first and a
-contradicting one refused against it, `admissionDrafts` being one
-round's decision and `admitReceipts` the pass under a lock already
-held), the
-invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
-disclosure as an address handed out, which whoever holds it writes to
-in a pair of their own, no receipt under it taking anything from the
-next; it is `available` while the disclosed DID is live and routed
-where it may deliver, and `unavailable` while the DID is retired, in
-conflict, not yet created here or waiting to be live, its arrangement
-retired or ungranted included), the
-contacts (`fold/contacts.ts`: `foldContacts` is a table of latest-wins
-decisions under each contact ID — tombstone, petname, flags, local-DID
-preference, the whole channel selection replaced or cleared, merge
-hints from either side — and `selecting` names the undeleted contacts
-whose selection holds a channel), the inbound
-inputs (`fold/inbound.ts`: `foldInbound` groups every authenticated
-observation whose own authentication is complete into the input its
-canonical sender, recipient and wire ID name, one execution per input
-in its channel, its members in canonical event order; the members an
-effective admission names must agree on the intent, and a
-disagreement is a `conflict` for good, whatever later becomes of
-those members' witnesses; the input is `complete` once one admitted
-member is a complete witness under the continuity, its
-`firstWitness`, `pending` otherwise, and a member no admission names
-neither makes a conflict nor clears one, one whose intent differs
-from the admitted one being listed as `contradicting`; the observations of the input whose own
-authentication is incomplete or contradicted are its `siblings`,
-listed and counted for nothing, those with no input to join are
-`unplaced`, and the `anonymous` ones are apart; each complete input
-has the agreed intent's `kind` — application, pure ACK in its exact
-shape, any other Empty message, ping-response or problem report — its
-`firstWitness`, which orders established inputs, and whether an
-erasure names it), the outbound
-messages (`fold/outbound.ts`: `foldOutbound` reads, for each message
-ID, the intent its `message.out` records must agree on and the
-channel its sender entity and canonical recipient fix; every distinct
-preparation, each checked against the intent and its own resolution
-evidence — the peer key it selected on the curve the sender's own
-key-agreement key is on — one being the `package` and two a conflict
-with no winner; each `delivery.submitted`, complete when a complete
-preparation carries its package ID, so that under a consistent intent
-`submitted` is a fact no unrelated, competing or later evidence
-withdraws; each `delivery.failed`, an expiry counting only against an
-intent that expires; the `ackWitnesses`, once a complete package is
-here, the admitted witnesses whose `ack` names the message in its
-channel or over a verified role-preserving path, the recorded
-`delivery.acknowledged` checked against the carriers each names — any
-one under the peer's authorized keys matching in full, one still short
-of its own evidence keeping the record pending — and `late` by the
-earliest witness against the expiry; an intent derived from an input
-has its `effect` checked against the input's execution, the source's
-witness, the output's channel — the source's, or a verified local
-successor keeping the peer, a path not verified yet being pending
-unless continuity is in conflict — and the built-in operation's shape — a pure ACK
-names exactly its source carrier's wire ID, which the carrier must request,
-its complete source witness validating the saved intent with or without an
-admission, an independently admitted intent conflict keeping it in
-conflict — and a
-notification against its decision's continuity and selection, a
-control input triggering none; the `outcome` in the order conflict,
-submitted, terminal, prepared, queued, and the `work` left — a package
-to prepare, or one to dispatch, neither while a submission names a
-package still to arrive nor through blocked or conflicted continuity,
-the runtime alone deciding whether to make the call; the messages
-whose envelope contribution is `released`, submitted or terminated
-under a consistent intent, which the held roots drop;
-`notificationFor` a decision, one intent selecting and several
-conflicting; `ackTarget` the carrier's own wire ID when it requests its
-receipt and is an admitted complete witness of an input whose admitted
-intents agree, or the reason it earns none; and `inReplyTo`, the
-outbound a ping-response or problem report answers), the whole fold
-(`fold/vault.ts`: `foldVault` runs every fold over one set, each fed
-the ones it reads, and adds the retention edge by edge and the roots
-it holds; `checkVault` computes every verdict beside it in one motion,
-the seed's and the documents', `objectReader` reading the vault's
-objects with absence, damage and excess size each as no verdict;
-`scanVault` is one scan of a vault, the checks and the fold), the views
-(`fold/views.ts`, reached as `fold.views`: a channel with its inputs in
-canonical event order, the outbounds fixed to it, the problem reports
-peers sent beside the outbound each one's thread names when the carrier
-may answer it, and its send gate — the local DID live and not
-replaced here by a decision, made or still waiting, the pair not
-denied, its continuity not in conflict and its peer not moved on,
-which `senderGate` / `channelPolicy` in `channel-policy.ts` decide for
-every path to the wire, a user send, a reply, a package and a call
-alike; and a
-contact, or several shown as one, as the channels it selected followed
-by the related history verified continuity connects to them, each
-message once and each in its own channel, with `writeTo` the distinct
-heads of the selected channels that take a new send now, a `useDid`
-preference matched to the heads at that DID or at a verified local
-successor of it on the way there, and `defaultWriteTo` only when one
-head is left, never a predecessor in place of an unusable head) and
-the procedures, one module per question (`retention.ts`:
-`vaultRetention` / `vaultHeldRoots` hand the event store the fold's
-retention for collection, export, validation and import, and
-`collectGarbage` is one pass; `commit.ts`: how a decision over the fold
-commits, one scan under the writer lock, one batch, and a collection
-under the same lock when the batch may release a root; `erasure.ts`:
-`eraseMessage` erases a message over every root its events and
-packages still name, in one commit, and `closeErasures` appends the
-equivalent erases a later observation or package made an erased
-message owed, `eraseDrafts` / `erasureClosure` being the decisions;
-`response-policy.ts`: `responseChannel`, where a built-in reply goes,
-the carrier's own channel while its local DID sends there and
-otherwise the unique verified local successor head keeping the peer,
-`notificationChannel`, where a verified decision's notification goes
-while its source, an application input, stays eligible, and
-`automaticIntent`, an operation's tuple over an input, its message ID
-and the intent already under it; `rotation-policy.ts`: `decisionFor`
-is the decision a rotation away from a pair reuses, defers on or
-refuses over, from its verified peer-only context; `pending-work.ts`:
-`unfinishedWork` lists what an open finds and dispatches nothing of —
-the outbounds still to prepare or dispatch, the pure ACKs and Ping
-replies established inputs may still be given, each a candidate the
-manual completion still holds to current policy and to what the body
-says, the notifications verified decisions permit, the decisions whose
-notification intents disagree, and the proofs waiting for issuer
-material; `contact-commands.ts`: `blockChannels` denies pairs once
-each, `deleteContact` appends the tombstone with the denials and
-erasures the product chose alongside, `blockDrafts` /
-`deleteContactDrafts` being the decisions).
-Every published
-identifier and public-key vector of those documents is a test in
-`test/`, and the DIDs and signature a fixed seed derives are pinned
-there too.
+for the hashes and the inbound identities. The code and its tests
+define what the folds and the procedures do; each module's leading
+comment states what it is responsible for.
+
+## Modules
+
+Each module answers one question. Its leading comment states its
+responsibility, its exports are the entry points, and `test/` mirrors
+`src/`. Every published identifier, key and document vector of the
+specifications is a test, and the DIDs and signatures a fixed seed
+derives are pinned there too.
+
+| Question | Module | Entry points |
+| --- | --- | --- |
+| What kind of value is this? | `types.ts` | the nominal identifier types, `VaultData` |
+| Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, the key names |
+| How is a public key spelled? | `public-key.ts` | `canonicalPublicKey`, `agreementKey` |
+| Does this payload read? | `schema.ts`, `syntax.ts` | `readVaultEvent`, `readVaultDraft`, `vaultDraft` |
+| What does a message store, and hash to? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `readPlaintext`, `wirePlaintext`, `intentHash`, `plaintextHash` |
+| Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `documentSendsTo` |
+| What does the vault retain of a peer's document? | `peer-document.ts` | `peerResolution`, `canonicalDidOf`, `authorizedMethodIds`, `methodPublicKey` |
+| How is a proof signed, and what is it verified against? | `from-prior.ts`, `replica-grant.ts`, `recipient-proof.ts` | `signFromPrior`, `issuerLongFormOf`, `signReplicaGrant`, `verifyReplicaGrant`, `signRecipientProof` |
+| Which events are there? | `fold/set.ts` | `VaultEventSet` |
+| Who wrote, and what is the vault called? | `fold/author.ts` | `foldAuthors`, `foldLabel` |
+| Which arrangements, replicas and DIDs carry mail? | `fold/mediation.ts`, `fold/replicas.ts`, `fold/dids.ts` | `foldMediations`, `foldReplicas`, `foldDids`, `requiredReceivingSet` |
+| Is a retained document what its resolution says? | `fold/evidence.ts` | `verifyResolutions` |
+| What does each receipt and each rotation establish on its own? | `fold/channels.ts` | `foldChannelEvidence`, `verifyProofs` |
+| Which channel stands where, now? | `fold/continuity.ts` | `foldContinuity`: `head`, `witness`, `status`, `confirmedBy`, `blocked`, `decisionsIn` |
+| Which observations speak for the application? | `admission/model.ts` | `foldAdmissions`, `foldDispositions` |
+| Which inputs are established, through which witness? | `fold/inbound.ts` | `foldInbound` |
+| What has an outbound become, and what does it still need? | `fold/outbound.ts` | `foldOutbound` |
+| What must collection keep? | `fold/held.ts` | `heldRoots`, `retainedRoots`, `readState` |
+| May this invitation still be handed out? | `fold/invitations.ts` | `foldInvitations` |
+| What did the user decide about a contact? | `fold/contacts.ts` | `foldContacts` |
+| What is shown for a channel, or a contact? | `fold/views.ts` | `foldViews` |
+| Does this channel take new work? | `channel-policy.ts` | `senderGate`, `channelPolicy` |
+| All of it, over one set | `fold/vault.ts` | `foldVault`, `checkVault`, `scanVault` |
+| How does a decision commit? | `commit.ts` | `commitDecided`, `commitAndCollect`, for the procedures below |
+| What does the event store keep? | `retention.ts` | `vaultRetention`, `vaultHeldRoots`, `collectGarbage` |
+| How is a message erased, and kept erased? | `erasure.ts` | `eraseMessage`, `closeErasures` |
+| Which admissions are owed? | `admission/record.ts` | `reconcileAdmissions`, `admitReceipts` |
+| Where does a reply, or a notification, go? | `response-policy.ts` | `responseChannel`, `notificationChannel`, `automaticIntent` |
+| Which decision does a rotation reuse? | `rotation-policy.ts` | `decisionFor` |
+| What does blocking or deleting a contact append? | `contact-commands.ts` | `blockChannels`, `deleteContact` |
+| What does an open find unfinished? | `pending-work.ts` | `unfinishedWork` |
+
+## Reading order
+
+1. `types.ts` and `ids.ts`: the vocabulary, and the identifiers every rule derives.
+2. `schema.ts`: what each event type carries, and the rules between its members.
+3. `fold/set.ts`, then `fold/vault.ts`: how an event set is read, and which fold feeds which.
+4. The folds, following the arguments `fold/vault.ts` passes from one to the next: a fold's inputs are the folds to read before it.
+5. `commit.ts`, which commits one decision over a fold read under the writer lock, then the procedures: each states its own lock and batch boundaries.
+
+## Example
+
+```ts
+import { channelOf, reconcileAdmissions, scanVault, senderGate } from "@estoc/vault";
+
+const fold = await scanVault(vault, keys);
+const channel = channelOf(ourDid, peerDid);
+senderGate(fold, channel);              // { status: "open" }, or why the channel takes no new work
+fold.views.channel(channel).inputs;     // the established inputs there, in canonical event order
+fold.dispositions.disposition(cid);     // what one observation stands as: admitted, refused, ignored, pending
+await reconcileAdmissions(vault, keys); // commit the admissions still owed, dispatching nothing
+```
 
 ## Development
 

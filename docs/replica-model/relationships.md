@@ -286,7 +286,7 @@ channel peer's immutable key changed. Live prerequisite retries follow
 Every local and remote phase-1 channel address is a Peer DID numalgo 4.
 Both validated long and canonical short forms name one entity. Canonicalization
 validates the long form and uses its derived short form. The retained document
-follows [vault-events.md section 4.4](vault-events.md#peer-resolved)'s fixed
+follows [vault-events.md section 4.3](vault-events.md#peer-resolved)'s fixed
 long-form representation, including when the presented DID is short. The
 encoded document is immutable; changing its keys or bound service produces
 another DID. Public and private disclosure use this same method.
@@ -324,7 +324,7 @@ a retained method-valid `peer.resolved` document matches it under section 8.1.
 A long form retained only in other event data does not qualify. Without the
 matching document, a proof that passes the checks not requiring it stays pending.
 A receiver compares predecessor DID spellings and authentication-method IDs
-under [vault-events.md section 6.3](vault-events.md#relationship-peertransitioned), using only the method's validated spelling
+under [the channel evidence fold](../../packages/vault/src/fold/channels.ts), using only the method's validated spelling
 equivalence and the exact verification document. Exact wire spellings remain retained.
 A successor may send through another arrangement or endpoint for privacy. Neither changing
 transport preference nor choosing another service changes an existing DID.

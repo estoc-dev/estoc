@@ -42,14 +42,7 @@ export type Released = ReadonlySet<MessageId>;
 
 const NONE: Released = new Set();
 
-/**
- * The retention the event set holds, edge by edge: each accepted event
- * with each root of its that it still retains. A message's event — a
- * `message.out`, a `message.in`, a `message.prepared` — retains what its
- * message's erasures did not release, and a preparation nothing when
- * its message is released; every other event every root it names. In
- * event order, then by root.
- */
+/** The retention the event set holds, edge by edge: each accepted event with each root it still retains. */
 export function retainedRoots(set: VaultEventSet, erasures: Erasures = foldErasures(set), released: Released = NONE): Retained[] {
   const retained: Retained[] = [];
   const retain = (cid: EventCid, root: Cid) => retained.push({ cid, root });
