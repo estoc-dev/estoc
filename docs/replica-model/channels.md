@@ -193,7 +193,7 @@ no invitation state and grants none. No event records who used an invitation,
 and nothing a peer sends under one takes it from the next. An invitation is
 available while its disclosed DID is live on a route that may deliver, and
 unavailable once the DID or its route ended or while one of them waits on
-something that may recover; [the invitation fold](vault-events.md#invitation-fold)
+something that may recover; [the invitation fold](../../packages/vault/src/fold/invitations.ts)
 owns that view. An `oobId` that distinct disclosures carry, once histories
 that each disclosed it are merged, is unavailable under every one of them and
 handed out again under none; the DIDs and their receipts are as they were.
@@ -718,7 +718,7 @@ pending; invalid source/proof evidence grants no effective admission.
 
 Then compare claims across effective admissions. Contradictory admitted claims
 remain admitted, with a separate logical-input conflict that suppresses affected
-application use under [vault events](vault-events.md#inbound-message-and-execution-fold).
+application use under [the inbound fold](../../packages/vault/src/fold/inbound.ts).
 Competing verified continuity likewise remains a separate conflict checked by
 each consumer. Neither conflict chooses a winning admission by event order or
 repeatedly removes/re-adds admissions. Independently committed operation and

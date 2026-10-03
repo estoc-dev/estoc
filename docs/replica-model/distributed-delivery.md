@@ -510,7 +510,7 @@ replace it; changing the package requires a new message ID.
 
 Any valid committed submission completes the message and prevents further
 preparation or retry, regardless of ACK policy. Missing submission does not prove
-nondelivery; pending work follows [the delivery fold](vault-events.md#outbound-message-and-delivery-fold).
+nondelivery; pending work follows [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 
 Expiry stops new work at equality and records message-terminal failure when
 observed before preparation/dispatch. It does not overwrite an already recorded
@@ -747,7 +747,7 @@ Address selection and optional early privacy rotation follow
 
 An automatic DIDComm output is identified by `(executionId, effectType)`.
 `executionId` MUST derive from a complete, conflict-free logical carrier under
-[the input fold](vault-events.md#inbound-message-and-execution-fold).
+[the input fold](../../packages/vault/src/fold/inbound.ts).
 An intent conflict between independently admitted observations suppresses all
 automatic work for that execution;
 making a disagreeing group ineligible cannot clear the conflict.
@@ -779,7 +779,7 @@ effectKey = base64url(
 The unpadded base64url key determines the outbound message and wire ID under
 [vault events](vault-events.md#ids). The [message.out schema](vault-events.md#message-out)
 stores the tuple and intent and defines their validation; conflicts follow
-[the delivery fold](vault-events.md#outbound-message-and-delivery-fold).
+[the delivery fold](../../packages/vault/src/fold/outbound.ts).
 
 Under the operation lock in [event-store.md section 9](event-store.md#vault-interface),
 check the specific operation's source, current policy and usable authorized
@@ -1012,7 +1012,7 @@ or mediator-visible IDs.
 - <a id="dd-29"></a> **DD-29.** Duplicate explicit ACKs are harmless and affect only peer receipt
     information, never submission completion or envelope retention.
 - <a id="dd-30"></a> **DD-30.** Expiry stops unsubmitted work permanently. Receipt `late` follows
-    [vault-events.md section 9.7](vault-events.md#outbound-message-and-delivery-fold)'s committed observation-time rule for both
+    [the outbound fold](../../packages/vault/src/fold/outbound.ts)'s committed observation-time rule for both
     submitted and expired messages, without changing submission outcome or
     restarting work. Already-submitted messages acquire no new expired failure.
 

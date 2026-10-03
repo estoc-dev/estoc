@@ -344,7 +344,7 @@ before seed/anchor verification. After any migration, validate the current schem
 and metadata again. Then unlock or obtain the seed and verify its anchor before
 application data writes or identity use. Validate control and reconstruct
 committed retention and unfinished work under
-[VE §13.1](vault-events.md#open-the-writable-full-runtime) before GC or workers.
+[the agent's open](../../packages/agent-core/src/identity.ts) before GC or workers.
 
 An inspector makes no application writes or new local IDs and rejects a runtime
 that requires schema migration. If read-only access cannot perform needed

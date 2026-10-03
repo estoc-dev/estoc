@@ -137,7 +137,7 @@ resolution. A discovered peer DID therefore needs a local-DID choice first.
 
 Opposite first sends can select the same channel without role arbitration.
 Each operation retains its own verification evidence. Contact selections affect
-display and send choices under [the contact fold](vault-events.md#contact-fold),
+display and send choices under [the contact view](../../packages/vault/src/fold/views.ts),
 not protocol authority. Deletion that also blocks communication must append
 concrete channel denials separately.
 
@@ -152,7 +152,7 @@ independently of its publication medium. An OOB ID supplies `pthid`, never
 channel identity. An invitation is reusable: whoever holds it writes in a
 channel of their own, and no receipt takes it from the next under
 [channels.md](channels.md#invitations). Availability follows
-[the invitation fold](vault-events.md#invitation-fold).
+[the invitation fold](../../packages/vault/src/fold/invitations.ts).
 
 <a id="address-lifecycle"></a>
 
@@ -178,7 +178,7 @@ admitted history and committed operations without granting another dispatch.
 ## 8. Ordinary sending and channel selection
 
 Before intent commit, select one exact eligible channel explicitly or through
-[the contact's send choices](vault-events.md#contact-fold). Defaults follow the
+[the contact's send choices](../../packages/vault/src/fold/views.ts). Defaults follow the
 unique verified head under [channel selection](channels.md#fixed-outbound-channel);
 an explicit address choice can start a new channel without a handshake.
 Existing intents keep their channels.
@@ -291,13 +291,13 @@ no `message.in`, contact or response effect.
 Input to an eligible retired local key MUST pass through ordinary
 decryption, authentication and durable receipt. It does not wait for a
 `recipient-add`: the DID stays in the desired recipient set under
-[vault-events.md section 5.7](vault-events.md#route-did-and-key-fold), and an addition the
+[the DID fold](../../packages/vault/src/fold/dids.ts), and an addition the
 mediator has not confirmed to this runtime is asked for on connection as any is. Channel denials and
 the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target) still govern subsequent work. Its mediation stays in the required
-receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while the
+receiving set under [the same fold](../../packages/vault/src/fold/dids.ts) while the
 arrangement that routes it is usable.
 Explicit channel blocking remains independent of contact display deletion under
-[vault-events.md section 13.6](vault-events.md#delete-a-contact).
+[contact deletion](../../packages/vault/src/procedures.ts).
 
 For an exact local recipient that can be decrypted, the receiver then checks
 only conditions needed to classify the input safely before writing portable
