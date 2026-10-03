@@ -213,7 +213,7 @@ disposition shown beside every observation are
 that records the admissions a vault owes, under the writer lock and in
 canonical event order, is
 [`packages/vault/src/admission/record.ts`](../../packages/vault/src/admission/record.ts), run by
-[`packages/agent-core/src/receive/after.ts`](../../packages/agent-core/src/receive/after.ts); pure fold or replay never
+[`packages/agent-core/src/reconcile.ts`](../../packages/agent-core/src/reconcile.ts); pure fold or replay never
 appends an admission. Which admitted observations speak for one logical input,
 and when they conflict, is [the inbound fold](../../packages/vault/src/fold/inbound.ts). As
 with other local decisions, the event records a trusted vault runtime's
@@ -334,8 +334,9 @@ its tests sit beside it. This document describes none of them a second time.
   and [`receiver.ts`](../../packages/agent-core/src/receive/receiver.ts). The authenticated unpack
   that keeps `from_prior` as the string it came as is the
   [DIDComm API](../../packages/agent-core/README.md#didcomm-api).
-- Durable receipt, and the admissions reconciled under the same lock:
-  [`receive/receipt.ts`](../../packages/agent-core/src/receive/receipt.ts) and
+- Durable receipt, what the vault owes once it is in, and what is reported of
+  the observation in hand: [`receive/receipt.ts`](../../packages/agent-core/src/receive/receipt.ts),
+  [`reconcile.ts`](../../packages/agent-core/src/reconcile.ts) and
   [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts).
 - What each source, carrier and decision establishes on its own:
   [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts). Locating
