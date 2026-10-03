@@ -7,7 +7,7 @@
 Status: **phase 1**. The event vocabulary of one single-seed vault
 executed by exactly one active writable full runtime. The folds over the
 events and the procedures that append them are code; see
-[section 13](#folds-and-procedures).
+[section 11](#folds-and-procedures).
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**,
@@ -39,13 +39,13 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 
 | Domain | Definitions and event schemas | Folds | Procedures |
 | --- | --- | --- | --- |
-| Identity and naming | [Identity, keys and identifier types](#identity-seed-and-key-names); [Identity label](#identity-label) | [Runtime author](#runtime-author-fold) | [Open runtime](../../packages/agent-core/src/identity.ts) |
+| Identity and naming | [Identity, keys and identifier types](#identity-seed-and-key-names); [Identity label](#identity-label) | [Authors and label](../../packages/vault/src/fold/author.ts) | [Open runtime](../../packages/agent-core/src/identity.ts) |
 | Mediation and DIDs | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation and DID events](#mediation-communication-dids-and-routes) | [Mediation](../../packages/vault/src/fold/mediation.ts); [Replicas](../../packages/vault/src/fold/replicas.ts); [DIDs and keys](../../packages/vault/src/fold/dids.ts) | [Establish mediation](../../packages/agent-core/src/mediation.ts); [Enroll a replica](../../packages/agent-core/src/replica-enrollment.ts); [Create and disclose a DID](../../packages/agent-core/src/dids.ts) |
-| Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](../../packages/agent-core/src/privacy.ts); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
-| Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](../../packages/vault/src/fold/contacts.ts); [Contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/contact-commands.ts) |
-| Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events and witnesses](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
+| Channels and continuity | [Channel identity and payloads](channels.md#channel-identity) | [Channel evidence](../../packages/vault/src/fold/channels.ts); [Continuity](../../packages/vault/src/fold/continuity.ts); [Admission](../../packages/vault/src/admission/model.ts) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](../../packages/agent-core/src/privacy.ts); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
+| Contacts | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Contacts](../../packages/vault/src/fold/contacts.ts); [Channel and contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/contact-commands.ts) |
+| Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
 | Invitations | [Disclosure](#disclosure) | [Invitation availability](../../packages/vault/src/fold/invitations.ts) | [Discovery](relationships.md#out-of-band-discovery); [Receipt](../../packages/agent-core/src/receive/receipt.ts) |
-| Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held-root rules](#held-roots) | [Erase message](../../packages/vault/src/erasure.ts) |
+| Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held roots](../../packages/vault/src/fold/held.ts) | [Erase message](../../packages/vault/src/erasure.ts) |
 
 <details>
 <summary>Contents</summary>
@@ -55,17 +55,15 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 - [3. Identity, seed and key names](#identity-seed-and-key-names)
 - [4. Message keys and peer evidence](#message-keys-and-peer-evidence)
 - [5. Mediation and communication DIDs](#mediation-communication-dids-and-routes)
-- [6. Channels, continuity and contact membership](#relationships-and-address-changes)
-- [7. Contacts and application views](#contacts)
-- [8. Stored message document](#stored-message-document)
-- [9. Outbound messages and delivery](#outbound-message-events)
-- [10. Inbound messages and execution](#inbound-message-events)
-- [11. Automatic effects](#automatic-effects)
-- [12. Erasure and collection](#erasure-and-collection)
-- [13. Folds and procedures](#folds-and-procedures)
-- [14. Merge and restore](#merge-and-restore)
-- [15. Privacy and security boundaries](#privacy-and-security-boundaries)
-- [16. Versioning](#versioning)
+- [6. Contacts](#contacts)
+- [7. Stored message document](#stored-message-document)
+- [8. Outbound messages and delivery](#outbound-message-events)
+- [9. Inbound messages](#inbound-message-events)
+- [10. Erasure and collection](#erasure-and-collection)
+- [11. Folds and procedures](#folds-and-procedures)
+- [12. Merge and restore](#merge-and-restore)
+- [13. Privacy and security boundaries](#privacy-and-security-boundaries)
+- [14. Versioning](#versioning)
 
 </details>
 <!-- reading-guide:end -->
@@ -127,15 +125,6 @@ is authoritative.
 10. **A mediator is not the vault.** Mailbox ciphertext has bounded retention.
     The readable event/object set is the recovery source.
 
-<a id="14-folds"></a>
-
-<a id="folds"></a>
-
-### 2.1 Fold conventions
-
-All folds accept events in any order and are deterministic over the set.
-Canonical order is used only where stated.
-
 <a id="identity-seed-and-key-names"></a>
 
 ## 3. Identity, seed and key names
@@ -186,10 +175,9 @@ derives the DID under which that replica alone picks up mail
 replica's own DID never becomes a portable observation.
 
 Changing a communication DID's keys or embedded service creates another
-`did:peer:4` entity. A local `did.rotationSelected` under
-[section 6.4](#relationship-localtransitioned) authorizes a successor channel
-for new intents; existing intents retain their channel and may become
-undispatchable. There is no local
+`did:peer:4` entity. A local [`did.rotationSelected`](channels.md#did-rotationselected)
+authorizes a successor channel for new intents; existing intents retain
+their channel and may become undispatchable. There is no local
 communication-key generation or key-generation selection. Store generations
 retain their separate storage meaning.
 
@@ -447,7 +435,7 @@ This vocabulary applies to vault payloads. The event envelope's `author` and
 `roots`, serialized local-file fields such as `replica_id`, and wire/protocol fields retain their
 owner-defined names. In particular, DIDComm `id`, `body`, `attachments`,
 `from`, `to`, `thid`, `pthid` and `kid` are unchanged; the stored message
-document in [section 8](#stored-message-document) also retains its application-content shape. Producers
+document in [section 7](#stored-message-document) also retains its application-content shape. Producers
 map vault fields to those protocol fields explicitly.
 
 Namespace purpose strings, keystore paths, literal hash-transcript tags and
@@ -477,16 +465,6 @@ container therefore follows those actual bytes.
 
 The latest value by canonical order is the user-visible identity name.
 It is ordinary LWW metadata and has no key or protocol effect.
-
-<a id="141-runtime-author-fold"></a>
-
-<a id="runtime-author-fold"></a>
-
-### 3.7 Runtime-author fold
-
-Phase 1 expects exactly one active local `replica_id`. For each author seen in
-the event set, the fold reports `firstEventAt` and `lastEventAt`. An author
-fork is an event-store integrity condition, not a normal multi-writer merge.
 
 <a id="message-keys-and-peer-evidence"></a>
 
@@ -524,10 +502,8 @@ exact string.
 
 For an inbound observation it is the key that authenticated the message; for
 an outbound package it is the selected recipient key. A peer resolution records
-the key-agreement key used for receipt/preparation. Predecessor JWT checks use
-the immutable issuer document derived under [section 6.3](#relationship-peertransitioned) and its authentication
-methods directly. Selection alone is not evidence
-of authenticated inbound traffic or remote receipt.
+the key-agreement key used for receipt/preparation. Selection alone is not
+evidence of authenticated inbound traffic or remote receipt.
 
 The executable key fixture used by this specification is X25519, public-key
 codec `0xec` (unsigned-varint bytes `ec01`), with these 32 raw public-key bytes:
@@ -548,11 +524,8 @@ their explicit keys. Continuity links derive from exact proof evidence and local
 
 `message.in.presentedDid` preserves the wire spelling, and
 `peer.resolved.presentedDid` preserves the spelling used for resolution.
-First-disclosure validation and recovery use this retained evidence.
-A verified link may justify a new channel without changing earlier message IDs.
-Equal key values under different DIDs do not supply channel authority or a
-contact assignment. Each observation retains its own key evidence, and each
-consumer checks its own prerequisites.
+Each observation retains its own key evidence; what it establishes is
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts)'s to say.
 
 <a id="mediation-key-evidence"></a>
 
@@ -567,25 +540,11 @@ mediation/
 These observations belong to the mediation fold, not application
 channels or contact/application views.
 
-<a id="11-peer-and-profile-observations"></a>
-
-<a id="peer-and-profile-observations"></a>
-
-<a id="43-peer-and-profile-observations"></a>
-
-<a id="resolution-observations"></a>
-
-### 4.3 Resolution observations
-
-Resolution observations retain exact cryptographic evidence. Peer continuity
-links follow the same rule in [section 6.3](#relationship-peertransitioned).
-These facts remain distinct from contact assignments and local DID entities.
-
 <a id="111-peerresolved"></a>
 
 <a id="peer-resolved"></a>
 
-### 4.4 `peer.resolved`
+### 4.3 `peer.resolved`
 
 ```json
 {
@@ -630,13 +589,10 @@ peer key. `localKeyName` identifies the local communication key/context.
 
 Receipts and packages retain exact resolution references for the immutable
 peer document. The receipt's `peerResolutionEventCid` authenticates the current
-sender only; predecessor JWT verification derives its issuer document under
-[section 6.3](#relationship-peertransitioned) using the same canonical representation.
-The referenced resolution objects
+sender only; a predecessor proof is verified against the issuer document
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts) finds
+under the same canonical representation. The referenced resolution objects
 remain historical evidence; another document cannot replace any reference.
-If the event or object is temporarily missing, processing is deferred until
-verified recovery material is available; absence is not proof that the
-referenced evidence is invalid.
 
 For a `did:peer:4` first disclosure, the implementation decodes and validates
 `presentedDid`, derives `did` and the document locally, and stores both forms.
@@ -661,7 +617,8 @@ bytes and CID from `L`, even though `presentedDid` may now be `S`. New resolutio
 events may record another presented spelling, selected key or local `localKeyName`;
 they do not produce a second document for the same numalgo-4 DID. Import
 validates this representation against `L`; it never repairs evidence by rewriting
-the retained bytes or CID. Method-ID comparison follows [section 6.3](#relationship-peertransitioned).
+the retained bytes or CID. Method IDs compare as [the retained peer
+document](../../packages/vault/src/peer-document.ts) reads them.
 
 Equivalent duplicate observations are harmless. Same document CID with
 incompatible contents is an integrity conflict; a different
@@ -717,12 +674,12 @@ whose mail each replica picks up under its own DID. `me.did` is recorded as a
 `did:peer:4` long form; a short form is an invalid payload. The payload names
 no profile: there is one kind of arrangement.
 
-Replicas that each arrange with one mediator record one creation: creations
-under one `mediationId` whose `mediatorDid` agree under `N` and whose `me`
-are identical are one creation, whichever spelling of the mediator each
-replica was given, and the fold reads them as one. Repeating the arrangement
-ID with another `me` is an integrity conflict. There is no second
-arrangement with one mediator.
+Replicas that each arrange with one mediator record one creation, whichever
+spelling of the mediator each was given: [the mediation
+fold](../../packages/vault/src/fold/mediation.ts) reads the creations and the
+grants of one arrangement as one when they agree under `N`, and as a conflict
+nothing later resolves when they do not. There is no second arrangement with
+one mediator.
 
 <a id="mediation-granted"></a>
 
@@ -745,11 +702,6 @@ observation of the mediator's `account-registered` reply, recorded once, and
 `N(routingDid)` equals `N(mediatorDid)` of the arrangement; any other value
 is a conflict.
 
-Grants of one arrangement whose routing DIDs agree under `N` are one grant.
-More than one routing DID under `N` for one arrangement ID is a conflict. The
-runtime MUST NOT guess which grant is authoritative, and no later grant
-chooses one: the arrangement stays in conflict.
-
 <a id="mediation-selected"></a>
 
 #### `mediation.selected`
@@ -765,10 +717,8 @@ chooses one: the arrangement stays in conflict.
 ```
 
 This is the user's or policy's preferred mediation for newly minted
-mediated DIDs. The latest event by canonical order wins.
-
-Selection does not stop old arrangements from receiving. Any mediation
-that routes a retained DID remains required.
+mediated DIDs. The latest event by canonical order wins. Selection does not
+stop old arrangements from receiving.
 
 <a id="mediation-retired"></a>
 
@@ -913,9 +863,9 @@ DID, or an absolute HTTPS or WSS direct endpoint. The route is part of
 the document, so the long form fixes it; nothing beside the document
 records it and no event changes it. A transport or mediation change
 creates successor DID entities, allowing old and new DIDs to overlap
-during cutover. Each affected channel context uses its own
-[section 6.4](#relationship-localtransitioned) local decision for new
-intents; mediation selection does not migrate existing DIDs.
+during cutover. Each affected channel takes its own
+[`did.rotationSelected`](channels.md#did-rotationselected) for new intents;
+mediation selection does not migrate existing DIDs.
 
 A direct endpoint routes to a full vault runtime or an ingress service.
 It MUST NOT identify one replica as the DIDComm application recipient.
@@ -925,16 +875,10 @@ One rendezvous DID and many pairwise DIDs may send through the same
 arrangement or endpoint, which is how they reuse a mediator or direct
 ingress without sharing an application identity.
 
-A mediated DID is routed by the usable arrangement whose grant names its
-routing DID. A usable arrangement is routed through its own mediator, and
-a vault has one arrangement per mediator under the ID the mediator's DID
-derives, so one arrangement at most routes a DID. While none does, the DID
-waits: the creation or the grant that makes that arrangement usable may not
-have been replicated here yet, so the fold MUST NOT end a mediated DID's
-receipt on the arrangement's account. Once the arrangement routing a DID is
-retired or in conflict, the DID waits as well, and no arrangement with that
-mediator follows it. Restoring communication takes a successor DID, never
-a change to the old entity.
+Which arrangement routes a mediated DID now, and whether the DID is live,
+waits or has ended, is [the DID fold](../../packages/vault/src/fold/dids.ts)'s.
+Restoring communication takes a successor DID, never a change to the old
+entity.
 
 <a id="disclosure"></a>
 
@@ -996,43 +940,28 @@ Retirement is terminal for new sending and disclosure using this DID.
 It does not erase keys, documents, received messages or continuity evidence,
 and it takes the DID off no mediator: the DID stays in the desired recipient
 set of [the DID fold](../../packages/vault/src/fold/dids.ts), held by its account.
+A retired DID's key still receives; whether it may now is that fold's, and
+[the receiver](../../packages/agent-core/src/receive/receiver.ts) owns the
+receipt gates. An invitation on a retired local DID is unavailable.
 
-A retained exact local key remains eligible for authenticated channel
-receipt, including after DID retirement; a mediated DID's key waits while
-no usable arrangement routes it. This rule applies equally to publicly disclosed and privately
-allocated addresses. Receipt does not wait for a `recipient-add`: an
-addition the mediator has not confirmed to this runtime is asked for on
-connection as any is, and that asks nothing new of sending or disclosure.
-An invitation on a retired local DID is unavailable.
-[the receiver](../../packages/agent-core/src/receive/receiver.ts) owns the receipt gates;
-[distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
+<a id="7-contacts"></a>
 
-Retain key/document evidence and usable mediation needed by retained channels.
-Channel denials and sender eligibility govern new work. Retained
-confirmation may justify an explicitly requested recovery rotation without reviving
-the old address. Retirement never erases committed message or delivery evidence;
-display contact deletion alone is not a transport or authorization operation.
+<a id="contacts"></a>
 
-<a id="12-relationships-and-address-changes"></a>
-<a id="relationships-and-address-changes"></a>
+## 6. Contacts
 
-## 6. Channels, continuity and contact membership
+A contact uses a `contactId` to organize [selected channels](#contact-channelsset),
+names and preferences independently of protocol authority.
 
-Channel identity, invitations, continuity links, local denial and contact views
-are defined in [channels.md](channels.md).
+<a id="contact-ids"></a>
 
-<a id="121-receipt-and-relationship-evidence"></a>
-<a id="receipt-and-relationship-evidence"></a>
+### 6.1 Contact IDs
 
-### 6.1 Receipt and channel evidence
+See [relationships.md section 5.1](relationships.md#contact-ids).
 
-Channel receipt commits independently. Each source-derived operation rechecks
-its exact DID pair, evidence and applicable policy under one vault operation
-lock.
-Every event reference must
-name an already committed event; use returned CIDs, not an assumed same-batch
-CID. Release the vault lock before network calls. Per-message dispatch is
-separately serialized under [delivery](distributed-delivery.md#send-an-ordinary-message).
+<a id="contact-event-schemas"></a>
+
+### 6.2 Contact event schemas
 
 <a id="123-relationshipcontactassigned"></a>
 <a id="relationship-contactassigned"></a>
@@ -1040,7 +969,7 @@ separately serialized under [delivery](distributed-delivery.md#send-an-ordinary-
 <a id="contact-peerdidremoved"></a>
 <a id="contact-channelsset"></a>
 
-### 6.2 `contact.channelsSet`
+#### `contact.channelsSet`
 
 ```json
 {
@@ -1071,99 +1000,6 @@ selection. One channel MAY be selected by several contacts, each with its own se
 Membership grants no protocol authority. Derived related history follows
 [the channel view rules](channels.md#contact-channels) without rewriting the set.
 
-<a id="112-relationshippeertransitioned"></a>
-<a id="relationship-peertransitioned"></a>
-
-### 6.3 Peer proof evidence and continuity
-
-Derive the issuer document and verify each committed carrier's original
-`fromPrior` under [the channel evidence fold](../../packages/vault/src/fold/channels.ts). A long-form
-issuer supplies its immutable document directly; a short-form issuer requires
-the matching retained `peer.resolved` document. The original JWT is event
-metadata, and `peer.resolved` independently retains its document root, so
-message-content erasure removes neither source of issuer material.
-No association, link or trusted verification result is stored as an event.
-Verification requires neither handler execution nor a known predecessor channel.
-
-Use the shared proof profile through
-[the vault's proof adapter](../../packages/vault/src/from-prior.ts), with
-`@estoc/continuity/from-prior` owning parsing, profile checks, signature
-verification, creation and receipt binding. The issuer material is its validated
-long-form DID: an arbitrary document with the same claimed ID cannot replace
-the document encoded in that DID. The retained document/CID must match that
-immutable representation.
-
-The proof's `iss` canonicalizes to that issuer and the predecessor peer;
-binding requires `sub` to canonicalize to the receipt's authenticated sender.
-Long and short spellings of the same DID compare equal, including the DID
-portion of `kid`; the method fragment still identifies the authorized
-authentication key. Preserve the original JWT, document and presented sender
-spellings without rewriting signing input. The package profile accepts optional
-`typ` as `JWT` or `application/jwt` without case sensitivity and rejects `exp`
-and `nbf`; it evaluates no clock window. These are examples of the shared
-profile, not permission for a separate vault parser. `iat` elects no branch.
-Local producers additionally use the fixed long-form spellings required by
-[local rotation](channels.md#did-rotationselected).
-
-Verification and rebuild follow [the channel evidence fold](../../packages/vault/src/fold/channels.ts).
-Restored issuer material can complete a short-form proof only when its validated
-long form derives the exact issuer; referenced document bytes can be repaired
-only when their canonical CID matches.
-Missing material defers verification; an invalid signature, claim, method or
-long form grants no proof authority. Repeated evidence for the same predecessor and
-successor is the same DID replacement across validated long/short spellings.
-Verify each carrier's own authentication references and original JWT against
-the immutable documents; another spelling alone is not a competing successor. Shared
-keys, current resolution alone and display assignment cannot replace the
-channel context and verified proof.
-
-<a id="124-relationshiplocaltransitioned"></a>
-<a id="relationship-localtransitioned"></a>
-
-### 6.4 Local continuity decisions
-
-The [did.rotationSelected schema](channels.md#did-rotationselected) defines the
-fixed predecessor pair, successor, proof, nullable source and independent
-confirmation requirement. Commit it before disclosure under
-[the rotation procedure](../../packages/agent-core/src/rotate.ts). Rotation selects
-channels for new intents only; existing intents retain their channel and may
-become undispatchable under [the continuity fold](../../packages/vault/src/fold/continuity.ts).
-
-<a id="144-relationship-fold-and-address-index"></a>
-<a id="relationship-fold-and-address-index"></a>
-
-### 6.5 Channel and continuity projections
-
-Index exact ordered pairs by their canonical local and peer DID strings.
-Derive directed links, verified opposite-side joins, local-only supersession contexts and
-denials under [channels.md](channels.md#continuity). Edges and verification
-statuses are derived; each edge exposes its complete source witnesses.
-Missing references defer the affected projection; contradictory identities,
-proofs or same-end successors conflict. Message and execution identities remain
-fixed when graph history changes.
-
-<a id="7-contacts"></a>
-
-<a id="contacts"></a>
-
-## 7. Contacts and application views
-
-A contact uses a `contactId` to organize [selected channels](#contact-channelsset),
-names and preferences independently of protocol authority.
-
-<a id="contact-ids"></a>
-
-### 7.1 Contact IDs
-
-See [relationships.md section 5.1](relationships.md#contact-ids).
-
-<a id="contact-event-schemas"></a>
-
-### 7.2 Contact event schemas
-
-Direct channel selections use `contact.channelsSet` in
-[section 6.2](#contact-channelsset).
-
 <a id="contact-created"></a>
 
 #### `contact.created`
@@ -1184,7 +1020,7 @@ Direct channel selections use `contact.channelsSet` in
 Commit this event together with an initial non-empty `contact.channelsSet`.
 Selection may precede receipt, outbound intent or peer resolution. Imported
 creation without its membership remains valid with an empty selection until
-that membership arrives; later sets may be empty under [section 6.2](#contact-channelsset).
+that membership arrives; later sets may be empty under [`contact.channelsSet`](#contact-channelsset).
 
 <a id="contact-petname"></a>
 
@@ -1282,45 +1118,9 @@ authority, deletion or erasure.
 
 This is a permanent tombstone for exactly the named contact ID.
 
-<a id="113-profilenameclaimed"></a>
-<a id="profile-nameclaimed"></a>
-<a id="114-profileshared"></a>
-<a id="profile-shared"></a>
-<a id="145-relationship-profile-fold"></a>
-<a id="relationship-profile-fold"></a>
-<a id="application-message-views"></a>
-
-### 7.3 Application message views
-
-Applications MAY derive display data from retained messages under a supported
-protocol and local display policy. The protocol defines fields, interpretation
-and ordering. Every value retains its exact source and channel; inbound claims
-require a complete source witness and consistent logical intent under
-[the inbound fold](../../packages/vault/src/fold/inbound.ts). Missing evidence
-defers attribution; conflicting evidence supports no verified claim. Duplicates
-and cache rebuilds neither create facts nor advance their ordering.
-
-Ordinary chat, peer-profile fields and incoming ACK/error projections additionally
-require effective application admission of their exact source. Unadmitted
-observations belong to labelled diagnostics, not accepted application data.
-
-A peer name must come from a protocol-recognized field and remains a peer claim.
-It creates no contact, changes no `contact.petname` and grants no sharing
-permission. To display a profile as submitted, require a protocol-recognized
-`message.out` and complete committed submission evidence; this proves no peer receipt.
-
-Caches must be rebuildable from retained sources. Read content through
-[section 12.2](#reading-content).
-Erasure invalidates values requiring the erased bytes, even if another message
-retains the same object. Retained metadata and delivery records still support
-their own facts; explicit petnames remain separate. Missing or erased evidence
-does not prove information was never shared. Aggregation retains source-channel
-attribution and grants no cryptographic authority or sharing permission.
-Rebuilding or losing a view grants no dispatch action.
-
 <a id="stored-message-document"></a>
 
-## 8. Stored message document
+## 7. Stored message document
 
 Message application content is stored as one whole-resource raw DASL object
 containing UTF-8 RFC 8785 canonical JSON. Version 4 uses the following closed
@@ -1429,11 +1229,11 @@ Canonical projections and message hashes are defined by [distributed-delivery.md
 
 <a id="outbound-message-events"></a>
 
-## 9. Outbound messages and delivery
+## 8. Outbound messages and delivery
 
 <a id="ids"></a>
 
-### 9.1 IDs
+### 8.1 IDs
 
 - `messageId` is both the outbound vault message entity ID and the innermost
   DIDComm plaintext `id`.
@@ -1460,7 +1260,7 @@ therefore identify one logical response.
 
 <a id="message-out"></a>
 
-### 9.2 `message.out`
+### 8.2 `message.out`
 
 ```json
 {
@@ -1490,18 +1290,14 @@ therefore identify one logical response.
 }
 ```
 
-`senderDidId` and `recipientDid` are REQUIRED and immutable. Under the operation
-lock, select an eligible local DID entity and a peer DID before intent commit.
-Their canonical pair fixes the channel under [channel identity](channels.md#channel-identity).
+`senderDidId` and `recipientDid` are REQUIRED and immutable; their canonical
+pair fixes the channel under [channel identity](channels.md#channel-identity).
 `recipientDid` retains the exact supplied spelling, including a validated Peer
 long form for offline preparation; canonicalize it for channel/package comparison.
-Selection requires no resolver lookup; preparation retains its own peer evidence.
-
-An automatic output selects the source's channel or a verified role-preserving
-successor under [the continuity fold](../../packages/vault/src/fold/continuity.ts).
-A UI may select through a contact, but its ID is not protocol identity. The
-fixed address fields are excluded from the intent hash and included in full
-event equality.
+Which channel an automatic output goes to is
+[the response policy](../../packages/vault/src/response-policy.ts)'s; a contact
+ID is not protocol identity. The fixed address fields are excluded from the
+intent hash and included in full event equality.
 
 Requirements:
 
@@ -1546,7 +1342,7 @@ Requirements:
   distinct operations may share a DIDComm `msgType` but have distinct effect types;
 - an automatic intent stores the complete `(executionId, effectType)` tuple. Validation checks
   its execution ID against the carrier group, its tuple and intent against the
-  producing protocol, recomputes its key under [distributed-delivery.md section 11](distributed-delivery.md#automatic-effects), and requires its `messageId` to equal the [section-9.1](#ids) derivation;
+  producing protocol, recomputes its key under [distributed-delivery.md section 11](distributed-delivery.md#automatic-effects), and requires its `messageId` to equal the [section 8.1](#ids) derivation;
 - the three automatic-effect fields and two source/rotation references are portable metadata excluded from
   the wire and intent hash; they still participate in full event equality;
 - `thid`, `pthid`, `expiresTime` and all three automatic-effect
@@ -1557,19 +1353,14 @@ A preparer emits `created_time`, `expires_time`, `thid` and `pthid` only when
 non-null; emits `please_ack` whenever `pleaseAck` is non-null; emits `ack` and
 `attachments` when non-empty; and expands `headers` at plaintext top level.
 
-Import validates the exact saved source, fixed endpoints and required proof evidence.
-It does not rerun old local policy to erase a previously committed intent;
-current policy still gates any new dispatch. A duplicate trigger reuses the
-existing intent without replacing its source references with another observation.
-
-More than one `message.out` under one `messageId` is allowed only when every field
-is identical. Different channel, sender or recipient values conflict even when
-the intent hashes agree. Reuse of one wire ID with a different intent projection
-is an intent conflict.
+More than one `message.out` under one `messageId` is one intent only when
+every field is identical; what [the outbound
+fold](../../packages/vault/src/fold/outbound.ts) makes of a difference, or of
+an automatic intent's source, is its own.
 
 <a id="message-prepared"></a>
 
-### 9.3 `message.prepared`
+### 8.3 `message.prepared`
 
 ```json
 {
@@ -1626,26 +1417,17 @@ Requirements:
 <a id="delivery-attempted"></a>
 
 Committing this event freezes the package for its `messageId`, even before any
-transport call. Further `message.prepared` records for that message MUST have
-identical payloads and roots, including `packageId` and exact evidence references.
-Under the operation lock, reuse an existing preparation and reject a different
-one before append. Imported incompatible preparations expose a conflict;
-no event order selects a winner. Missing exact evidence or envelope bytes
-defers sending and cannot justify another preparation.
-A retained package reference whose preparation is missing remains pending;
-it is not evidence that no package was selected.
-
-Initial sends and manual retries use this package unchanged under
-[dispatch](../../packages/agent-core/src/dispatch.ts). An uncertain commit
-must be resolved before dispatch or further preparation. A package records no
-transport invocation; call counts and retry diagnostics are local trace.
-Submission or message-scoped termination stops preparation and retry. Recheck
-lifecycle and security at dispatch without invalidating historical evidence.
-Public and pairwise addresses use the same package rules and name no replica.
+transport call: further `message.prepared` records for that message MUST have
+identical payloads and roots, including `packageId` and exact evidence
+references, and every transport call of the message carries these envelope
+bytes. A package records no transport invocation; call counts and retry
+diagnostics are local trace. What a differing or missing preparation means is
+[the outbound fold](../../packages/vault/src/fold/outbound.ts)'s; when the
+package is sent is [dispatch](../../packages/agent-core/src/dispatch.ts)'s.
 
 <a id="delivery-submitted"></a>
 
-### 9.4 `delivery.submitted`
+### 8.4 `delivery.submitted`
 
 ```json
 {
@@ -1674,7 +1456,7 @@ fields of this portable event and do not participate in the delivery fold.
 
 <a id="delivery-failed"></a>
 
-### 9.5 `delivery.failed`
+### 8.5 `delivery.failed`
 
 ```json
 {
@@ -1706,26 +1488,19 @@ later cannot reopen the intent. Further sending requires a new message ID.
 A termination never proves nondelivery: an earlier unrecorded call may have
 succeeded. Any independently complete submission takes precedence after import.
 
-An explicit cancel action serializes with dispatch for the message, rechecks
-submission under the operation lock and appends `code == "cancelled"` only
-while unsubmitted. It may cancel before preparation or after an outcome-unknown
-call. Cancellation preserves message content.
-
 Resolution and transport failures, the `resolve`/`prepare`/`submit` phase and
 retry diagnostics belong only to local trace and retry policy. They MUST NOT append
 `delivery.failed`. Losing that local state does not terminate the intent or
 change its portable delivery state.
 
-A worker that observes a non-null `expiresTime` with `now >= expiresTime` for an
-unsubmitted outbound before prepare or retry appends that expired failure and
-submits nothing. It does not
-append an expired failure merely because an already-submitted message later
-reaches expiry. A later user attempt requires a new `message.out` and wire ID.
-Sensitive strings remain in local trace; `code` is a stable non-secret value.
+When each code is appended is [preparation](../../packages/agent-core/src/prepare.ts)'s
+and [dispatch](../../packages/agent-core/src/dispatch.ts)'s. A later user
+attempt requires a new `message.out` and wire ID. Sensitive strings remain in
+local trace; `code` is a stable non-secret value.
 
 <a id="delivery-acknowledged"></a>
 
-### 9.6 `delivery.acknowledged`
+### 8.6 `delivery.acknowledged`
 
 ```json
 {
@@ -1741,37 +1516,30 @@ Sensitive strings remain in local trace; `code` is a stable non-secret value.
 }
 ```
 
-The exact carrier is an admitted complete source witness under
-[the admission model](../../packages/vault/src/admission/model.ts). Its explicit `ack`
-names this outbound wire ID. Its channel must be the
-outbound's fixed channel or a verified role-preserving successor under
-[channels.md](channels.md#continuity). Validate the outbound intent and exact
-prepared package independently; display membership never supplies that path.
-All redundant local-key, sender, wire-ID and message fields match this one
-complete witness. Do not assemble a witness from incomplete sibling rows.
-
-This records peer receipt information only. It cannot synthesize submission,
-release a package envelope or authorize a retry. Missing references defer;
-incompatible evidence conflicts. All five data fields are required:
-`messageId` names the outbound; `ackMessageId` and `ackWireMessageId` name
-the carrier's vault and wire IDs; `localKeyName` and `peerPublicKey` equal
-that complete carrier's local key and derived authenticated peer key.
+This records peer receipt information only: it cannot synthesize submission,
+release a package envelope or authorize a retry. All five data fields are
+required: `messageId` names the outbound; `ackMessageId` and
+`ackWireMessageId` name the carrier's vault and wire IDs; `localKeyName` and
+`peerPublicKey` equal that carrier's local key and derived authenticated peer
+key, every field matched against one complete witness. Which carriers
+acknowledge an outbound, and over which path, is
+[the outbound fold](../../packages/vault/src/fold/outbound.ts)'s.
 
 <a id="10-inbound-message-events"></a>
 
 <a id="inbound-message-events"></a>
 
-## 10. Inbound messages and execution
+## 9. Inbound messages
 
 <a id="deterministic-inbound-observation-message-id"></a>
 
-### 10.1 Deterministic inbound observation message ID
+### 9.1 Deterministic inbound observation message ID
 
 See [distributed-delivery.md section 9](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity).
 
 <a id="message-in"></a>
 
-### 10.2 `message.in`
+### 9.2 `message.in`
 
 ```json
 {
@@ -1871,50 +1639,11 @@ Requirements:
 
 Every newly committed `message.in` is an event of its own, including a
 recorded duplicate of an existing channel-local message ID; re-ingest of an
-existing `cid` preserves its event. Inbound commit MUST be serialized across
-the active writer. A pickup batch follows the per-delivery receipt/admission
-ordering in [the receive procedure](distributed-delivery.md#receive-a-message);
-this does not permit committing all live receipts before admission.
-
-The observations of one logical message `M`, including consistent
-same-channel key variants, are ordered by
-[canonical event order](event-store.md#canonical-order), as are the
-candidates admission reconciliation walks under
-[channels.md](channels.md#application-admission). Define:
-
-```text
-firstWitness(M) = the first admitted complete observation of M in canonical event order
-```
-
-It is undefined while no admitted complete observation qualifies, and raw
-unadmitted duplicates cannot change it. `firstWitness` names the observation
-an operation reads the input's fields from and orders established logical
-messages for display; it is no admission prerequisite. A pure ACK names its
-carrier alone, so no target array is ordered. For successive events of one
-writer whose timestamps strictly increase, canonical order follows commit
-order. Events sharing a timestamp are ordered by CID, so their canonical
-order may differ from commit order even without clock rollback; a clock
-rollback may place later commits before earlier commits. What follows that
-order is the choice of witness among consistent duplicates, the order
-candidates are judged in and display; a committed admission or intent stands
-whatever the order. For independently run histories canonical order is a
-deterministic merged order, not a claim about physical receive time between
-disconnected writers. This rule permits history union; it does not enable
-concurrent phase-1 writers or establish multi-writer effect convergence.
-
-A later observation does not reorder earlier events. Learning an older alias
-or importing history may change the first witness for future decisions, but
-MUST NOT change a committed `message.out`.
-
-Full import MUST NOT reject an event union for repeated observations of one
-input. The generic event store remains payload-opaque. Its [section 5.3](event-store.md#ingest)
-`ForkedAuthor` check detects unseen events under the current local author; it
-does not prove that every historical author is fork-free.
-
-Commit the observation with its objects after its exact resolution evidence.
-Pickup ACK follows [the receive procedure](distributed-delivery.md#receive-a-message),
-including its separate hard-rejection path. Subsequent consumers independently
-check [admission](../../packages/vault/src/admission/model.ts).
+existing `cid` preserves its event, and a full import never rejects an event
+union for repeated observations of one input. How the observations of one
+input are grouped, ordered and witnessed is
+[the inbound fold](../../packages/vault/src/fold/inbound.ts)'s; how a delivery
+becomes one is [the receipt](../../packages/agent-core/src/receive/receipt.ts)'s.
 
 <a id="message-admitted"></a>
 
@@ -1928,152 +1657,21 @@ Preserve both events through export/import and metadata-preserving erasure.
 The source retains its own objects; admission introduces no extra roots.
 Missing source or verification evidence defers the admission, never completes
 it from another observation. Schema validation rejects additional payload
-fields, wrong reference types, null references and nonempty roots.
-
-Event order and admission are independent facts. An earlier observation
-does not prove acceptance before rotation; use the durable admission record.
-Imported historic admissions preserve the originating runtime's decisions,
-subject to their exact cryptographic evidence, not today's supersession policy.
-New local admissions always check the complete current graph, including when
-reconciling restored or imported receipts without admissions.
-
-<a id="duplicate-transition-and-conflict-rules"></a>
-
-### 10.3 Duplicate and conflict rules
-
-Group by `(canonical sender DID, canonical recipient DID, wireMessageId)` and its deterministic
-message ID. Each complete observation authenticates independently with its own
-method-valid immutable document and derives the same exact sender/recipient pair. Equal intent hashes
-represent one logical input. Differences between independently admitted
-observations conflict for application use; unadmitted differences remain raw
-diagnostics and cannot overwrite admitted content. Transport, author, event time,
-authorized key and exact plaintext may
-differ without creating a new logical input in this same channel. Incomplete
-evidence for a consistent sibling neither supplies another execution nor
-withdraws an existing complete witness. Contradictory admitted evidence remains visible and suppresses new affected
-application work. Cryptographic continuity conflicts are evaluated independently
-of application admission.
-
-Another channel always has another message/execution identity. Verified links,
-same bodies and display merges never alias those messages. Local producers
-cannot move one outbound wire ID across channels; external peer behavior does
-not create a cross-channel exactly-once guarantee.
-
-A pure ACK has Empty type, `{}` body, no attachments, nonempty `ack` and null
-`pleaseAck`. This vault produces one whose `ack` names exactly its carrier; a
-received one may name several. It is control input; invalid variants are not
-treated as pure ACKs.
-Receipt/erasure skeletons retain this classification and frozen headers.
-
-<a id="pickup-versus-ultimate-acknowledgment"></a>
-
-### 10.4 Pickup versus ultimate acknowledgment
-
-
-Message Pickup `messages-received` is mediator queue state, not a vault event.
-In phase 1 it acknowledges one account-scoped delivery and follows durable
-`message.in`.
-
-An ultimate ACK is an end-to-end application message. It is recorded as
-`message.in`; each wire ID in its validated `ack` array selects an exact local
-outbound. The admitted complete source witness must be in that outbound's channel or a verified
-role-preserving successor channel under [the outbound fold](../../packages/vault/src/fold/outbound.ts).
-A conflict-free match may produce an idempotent `delivery.acknowledged`.
-A wire ID alone or shared contact grants no ACK authority. A threaded
-or natural response without an explicit `ack` array does not create that
-delivery observation.
-
-<a id="complete-observation-witnesses"></a>
-
-### 10.5 Complete observation witnesses
-
-For a claim about received evidence, its **complete observation witnesses** are
-all committed `message.in` candidates that each satisfy every per-observation
-requirement of the consuming schema or fold. Evaluate the required fields and
-their exact referenced evidence against one observation at a time. A check
-MUST NOT combine a field from one candidate with a field from another. The
-result is the set of all complete matches, independent of enumeration order.
-
-The consumer defines the candidate set and its required comparisons and
-validation. `ackMessageId` in [section 9.6](#delivery-acknowledged) restricts
-candidates to that observation message ID's group. Any complete matching
-duplicate can witness that claim. In contrast, `sourceEventCid` in a
-`did.rotationSelected`, `message.out` or `message.admitted`
-names one exact observation and cannot replace it with a duplicate. That source
-must supply its own complete sender authentication and immutable claims.
-If that source carries a JWT, it must independently verify under
-[the channel evidence fold](../../packages/vault/src/fold/channels.ts). Immutable issuer material may
-be shared, but another carrier's authentication or proof result cannot replace
-this source's checks. Every exact reference required by a schema must match as specified.
-
-This matching rule does not replace authentication, scope, historical
-membership, proof or group-validity checks. A matching candidate cannot clear
-a group conflict or bypass a missing-evidence deferral required by the
-consuming schema or fold. Incomplete evidence is not a proven mismatch merely
-because the candidate cannot yet enter the witness set.
-
-Subject to those checks, an existential claim requires at least one complete
-witness. Aggregates use all qualifying witnesses; [the outbound fold](../../packages/vault/src/fold/outbound.ts)
-computes ACK receipt time across all qualifying admitted witnesses, including
-duplicates and distinct carriers.
-
-Admission is a prerequisite for producing a new source-derived rotation decision
-or outbound intent, and for new address confirmation.
-Application projections of chat, profile values, received ACKs and Report Problem
-correlation also require effective admission of each exact contributing source;
-ACK timing and new ACK-target selection use only admitted witnesses.
-
-Validation of a committed `did.rotationSelected`,
-`message.out`, preparation or submission requires its own cryptographic and
-reference evidence, not source admission. Their derived links,
-frozen intents/packages and submitted facts do not become pending or invalid
-merely because an admission is absent. A committed local decision still needs
-independent complete predecessor-confirming evidence, without an admission
-prerequisite for that witness. Missing exact evidence still defers validation.
-For a saved pure ACK, validate its one target under
-[distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target)
-on the carrier's complete witness, admitted or not.
-These records do not grant admission to their sources or populate accepted
-chat/profile/ACK views. A saved `delivery.acknowledged` likewise cannot substitute
-for the admitted witnesses [the outbound fold](../../packages/vault/src/fold/outbound.ts) requires.
-
-Cryptographic carrier verification and continuity/conflict inspection do not
-require admission and cannot supply it. Current policy still governs all new
-work and dispatch independently of saved-record validity.
-
-<a id="message-scoped"></a>
-<a id="message-accepted"></a>
-
-### 10.6 Operation evidence
-
-The folds in [`packages/vault/src/fold/`](../../packages/vault/src/fold/) define the independent
-evidence checks for observations and rotation decisions, and the procedures
-that commit intents define their policy checks under
-[section 13](#folds-and-procedures).
-
-<a id="13-automatic-effects"></a>
-
-<a id="automatic-effects"></a>
-
-## 11. Automatic effects
-
-[distributed-delivery.md section 11](distributed-delivery.md#automatic-effects) defines effect identity and commit ordering;
-[section 8.2](distributed-delivery.md#deterministic-pure-ack) there owns the pure-ACK vector. [Section 9.1](#ids) of this document defines
-outbound ID derivation. [Built-in independent operations](distributed-delivery.md#built-in-independent-operations)
-owns rotation-notification selection; [the channel view](../../packages/vault/src/fold/views.ts)
-owns remote error attribution.
+fields, wrong reference types, null references and nonempty roots. What an
+admission is worth, and which observation may be admitted now, is
+[the admission model](../../packages/vault/src/admission/model.ts)'s.
 
 <a id="15-erasure-and-collection"></a>
 
 <a id="erasure-and-collection"></a>
 
-## 12. Erasure and collection
+## 10. Erasure and collection
 
 <a id="151-messageerased"></a>
 
 <a id="message-erased"></a>
 
-### 12.1 `message.erased`
+### 10.1 `message.erased`
 
 ```json
 {
@@ -2096,88 +1694,35 @@ Erasure is global and permanent for that message/root relation. Object
 bytes may remain because another message or event retains the same exact CID.
 The erased message still reads erased.
 
-<a id="152-reading-content"></a>
-
-<a id="reading-content"></a>
-
-### 12.2 Reading content
-
-For a message root:
-
-1. if any `message.erased` for the message names the root, state is
-   **erased** regardless of object presence;
-2. otherwise, if every required object is present, content is available;
-3. otherwise, if the local view explicitly permits partial object availability,
-   state may be **not yet fetched**; and
-4. otherwise state is **missing or damaged**.
-
-Missing bytes MUST NOT be displayed as intentional deletion.
-
 <a id="153-held-roots"></a>
 
 <a id="held-roots"></a>
 
-### 12.3 Held roots
+### 10.2 Held roots
 
 Under the operation lock in [event-store.md section 9](event-store.md#vault-interface), the vault runtime computes
-the held roots passed to `ObjectStore.collect` in [dasl-objects.md section 8.3](dasl-objects.md#collection).
+the held roots passed to `ObjectStore.collect` in [dasl-objects.md section 8.3](dasl-objects.md#collection);
+[the held-roots fold](../../packages/vault/src/fold/held.ts) is that
+computation. Collection may rely on this much:
 
-A root is held when at least one accepted event retains it through `event.roots`,
-except where a release rule below applies. Retention is a set fold over the
-complete event inventory. Each known event's schema assigns its message/root
-contributions. Any valid `message.erased` naming `(messageId, root)` permanently
-releases every contribution for that relation, including contributions learned
-later. Adding another event cannot revoke that erase or re-hold the same erased
-relation. Another message's non-erased contribution can still hold the root.
-
-This section is the sole normative owner of prepared-envelope retention.
-For a consistent outbound `M` and valid package `P`, define:
-
-```text
-retainEnvelopeForMessage(M, P) =
-    !erased(M, P.envelopeCid)
-    and !submitted(M)
-    and !messageTerminal(M)
-```
-
-Terminal means valid committed expiry or cancellation under `delivery.failed`.
-It releases this message's envelope contribution independently of preparation
-arrival order. Sampling wall time beyond expiry blocks unsubmitted work but
-MUST NOT release its envelope until that durable termination is committed.
-`submitted(M)` is defined by
-[the outbound fold](../../packages/vault/src/fold/outbound.ts) and remains true after envelope collection or termination.
-It releases this message's envelope contribution, including competing imported
-packages. Missing evidence for another package or operation of `M`, and an
-execution conflict of an automatic `M`, do not withdraw it or require these bytes again. An ACK
-does not affect retention, including when an outcome-unknown transport attempt
-has no `delivery.submitted`.
-
-Unavailable routes, retryable resolution failures and other reversible
-scheduling conditions do not release an unsubmitted, non-terminal package.
-There is no separate response-replay retention contribution or closure event.
-After submission, even a duplicate inbound request cannot require these bytes
-again or authorize a replacement package. The message's body/attachments and
-its event skeletons keep their separate retention rules; submission or termination
-does not erase conversation content or receipt/scope evidence.
-
-`erased(M, root)` names the permanent message/root relation, not global deletion
-of a CID. Another independent non-erased reference may retain the same bytes.
-Conflicted evidence is not release authority: disputed package roots remain
-held until unambiguous release evidence or explicit erasure exists.
-
-Submission eligibility additionally checks current time, addressing,
-proof, route and available bytes. Scheduling eligibility is not a retention
-predicate.
-
-Unknown event types retain every exact root in their `roots` because version 4
-defines no erase rule for them. A CID embedded in object content is not a
-retention edge unless it also appears in an accepted event's `roots`.
+- a root is held while an accepted event retains it through `event.roots`;
+  an event of a type this version does not name, or whose payload does not
+  read, retains every root it names;
+- a valid `message.erased` naming `(messageId, root)` permanently releases
+  every contribution of that message to that root, those learned later
+  included, and no later event re-holds that relation; another message's
+  contribution still holds the bytes;
+- a prepared envelope is released once its message is submitted or
+  terminated under a consistent intent, and by nothing else: not a peer's
+  acknowledgement, a competing package, a conflict or missing evidence;
+- a CID embedded in object content is not a retention edge unless it also
+  appears in an accepted event's `roots`.
 
 <a id="154-no-runtime-local-eviction-event"></a>
 
 <a id="no-runtime-local-eviction-event"></a>
 
-### 12.4 No runtime-local eviction event
+### 10.3 No runtime-local eviction event
 
 Version 4 does not represent local body eviction as a portable event. A local
 storage policy that deletes a non-erased retained object makes the phase-1
@@ -2189,53 +1734,37 @@ Missing bytes never authorize collection of retained roots.
 <a id="procedures"></a>
 <a id="folds-and-procedures"></a>
 
-## 13. Folds and procedures
+## 11. Folds and procedures
 
 The folds over these events, and the procedures that decide what to
 append, are specified by their code and its tests, not by this document.
-Each fold is a module of
-[`packages/vault/src/fold/`](../../packages/vault/src/fold/) whose leading
-comment states the rule it implements; the admission fold is
-[`packages/vault/src/admission/model.ts`](../../packages/vault/src/admission/model.ts),
-beside the pass that records admissions. A fold is deterministic over the
-same event set, the verdicts handed to it and its interpretation options,
-in whatever order the events arrived: what needs the seed or the retained
-objects is checked once beside the fold, in
+[`packages/vault/README.md`](../../packages/vault/README.md) lists them,
+one module per question, with each module's entry points; a module's
+leading comment states the rule it implements, and the tests beside it
+are the evidence. A fold is deterministic over the same event set, the
+verdicts handed to it and its options, in whatever order the events
+arrived; what needs the seed or the retained objects is checked once
+beside the fold, in
 [`packages/vault/src/fold/vault.ts`](../../packages/vault/src/fold/vault.ts),
-and the verdicts are passed in, so the event frontier alone is not the
-whole input and a repaired or lost object changes the projection without
-a new event. `packages/vault/test/fold/` and
-`packages/vault/test/admission/` check each fold by shuffling.
-The procedures that write the vault are modules of
-[`packages/vault/src/`](../../packages/vault/src/), one per question —
-[`retention.ts`](../../packages/vault/src/retention.ts) hands the event
-store what the fold holds, [`erasure.ts`](../../packages/vault/src/erasure.ts)
-releases a message's roots and keeps the erasure complete,
-[`contact-commands.ts`](../../packages/vault/src/contact-commands.ts)
-denies channels and deletes a contact,
-[`admission/record.ts`](../../packages/vault/src/admission/record.ts)
-records admissions, [`response-policy.ts`](../../packages/vault/src/response-policy.ts)
-and [`rotation-policy.ts`](../../packages/vault/src/rotation-policy.ts)
-are the decisions a reply, a notification and a rotation take before
-they commit, and [`pending-work.ts`](../../packages/vault/src/pending-work.ts)
-lists what an open finds unfinished — and the modules of
-[`packages/agent-core/src/`](../../packages/agent-core/src/); each reads
-the fold under the writer lock, decides over it and commits each decision
-in one batch, as [`commit.ts`](../../packages/vault/src/commit.ts) states. Where one procedure commits twice, such as a rotation and
-its notification, its module states what a crash between the commits
-leaves. Their tests sit beside them. This document keeps the event schemas
-and the retention contract that the folds obey; where a section above
-refers to a fold or a procedure, it links the module that owns it.
+so a repaired or lost object changes the projection without a new event.
+A procedure reads the fold under the writer lock, decides over it and
+commits each decision in one batch, as
+[`commit.ts`](../../packages/vault/src/commit.ts) states; the runtime's
+own procedures are the modules of
+[`packages/agent-core/src/`](../../packages/agent-core/src/). This
+document keeps the event schemas, the identifiers and the retention
+contract the folds obey; where a section above refers to a fold or a
+procedure, it links the module that owns it.
 
 <a id="merge-and-restore"></a>
 
-## 14. Merge and restore
+## 12. Merge and restore
 
 <a id="171-event-merge"></a>
 
 <a id="event-merge"></a>
 
-### 14.1 Event merge
+### 12.1 Event merge
 
 Merge is event-store set union by event CID. Equal canonical envelopes occur
 once, and every reference continues to name the same exact envelope after
@@ -2251,17 +1780,11 @@ After merge, every fold reflects the complete union. A cached projection must
 be updated or invalidated in the acceptance transaction and rebuilt before use
 if invalid; an incremental result must equal the pure fold of that union.
 
-Application admissions remain distinct from raw observations under
-[admission and merge](channels.md#application-admission). A complete imported
-admission can restore accepted historical state; merely importing an earlier
-receipt cannot manufacture it. A newer rotation blocks new old-peer admission
-and dispatch without deleting earlier admitted history or submitted outcomes.
-
 <a id="172-object-merge"></a>
 
 <a id="object-merge"></a>
 
-### 14.2 Object merge
+### 12.2 Object merge
 
 Compute held roots from the prospective event union and copy only verified
 source objects that are absent or known damaged in the target and held by that
@@ -2279,7 +1802,7 @@ be repaired from a verified portable SQLite import or backup.
 
 <a id="restore"></a>
 
-### 14.3 Restore
+### 12.3 Restore
 
 A portable SQLite restore creates a new local `replica_id` and
 `store_generation`. An exact local move is a separate operation that may retain
@@ -2344,7 +1867,7 @@ its encrypted wrapper. Recovery verification follows
 
 <a id="forked-author"></a>
 
-### 14.4 Forked author
+### 12.4 Forked author
 
 If two writable copies accidentally preserve the same local replica ID,
 previously unseen same-author events cause `ForkedAuthor`. One copy mints
@@ -2355,7 +1878,7 @@ author remain unchanged.
 
 <a id="privacy-and-security-boundaries"></a>
 
-## 15. Privacy and security boundaries
+## 13. Privacy and security boundaries
 
 - Phase 1 has one active full runtime holding the single seed.
 - A full runtime may run locally or on a server; process location does not
@@ -2391,7 +1914,7 @@ author remain unchanged.
 
 <a id="versioning"></a>
 
-## 16. Versioning
+## 14. Versioning
 
 These event meanings belong to vault version 4. A version-4 reader may
 preserve unknown event types but MUST validate every known type according

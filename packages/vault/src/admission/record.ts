@@ -45,13 +45,9 @@ export interface Admitted {
 }
 
 /**
- * The ordered pass under a lock already held: round after round, the
- * admissions the fold owes are committed, the committed events added
- * to the fold's set and the fold read again over it, until a round
- * owes none. A commit that fails ends the pass where it is, the rounds
- * before it durable. The fold handed in is superseded by the one
- * returned. An admission that is not effective once committed is a
- * fault of the fold, not something to record again.
+ * The pass under a lock already held. The fold handed in is superseded
+ * by the one returned; an admission that is not effective once
+ * committed is a fault of the fold, not something to record again.
  */
 export async function admitReceipts(held: Held, fold: VaultFold, options: FoldOptions = {}): Promise<Admitted> {
   const events: VaultEvent<"message.admitted">[] = [];
