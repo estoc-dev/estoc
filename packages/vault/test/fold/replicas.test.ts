@@ -6,6 +6,7 @@ import {
   Keys,
   foldMediations,
   foldReplicas,
+  mediationIdOf,
   mintMediationDid,
   signReplicaGrant,
   verifyMediationKeys,
@@ -17,25 +18,31 @@ import {
   type ReplicaId,
   type VaultEventSet,
 } from "../../src/index.js";
-import { AUTHOR2, MEDIATION, MEDIATION2, OTHER_SEED, ROUTING_DID, Scene, expectOrderFree, openKeys } from "./helpers.js";
+import { AUTHOR2, OTHER_SEED, ROUTING_DID, Scene, expectOrderFree, openKeys } from "./helpers.js";
 
 const MEDIATOR = "did:web:mediator.example" as Did;
+const MEDIATOR2 = "did:web:other.example" as Did;
+const MEDIATION = mediationIdOf(MEDIATOR);
+const MEDIATION2 = mediationIdOf(MEDIATOR2);
 const REPLICA = "019b2a43-4a56-7c0f-862f-194c0c4124a0" as ReplicaId;
 const REPLICA2 = "019b2a44-0b1c-7d2e-9f3a-4b5c6d7e8f90" as ReplicaId;
 let keys: Keys;
 let account: GrantingMediation;
 let account2: GrantingMediation;
+/** the account another seed derives for the first arrangement */
+let foreign: Did;
 
 beforeAll(async () => {
   keys = await openKeys();
   account = { mediationId: MEDIATION, mediatorDid: MEDIATOR, me: { did: (await mintMediationDid(keys, MEDIATION)).longFormDid } };
-  account2 = { mediationId: MEDIATION2, mediatorDid: MEDIATOR, me: { did: (await mintMediationDid(keys, MEDIATION2)).longFormDid } };
+  account2 = { mediationId: MEDIATION2, mediatorDid: MEDIATOR2, me: { did: (await mintMediationDid(keys, MEDIATION2)).longFormDid } };
+  foreign = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION)).longFormDid;
 });
 
-const arrangement = (scene: Scene, mediation: GrantingMediation, mediatorDid = mediation.mediatorDid) =>
+const arrangement = (scene: Scene, mediation: GrantingMediation) =>
   scene.add("mediation.created", {
     mediationId: mediation.mediationId,
-    mediatorDid,
+    mediatorDid: mediation.mediatorDid,
     me: { keyName: `mediation/${mediation.mediationId}/me` as KeyName, did: mediation.me.did },
   });
 
@@ -96,13 +103,13 @@ describe("the replica fold", () => {
 
   it("refuses a binding that is not its arrangement's: another mediator, an arrangement whose creations disagree", async () => {
     const moved = new Scene();
-    arrangement(moved, { ...account, mediatorDid: "did:web:other.example" as Did });
-    await enrolled(moved, account, REPLICA);
+    arrangement(moved, account2);
+    await enrolled(moved, { ...account2, mediatorDid: MEDIATOR }, REPLICA);
     expect((await checked(moved))(moved.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: ["the grant's mediator is not the arrangement's"] });
 
     const conflicted = new Scene();
     arrangement(conflicted, account);
-    arrangement(conflicted, { ...account, mediatorDid: "did:web:other.example" as Did });
+    arrangement(conflicted, { ...account, me: { did: foreign } });
     await enrolled(conflicted, account, REPLICA);
     expect((await checked(conflicted))(conflicted.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: [`the creations of mediation ${MEDIATION} disagree`] });
   });

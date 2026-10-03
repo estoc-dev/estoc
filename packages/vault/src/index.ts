@@ -65,6 +65,9 @@ export {
   didKeyName,
   mediationKeyName,
   replicaKeyName,
+  mediationIdOf,
+  successorDidId,
+  startDidId,
 } from "./ids.js";
 
 export { canonicalPublicKey, parsePublicKey, decodePublicKey, agreementKey, type KeyType, type DecodedPublicKey, type Jwk } from "./public-key.js";

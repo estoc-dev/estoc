@@ -14,6 +14,7 @@ import {
   REPLICA_GRANT_TYP,
   didcommServiceUris,
   mintDid,
+  mediationIdOf,
   mintMediationDid,
   mintReplicaDid,
   peerResolution,
@@ -26,16 +27,15 @@ import {
   type DidId,
   type GrantingMediation,
   type LocalKey,
-  type MediationId,
   type ReplicaId,
 } from "../src/index.js";
 
-const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
-const MEDIATION2 = "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" as MediationId;
 const REPLICA = "019b2a43-4a56-7c0f-862f-194c0c4124a0" as ReplicaId;
 const REPLICA2 = "019b2a44-0b1c-7d2e-9f3a-4b5c6d7e8f90" as ReplicaId;
 const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 const MEDIATOR = "did:web:mediator.example" as Did;
+const MEDIATION = mediationIdOf(MEDIATOR);
+const MEDIATION2 = mediationIdOf("did:web:other.example" as Did);
 
 const encoder = new TextEncoder();
 
@@ -69,7 +69,7 @@ describe("a replica's DID", () => {
     expect(await mintReplicaDid(keys, REPLICA, MEDIATOR)).toEqual(replica);
     expect((await mintReplicaDid(keys, REPLICA2, MEDIATOR)).did).not.toBe(replica.did);
     expect((await mintReplicaDid(keys, REPLICA, "did:web:other.example" as Did)).did).not.toBe(replica.did);
-    expect((await mintMediationDid(keys, REPLICA as unknown as MediationId)).did).not.toBe(replica.did);
+    expect((await mintMediationDid(keys, MEDIATION)).did).not.toBe(replica.did);
   });
 });
 

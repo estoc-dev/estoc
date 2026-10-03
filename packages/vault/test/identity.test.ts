@@ -17,6 +17,7 @@ import {
   checkMediationCreated,
   decodePublicKey,
   didKeyName,
+  mediationIdOf,
   mediationKeyName,
   methodPublicKey,
   mintDid,
@@ -26,7 +27,6 @@ import {
   type Did,
   type DidId,
   type KeyName,
-  type MediationId,
   type RouteTarget,
 } from "../src/index.js";
 
@@ -34,7 +34,7 @@ const SEED = new Uint8Array(32).fill(7);
 const OTHER_SEED = new Uint8Array(32).fill(8);
 const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 const DID_ID2 = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715" as DidId;
-const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
+const MEDIATION = mediationIdOf("did:web:mediator.example" as Did);
 const MEDIATED: RouteTarget = { kind: "mediated", routingDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" as Did };
 const DIRECT: RouteTarget = { kind: "direct", endpoint: "https://ingress.example/didcomm" };
 
@@ -43,7 +43,7 @@ const EXPECTED = {
   anchor: "did:key:z6MknPaqk9immiDFicttb6PNyNEc3B2f28DxSoYKbEvaNvqL",
   mediatedShort: "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP",
   directShort: "did:peer:4zQmcRRbHFBJtMfjVL6ycfrhWYviwcCZPT95vriF6JMSpye5",
-  mediationShort: "did:peer:4zQmdxb4gk3GmReVxbUhThVG4hAfKTmF2jTf2cGdHZryz1xC",
+  mediationShort: "did:peer:4zQma1SFZ9eD4J3Bb2ixK2yQNa1Pf8yPiU5k2p9cjAxvq2v2",
 };
 
 async function open(seed = SEED): Promise<Keys> {

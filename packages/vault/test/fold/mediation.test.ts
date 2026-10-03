@@ -7,11 +7,14 @@ const MEDIATOR = ROUTING_DID;
 let keys: Keys;
 let me: Did;
 let me2: Did;
+/** the account another seed derives for the same arrangement */
+let foreign: Did;
 
 beforeAll(async () => {
   keys = await openKeys();
   me = (await mintMediationDid(keys, MEDIATION)).longFormDid;
   me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
+  foreign = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION)).longFormDid;
 });
 
 const created = (scene: Scene, mediationId: MediationId, did: Did, mediatorDid = MEDIATOR) =>
@@ -59,9 +62,9 @@ describe("the mediation fold", () => {
   it("makes disagreeing creations or grants a conflict that nothing later resolves, and a grant naming a routing DID other than the mediator too", async () => {
     const scene = new Scene();
     created(scene, MEDIATION, me);
-    created(scene, MEDIATION, me, "did:web:other.example" as Did);
+    created(scene, MEDIATION, foreign);
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    created(scene, MEDIATION2, me2);
+    created(scene, MEDIATION2, me2, ROUTING_DID2);
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID2 });
     scene.add("mediation.retired", { mediationId: MEDIATION2, because: "replaced" });

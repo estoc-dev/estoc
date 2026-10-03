@@ -1,13 +1,15 @@
 /**
  * The deterministic identifiers: the reproducible UUIDv5 namespaces and
  * every entity ID a rule derives rather than mints — an inbound
- * observation, an execution, an automatic effect's key and message —
+ * observation, an execution, an automatic effect's key and message, the
+ * arrangement with a mediator, a DID entity that follows from another —
  * the channel a local and a peer DID form and the order channels are
  * kept in, plus the reserved keystore names. Each derivation hashes
  * exactly the transcript its rule specifies, never a payload or an API
  * object standing in for it.
  */
 
+import { longToShort } from "@estoc/did-peer";
 import { canonicalText, canonicalize, forbiddenIn, type JsonValue } from "@estoc/event-store";
 import { sha256 } from "@noble/hashes/sha2";
 import { base64urlnopad } from "@scure/base";
@@ -16,10 +18,10 @@ import { v5 as uuidv5 } from "uuid";
 import type { FactId } from "@estoc/continuity";
 
 import { InvalidIdentifier } from "./errors.js";
-import { isMintedId } from "./syntax.js";
+import { isDerivedId, isDid, isEntityId, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
-export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid"] as const;
+export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity"] as const;
 
 export type NamespacePurpose = (typeof NAMESPACE_PURPOSES)[number];
 
@@ -44,6 +46,21 @@ function derive(purpose: NamespacePurpose, transcript: JsonValue): string {
 function nonEmpty(value: string, what: string): string {
   if (value.length === 0) throw new InvalidIdentifier(`${what} is empty`);
   return value;
+}
+
+/**
+ * A DID in the one spelling every replica derives from: a did:peer:4 by
+ * its short form, whichever spelling arrived, any other DID as it is.
+ * String work over a DID verified elsewhere: a long form's document is
+ * checked against its hash where it is resolved, not here.
+ */
+function canonical(value: string, what: string): string {
+  nonEmpty(value, what);
+  if (!isDid(value)) throw new InvalidIdentifier(`${what} is a DID`);
+  if (!value.startsWith("did:peer:4")) return value;
+  if (isPeer4Short(value)) return value;
+  if (isPeer4Long(value)) return longToShort(value);
+  throw new InvalidIdentifier(`${what} is a did:peer:4 in its short or long form`);
 }
 
 const encoder = new TextEncoder();
@@ -136,6 +153,45 @@ export function automaticMessageId(key: EffectKey): MessageId {
   return derive("automatic-mid", ["v1", nonEmpty(key, "effect key")]) as MessageId;
 }
 
+/**
+ * The vault's one arrangement with a mediator, named by the mediator's
+ * canonical DID alone: every replica that reaches for the mediator names
+ * the same arrangement, derives the same account key and records the
+ * same creation, so their histories merge into one account where minted
+ * IDs would have made two. The ID outlives the arrangement: once it is
+ * retired, the vault has no other ID to arrange with that mediator under.
+ */
+export function mediationIdOf(mediatorDid: Did): MediationId {
+  return derive("mediation", ["v1", canonical(mediatorDid, "mediator DID")]) as MediationId;
+}
+
+/**
+ * The entity that succeeds one of our DIDs in place, named by the
+ * predecessor's canonical DID: the DID commits to the whole document,
+ * keys and route, so every replica rotating from it arrives at one
+ * successor whose key names, and so whose keys and document, agree. The
+ * peer's current DID is no input: replicas learn of a peer's rotation at
+ * different times and would otherwise part. The version tag covers this
+ * transcript together with the key derivation and document builder the
+ * entity's keys and DID are made by.
+ */
+export function successorDidId(predecessor: Did): DidId {
+  return derive("did-entity", ["v1", "next", canonical(predecessor, "predecessor DID")]) as DidId;
+}
+
+/**
+ * The entity a public address of ours first answers one peer from,
+ * named by that address and the peer DID the relationship is bound to:
+ * each peer gets its own branch, and every replica answering the same
+ * peer gets the same one.
+ */
+export function startDidId(publicDid: Did, binding: Did): DidId {
+  const ours = canonical(publicDid, "public DID");
+  const theirs = canonical(binding, "binding DID");
+  if (ours === theirs) throw new InvalidIdentifier("a relationship binds two distinct DIDs");
+  return derive("did-entity", ["v1", "start", ours, theirs]) as DidId;
+}
+
 export const ANCHOR_KEY_NAME = "anchor" as KeyName;
 
 /**
@@ -151,15 +207,16 @@ export const decisionFactId = (decision: EventCid): FactId => `decision:${decisi
 
 export type DidKeyRole = "authentication" | "key-agreement";
 
-/** The name of one of the two keys of a communication-DID entity; the entity ID is minted, a UUIDv7. */
+/** The name of one of the two keys of a communication-DID entity; the entity ID is a minted UUIDv7 or a derived UUIDv5. */
 export function didKeyName(did: DidId, role: DidKeyRole): KeyName {
-  if (!isMintedId(did)) throw new InvalidIdentifier("a DID entity ID is a canonical UUIDv7");
+  if (!isEntityId(did)) throw new InvalidIdentifier("a DID entity ID is a canonical UUIDv5 or UUIDv7");
   return `did/${did}/${role}` as KeyName;
 }
 
-/** The name of the DIDComm identity key of one mediation arrangement. */
+/** The name of the DIDComm identity key of one mediation arrangement; the arrangement ID is derived, a UUIDv5. */
 export function mediationKeyName(mediation: MediationId): KeyName {
-  return `mediation/${nonEmpty(mediation, "mediation ID")}/me` as KeyName;
+  if (!isDerivedId(mediation)) throw new InvalidIdentifier("a mediation ID is a canonical UUIDv5");
+  return `mediation/${mediation}/me` as KeyName;
 }
 
 /**

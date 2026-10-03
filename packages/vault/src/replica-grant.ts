@@ -21,7 +21,7 @@ import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
 import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
 import { didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
 import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
-import { isCompactJwt, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
 
 export const REPLICA_GRANT_TYP = "estoc/replica-grant+jws";
@@ -98,7 +98,8 @@ export function readReplicaGrant(jws: string): ReplicaGrant {
   const payload = payloadOf(jws);
   const { account, mediator, replica_did: replicaDid, replica_long_form: replicaLongForm } = payload;
   if (!isPeer4Short(account)) refuse("account is a did:peer:4 short form");
-  if (!isMintedId(payload.mediation_id) || !isMintedId(payload.replica_id)) refuse("mediation_id and replica_id are canonical UUIDv7");
+  if (!isDerivedId(payload.mediation_id)) refuse("mediation_id is a canonical UUIDv5");
+  if (!isMintedId(payload.replica_id)) refuse("replica_id is a canonical UUIDv7");
   if (!isDid(mediator)) refuse("mediator is a DID");
   if (!isPeer4Short(replicaDid) || replicaDid === account) refuse("replica_did is a did:peer:4 short form other than the account");
   if (!isPeer4Long(replicaLongForm) || !replicaLongForm.startsWith(`${replicaDid}:`)) refuse("replica_long_form is the long form of replica_did");

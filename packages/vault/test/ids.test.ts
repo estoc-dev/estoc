@@ -17,8 +17,11 @@ import {
   estocNamespace,
   executionId,
   inboundMessageId,
+  mediationIdOf,
   mediationKeyName,
   replicaKeyName,
+  startDidId,
+  successorDidId,
   sameChannel,
   type Did,
   type DidId,
@@ -43,12 +46,14 @@ const PURE_ACK = "https://estoc.dev/distributed-delivery/1.0#pure-ack";
 const PING_RESPONSE = "https://didcomm.org/trust-ping/2.0/ping-response";
 
 describe("estocNamespace", () => {
-  it("derives each of the three namespaces from the URL namespace to the published value", () => {
-    expect(NAMESPACE_PURPOSES).toHaveLength(3);
+  it("derives each of the five namespaces from the URL namespace to the published value", () => {
+    expect(NAMESPACE_PURPOSES).toHaveLength(5);
     expect(Object.fromEntries(NAMESPACE_PURPOSES.map((p) => [p, estocNamespace(p)]))).toEqual({
       "inbound-message": "4dc929eb-aa9c-5f2e-9d33-1fdf1848fde6",
       "message-execution": "6511fc66-4d39-589e-b2c7-7185a807b6c6",
       "automatic-mid": "8847bd57-5907-5bcd-9a71-d1e97cee3199",
+      mediation: "ef3354b7-959d-5de2-a68d-f475ff7a7ab4",
+      "did-entity": "47c0b363-2cc9-5e29-8898-0cb3cffa2ac2",
     });
     expect(estocNamespace("inbound-message")).toBe(uuidv5("https://estoc.dev/uuid/v1/inbound-message", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"));
   });
@@ -151,16 +156,63 @@ describe("effectKey and automaticMessageId", () => {
   });
 });
 
+describe("mediationIdOf", () => {
+  const MEDIATOR = did("did:web:mediator.example");
+
+  it("names the arrangement with a mediator by its canonical DID alone, to the published value", () => {
+    expect(mediationIdOf(MEDIATOR)).toBe("1922ce3b-533a-5c75-8cb1-10cdd1f80204");
+    expect(mediationIdOf(MEDIATOR)).toBe(uuidv5(canonicalize(["v1", MEDIATOR]), estocNamespace("mediation")));
+    expect(mediationIdOf(did("did:web:other.example"))).toBe("a9934024-3ed4-5e9d-b04d-33ce664c4300");
+    expect(mediationIdOf(LOCAL)).not.toBe(mediationIdOf(PEER));
+  });
+
+  it("derives from the short form whichever spelling of a did:peer:4 arrives, and refuses an empty or malformed DID", () => {
+    expect(mediationIdOf(did(`${LOCAL}:z2LongForm`))).toBe(mediationIdOf(LOCAL));
+    expect(() => mediationIdOf(did(""))).toThrow(InvalidIdentifier);
+    expect(() => mediationIdOf(did("mediator.example"))).toThrow(InvalidIdentifier);
+    expect(() => mediationIdOf(did("did:peer:4abc"))).toThrow(InvalidIdentifier);
+  });
+});
+
+describe("successorDidId and startDidId", () => {
+  it("name the successor of a DID by that DID alone, and the first address toward a peer by the public DID and the peer, to the published values", () => {
+    expect(successorDidId(LOCAL)).toBe("24ae4bcc-e4ee-5111-b600-1674a2300462");
+    expect(successorDidId(LOCAL)).toBe(uuidv5(canonicalize(["v1", "next", LOCAL]), estocNamespace("did-entity")));
+    expect(startDidId(LOCAL, PEER)).toBe("4cb0f38a-668b-5472-b82c-509b397c8058");
+    expect(startDidId(LOCAL, PEER)).toBe(uuidv5(canonicalize(["v1", "start", LOCAL, PEER]), estocNamespace("did-entity")));
+  });
+
+  it("give one value for one input, and other values for the other DID, the swapped pair and the other rule", () => {
+    expect(successorDidId(LOCAL)).toBe(successorDidId(LOCAL));
+    expect(successorDidId(LOCAL)).not.toBe(successorDidId(PEER));
+    expect(startDidId(LOCAL, PEER)).not.toBe(startDidId(PEER, LOCAL));
+    expect(startDidId(LOCAL, PEER)).not.toBe(successorDidId(LOCAL));
+    expect(didKeyName(successorDidId(LOCAL), "authentication")).toBe(`did/${successorDidId(LOCAL)}/authentication`);
+  });
+
+  it("take either spelling of a did:peer:4, and refuse an empty or malformed DID and a relationship of one DID with itself", () => {
+    expect(successorDidId(did(`${LOCAL}:z2LongForm`))).toBe(successorDidId(LOCAL));
+    expect(startDidId(LOCAL, did(`${PEER}:z2LongForm`))).toBe(startDidId(LOCAL, PEER));
+    expect(() => successorDidId(did(""))).toThrow(InvalidIdentifier);
+    expect(() => successorDidId(did("not a did"))).toThrow(InvalidIdentifier);
+    expect(() => startDidId(did(""), PEER)).toThrow(InvalidIdentifier);
+    expect(() => startDidId(LOCAL, LOCAL)).toThrow(InvalidIdentifier);
+    expect(() => startDidId(LOCAL, did(`${LOCAL}:z2LongForm`))).toThrow(InvalidIdentifier);
+  });
+});
+
 describe("key names", () => {
-  it("names the anchor, a DID entity's two keys and a mediation's identity key", () => {
+  it("names the anchor, a DID entity's two keys whether its ID is minted or derived, and a mediation's identity key", () => {
     expect(ANCHOR_KEY_NAME).toBe("anchor");
     const d = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715" as DidId;
     expect(didKeyName(d, "authentication")).toBe("did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/authentication");
     expect(didKeyName(d, "key-agreement")).toBe("did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement");
-    expect(mediationKeyName("019b2a60-c68e-75bf-b6fb-ae1a41f8d716" as MediationId)).toBe("mediation/019b2a60-c68e-75bf-b6fb-ae1a41f8d716/me");
+    expect(didKeyName("019b0000-0000-5000-8000-00000000000c" as DidId, "authentication")).toBe("did/019b0000-0000-5000-8000-00000000000c/authentication");
+    expect(mediationKeyName("1922ce3b-533a-5c75-8cb1-10cdd1f80204" as MediationId)).toBe("mediation/1922ce3b-533a-5c75-8cb1-10cdd1f80204/me");
     expect(() => didKeyName("" as DidId, "authentication")).toThrow(InvalidIdentifier);
-    expect(() => didKeyName("019b0000-0000-5000-8000-00000000000c" as DidId, "authentication")).toThrow(InvalidIdentifier);
+    expect(() => didKeyName("019b0000-0000-4000-8000-00000000000c" as DidId, "authentication")).toThrow(InvalidIdentifier);
     expect(() => mediationKeyName("" as MediationId)).toThrow(InvalidIdentifier);
+    expect(() => mediationKeyName("019b2a60-c68e-75bf-b6fb-ae1a41f8d716" as MediationId)).toThrow(InvalidIdentifier);
     expect(replicaKeyName("019b2a43-4a56-7c0f-862f-194c0c4124a0" as ReplicaId)).toBe("replica/019b2a43-4a56-7c0f-862f-194c0c4124a0/me");
     expect(() => replicaKeyName("019b0000-0000-5000-8000-00000000000c" as ReplicaId)).toThrow(InvalidIdentifier);
   });

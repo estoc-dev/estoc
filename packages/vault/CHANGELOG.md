@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Derived arrangement and DID entity IDs**: `mediationIdOf(mediatorDid)`
+  names the one arrangement with a mediator by the UUIDv5 its canonical
+  DID derives, so every replica that arranges with a mediator records the
+  same creation; a `mediation.created` whose `mediationId` is any other
+  value is an invalid payload, `mediationKeyName` and the
+  `mediation/<id>/me` key name take a UUIDv5 alone, and a replica grant's
+  `mediation_id` is one too. `successorDidId(predecessor)` and
+  `startDidId(publicDid, binding)` derive DID entity IDs; every `didId`
+  member, `didKeyName` and the `did/<id>/…` key names take a UUIDv5 or a
+  UUIDv7, and the procedures here still mint. `LocalDidEntity.mediation`,
+  the one usable arrangement routing the entity or null, replaces
+  `mediations`: a usable arrangement is routed through its own mediator and
+  a vault has one arrangement per mediator, so no routing DID is routed by
+  several. A vault recorded before this change is read anew.
 - `DidFold.desiredRecipients` and `DesiredRecipient` are gone. Which DIDs
   an account is to hold at its mediator is the agent's to decide, over
   `receipt`, and it keeps retired DIDs: nothing reads a projection of the
