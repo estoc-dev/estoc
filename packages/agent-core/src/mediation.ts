@@ -10,12 +10,11 @@
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { mediationIdOf, mediationKeyName, mintMediationDid, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { mediationIdOf, mediationKeyName, mintMediationDid, sameDid, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { EntityConflict, UnknownEntity, Unusable, WrongAccount, WrongMediator } from "./errors.js";
 import type { MediatorLink } from "./link.js";
 import { decide } from "./procedure.js";
-import { sameDid } from "./same-did.js";
 
 /** The arrangement as the fold has it; `UnknownEntity` when it has none. */
 export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediation {
@@ -39,9 +38,11 @@ export function toward(link: MediatorLink, mediation: Mediation): void {
  * `mediation.created` for the arrangement with `mediatorDid`, under the
  * ID the mediator's DID derives: the vault-controlled identity toward
  * the mediator, minted from the arrangement's own key name. Committed
- * before any network request. The same mediator again returns the
- * creation already recorded, since every replica derives the same one,
- * and refuses a recorded arrangement that is in conflict. The
+ * before any network request. The same mediator again, under either
+ * spelling of its DID, returns the creation already recorded, since
+ * every replica derives the same one; an arrangement whose grant
+ * arrived before any creation takes this one; and a recorded
+ * arrangement that is in conflict is refused. The
  * arrangement is an account of the replica-mediation protocol at the
  * mediator, and is `enroll`ed there.
  */
@@ -51,8 +52,8 @@ export async function createMediation(runtime: VaultRuntime, keys: Keys, mediato
   const data = { mediationId, mediatorDid, me: { keyName: mediationKeyName(mediationId), did: me.longFormDid } };
   const { fold, events } = await decide(runtime, keys, (fold) => {
     const existing = fold.mediations.mediations.get(mediationId);
-    if (existing === undefined) return [vaultDraft("mediation.created", data)];
-    if (existing.mediatorDid !== data.mediatorDid || existing.me?.did !== data.me.did) {
+    if (existing === undefined || (existing.me === null && existing.faults.length === 0)) return [vaultDraft("mediation.created", data)];
+    if (existing.mediatorDid === null || !sameDid(existing.mediatorDid, data.mediatorDid) || existing.me?.did !== data.me.did) {
       throw new EntityConflict("mediation", mediationId, existing.faults.join("; ") || "another mediator or identity");
     }
     return [];

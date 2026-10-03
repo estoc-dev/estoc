@@ -5,8 +5,9 @@
 - **One arrangement per mediator, under its derived ID**:
   `createMediation(runtime, keys, mediatorDid)` takes no ID; the
   arrangement is the one the mediator's DID derives, asking again for the
-  same mediator returns the creation recorded, and an arrangement in
-  conflict is refused. `usableTarget` refuses only a routing DID no usable
+  same mediator, under either spelling of a `did:peer:4`, returns the
+  creation recorded, and an arrangement in conflict is refused.
+  `canonicalDid` and `sameDid` are `@estoc/vault`'s, re-exported here. `usableTarget` refuses only a routing DID no usable
   arrangement routes through, and `routeOf` reads the entity's one
   arrangement.
 - **Every arrangement is a replica-mediation account** (behaviour

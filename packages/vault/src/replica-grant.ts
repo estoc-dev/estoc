@@ -19,6 +19,7 @@ import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
 import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
+import { sameDid } from "./ids.js";
 import { didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
 import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
 import { isCompactJwt, isDerivedId, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
@@ -119,9 +120,9 @@ export function readReplicaGrant(jws: string): ReplicaGrant {
   };
 }
 
-/** Do two grants bind the same replica to the same account, arrangement and mediator, whichever key spelling each was signed under? */
+/** Do two grants bind the same replica to the same account, arrangement and mediator, whichever key spelling each was signed under and however each spells the mediator? */
 export function sameBinding(a: ReplicaGrant, b: ReplicaGrant): boolean {
-  return a.account === b.account && a.mediationId === b.mediationId && a.mediator === b.mediator && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
+  return a.account === b.account && a.mediationId === b.mediationId && sameDid(a.mediator, b.mediator) && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
 }
 
 /** The arrangement a grant is signed for: what its `mediation.created` records. */
@@ -186,6 +187,6 @@ export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Di
   const replica = peerResolution(grant.replicaLongForm);
   await checkReplicaKeys(keys, grant.replicaId, replica);
   const uris = didcommServiceUris(replica.document);
-  if (uris.length !== 1 || uris[0] !== grant.mediator) throw new IdentityMismatch(`replica ${grant.replicaId} sends to ${JSON.stringify(uris)}, not the grant's mediator`);
+  if (uris.length !== 1 || !sameDid(uris[0]!, grant.mediator)) throw new IdentityMismatch(`replica ${grant.replicaId} sends to ${JSON.stringify(uris)}, not the grant's mediator`);
   return grant;
 }

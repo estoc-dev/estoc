@@ -17,12 +17,12 @@
 
 import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
+import { sameDid } from "@estoc/vault";
 
 import { ENCRYPTED_MIME, didOf, endpointOf, packEncrypted, plainMessage, secretsResolverFor, unpackMessage, type DidcommApi, type IMessage, type UnpackMetadata } from "./protocol/didcomm.js";
 import { envelopeHeader } from "./protocol/envelope.js";
 import { LIVE_DELIVERY_CHANGE } from "./protocol/mediation.js";
 import { UnverifiedReply } from "./errors.js";
-import { sameDid } from "./same-did.js";
 import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
 
 export interface LinkOptions {

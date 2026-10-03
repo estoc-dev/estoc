@@ -40,7 +40,7 @@
 
 import type { Secret } from "@estoc/did-peer";
 import { canonicalize, parseStrict, type VaultRuntime } from "@estoc/event-store";
-import { rawCidOfBytes, scanVault, type Did, type DidId, type DidUrl, type EventReference, type Keys, type KeyName, type MediationId, type VaultFold } from "@estoc/vault";
+import { rawCidOfBytes, sameDid, scanVault, type Did, type DidId, type DidUrl, type EventReference, type Keys, type KeyName, type MediationId, type VaultFold } from "@estoc/vault";
 
 import { secretsResolverFor, unpack, type DidcommApi, type IMessage, type UnpackMetadata } from "../protocol/didcomm.js";
 import { envelopeHeader } from "../protocol/envelope.js";
@@ -49,7 +49,6 @@ import { pinnedResolver } from "../evidence.js";
 import type { Keyring } from "../keyring.js";
 import type { Delivered, Fate, Handle } from "../pickup.js";
 import { serially } from "../procedure.js";
-import { sameDid } from "../same-did.js";
 import { note, type AgentTrace, type TraceData } from "../trace.js";
 import { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender } from "./gate.js";
 

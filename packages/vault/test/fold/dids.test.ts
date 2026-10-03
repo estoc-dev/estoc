@@ -8,6 +8,7 @@ import {
   foldDids,
   foldWithSeed,
   inputDocumentOf,
+  mediationIdOf,
   mintDid,
   mintMediationDid,
   requiredReceivingSet,
@@ -282,7 +283,19 @@ describe("receipt eligibility and the required receiving set", () => {
     expect((await checked(s)).entities.get(DID_ID2)).toMatchObject({ mediation: null, faults: [`mediation ${MEDIATION2} is retired`] });
   });
 
-  it("waits, rather than ends, while the arrangement naming its routing DID is ungranted or retired: a grant not yet replicated here may route it", async () => {
+  it("routes a document naming a did:peer:4 mediator by its long form through the arrangement whose grant names the short form", async () => {
+    const long = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid;
+    const mediationId = mediationIdOf(long);
+    const s = new Scene();
+    mediatedRoute(s, { me: (await mintMediationDid(keys, mediationId)).longFormDid }, mediationId, longToShort(long) as Did);
+    await createdDid(s, keys, DID_ID, { kind: "mediated", routingDid: long });
+    const { mediations, dids } = await foldWithSeed(s.set(), keys);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, mediation: mediationId, faults: [] });
+    expect(dids.receipt(DID_ID)).toBe("eligible");
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([mediationId]));
+  });
+
+  it("waits, rather than ends, while the arrangement naming its routing DID is ungranted or retired: its grant may not have arrived here yet, and its retirement is the arrangement's state", async () => {
     const s = new Scene();
     s.add("mediation.created", { mediationId: MEDIATION, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
     const created = await createdDid(s, keys, DID_ID, MEDIATED);

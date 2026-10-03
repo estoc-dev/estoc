@@ -68,7 +68,7 @@ export {
 export { MediatorLink, bounded, ritual, sealData, sealerOf, senderOf, type LinkOptions, type Opened, type Sealed } from "./link.js";
 export { Pickup, type Delivered, type Drained, type Fate, type Handle, type PickupOptions } from "./pickup.js";
 export { decide, serially, type Decided } from "./procedure.js";
-export { canonicalDid, sameDid } from "./same-did.js";
+export { canonicalDid, sameDid } from "@estoc/vault";
 export { createMediation, mediationOf, selectMediation } from "./mediation.js";
 export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";

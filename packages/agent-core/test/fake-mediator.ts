@@ -5,7 +5,7 @@ import type { Secret } from "@estoc/did-peer";
 import bs58 from "bs58";
 import { base64urlToBytes } from "@estoc/did-peer";
 import type { DerivedIdentity } from "@estoc/keystore";
-import { RECIPIENT_PROOF_TYP, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, splitDidUrl, type Did, type DidUrl } from "@estoc/vault";
+import { RECIPIENT_PROOF_TYP, canonicalDid, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, sameDid, splitDidUrl, type Did, type DidUrl } from "@estoc/vault";
 import { base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 
 import {
@@ -26,7 +26,6 @@ import {
   secretsResolverFor,
 } from "../src/index.js";
 import { didOf } from "../src/protocol/didcomm.js";
-import { canonicalDid, sameDid } from "../src/same-did.js";
 
 /**
  * A mediator that lives inside the test: messagepickup 3.0 (HTTP and a

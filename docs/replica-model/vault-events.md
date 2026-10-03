@@ -239,7 +239,8 @@ estocNamespace(purpose) = UUIDv5(
 )
 ```
 
-The purposes and resulting namespace UUIDs, unchanged from version 3, are:
+The purposes and resulting namespace UUIDs are these; the first three are
+unchanged from version 3:
 
 | purpose | namespace UUID |
 | --- | --- |
@@ -283,6 +284,16 @@ events are one creation under the
 [mediation fold](#mediation-fold). The ID outlives the arrangement: once it
 is retired, there is no other ID under which to arrange with that mediator.
 
+The mediator's identity is `N(mediatorDid)`. Wherever a mediator or routing
+DID is compared — creations of one arrangement, its grants, the arrangement
+a document's routing DID is looked up by, a replica grant's `mediator`
+against the arrangement's — the comparison is of `N` of each side: a valid
+long and short spelling of one `did:peer:4` are one mediator, never a second
+mediator or a disagreeing grant. Each event keeps the spelling it was
+written with, and no event or CID is rewritten to canonicalize it: a long
+form is the material its short form resolves from. Comparing identities
+replaces no check of a document, hash or signature.
+
 Test vector: `did:web:mediator.example` gives
 `1922ce3b-533a-5c75-8cb1-10cdd1f80204`.
 
@@ -309,8 +320,10 @@ input.
 
 The successor rule names the predecessor's DID, not its entity ID: the DID
 commits to the whole document, keys and route alike, so replicas rotating
-from one DID arrive at one successor whose key names, keys and document
-agree. The peer's current DID is no input to the successor rule: replicas
+from one DID arrive at one successor whose key names and keys agree. Equal
+successor documents take more: the allocating procedure must choose the same
+document-builder inputs, the route among them, which the ID derivation does
+not select. The peer's current DID is no input to the successor rule: replicas
 learn of a peer's rotation at different times and would otherwise part.
 `"v1"` names the derivation profile: this transcript together with the key
 derivation of [section 3.2](#single-seed) and the numalgo-4 document
@@ -702,10 +715,12 @@ whose mail each replica picks up under its own DID. `me.did` is recorded as a
 `did:peer:4` long form; a short form is an invalid payload. The payload names
 no profile: there is one kind of arrangement.
 
-Replicas that each arrange with one mediator record the same creation,
-which the fold reads as one. Repeating the arrangement ID with another
-`me` is an integrity conflict. There is no second arrangement with one
-mediator.
+Replicas that each arrange with one mediator record one creation: creations
+under one `mediationId` whose `mediatorDid` agree under `N` and whose `me`
+are identical are one creation, whichever spelling of the mediator each
+replica was given, and the fold reads them as one. Repeating the arrangement
+ID with another `me` is an integrity conflict. There is no second
+arrangement with one mediator.
 
 <a id="mediation-granted"></a>
 
@@ -725,12 +740,13 @@ mediator.
 This is the durable observation that the mediator granted the arrangement
 and returned `routingDid`. For a replica-mediation arrangement it is the
 observation of the mediator's `account-registered` reply, recorded once, and
-`routingDid` equals the arrangement's `mediatorDid`; any other value is a
-conflict.
+`N(routingDid)` equals `N(mediatorDid)` of the arrangement; any other value
+is a conflict.
 
-More than one distinct routing DID for one arrangement ID is a conflict. The
-runtime MUST NOT guess which grant is authoritative; it establishes a new
-arrangement or obtains an explicit current answer from the mediator.
+Grants of one arrangement whose routing DIDs agree under `N` are one grant.
+More than one routing DID under `N` for one arrangement ID is a conflict. The
+runtime MUST NOT guess which grant is authoritative, and no later grant
+chooses one: the arrangement stays in conflict.
 
 <a id="mediation-selected"></a>
 
@@ -911,10 +927,10 @@ A mediated DID is routed by the usable arrangement whose grant names its
 routing DID. A usable arrangement is routed through its own mediator, and
 a vault has one arrangement per mediator under the ID the mediator's DID
 derives, so one arrangement at most routes a DID. While none does, the DID
-waits: the arrangements that may name a routing DID are an open set, a
-grant not yet replicated here among them, so the fold MUST NOT end a
-mediated DID's receipt on their account. Once the arrangement routing a
-DID is retired, the DID waits as well, and no arrangement with that
+waits: the creation or the grant that makes that arrangement usable may not
+have been replicated here yet, so the fold MUST NOT end a mediated DID's
+receipt on the arrangement's account. Once the arrangement routing a DID is
+retired or in conflict, the DID waits as well, and no arrangement with that
 mediator follows it. Restoring communication takes a successor DID, never
 a change to the old entity.
 
@@ -1003,12 +1019,20 @@ display contact deletion alone is not a transport or authorization operation.
 
 For each mediation ID:
 
-- exactly one consistent `mediation.created` defines mediator and key;
-- one consistent `mediation.granted` makes it usable;
+- exactly one consistent `mediation.created` defines mediator and key,
+  creations agreeing under `N(mediatorDid)` and identical `me` being one;
+- one consistent `mediation.granted` makes it usable, grants agreeing under
+  `N(routingDid)` being one;
 - any `mediation.retired` makes it terminal; and
 - conflicting create or grant values make it unusable and visible as a
   conflict, as does an arrangement granted a routing DID other than its
-  mediator.
+  mediator under `N`.
+
+Where several events are one creation or one grant, the fold reports the
+mediator or routing DID as the first of them in canonical order spells it;
+every long form any of them records stays available as resolution material.
+The arrangements a routing DID is looked up by are indexed under `N` of the
+DIDs their grants name.
 
 The preferred mediation is the latest `mediation.selected`. If it is missing,
 ungranted, retired or conflicted, preferred is null and policy must select
@@ -1024,23 +1048,25 @@ such dependency remains or it becomes unusable.
 
 This set and the desired recipient set of [section 5.7](#route-did-and-key-fold)
 both serve receipt: a retired DID stays in both while an arrangement routes it.
-A retired mediation routes nothing and is never required; receipt under a DID
-it routed waits for another usable arrangement naming the routing DID.
-Temporary unavailability does not erase dependencies.
+A retired or conflicted mediation routes nothing and is never required;
+receipt under a DID it routed waits, since no arrangement with that mediator
+follows it. An arrangement whose creation or grant has not arrived becomes
+usable when it does; retirement and conflict are not undone by any later
+event. Temporary unavailability does not erase dependencies.
 
 The active runtime has the account hold its recipients and, as a replica,
 drains its own pickup on every reachable mediation in this set. A hosted
 runtime receives no special ownership.
 
-For each replica ID, grants equal in `account`, `mediation_id`, `mediator`,
-`replica_id` and `replica_long_form` are one binding, whatever `kid` each was
-signed under and whoever authored the events. Different bindings for one
+For each replica ID, grants equal in `account`, `mediation_id`, `replica_id`
+and `replica_long_form` and agreeing in `mediator` under `N` are one binding,
+whatever `kid` each was signed under and whoever authored the events. Different bindings for one
 replica ID are a conflict; no canonical-order winner is chosen. A replica with
 one binding is a member of its arrangement when all of these hold:
 
 - the arrangement has one consistent creation;
 - the grant's `account` is the short form of that creation's `me.did` and its
-  `mediator` equals `mediatorDid`;
+  `mediator` is the arrangement's under `N`;
 - the grant's `kid` spells the account as its short form or as exactly the
   long form that creation records, and its fragment names a method which that
   long form's document authorizes for authentication and which carries the
@@ -1049,7 +1075,8 @@ one binding is a member of its arrangement when all of these hold:
   the same key under any other type is a grant no mediator takes;
 - the grant's signature verifies under that key; and
 - the replica's document carries the keys the seed derives for
-  `replica/<replicaId>/me` and names that mediator as its only DIDComm service.
+  `replica/<replicaId>/me` and names that mediator, under `N`, as its only
+  DIDComm service.
 
 A missing creation or an unavailable seed leaves the replica pending; a failed
 condition, disagreeing creations included, makes it a conflict. Membership is
@@ -1081,16 +1108,17 @@ The fold verifies all of the following:
 - the document names exactly one DIDComm service, a DID or an absolute
   HTTPS or WSS URL, under [section 5.3](#delivery-routes); a document that
   does not is a conflict; and
-- a mediated document's routing DID is named by the grant of a usable
-  arrangement, which routes the DID.
+- a mediated document's routing DID is named, under `N`, by the grant of a
+  usable arrangement, which routes the DID.
 
 A DID is **terminal for receipt** only on its own account: no consistent
 creation, or a conflict above. A mediated DID whose routing DID no usable
-arrangement names — none yet, none granted, every one known retired or in
-conflict — is **pending**: the arrangements that may name a routing DID
-are an open set, and a grant that has not arrived MUST NOT be mistaken for
-one that never will. A temporarily unavailable
-endpoint is not a fold state. A direct DID waits only for its key check.
+arrangement names — none yet, none granted, the one known retired or in
+conflict — is **pending**: the creation or grant that has not arrived MUST
+NOT be mistaken for one that never will, and a retired or conflicted
+arrangement is the arrangement's state, not the DID's. A temporarily
+unavailable endpoint is not a fold state. A direct DID waits only for its
+key check.
 
 The **desired mediator recipient set** contains exactly each
 `(canonical DID short form, mediation ID)` pair for a mediated DID that is not
@@ -3237,12 +3265,14 @@ derivation requires a new vault version.
 
 - <a id="ve-157"></a> **VE-157.** New rotation allocation commits its UUIDv7 did.created and did.rotationSelected atomically. A crash exposes both or neither; recovery of an uncertain commit reuses the committed successor/decision instead of allocating a second DID. Import of the decision without its creation remains pending until exact evidence arrives. No crash prefix alone permits disclosure or dispatch.
 
-### Replica-mediation membership (VE-158–VE-161)
+### Replica-mediation membership (VE-158–VE-162)
 
-- <a id="ve-158"></a> **VE-158.** mediation.created names the arrangement by the UUIDv5 its mediatorDid derives under the mediation arrangement rule, and records me.did as a did:peer:4 long form with no profile; another ID, a short form or a profile member is an invalid payload. An arrangement granted a routing DID other than its mediatorDid is a conflict.
+- <a id="ve-158"></a> **VE-158.** mediation.created names the arrangement by the UUIDv5 its mediatorDid derives under the mediation arrangement rule, and records me.did as a did:peer:4 long form with no profile; another ID, a short form or a profile member is an invalid payload. An arrangement granted a routing DID other than its mediator, compared as N(did), is a conflict.
 
 - <a id="ve-159"></a> **VE-159.** replica/<replicaId>/me derives a replica's DID with its mediator as the only DIDComm service: the same replica ID and mediator give the same DID, another mediator or replica ID another DID. No payload field accepts a replica key name.
 
 - <a id="ve-160"></a> **VE-160.** replica.created has exactly replicaId, mediationId and grant, with empty roots. The grant's protected header is exactly alg EdDSA, the grant typ and a kid naming a method of the account; its payload is its own RFC 8785 text of exactly the six string members, with IDs equal to the event's, a short-form account, a replica DID other than the account and that DID's long form, no DID over 8192 bytes and no more than 16384 characters in all. Anything else, a payload that is not I-JSON included, is an invalid payload and leaves the events around it readable.
 
 - <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives as a Multikey or Ed25519VerificationKey2020 multibase value or a JsonWebKey2020 JWK, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.
+
+- <a id="ve-162"></a> **VE-162.** A mediator is one DID however it is spelled: creations of one arrangement that agree under N(mediatorDid) with identical me are one creation, grants that agree under N(routingDid) are one grant, a routing DID is looked up under N, and a replica grant's mediator is compared with the arrangement's under N. Each event keeps the spelling it recorded and no event is rewritten; the fold reports the spelling of the first event in canonical order, and every recorded long form stays available as resolution material.

@@ -47,6 +47,8 @@ export {
   NAMESPACE_PURPOSES,
   type NamespacePurpose,
   estocNamespace,
+  canonicalDid,
+  sameDid,
   compareUtf8,
   channelOf,
   channelKey,

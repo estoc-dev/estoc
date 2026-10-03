@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Message } from "@estoc/didcomm-node";
 import type { IMessage } from "@estoc/didcomm-node";
 import canonicalize from "canonicalize";
-import { v7 as uuidv7 } from "uuid";
+import { isLongForm, longToShort } from "@estoc/did-peer";
+import { v5 as uuidv5, v7 as uuidv7 } from "uuid";
 import WebSocket from "ws";
 
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
@@ -305,10 +306,15 @@ check(
   "account registered, routed through the mediator"
 );
 
+/** The ID a vault names its one arrangement with this mediator by: the UUIDv5 the mediator's canonical DID derives, which the mediator takes by shape alone. */
+const mediationId = uuidv5(
+  new TextEncoder().encode(canonicalize(["v1", isLongForm(mediatorDid) ? longToShort(mediatorDid) : mediatorDid])!),
+  uuidv5("https://estoc.dev/uuid/v1/mediation", uuidv5.URL)
+);
 const replica = await peer4Agent(mediatorDid);
 const replicaGrant = await signedBy(account, {
   account: account.did,
-  mediation_id: uuidv7(),
+  mediation_id: mediationId,
   mediator: mediatorDid,
   replica_id: uuidv7(),
   replica_did: replica.did,

@@ -20,7 +20,7 @@
  */
 
 import { isJsonObject, type JsonValue, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
-import { scanVault, signReplicaGrant, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type Replica, type ReplicaId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { sameDid, scanVault, signReplicaGrant, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type Replica, type ReplicaId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import type { IMessage } from "./protocol/didcomm.js";
 import { ACCOUNT_REGISTER, ACCOUNT_REGISTERED, REPLICA_ADD, REPLICA_ADDED } from "./protocol/replica-mediation.js";
@@ -29,7 +29,6 @@ import { EntityConflict, MediatorRefused, Unusable } from "./errors.js";
 import type { MediatorLink } from "./link.js";
 import { mediationOf, toward } from "./mediation.js";
 import { decide, serially } from "./procedure.js";
-import { sameDid } from "./same-did.js";
 
 /**
  * Where a runtime keeps what its mediator confirmed to it: its local

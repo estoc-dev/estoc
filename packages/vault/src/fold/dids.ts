@@ -67,9 +67,10 @@ export interface DidFold {
    * disclosure but not the draining of what was addressed here;
    * `pending` while the entity waits for something not its own: a
    * usable arrangement through its routing DID, the key check. The
-   * arrangements that may name a routing DID are an open set — the one
-   * that routes this entity may not have arrived here yet — so none of
-   * them retiring ends receipt.
+   * creation or grant that makes its arrangement usable may not have
+   * arrived here yet, so a missing one does not end receipt; nor does
+   * the arrangement's retirement or conflict, which is the arrangement's
+   * state and not the entity's.
    */
   receipt(didId: DidId): ReceiptEligibility;
 }
@@ -105,10 +106,12 @@ export function foldDids(set: VaultEventSet, mediations: MediationFold, options:
 
 /**
  * The arrangement a mediated document is routed by: the usable one
- * whose grant names its routing DID. A usable arrangement is routed
- * through its own mediator and the vault has one arrangement per
- * mediator, so at most one is. None yet, or none usable yet, may
- * recover, another arrangement naming the same DID included.
+ * whose grant names its routing DID, under either spelling. A usable
+ * arrangement is routed through its own mediator and the vault has one
+ * arrangement per mediator, so at most one is. None yet, or one whose
+ * creation or grant has not arrived, may become usable; a retired or
+ * conflicted one does not, and no other arrangement with that mediator
+ * follows it.
  */
 function routedBy(mediations: MediationFold, routingDid: Did): { usable: MediationId | null; faults: string[] } {
   const through = mediations.through(routingDid);

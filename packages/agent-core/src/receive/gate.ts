@@ -8,12 +8,11 @@
  */
 
 import { base64urlToUtf8, isPeerDID4, isShortForm } from "@estoc/did-peer";
-import { authorizedMethodIds, peerResolution, splitDidUrl, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type ReplicaId, type VaultFold } from "@estoc/vault";
+import { authorizedMethodIds, peerResolution, sameDid, splitDidUrl, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type ReplicaId, type VaultFold } from "@estoc/vault";
 
 import type { Unpacked } from "../protocol/didcomm.js";
 import { authorizedKeys } from "../evidence.js";
 import { knownLongForms, resolve, type Resolution } from "../resolver.js";
-import { sameDid } from "../same-did.js";
 
 export type Recipients =
   | { verdict: "eligible"; kid: DidUrl; didId: DidId; did: Did; localKeyName: KeyName }

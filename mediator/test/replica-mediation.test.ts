@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { Hono } from "hono";
 import type { IMessage } from "@estoc/didcomm-node";
 import { CompactSign, importJWK } from "jose";
+import { v5, v7 } from "uuid";
 import canonicalize from "canonicalize";
 import bs58 from "bs58";
 import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
@@ -64,14 +65,10 @@ let mediator: MediatorIdentity;
 let account: Peer4Agent;
 let mediationId: string;
 
-function uuidOfVersion(version: "5" | "7"): string {
-  const hex = randomUUID().replaceAll("-", "");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${version}${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
-}
-/** The spelling an account names its arrangement by: a derived UUIDv5. */
-const uuidv5 = (): string => uuidOfVersion("5");
+/** The spelling an account names its arrangement by: a UUIDv5, derived here from a random name since the mediator reads only its shape. */
+const uuidv5 = (): string => v5(randomUUID(), v5.URL);
 /** The spelling an account names a replica by: a minted UUIDv7. */
-const uuidv7 = (): string => uuidOfVersion("7");
+const uuidv7 = (): string => v7();
 
 function serve(config: Partial<MediatorConfig> = {}): Hono {
   return buildServer({ identity: mediator, store, config: { ...TEST_CONFIG, ...config } }).app;

@@ -1,3 +1,4 @@
+import { longToShort } from "@estoc/did-peer";
 import { base64urlnopad } from "@scure/base";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -112,6 +113,16 @@ describe("the replica fold", () => {
     arrangement(conflicted, { ...account, me: { did: foreign } });
     await enrolled(conflicted, account, REPLICA);
     expect((await checked(conflicted))(conflicted.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: [`the creations of mediation ${MEDIATION} disagree`] });
+  });
+
+  it("takes a grant spelling a did:peer:4 mediator by its short form as the arrangement's whose creation spells the long form", async () => {
+    const long = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid;
+    const mediationId = mediationIdOf(long);
+    const peer: GrantingMediation = { mediationId, mediatorDid: long, me: { did: (await mintMediationDid(keys, mediationId)).longFormDid } };
+    const scene = new Scene();
+    arrangement(scene, peer);
+    await enrolled(scene, { ...peer, mediatorDid: longToShort(long) as Did }, REPLICA);
+    expect((await checked(scene))(scene.set()).replicas.get(REPLICA)).toMatchObject({ status: "member", mediationId, identity: "verified", faults: [] });
   });
 
   it("keeps a member whatever the mediator's routing grants say, while the arrangement they contradict carries no mail", async () => {

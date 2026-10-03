@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A mediator is one DID however it is spelled**: `canonicalDid` and
+  `sameDid` compare a `did:peer:4` by its short form and any other DID as
+  it is. The mediation fold reads creations of one arrangement that name
+  the same mediator under either spelling, with identical `me`, as one
+  creation, grants naming the same routing DID under either spelling as
+  one grant, and `through` finds an arrangement under either spelling;
+  the replica fold and `sameBinding` compare a grant's `mediator` the
+  same way. Events keep the spelling they recorded, and the fold reports
+  the spelling of the first in canonical order.
 - **Derived arrangement and DID entity IDs**: `mediationIdOf(mediatorDid)`
   names the one arrangement with a mediator by the UUIDv5 its canonical
   DID derives, so every replica that arranges with a mediator records the

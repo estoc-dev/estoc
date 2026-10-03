@@ -8,6 +8,7 @@ import {
   NAMESPACE_PURPOSES,
   anonymousMessageId,
   automaticMessageId,
+  canonicalDid,
   channelKey,
   channelOf,
   compareChannels,
@@ -20,6 +21,7 @@ import {
   mediationIdOf,
   mediationKeyName,
   replicaKeyName,
+  sameDid,
   startDidId,
   successorDidId,
   sameChannel,
@@ -153,6 +155,19 @@ describe("effectKey and automaticMessageId", () => {
     expect(() => effectKey(ACK_EXECUTION, "urn:effect-￿")).toThrow(InvalidIdentifier);
     expect(effectKey(ACK_EXECUTION, "urn:effect-�")).not.toBe(effectKey(ACK_EXECUTION, "urn:effect-\u{10000}"));
     expect(() => automaticMessageId("" as EffectKey)).toThrow(InvalidIdentifier);
+  });
+});
+
+describe("canonicalDid", () => {
+  it("spells a did:peer:4 by its short form whichever form it is given, and any other DID as it is, so that two spellings of one DID are the same DID", () => {
+    const long = did(`${LOCAL}:z2LongForm`);
+    expect(canonicalDid(long)).toBe(LOCAL);
+    expect(canonicalDid(LOCAL)).toBe(LOCAL);
+    expect(canonicalDid("did:web:mediator.example")).toBe("did:web:mediator.example");
+    expect(sameDid(long, LOCAL)).toBe(true);
+    expect(sameDid(LOCAL, long)).toBe(true);
+    expect(sameDid(LOCAL, PEER)).toBe(false);
+    expect(sameDid("did:web:mediator.example", "did:web:mediator.example")).toBe(true);
   });
 });
 

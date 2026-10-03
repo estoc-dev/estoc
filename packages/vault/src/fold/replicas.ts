@@ -14,6 +14,7 @@
 
 import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant } from "../errors.js";
 import type { Keys } from "../identity.js";
+import { sameDid } from "../ids.js";
 import { canonicalDidOf } from "../peer-document.js";
 import { readReplicaGrant, sameBinding, verifyReplicaGrant, type ReplicaGrant } from "../replica-grant.js";
 import type { Did, MediationId, ReplicaId } from "../types.js";
@@ -79,7 +80,7 @@ export function foldReplicas(set: VaultEventSet, options: ReplicaFoldOptions = {
         faults.push(`the creations of mediation ${binding.mediationId} disagree`);
       } else {
         if (accountOf(creation.me.did) !== binding.account) faults.push("the grant's account is not the arrangement's");
-        if (creation.mediatorDid !== binding.mediator) faults.push("the grant's mediator is not the arrangement's");
+        if (!sameDid(creation.mediatorDid, binding.mediator)) faults.push("the grant's mediator is not the arrangement's");
       }
     }
     const identity: IdentityCheck = options.grantChecks?.get(replicaId) ?? "unchecked";

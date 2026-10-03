@@ -9,7 +9,7 @@
  * object standing in for it.
  */
 
-import { longToShort } from "@estoc/did-peer";
+import { isLongForm, isShortForm, longToShort } from "@estoc/did-peer";
 import { canonicalText, canonicalize, forbiddenIn, type JsonValue } from "@estoc/event-store";
 import { sha256 } from "@noble/hashes/sha2";
 import { base64urlnopad } from "@scure/base";
@@ -18,7 +18,7 @@ import { v5 as uuidv5 } from "uuid";
 import type { FactId } from "@estoc/continuity";
 
 import { InvalidIdentifier } from "./errors.js";
-import { isDerivedId, isDid, isEntityId, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
+import { isDerivedId, isDid, isEntityId, isMintedId } from "./syntax.js";
 import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
 export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity"] as const;
@@ -49,18 +49,27 @@ function nonEmpty(value: string, what: string): string {
 }
 
 /**
- * A DID in the one spelling every replica derives from: a did:peer:4 by
- * its short form, whichever spelling arrived, any other DID as it is.
- * String work over a DID verified elsewhere: a long form's document is
- * checked against its hash where it is resolved, not here.
+ * A DID in the one spelling every replica compares and derives by: a
+ * did:peer:4 by its short form, whichever spelling arrived, any other
+ * DID as it is. String work over a DID verified elsewhere: a long
+ * form's document is checked against its hash where it is resolved,
+ * not here. A long form is kept where it was recorded, as the material
+ * its short form resolves from; only comparisons go through here.
  */
+export function canonicalDid(did: string): Did {
+  return (isLongForm(did) ? longToShort(did) : did) as Did;
+}
+
+/** Do two spellings name one DID? */
+export function sameDid(a: string, b: string): boolean {
+  return a === b || canonicalDid(a) === canonicalDid(b);
+}
+
 function canonical(value: string, what: string): string {
   nonEmpty(value, what);
   if (!isDid(value)) throw new InvalidIdentifier(`${what} is a DID`);
-  if (!value.startsWith("did:peer:4")) return value;
-  if (isPeer4Short(value)) return value;
-  if (isPeer4Long(value)) return longToShort(value);
-  throw new InvalidIdentifier(`${what} is a did:peer:4 in its short or long form`);
+  if (value.startsWith("did:peer:4") && !isShortForm(value) && !isLongForm(value)) throw new InvalidIdentifier(`${what} is a did:peer:4 in its short or long form`);
+  return canonicalDid(value);
 }
 
 const encoder = new TextEncoder();
