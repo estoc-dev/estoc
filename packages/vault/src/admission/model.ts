@@ -14,11 +14,14 @@
  *
  * Whether an observation without one may be admitted now is the second
  * reading here, over the whole fold: what refuses it for good, then
- * what current policy holds against it — the peer's replacement, the
- * channel's denial, a conflict in the continuity its proof needs, a
- * contradiction of the intent its input already admitted — then what
- * still waits. The candidates, in canonical event order, are what the
- * runtime walks when it records admissions; the fold records none. An
+ * whether its evidence is still incomplete, and only then what current
+ * policy holds against it — the peer's replacement, the channel's
+ * denial, a conflict in the continuity its proof needs, a contradiction
+ * of the intent its input already admitted. Policy is read last because
+ * it is judged over the source's channel and input, which only complete
+ * evidence establishes. The candidates, in canonical event order, are
+ * what the runtime walks when it records admissions; the fold records
+ * none. An
  * admission already committed is displaced by no later candidate, but
  * several unadmitted observations of one input may coexist, waiting
  * for evidence, left by interrupted processing or merged from copies

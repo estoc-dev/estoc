@@ -914,7 +914,7 @@ the document, so the long form fixes it; nothing beside the document
 records it and no event changes it. A transport or mediation change
 creates successor DID entities, allowing old and new DIDs to overlap
 during cutover. Each affected channel context uses its own
-[section-6.5](#relationship-localtransitioned) local decision for new
+[section 6.4](#relationship-localtransitioned) local decision for new
 intents; mediation selection does not migrate existing DIDs.
 
 A direct endpoint routes to a full vault runtime or an ingress service.
@@ -2195,16 +2195,20 @@ The folds over these events, and the procedures that decide what to
 append, are specified by their code and its tests, not by this document.
 Each fold is a module of
 [`packages/vault/src/fold/`](../../packages/vault/src/fold/) whose leading
-comment states the rule it implements. A fold is deterministic over the
+comment states the rule it implements; the admission fold is
+[`packages/vault/src/admission/model.ts`](../../packages/vault/src/admission/model.ts),
+beside the pass that records admissions. A fold is deterministic over the
 same event set, the verdicts handed to it and its interpretation options,
 in whatever order the events arrived: what needs the seed or the retained
 objects is checked once beside the fold, in
 [`packages/vault/src/fold/vault.ts`](../../packages/vault/src/fold/vault.ts),
 and the verdicts are passed in, so the event frontier alone is not the
 whole input and a repaired or lost object changes the projection without
-a new event. `packages/vault/test/fold/` checks each fold by shuffling.
+a new event. `packages/vault/test/fold/` and
+`packages/vault/test/admission/` check each fold by shuffling.
 The procedures that write the vault are
-[`packages/vault/src/procedures.ts`](../../packages/vault/src/procedures.ts)
+[`packages/vault/src/procedures.ts`](../../packages/vault/src/procedures.ts),
+[`packages/vault/src/admission/record.ts`](../../packages/vault/src/admission/record.ts)
 and the modules of
 [`packages/agent-core/src/`](../../packages/agent-core/src/); each reads
 the fold under the writer lock, decides over it and commits each decision
