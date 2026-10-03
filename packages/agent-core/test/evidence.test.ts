@@ -3,14 +3,13 @@ import { describe, expect, it, test } from "vitest";
 import { FromPrior } from "@estoc/didcomm-node";
 import { longToShort, resolveDIDCommDoc, toDIDCommDIDDoc } from "@estoc/did-peer";
 import { MemoryVault } from "@estoc/event-store";
-import { didKeyName, objectReader, peerResolution, scanVault, type Did, type DidId, type PublicKey, type RouteId } from "@estoc/vault";
+import { didKeyName, objectReader, peerResolution, scanVault, type Did, type DidId, type PublicKey } from "@estoc/vault";
 
-import { Keyring, UnauthorizedKey, authorizedKeys, commitResolution, configureRoute, createDid, didcommDocumentOf, knownLongForms, pinnedResolver, readResolution, resolve, secretsResolverFor, type Resolution } from "../src/index.js";
+import { Keyring, UnauthorizedKey, authorizedKeys, commitResolution, createDid, didcommDocumentOf, knownLongForms, pinnedResolver, readResolution, resolve, secretsResolverFor, type Resolution } from "../src/index.js";
 import { didcomm, freshVault, json, newMediator, webFetch, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
 
 const BOB = "did:web:bob.example";
 const BOB_URL = "https://bob.example/.well-known/did.json";
-const ROUTE = "019b0000-0000-7000-8000-00000000000a" as RouteId;
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const LOCAL_KEY = didKeyName(DID, "key-agreement");
 
@@ -28,8 +27,7 @@ function keyAgreementKey(resolution: Resolution): PublicKey {
 /** Alice: a vault with one communication DID on a direct route, and her keys in hand. */
 async function alice(): Promise<Fresh & { did: Did; longFormDid: Did; ring: Keyring }> {
   const fresh = await freshVault();
-  await configureRoute(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, ROUTE);
-  const { minted } = await createDid(fresh.runtime, fresh.keys, ROUTE, DID);
+  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
   const ring = await Keyring.load(fresh.keys, await scanVault(fresh.runtime.vault, fresh.keys));
   return { ...fresh, did: minted.did, longFormDid: minted.longFormDid, ring };
 }

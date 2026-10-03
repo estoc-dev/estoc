@@ -34,7 +34,7 @@ export function privacyPolicy(fold: VaultFold, cid: EventReference<"message.in">
   if (execution.status.status !== "complete") return none(`the input is not established: ${execution.status.because}`);
   const kind = kindOf(source.event.data);
   if (kind !== "application") return none(`a control input selects no rotation: it is ${kind}`);
-  const entity = fold.routes.dids.get(source.localDidId);
+  const entity = fold.dids.entities.get(source.localDidId);
   if (entity === undefined || entity.disclosures.length === 0) return none("the local DID is not disclosed");
   const denied = channelPolicy(fold, source.channel);
   if (denied !== null) return none(denied);

@@ -19,7 +19,6 @@ export type MessageId = EntityId<"message">;
 export type ContactId = EntityId<"contact">;
 /** A local communication-DID entity, not the DID string. */
 export type DidId = EntityId<"did">;
-export type RouteId = EntityId<"route">;
 export type MediationId = EntityId<"mediation">;
 export type PackageId = EntityId<"package">;
 /** A channel-scoped automatic execution. */
@@ -64,7 +63,6 @@ export type EpochSeconds = number;
  * protocol, whose mail each replica picks up under a DID of its own.
  */
 export type MediationProfile = "replica-mediation/1.0";
-export type RouteKind = "mediated" | "direct";
 export type DisclosureAs = "oob" | "direct";
 export type ContactOrigin = "user" | "automatic";
 /** Why an unsubmitted outbound ended: its expiry was reached, or the user cancelled it. */
@@ -154,11 +152,7 @@ export type VaultData = {
   "mediation.selected": { mediationId: MediationId };
   "mediation.retired": { mediationId: MediationId; because: string };
   "replica.created": { replicaId: ReplicaId; mediationId: MediationId; grant: string };
-  "did.created": { didId: DidId; did: Did; longFormDid: Did; boundRouteId: RouteId };
-  "route.configured":
-    | { routeId: RouteId; kind: "mediated"; mediationId: MediationId; endpoint: null }
-    | { routeId: RouteId; kind: "direct"; mediationId: null; endpoint: string };
-  "route.retired": { routeId: RouteId; because: string };
+  "did.created": { didId: DidId; did: Did; longFormDid: Did };
   "did.disclosed": { didId: DidId; as: DisclosureAs; oobId: string | null; goal: string | null };
   "did.retired": { didId: DidId; because: string };
   "message.admitted": { sourceEventCid: EventReference<"message.in"> };

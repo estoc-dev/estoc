@@ -131,7 +131,7 @@ describe("a process that dies", () => {
     expect(await alice.agent.manual.completeNotification(missingNotifications[0]!.rotationEventCid as EventReference<"did.rotationSelected">)).toMatchObject({ outcome: "created", action: { kind: "manual" }, dispatched: { outcome: "submitted" } });
     await until("bob has the notification", () => bob.inbounds.length === 2);
     expect(bob.inbounds[1]).toMatchObject({ after: { proof: { status: "verified" } } });
-    const successor = (await foldOf(alice)).routes.dids.get(rotated.successor)!.created!.did;
+    const successor = (await foldOf(alice)).dids.entities.get(rotated.successor)!.created!.did;
     expect((await foldOf(bob)).continuity.head(channelOf(bob.party.did, alice.party.did))).toEqual(channelOf(bob.party.did, successor));
     expect((await alice.agent.pending()).missingNotifications).toEqual([]);
   });

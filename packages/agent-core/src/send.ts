@@ -177,8 +177,8 @@ function inChannel(fold: VaultFold, channel: Channel, recipientDid: Did): Select
 }
 
 function senderOf(fold: VaultFold, channel: Channel): LocalDidEntity {
-  const didId = fold.routes.entityOfDid(channel.localDid);
-  const entity = didId === null ? undefined : fold.routes.dids.get(didId);
+  const didId = fold.dids.entityOfDid(channel.localDid);
+  const entity = didId === null ? undefined : fold.dids.entities.get(didId);
   if (entity === undefined) throw new UnknownEntity("DID", channel.localDid);
   if (!entity.live) throw new Unusable("DID", entity.didId, entity.retired !== null ? [`retired: ${entity.retired}`, ...entity.faults] : entity.faults);
   return entity;

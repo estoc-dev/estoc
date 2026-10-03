@@ -6,7 +6,7 @@ import { AUTHENTICATION_METHOD, didKeyName, inboundMessageId, scanVault, signFro
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, Receiver, acknowledgementDrafts, afterReceipt, createDid, disclose, prepare, receiptOf, recordAcks, recordOwed, recordReceipt, send, type Authenticated, type Content, type ReceiptOutcome, type Source } from "../src/index.js";
+import { AgentTrace, Keyring, Receiver, acknowledgementDrafts, afterReceipt, createDid, disclose, prepare, receiptOf, recordAcks, recordOwed, recordReceipt, send, type Authenticated, type Content, type ReceiptOutcome, type Source, routeOf } from "../src/index.js";
 import { didcomm, directParty, peerSealer, refuseCommits, sealed, type DirectParty, type Fresh } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -115,8 +115,8 @@ describe("after the receipt", () => {
     expect([recovered.admitted.map(({ data }) => data.sourceEventCid), recovered.acknowledged]).toEqual([[orphan!.cid], []]);
     expect(await recordOwed(alice.runtime, alice.keys)).toEqual({ admitted: [], acknowledged: [] });
 
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const shortIssuer = await new SignJWT({ iss: prior.did, sub: bob.longFormDid, iat: IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));
     receiver.close();
@@ -144,8 +144,8 @@ describe("after the receipt", () => {
   test("the proof the observation carried is judged by the fold: one that verifies is reported as such and traced nowhere, one that does not is reported and left as a diagnostic", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const { receiver, seen } = await receiving(alice);
     const verified = await receivedThen(receiver, alice, bob, { from_prior: proof }, trace);

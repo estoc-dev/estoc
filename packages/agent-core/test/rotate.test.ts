@@ -42,7 +42,6 @@ import {
   createMediation,
   disclose,
   dispatch,
-  ensureRoute,
   manualNotificationDraft,
   pinnedResolver,
   privateAddress,
@@ -56,8 +55,9 @@ import {
   type RotateOptions,
   type Rotated,
   type Source,
+  routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
+import { didcomm, directParty, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -115,7 +115,8 @@ function rotated(privacy: Awaited<ReturnType<typeof privateAddress>>): Rotated {
   return privacy.rotation;
 }
 
-const successorOf = async (holder: Holder, rotation: Rotated) => (await foldOf(holder)).routes.dids.get(rotation.successor)!.created!;
+const successorOf = async (holder: Holder, rotation: Rotated) => (await foldOf(holder)).dids.entities.get(rotation.successor)!.created!;
+const successorRoute = async (holder: Holder, rotation: Rotated) => routeOf((await foldOf(holder)).dids.entities.get(rotation.successor)!);
 
 /** The envelope the message's one package names, opened as Bob opens it: with his secrets, the documents each vault holds. */
 async function openedByBob(bob: DirectParty, alice: DirectParty, messageId: MessageId): Promise<JsonObject> {
@@ -141,7 +142,7 @@ describe("a local rotation", () => {
     expect(decodeJwt(rotation.decision.data.fromPrior)).toMatchObject({ iss: alice.longFormDid, sub: successor.longFormDid, iat: IAT });
     let fold = await foldOf(alice);
     const creation = fold.set.of("did.created").find((event) => event.data.didId === rotation.successor)!;
-    expect([creation.at, successor.boundRouteId]).toEqual([rotation.decision.at, fold.routes.dids.get(ALICE)!.created!.boundRouteId]);
+    expect([creation.at, routeOf(fold.dids.entities.get(rotation.successor)!)]).toEqual([rotation.decision.at, routeOf(fold.dids.entities.get(ALICE)!)]);
     expect(fold.continuity.status(rotation.decision.cid)).toEqual({ status: "verified" });
     expect(fold.continuity.head({ localDid: alice.did, peerDid: bob.did })).toEqual({ localDid: successor.did, peerDid: bob.did });
 
@@ -171,7 +172,7 @@ describe("a local rotation", () => {
     const again = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
     expect(again).toMatchObject({ existed: true, decision: { cid: rotation.decision.cid }, successor: rotation.successor, notification: { outcome: "existing", messageId: notification.messageId, action: null, dispatched: null } });
     fold = await foldOf(alice);
-    expect([fold.routes.dids.size, fold.set.of("did.rotationSelected").length, wire.posts.length]).toEqual([2, 1, 1]);
+    expect([fold.dids.entities.size, fold.set.of("did.rotationSelected").length, wire.posts.length]).toEqual([2, 1, 1]);
     await closeAll(alice, bob);
   });
 
@@ -181,28 +182,28 @@ describe("a local rotation", () => {
     const dave = await directParty(4, "https://dave.example/didcomm", DAVE);
     const { options, receive } = await rotating(alice);
     for (const peer of [bob, charlie, dave]) await receive(peer, { type: BASIC_MESSAGE });
-    const direct = (await foldOf(alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
+    const direct = routeOf((await foldOf(alice)).dids.entities.get(ALICE)!)!;
 
     const unpreferred = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
-    expect((await successorOf(alice, unpreferred)).boundRouteId).toBe(direct);
+    expect(await successorRoute(alice, unpreferred)).toEqual(direct);
 
     const mediator = await newMediator();
     const { mediationId } = (await createMediation(alice.runtime, alice.keys, mediator.did as Did)).data;
     await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
     await selectMediation(alice.runtime, alice.keys, mediationId);
-    const mediated = await ensureRoute(alice.runtime, alice.keys, mediationId);
-    expect(mediated).not.toBe(direct);
+    const mediated = mediatedRoute(mediationId);
+    expect(mediated).not.toEqual(direct);
 
     const preferred = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options);
     const onMediated = await successorOf(alice, preferred);
-    expect(onMediated.boundRouteId).toBe(mediated);
+    expect(await successorRoute(alice, preferred)).toEqual(mediated);
     expect((await resolveDIDCommDoc(onMediated.longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
 
     const again = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, { ...options, didId: preferred.successor });
     expect([again.existed, again.successor]).toEqual([true, preferred.successor]);
 
-    const given = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: dave.did }, { ...options, routeId: direct });
-    expect((await successorOf(alice, given)).boundRouteId).toBe(direct);
+    const given = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: dave.did }, { ...options, route: direct });
+    expect(await successorRoute(alice, given)).toEqual(direct);
     await closeAll(alice, bob, charlie, dave);
   });
 
@@ -239,14 +240,14 @@ describe("a local rotation", () => {
     const fresh = await parties();
     const { options: fresh0, receive: written } = await rotating(fresh.alice);
     await written(fresh.bob, { type: BASIC_MESSAGE });
-    const routeId = (await foldOf(fresh.alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
+    const route = routeOf((await foldOf(fresh.alice)).dids.entities.get(ALICE)!)!;
     for (const didId of [ALICE_NEXT, ALICE_OTHER]) {
-      const { minted } = await createDid(fresh.alice.runtime, fresh.alice.keys, routeId, didId);
+      const { minted } = await createDid(fresh.alice.runtime, fresh.alice.keys, route, didId);
       const fromPrior = await signFromPrior(fresh.alice.keys, { didId: ALICE, longFormDid: fresh.alice.longFormDid }, minted.longFormDid, IAT);
       await fresh.alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: fresh.bob.did, toDidId: didId, sourceEventCid: null, fromPrior })]);
     }
     await expect(rotate(fresh.alice.runtime, fresh.alice.keys, target, fresh0)).rejects.toThrow(Unusable);
-    expect((await foldOf(fresh.alice)).routes.dids.size).toBe(3);
+    expect((await foldOf(fresh.alice)).dids.entities.size).toBe(3);
     await closeAll(fresh.alice, fresh.bob);
   });
 
@@ -261,32 +262,32 @@ describe("a local rotation", () => {
     expect(fold.continuity.confirmedBy(successor.did, bob.did)).not.toBeNull();
     await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: bob.did }, { ...options, didId: ALICE })).rejects.toThrow(new Unusable("DID", ALICE, ["the decision would be in conflict: its context is in conflict"]));
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.routes.dids.size, fold.continuity.head({ localDid: alice.did, peerDid: bob.did }), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: successor.did, peerDid: bob.did }, [], 1]);
+    expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, fold.continuity.head({ localDid: alice.did, peerDid: bob.did }), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: successor.did, peerDid: bob.did }, [], 1]);
     await closeAll(alice, bob);
 
     const disclosed = await parties();
-    const routeId = (await foldOf(disclosed.alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
-    await createDid(disclosed.alice.runtime, disclosed.alice.keys, routeId, ALICE_OTHER);
+    const route = routeOf((await foldOf(disclosed.alice)).dids.entities.get(ALICE)!)!;
+    await createDid(disclosed.alice.runtime, disclosed.alice.keys, route, ALICE_OTHER);
     for (const didId of [ALICE, ALICE_OTHER]) await disclose(null, disclosed.alice.runtime, disclosed.alice.keys, didId, { as: "direct" });
     const { wire: theirs, options: policy, receive: written } = await rotating(disclosed.alice);
     const chat = await written(disclosed.bob, { type: BASIC_MESSAGE });
     await expect(privateAddress(disclosed.alice.runtime, disclosed.alice.keys, new LiveInput(chat), { ...policy, didId: ALICE_OTHER })).rejects.toThrow(new Unusable("DID", ALICE_OTHER, ["a rotation an input selects takes a fresh successor"]));
     fold = await foldOf(disclosed.alice);
-    expect([fold.set.of("did.rotationSelected"), fold.set.of("message.out"), theirs.posts.length, fold.routes.dids.size]).toEqual([[], [], 0, 2]);
+    expect([fold.set.of("did.rotationSelected"), fold.set.of("message.out"), theirs.posts.length, fold.dids.entities.size]).toEqual([[], [], 0, 2]);
     const fresh = rotated(await privateAddress(disclosed.alice.runtime, disclosed.alice.keys, new LiveInput(chat), { ...policy, didId: ALICE_NEXT }));
-    expect([fresh.successor, fresh.decision.data.sourceEventCid, fresh.notification.outcome, theirs.posts.length, (await foldOf(disclosed.alice)).routes.dids.size]).toEqual([ALICE_NEXT, chat, "created", 1, 3]);
+    expect([fresh.successor, fresh.decision.data.sourceEventCid, fresh.notification.outcome, theirs.posts.length, (await foldOf(disclosed.alice)).dids.entities.size]).toEqual([ALICE_NEXT, chat, "created", 1, 3]);
     await closeAll(disclosed.alice, disclosed.bob);
   });
 
   test("no rotation toward a peer that has replaced its DID, whatever a join at the old pair would make of a waiting decision: nothing is written, while the same local DIDs rotate back and forth toward unrelated peers, each context keeping its own head", async () => {
     const { alice, bob } = await parties();
     const { wire, options, receive } = await rotating(alice);
-    const bobRoute = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
+    const bobRoute = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, bobRoute, BOB_PRIOR);
     await receive(bob, { type: BASIC_MESSAGE }, prior.longFormDid);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     await receive(bob, { type: BASIC_MESSAGE, from_prior: proof });
-    const aliceRoute = (await foldOf(alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
+    const aliceRoute = routeOf((await foldOf(alice)).dids.entities.get(ALICE)!)!;
     const { minted: next } = await createDid(alice.runtime, alice.keys, aliceRoute, ALICE_NEXT);
     await receive(bob, { type: BASIC_MESSAGE }, undefined, next.longFormDid);
     const waiting = await signFromPrior(alice.keys, { didId: ALICE_NEXT, longFormDid: next.longFormDid }, alice.longFormDid, IAT);
@@ -296,7 +297,7 @@ describe("a local rotation", () => {
     expect([fold.continuity.status(pending!.cid).status, fold.continuity.confirmedBy(alice.did, prior.did) !== null, fold.continuity.head(old)]).toEqual(["pending-history", true, { localDid: alice.did, peerDid: bob.did }]);
     await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, { ...options, didId: ALICE_NEXT })).rejects.toThrow(new Unusable("channel", channelKey(old), ["the peer has replaced its DID"]));
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.routes.dids.size, fold.continuity.head(old), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: alice.did, peerDid: bob.did }, [], 0]);
+    expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, fold.continuity.head(old), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: alice.did, peerDid: bob.did }, [], 0]);
     await closeAll(alice, bob);
 
     const three = await parties();
@@ -310,7 +311,7 @@ describe("a local rotation", () => {
     expect([back.existed, back.successor, back.decision.data.peerDid, back.notification.outcome]).toEqual([false, ALICE, charlie.did, "created"]);
     fold = await foldOf(three.alice);
     expect(fold.continuity.status(back.decision.cid)).toEqual({ status: "verified" });
-    expect([fold.continuity.conflicts, fold.routes.dids.size, hers.posts.map((post) => post.url)]).toEqual([[], 2, [BOB_ENDPOINT, "https://charlie.example/didcomm"]]);
+    expect([fold.continuity.conflicts, fold.dids.entities.size, hers.posts.map((post) => post.url)]).toEqual([[], 2, [BOB_ENDPOINT, "https://charlie.example/didcomm"]]);
     expect([fold.continuity.head({ localDid: three.alice.did, peerDid: three.bob.did }), fold.continuity.head({ localDid: successor.did, peerDid: charlie.did })]).toEqual([
       { localDid: successor.did, peerDid: three.bob.did },
       { localDid: three.alice.did, peerDid: charlie.did },
@@ -321,11 +322,11 @@ describe("a local rotation", () => {
   test("a decision whose joins would carry an existing peer fork into a channel no conflict reached is refused with nothing written, while a rotation the fork does not touch goes through beside it", async () => {
     const { alice, bob } = await parties();
     const { wire, options, receive } = await rotating(alice);
-    const bobRoute = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
+    const bobRoute = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, bobRoute, BOB_PRIOR);
     const { minted: fork } = await createDid(bob.runtime, bob.keys, bobRoute, BOB_FORK);
     const { minted: otherFork } = await createDid(bob.runtime, bob.keys, bobRoute, BOB_OTHER_FORK);
-    const aliceRoute = (await foldOf(alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
+    const aliceRoute = routeOf((await foldOf(alice)).dids.entities.get(ALICE)!)!;
     const { minted: next } = await createDid(alice.runtime, alice.keys, aliceRoute, ALICE_NEXT);
     await receive(bob, { type: BASIC_MESSAGE }, prior.longFormDid);
     const proofs: [{ didId: DidId; longFormDid: Did }, Did][] = [
@@ -341,13 +342,13 @@ describe("a local rotation", () => {
 
     await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, { ...options, didId: ALICE_NEXT })).rejects.toThrow(/^channel \[.*\] is not usable: the channel's continuity is in conflict$/);
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, fold.routes.dids.size, fold.continuity.conflicted(healthy), fold.continuity.head(healthy), wire.posts.length]).toEqual([0, 0, 2, false, healthy, 0]);
+    expect([fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, fold.dids.entities.size, fold.continuity.conflicted(healthy), fold.continuity.head(healthy), wire.posts.length]).toEqual([0, 0, 2, false, healthy, 0]);
 
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     await receive(charlie, { type: BASIC_MESSAGE }, undefined, next.longFormDid);
     const beside = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: charlie.did }, options);
     fold = await foldOf(alice);
-    expect([beside.existed, fold.continuity.status(beside.decision.cid), fold.continuity.conflicts.length, beside.notification.outcome, wire.posts.length, fold.routes.dids.size]).toEqual([false, { status: "verified" }, 1, "created", 1, 3]);
+    expect([beside.existed, fold.continuity.status(beside.decision.cid), fold.continuity.conflicts.length, beside.notification.outcome, wire.posts.length, fold.dids.entities.size]).toEqual([false, { status: "verified" }, 1, "created", 1, 3]);
     await closeAll(alice, bob, charlie);
   });
 
@@ -375,7 +376,7 @@ describe("a local rotation", () => {
     const later = await live(bob, ping(crypto.randomUUID()));
     expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(later.cid), options)).toEqual({ outcome: "reused", decision: rotation.decision });
     fold = await foldOf(alice);
-    expect([fold.routes.dids.size, fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, wire.posts.length]).toEqual([2, 1, 5, 5]);
+    expect([fold.dids.entities.size, fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, wire.posts.length]).toEqual([2, 1, 5, 5]);
 
     const atSuccessor = await receive(bob, { type: BASIC_MESSAGE }, undefined, successor.longFormDid);
     expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(atSuccessor), options)).toEqual({ outcome: "none", because: "the local DID is not disclosed" });
@@ -426,8 +427,8 @@ describe("a local rotation", () => {
     const { alice, bob } = await parties();
     await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct" });
     const { wire, options, receive } = await rotating(alice);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const first = await receive(bob, ping(crypto.randomUUID()), prior.longFormDid);
     refuseCommits(alice.runtime, "message.out", 1);
     const rotation = rotated(await privateAddress(alice.runtime, alice.keys, new LiveInput(first), options));
@@ -442,7 +443,7 @@ describe("a local rotation", () => {
     expect(await completeNotification(alice.runtime, alice.keys, rotationEventCid, options)).toEqual({ effectType: ROTATION_NOTIFICATION_EFFECT, outcome: "none", because: "the successor cannot send to the peer: the peer has replaced its DID" });
     expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(moved), options)).toEqual({ outcome: "reused", decision: rotation.decision });
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.routes.dids.size, wire.posts.length]).toEqual([1, 2, 0]);
+    expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, wire.posts.length]).toEqual([1, 2, 0]);
     expect(fold.continuity.head({ localDid: alice.did, peerDid: prior.did })).toEqual({ localDid: (await successorOf(alice, rotation)).did, peerDid: bob.did });
     await closeAll(alice, bob);
   });

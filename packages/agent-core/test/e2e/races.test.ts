@@ -59,7 +59,7 @@ describe("first messages that race", () => {
       [carol, decisions[1]!],
     ] as const) {
       await until("the peer has its acknowledgement and the notification", () => peer.inbounds.length === 2);
-      const successor = ofAlice.routes.dids.get(decision.toDidId)!.created!.did;
+      const successor = ofAlice.dids.entities.get(decision.toDidId)!.created!.did;
       const fold = await foldOf(peer);
       expect(fold.outbound.outbounds.get(peer === bob ? FROM_BOB : FROM_CAROL)).toMatchObject({ acknowledged: true });
       expect(fold.continuity.head(channelOf(peer.party.did, a0))).toEqual(channelOf(peer.party.did, successor));

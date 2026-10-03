@@ -55,6 +55,7 @@ import {
   type Handler,
   type Reacted,
   type Source,
+  routeOf,
 } from "../src/index.js";
 import { didcomm, directParty, peerSealer, posting, refuseCommits, refuseReads, refuseSubmissions, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
@@ -219,8 +220,8 @@ describe("the automatic effects of a live input", () => {
     const options: EffectOptions = { dispatch: (action) => dispatch(alice.runtime, alice.keys, action, { didcomm, fetch: wire.fetch }) };
     const seen: Authenticated[] = [];
     const observer = new Receiver(alice.runtime, alice.keys, await Keyring.load(alice.keys, await foldOf(alice)), { didcomm, receipt: async (a) => (seen.push(a), { outcome: "terminal", reason: "kept for the test" }) });
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const undocumented = await new SignJWT({ iss: prior.did, sub: bob.longFormDid, iat: IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));
     const executions: ExecutionId[] = [];
@@ -457,8 +458,8 @@ describe("the automatic effects of a live input", () => {
     const { alice, bob } = await parties();
     const { options, receive, executionOf } = await reacting(alice);
     const executionId = await executionOf(await receive(bob, ping(crypto.randomUUID())));
-    const routeId = (await foldOf(alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
-    const { minted: next } = await createDid(alice.runtime, alice.keys, routeId, ALICE_NEXT);
+    const route = routeOf((await foldOf(alice)).dids.entities.get(ALICE)!)!;
+    const { minted: next } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
     const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, next.longFormDid, IAT);
     const [decision] = await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: bob.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
     expect((await foldOf(alice)).continuity.status(decision!.cid)).toEqual({ status: "verified" });
@@ -474,7 +475,7 @@ describe("the automatic effects of a live input", () => {
     expect(fold.outbound.outbounds.get(reply.messageId)!.channel).toEqual({ localDid: next.did, peerDid: bob.did });
     expect(await openedByBob(bob, alice, reply.messageId)).toMatchObject({ type: PING_RESPONSE_TYPE, from: next.longFormDid, from_prior: fromPrior });
 
-    const { minted: other } = await createDid(alice.runtime, alice.keys, routeId, ALICE_OTHER);
+    const { minted: other } = await createDid(alice.runtime, alice.keys, route, ALICE_OTHER);
     await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: bob.did, toDidId: ALICE_OTHER, sourceEventCid: null, fromPrior: await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, other.longFormDid, IAT) })]);
     const later = await executionOf(await receive(bob, ping(crypto.randomUUID())));
     expect(outcomes([await completeResponse(alice.runtime, alice.keys, later, PURE_ACK_EFFECT, options)])).toEqual([[PURE_ACK_EFFECT, "none", "the channel's continuity is in conflict"]]);
@@ -484,8 +485,8 @@ describe("the automatic effects of a live input", () => {
   test("no effect for a denied channel, for the input of a peer that has replaced its DID, or for an anonymous observation", async () => {
     const { alice, bob } = await parties();
     const { receiver, options, receive, live, executionOf } = await reacting(alice);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const old = await executionOf(await receive(bob, ping(crypto.randomUUID()), prior.longFormDid));
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const moved = await live(bob, ping(crypto.randomUUID(), { from_prior: proof }));

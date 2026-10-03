@@ -3,12 +3,12 @@
  * arrangement is created in the vault before the mediator is asked,
  * so a network failure leaves a retryable intent and never a half
  * identity; the grant is recorded when it comes; the desired recipient
- * set — every live DID bound to a mediated route of the arrangement —
- * is reconciled with what the mediator holds on every connection,
- * since registration is runtime state and not the vault's; and the
- * selection for new routes is the vault's to record. Every step reads
- * the fold and is safe to repeat: what the events already say is not
- * asked for again.
+ * set — every live DID the arrangement routes — is reconciled with
+ * what the mediator holds on every connection, since registration is
+ * runtime state and not the vault's; and the selection of the
+ * arrangement new mediated DIDs are minted for is the vault's to
+ * record. Every step reads the fold and is safe to repeat: what the
+ * events already say is not asked for again.
  */
 
 import { v7 as uuidv7 } from "uuid";
@@ -86,7 +86,7 @@ export interface Established {
  * mediate-request → `mediation.granted` → recipients reconciled, each
  * only when the fold lacks it: a grant recorded is not asked for
  * again. Needs the arrangement created toward the link's mediator and
- * neither retired nor in conflict. Selecting it for new routes is a
+ * neither retired nor in conflict. Selecting it for new DIDs is a
  * separate step, `selectMediation`, since it is policy's.
  */
 export async function establish(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<Established> {
@@ -158,9 +158,9 @@ export function registered(reconciled: Reconciled, did: Did): boolean {
 
 /**
  * recipient-query, then one recipient-update for the difference between
- * what the mediator holds and the desired set: every live DID bound to
- * a mediated route of this arrangement, by its short form, and nothing
- * else. Needs a usable arrangement; the diff goes to the `diag` trace.
+ * what the mediator holds and the desired set: every live DID this
+ * arrangement routes, by its short form, and nothing else. Needs a
+ * usable arrangement; the diff goes to the `diag` trace.
  * Runs as the account's one procedure at a time, over the fold as it
  * stands on entry: a desired set read earlier could be missing a DID
  * disclosed since, and would have it removed.
@@ -175,11 +175,11 @@ export async function reconcileNow(link: MediatorLink, fold: VaultFold, mediatio
   toward(link, mediation);
   ordinary(mediation);
   if (mediation.status !== "usable") throw new Unusable("mediation", mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
-  const desired = fold.routes.desiredRecipients.filter((recipient) => recipient.mediationId === mediationId).map((recipient) => recipient.did);
+  const desired = fold.dids.desiredRecipients.filter((recipient) => recipient.mediationId === mediationId).map((recipient) => recipient.did);
   const held = await queryRecipients(link);
   const added = desired.filter((did) => !held.includes(did));
   const removed = held.filter((did) => !desired.includes(did));
-  const created = new Set([...fold.routes.dids.values()].map((entity) => entity.created?.did));
+  const created = new Set([...fold.dids.entities.values()].map((entity) => entity.created?.did));
   const unknown = held.filter((did) => !created.has(did));
   if (unknown.length > 0) unknownWatchers.get(link)?.(unknown);
   const refused: Did[] = [];

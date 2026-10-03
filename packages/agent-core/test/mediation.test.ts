@@ -24,7 +24,6 @@ import {
   createDid,
   createMediation,
   disclose,
-  ensureRoute,
   establish,
   plainMessage,
   reconcile,
@@ -35,7 +34,7 @@ import {
   type IMessage,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { newMediator, party, reloaded } from "./helpers.js";
+import { newMediator, party, reloaded, mediatedRoute } from "./helpers.js";
 
 describe("creating an arrangement", () => {
   it("records the vault's identity toward the mediator before any request, and says the same again for the same ID", async () => {
@@ -96,8 +95,8 @@ describe("establishing", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const mine = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const mine = await createDid(p.runtime, p.keys, route);
     await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     const second = await createMediation(p.runtime, p.keys, mediator.did as Did);
     const seen = mediator.seenTypes.length;
@@ -199,9 +198,9 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const a = await createDid(p.runtime, p.keys, routeId);
-    const b = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const a = await createDid(p.runtime, p.keys, route);
+    const b = await createDid(p.runtime, p.keys, route);
     mediator.recipients.set("did:peer:2.Ez6stale", p.created.data.me.did);
     const first = await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     expect(first.desired.sort()).toEqual([a.minted.did, b.minted.did].sort());
@@ -228,19 +227,19 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const kept = await createDid(p.runtime, p.keys, routeId);
-    const retired = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const kept = await createDid(p.runtime, p.keys, route);
+    const retired = await createDid(p.runtime, p.keys, route);
     await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     await retireDid(p.runtime, p.keys, retired.minted.didId, "user");
     mediator.recipients.set("did:peer:2.Ez6unknown", p.created.data.me.did);
-    const before = (await scanVault(p.runtime.vault, p.keys)).routes.dids.size;
+    const before = (await scanVault(p.runtime.vault, p.keys)).dids.entities.size;
 
     const found = await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     expect(found.removed.sort()).toEqual([retired.minted.did, "did:peer:2.Ez6unknown"].sort());
     expect(found.unknown).toEqual(["did:peer:2.Ez6unknown"]);
     expect([...mediator.recipients.keys()]).toEqual([kept.minted.did]);
-    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.size).toBe(before);
+    expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.size).toBe(before);
 
     expect((await reconcile(p.link, p.runtime, p.keys, p.mediationId)).unknown).toEqual([]);
     await p.runtime.close();
@@ -250,8 +249,8 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const a = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const a = await createDid(p.runtime, p.keys, route);
     mediator.refuse.add(a.minted.did);
     const reconciled = await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     expect(reconciled.refused).toEqual([a.minted.did]);
@@ -264,8 +263,8 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const a = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const a = await createDid(p.runtime, p.keys, route);
     const established = mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY).length;
     const queries = () => mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY).length - established;
     const offsetOf = (msg: IMessage) => (msg.body as { paginate: { offset: number } }).paginate.offset;
@@ -301,8 +300,8 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const a = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const a = await createDid(p.runtime, p.keys, route);
     const answers: Record<string, unknown>[][] = [
       [{ recipient_did: a.minted.did, action: "remove", result: "success" }],
       [{ recipient_did: a.minted.did, result: "success" }],
@@ -332,8 +331,8 @@ describe("reconciling recipients", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const first = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const first = await createDid(p.runtime, p.keys, route);
     let release = (): void => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve));
     let entered = (): void => undefined;
@@ -348,7 +347,7 @@ describe("reconciling recipients", () => {
     };
     const firstDisclosure = disclose(p.link, p.runtime, p.keys, first.minted.didId, { as: "oob" });
     await paused;
-    const second = await createDid(p.runtime, p.keys, routeId);
+    const second = await createDid(p.runtime, p.keys, route);
     const other = new MediatorLink({ ...p.linkOptions, me: p.created.data.me.did });
     const secondDisclosure = disclose(other, p.runtime, p.keys, second.minted.didId, { as: "oob" });
     expect(mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY)).toHaveLength(2);

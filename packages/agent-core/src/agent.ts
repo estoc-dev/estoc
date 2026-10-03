@@ -259,7 +259,7 @@ export class Agent {
    */
   async connect(): Promise<Connection[]> {
     const fold = await scanVault(this.runtime.vault, this.keys);
-    const required = [...requiredReceivingSet(fold.mediations, fold.routes)].sort();
+    const required = [...requiredReceivingSet(fold.mediations, fold.dids)].sort();
     return Promise.all(required.map((mediationId) => this.connectTo(mediationId)));
   }
 
@@ -289,12 +289,11 @@ export class Agent {
     return enrolled;
   }
 
-  /** `disclose` over the line of the arrangement the DID's route is on. */
+  /** `disclose` over the line of the arrangement that routes the DID. */
   async disclose(didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
     const fold = await scanVault(this.runtime.vault, this.keys);
-    const created = didOf(fold, didId).created;
-    const configured = created === null ? null : (routeOf(fold, created.boundRouteId).configured ?? null);
-    const link = configured?.kind === "mediated" ? (await this.lineOf(configured.mediationId)).link : null;
+    const route = routeOf(didOf(fold, didId));
+    const link = route?.kind === "mediated" ? (await this.lineOf(route.mediationId)).link : null;
     return disclose(link, this.runtime, this.keys, didId, disclosure, this.confirmations);
   }
 
@@ -316,8 +315,8 @@ export class Agent {
 
   /**
    * The vault's local state changed outside this agent — a DID
-   * created, a route configured, an arrangement granted, evidence
-   * imported or a document resolved. What the vault owes over it is
+   * created, an arrangement granted, evidence imported or a document
+   * resolved. What the vault owes over it is
    * recorded first, an admission a proof waited for included, and
    * dispatched by nothing; then each waiting delivery whose wait ended
    * is retried, and followed like any other.
@@ -553,7 +552,7 @@ export class Agent {
     try {
       const fold = await scanVault(this.runtime.vault, this.keys);
       if (!stands()) return;
-      if (!requiredReceivingSet(fold.mediations, fold.routes).has(mediationId)) return;
+      if (!requiredReceivingSet(fold.mediations, fold.dids).has(mediationId)) return;
     } catch (err) {
       if (!stands()) return;
       this.log(`the connection of ${mediationId} was not tried again: ${messageOf(err)}`);

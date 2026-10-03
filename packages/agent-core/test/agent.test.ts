@@ -445,7 +445,7 @@ describe("opening an agent", () => {
     expect(connection!.reconciled!.unknown).toEqual([]);
     expect(connection!.unknownRegistrations).toHaveLength(UNKNOWN_REGISTRATIONS_KEPT);
     expect(connection!.unknownRegistrations[0]).toBe("did:peer:2.Ez6unknown");
-    expect((await fold(alice)).routes.dids.size).toBe(1);
+    expect((await fold(alice)).dids.entities.size).toBe(1);
   });
 
   it("keeps what it cannot account for whichever reconciliation found it, a grant's or a disclosure's as much as a connection's, and one the mediator would not take off beside the refusal", async () => {

@@ -47,6 +47,7 @@ import { ENCRYPTED_MIME, PLAIN_TYP, endpointOf, packEncrypted, secretsResolverFo
 import { FORWARD } from "./protocol/spec.js";
 import { recordAcceptance, recordOwedAcceptance } from "./acceptance.js";
 import type { LiveAction } from "./action.js";
+import { routeOf } from "./dids.js";
 import { UnknownEntity } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { bounded, sealData, type MediatorLink } from "./link.js";
@@ -180,8 +181,8 @@ async function ready(held: Held, keys: Keys, messageId: MessageId, options: Disp
  */
 function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, channel: Channel): Ready["registerWith"] {
   const created = sender.created as NonNullable<LocalDidEntity["created"]>;
-  const route = fold.routes.routes.get(created.boundRouteId)?.configured;
-  if (route === undefined || route === null || route.kind !== "mediated") return null;
+  const route = routeOf(sender);
+  if (route === null || route.kind !== "mediated") return null;
   if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) !== null) return null;
   return { mediationId: route.mediationId, did: created.did };
 }

@@ -28,7 +28,6 @@ import {
   createVault,
   decide,
   effectTypesOf,
-  ensureRoute,
   inspectRuntime,
   isTraceLevel,
   openVault,
@@ -39,6 +38,7 @@ import {
   type Called,
   type EffectOutcome,
   type InspectedRuntime,
+  type RouteSpec,
 } from "@estoc/agent-core";
 
 import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
@@ -331,7 +331,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       label: fold.label ?? "",
       restoreUnexplained: !(await explained(runtime)),
       mediations: mediationRecords(fold.mediations),
-      dids: localDidRecords(fold.routes),
+      dids: localDidRecords(fold.dids),
     });
   }
 
@@ -545,10 +545,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Unmet(`no contact ${contactId}`);
   }
 
-  async function preferredRoute({ runtime, keys }: Open) {
+  async function preferredRoute({ runtime, keys }: Open): Promise<RouteSpec> {
     const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
     if (preferred === null) throw new Unmet("no mediator is set");
-    return ensureRoute(runtime, keys, preferred);
+    return { kind: "mediated", mediationId: preferred };
   }
 
   /** `presented` as a peer's DID: canonical, and none of this vault's own. */
@@ -560,7 +560,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       throw new InvalidArgument(failure(err));
     }
     const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
-    if ([...fold.routes.dids.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new InvalidArgument("that is an address of your own");
+    if ([...fold.dids.entities.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new InvalidArgument("that is an address of your own");
     return peerDid;
   }
 
@@ -864,7 +864,6 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         if (profile === null) await agent.establish(mediationId);
         else await agent.enroll(mediationId);
         await selectMediation(runtime, keys, mediationId);
-        await ensureRoute(runtime, keys, mediationId);
         return mediationId;
       }),
 
@@ -887,7 +886,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         if (pending !== undefined) return pending;
         const minting = (async () => {
           const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
-          const handedOut = [...fold.routes.dids.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct"));
+          const handedOut = [...fold.dids.entities.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct"));
           if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
           const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
           const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct" });
@@ -977,13 +976,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     rotateChannel: (channel) =>
       act(async (agent, running) => {
         await refuseUnexplained(running);
-        const entities = [...(await scanVault(running.runtime.vault, running.keys, SCAN)).routes.dids.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
+        const entities = [...(await scanVault(running.runtime.vault, running.keys, SCAN)).dids.entities.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
         const live = entities.filter((entity) => entity.live);
         const candidates = live.length > 0 ? live : entities;
         if (candidates.length === 0) throw new Unmet(`no DID of this vault is ${channel.localDid}`);
         if (candidates.length > 1) throw new Unmet(`${candidates.length} DIDs of this vault are ${channel.localDid}: which of them to rotate is not decidable`);
         const rotated = await agent.manual.rotate({ localDidId: candidates[0]!.didId, peerDid: channel.peerDid });
-        const successor = (await scanVault(running.runtime.vault, running.keys, SCAN)).routes.dids.get(rotated.successor)?.created?.did;
+        const successor = (await scanVault(running.runtime.vault, running.keys, SCAN)).dids.entities.get(rotated.successor)?.created?.did;
         if (successor === undefined) throw new Error(`the successor ${rotated.successor} has no DID`);
         return { successor: { localDid: successor, peerDid: rotated.channel.peerDid }, ...effectOutcomeOf(rotated.notification) };
       }),

@@ -201,7 +201,7 @@ export function pinnedResolver(fold: VaultFold, options: PinnedResolverOptions =
   const known = knownLongForms(fold);
   const among = (resolutions: readonly Resolution[], did: string): Resolution | undefined => resolutions.find((r) => r.presentedDid === did) ?? resolutions.find((r) => sameDid(r.did, did));
   const local = (did: string): DIDDoc | null => {
-    for (const entity of fold.routes.dids.values()) {
+    for (const entity of fold.dids.entities.values()) {
       if (entity.created !== null && entity.resolution !== null && !entity.conflict && sameDid(entity.created.did, did)) return didcommProjection({ ...entity.resolution.document, id: did });
     }
     for (const mediation of fold.mediations.mediations.values()) {

@@ -32,7 +32,6 @@ import type {
   PackageId,
   PublicKey,
   ReplicaId,
-  RouteId,
   VaultData,
   VaultEventType,
   WireMessageId,
@@ -155,7 +154,6 @@ const contentRoots = (data: { bodyCid: Cid; attachmentCids: Cid[] }): Cid[] => m
 
 const idMembers = {
   mediationId: minted<MediationId>(),
-  routeId: minted<RouteId>(),
   didId: minted<DidId>(),
   contactId: minted<ContactId>(),
   packageId: minted<PackageId>(),
@@ -265,24 +263,6 @@ const messageIn = checked(
   }
 ) as Check<VaultData["message.in"]>;
 
-const routeConfigured = checked(
-  shape({ routeId: idMembers.routeId, kind: oneOf(["mediated", "direct"]), mediationId: nullable(idMembers.mediationId), endpoint: nullable(nonEmpty) }),
-  (data) => {
-    if (data.kind === "mediated") {
-      if (data.mediationId === null || data.endpoint !== null) throw new Fault("a mediated route has a mediationId and no endpoint");
-      return;
-    }
-    if (data.mediationId !== null || data.endpoint === null) throw new Fault("a direct route has an endpoint and no mediationId");
-    let url: URL;
-    try {
-      url = new URL(data.endpoint);
-    } catch {
-      throw new Fault("endpoint is an absolute URL");
-    }
-    if (url.protocol !== "https:" && url.protocol !== "wss:") throw new Fault("endpoint is an HTTPS or WSS URL");
-  }
-) as Check<VaultData["route.configured"]>;
-
 type Schema<T extends VaultEventType> = { readonly check: Check<VaultData[T]>; readonly roots: (data: VaultData[T]) => readonly Cid[] };
 
 function schema<T extends VaultEventType>(check: Check<VaultData[T]>, roots: (data: VaultData[T]) => readonly Cid[]): Schema<T> {
@@ -331,14 +311,12 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     none
   ),
   "did.created": schema(
-    checked(shape({ didId: idMembers.didId, did: text, longFormDid: text, boundRouteId: idMembers.routeId }), (data) => {
+    checked(shape({ didId: idMembers.didId, did: text, longFormDid: text }), (data) => {
       if (!isPeer4Short(data.did)) throw new Fault("did is a did:peer:4 short form");
       if (!isPeer4Long(data.longFormDid) || !data.longFormDid.startsWith(`${data.did}:`)) throw new Fault("longFormDid is the did:peer:4 long form of did");
     }) as Check<VaultData["did.created"]>,
     none
   ),
-  "route.configured": schema(routeConfigured, none),
-  "route.retired": schema(shape({ routeId: idMembers.routeId, because: nonEmpty }), none),
   "did.disclosed": schema(
     checked(shape({ didId: idMembers.didId, as: oneOf(["oob", "direct"]), oobId: nullable(nonEmpty), goal: nullable(text) }), (data) => {
       if ((data.as === "oob") !== (data.oobId !== null)) throw new Fault("oobId is present exactly for an oob disclosure");

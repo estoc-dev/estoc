@@ -27,7 +27,7 @@ const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filt
 
 const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
 
-const didOf = (fold: VaultFold, didId: DidId): Did => fold.routes.dids.get(didId)!.created!.did;
+const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 const sealerOf = (running: Running, as?: Did): Promise<Sealer> => peerSealer(running.party as unknown as DirectParty, as);
 

@@ -6,9 +6,9 @@ import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MediationP
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, ensureRoute, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { didcomm, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party } from "./helpers.js";
+import { didcomm, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
 
 const PROFILE: MediationProfile = "replica-mediation/1.0";
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -38,7 +38,7 @@ async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}
   closing.push({ close: () => agent.close(), runtime: p.runtime });
   const { replica } = await agent.enroll(p.mediationId);
   await selectMediation(p.runtime, p.keys, p.mediationId);
-  const address = (await createDid(p.runtime, p.keys, await ensureRoute(p.runtime, p.keys, p.mediationId))).minted;
+  const address = (await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).minted;
   await agent.connect();
   return { ...p, agent, inbounds, replica: replica as Enrolled["replica"], address };
 }

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **A DID's route is its document's**: `did.created` records only the
+  entity ID and the two spellings; where the DID sends is the one
+  DIDComm service of its long form, read back by the fold
+  (`LocalDidEntity.routeTarget`, via `serviceTargetOf`). A mediated DID
+  is routed by the usable arrangement whose grant names its routing DID
+  (`LocalDidEntity.mediations`, `MediationFold.through`); it waits while
+  no arrangement does, none usable does or several usable ones do, and
+  is terminal for receipt only on its own conflict, never on the
+  arrangements' account, since the one that routes it may not have
+  arrived here yet. `serviceTargetOf` takes a DID, not a DID URL or a
+  bare `did:`, which no grant could name. `route.configured`, `route.retired`, `RouteId`, `RouteKind`,
+  `Route` and `DesiredRecipient.routeId` are gone, and the fold is the
+  DID fold: `foldDids` and `DidFold` at `VaultFold.dids`, its entities
+  under `entities`, in place of `foldRoutes`, `RouteFold` and
+  `VaultFold.routes`. A `did.created` carrying `boundRouteId` is an
+  invalid payload: a vault recorded before this change is read anew.
 - **Replica-mediation membership**: `mediation.created` takes an optional
   `profile`, whose only value `"replica-mediation/1.0"` makes the
   arrangement an account of the mediator's replica-mediation protocol

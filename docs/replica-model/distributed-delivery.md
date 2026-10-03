@@ -94,8 +94,9 @@ path. A later server or replica does not own an address merely by executing
 the vault. The channel preserves local/peer roles within that vault;
 each message has a sender and recipient, and every rotation is directed.
 
-Each local communication DID has one immutable `boundRouteId`, mediated or
-direct. Changing its keys or bound route creates a successor DID entity;
+Each local communication DID sends where its document's one DIDComm service
+says, a mediator's routing DID or a direct endpoint. Changing its keys or
+route creates a successor DID entity;
 [local rotation decisions](channels.md#did-rotationselected) select continuation
 in an exact channel context; their links are derived.
 An external recipient's resolved document may offer transport choices; choosing

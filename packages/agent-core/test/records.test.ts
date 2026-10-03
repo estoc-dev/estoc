@@ -44,6 +44,7 @@ import {
   type Handler,
   type MessageRecord,
   type Source,
+  routeOf,
 } from "../src/index.js";
 import { didcomm, directParty, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
@@ -159,8 +160,8 @@ describe("records", () => {
     const { alice, bob } = await parties();
     let answer = refused;
     const { manual, receive, channel } = await hosting(alice, () => answer());
-    const routeId = (await scanVault(alice.runtime.vault, alice.keys)).routes.dids.get(ALICE)!.created!.boundRouteId;
-    const { minted: other } = await createDid(alice.runtime, alice.keys, routeId, ALICE_OTHER);
+    const route = routeOf((await scanVault(alice.runtime.vault, alice.keys)).dids.entities.get(ALICE)!)!;
+    const { minted: other } = await createDid(alice.runtime, alice.keys, route, ALICE_OTHER);
     const pair = { localDid: alice.did, peerDid: bob.did };
     const elsewhere = { localDid: other.did, peerDid: bob.did };
 
@@ -402,7 +403,7 @@ describe("records", () => {
     expect(rotated).toMatchObject({ existed: false, decision: { data: { sourceEventCid: null } }, notification: { outcome: "created", dispatched: { outcome: "submitted" } } });
     expect(wire.posts).toHaveLength(1);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
-    const successor = { localDid: fold.routes.dids.get(rotated.successor)!.created!.did, peerDid: bob.did };
+    const successor = { localDid: fold.dids.entities.get(rotated.successor)!.created!.did, peerDid: bob.did };
     const rotationEventCid = rotated.decision.cid as EventReference<"did.rotationSelected">;
     const notified = only(await channel(successor), "out");
     expect(notified).toMatchObject({ msg: { type: EMPTY_MESSAGE_TYPE }, outcome: { status: "submitted" }, verification: fold.continuity.status(rotationEventCid), manualAction: "none", diagnostics: [] });
@@ -433,7 +434,7 @@ describe("records", () => {
     expect(JSON.parse(JSON.stringify(contact))).toEqual(contact);
 
     const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
-    const { did: successorDid, longFormDid } = (await scanVault(alice.runtime.vault, alice.keys)).routes.dids.get(rotated.successor)!.created!;
+    const { did: successorDid, longFormDid } = (await scanVault(alice.runtime.vault, alice.keys)).dids.entities.get(rotated.successor)!.created!;
     await receive(bob, { id: crypto.randomUUID(), body: { content: "got your new address" } }, longFormDid);
     contact = await (await readRecords(alice.runtime, alice.keys)).contact(CONTACT);
     const successor = { localDid: successorDid, peerDid: bob.did };

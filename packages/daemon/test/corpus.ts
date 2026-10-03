@@ -82,7 +82,7 @@ export async function readCorpus(file = CORPUS_VAULT, passphrase = CORPUS_PASSPH
       label: fold.label ?? "",
       restoreUnexplained: false,
       mediations: mediationRecords(fold.mediations),
-      dids: localDidRecords(fold.routes),
+      dids: localDidRecords(fold.dids),
     });
     return { fold, snapshot };
   } finally {

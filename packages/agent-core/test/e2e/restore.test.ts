@@ -5,9 +5,9 @@ import type { Did, DidId, MessageId, VaultFold } from "@estoc/vault";
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED } from "../../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../../src/protocol/spec.js";
-import { Unusable, createDid, ensureRoute } from "../../src/index.js";
+import { Unusable, createDid } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
-import { newMediator } from "../helpers.js";
+import { newMediator, mediatedRoute } from "../helpers.js";
 import { LONG, channelOf, foldOf, imported, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -27,7 +27,7 @@ const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filt
 
 const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
 
-const didOf = (fold: VaultFold, didId: DidId): Did => fold.routes.dids.get(didId)!.created!.did;
+const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 const eventIds = (fold: VaultFold): string[] => [...fold.set.all()].map((event) => event.cid);
 
@@ -85,7 +85,7 @@ describe("a vault restored from a snapshot", () => {
     await until("bob has the answer", () => bob.inbounds.length === 1);
     const snapshot = await snapshotOf(alice);
 
-    const later = await createDid(alice.runtime, alice.keys, await ensureRoute(alice.runtime, alice.keys, alice.party.mediationId), ALICE_LATER);
+    const later = await createDid(alice.runtime, alice.keys, mediatedRoute(alice.party.mediationId), ALICE_LATER);
     const { invitation } = await alice.agent.disclose(ALICE_LATER, { as: "oob" });
     const rotated = await bob.agent.manual.rotate({ localDidId: BOB, peerDid: a0 });
     const b1 = didOf(await foldOf(bob), rotated.successor);
@@ -118,7 +118,7 @@ describe("a vault restored from a snapshot", () => {
     ).toEqual([expect.stringContaining("local recipient material is unavailable"), expect.stringContaining(`sender material is unavailable for ${b1}`)]);
     const fold = await foldOf(restored);
     expect(fold.set.of("message.in")).toHaveLength(1);
-    expect(fold.routes.dids.has(ALICE_LATER)).toBe(false);
+    expect(fold.dids.entities.has(ALICE_LATER)).toBe(false);
     expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed")).toEqual([]);
   });
 

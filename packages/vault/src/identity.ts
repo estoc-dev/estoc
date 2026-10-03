@@ -6,8 +6,8 @@
  * the keystore's own domain, an X25519 key; a key-agreement use takes
  * the latter, never a conversion of the former. Nothing derived
  * is stored: a recorded `did.created` is checked by reading its own
- * document back and holding the keys and route it authorizes against
- * what the seed and the bound route give.
+ * document back and holding the keys it authorizes against what the
+ * seed gives; where the document sends is the document's own word.
  */
 
 import type { JsonObject, WrappedSeed } from "@estoc/event-store";
@@ -20,6 +20,7 @@ import { IdentityMismatch, InvalidPublicKey, Locked } from "./errors.js";
 import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName, replicaKeyName } from "./ids.js";
 import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl, type PeerResolution } from "./peer-document.js";
 import { canonicalPublicKey } from "./public-key.js";
+import { isDid } from "./syntax.js";
 import type { Did, DidId, KeyName, MediationId, PublicKey, ReplicaId, VaultData } from "./types.js";
 
 /** An OKP private key as RFC 8037 spells it. */
@@ -128,7 +129,7 @@ export type RouteTarget = { kind: "mediated"; routingDid: Did } | { kind: "direc
 /** A did:peer:4 the vault controls: both spellings and the input document the long form encodes. */
 export type LocalDid = { did: Did; longFormDid: Did; inputDocument: JsonObject };
 
-/** A communication DID with the entity ID it belongs to: what `did.created` records, short of the route ID. */
+/** A communication DID with the entity ID it belongs to: what `did.created` records. */
 export type MintedDid = LocalDid & { didId: DidId };
 
 export const AUTHENTICATION_METHOD = "#key-1";
@@ -176,6 +177,24 @@ export async function mintReplicaDid(keys: Keys, replicaId: ReplicaId, mediatorD
 
 export function routeServiceUri(route: RouteTarget): string {
   return route.kind === "mediated" ? route.routingDid : route.endpoint;
+}
+
+/**
+ * The route a document's one DIDComm service URI names: a DID is a
+ * mediator's routing DID, an absolute HTTPS or WSS URL a direct
+ * endpoint. Null for a URI that is neither — a DID URL and a malformed
+ * `did:` string included, which no grant could ever name — so no local
+ * DID sends to it.
+ */
+export function serviceTargetOf(uri: string): RouteTarget | null {
+  if (isDid(uri)) return { kind: "mediated", routingDid: uri as Did };
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  return url.protocol === "https:" || url.protocol === "wss:" ? { kind: "direct", endpoint: uri } : null;
 }
 
 /**
@@ -237,15 +256,15 @@ export async function checkReplicaKeys(keys: Keys, replicaId: ReplicaId, resolut
 }
 
 /**
- * A recorded DID entity against the seed and its bound route: the
- * document must read, carry the entity's two keys and send to the
- * route. A long form that does not resolve throws `InvalidDidDocument`.
+ * A recorded DID entity against the seed and the route it was minted
+ * for: the document must read, carry the entity's two keys and send to
+ * the route. A long form that does not resolve throws `InvalidDidDocument`.
  */
 export async function checkDidCreated(keys: Keys, created: Pick<VaultData["did.created"], "didId" | "did" | "longFormDid">, route: RouteTarget): Promise<void> {
   const resolution = didDocumentOf(created);
   await checkDidKeys(keys, created.didId, resolution);
   if (!documentSendsTo(resolution.document, route)) {
-    throw new IdentityMismatch(`DID entity ${created.didId} sends to ${JSON.stringify(didcommServiceUris(resolution.document))}, not its bound route`);
+    throw new IdentityMismatch(`DID entity ${created.didId} sends to ${JSON.stringify(didcommServiceUris(resolution.document))}, not the route it was minted for`);
   }
 }
 

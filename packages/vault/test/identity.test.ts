@@ -22,6 +22,7 @@ import {
   mintDid,
   mintMediationDid,
   peerResolution,
+  serviceTargetOf,
   type Did,
   type DidId,
   type KeyName,
@@ -241,5 +242,17 @@ describe("checkDidCreated", () => {
     const other = (await keys.didKeys(DID_ID)).authentication.publicKey;
     const foreign = { ...minted.inputDocument, authentication: [AUTHENTICATION_METHOD, { id: "#more", type: "Multikey", publicKeyMultibase: other }] };
     await expect(checkMediationCreated(keys, { mediationId: MEDIATION, me: { ...me, did: encodeLongForm(foreign) as Did } })).rejects.toThrow(IdentityMismatch);
+  });
+});
+
+describe("serviceTargetOf", () => {
+  it("reads a DID as a routing DID and an absolute HTTPS or WSS URL as a direct endpoint, and nothing else: not a DID URL, a bare `did:`, HTTP or a relative path", () => {
+    expect(serviceTargetOf("did:web:mediator.example")).toEqual({ kind: "mediated", routingDid: "did:web:mediator.example" });
+    expect(serviceTargetOf("did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc")).toEqual({ kind: "mediated", routingDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" });
+    expect(serviceTargetOf("https://ingress.example/didcomm")).toEqual({ kind: "direct", endpoint: "https://ingress.example/didcomm" });
+    expect(serviceTargetOf("wss://ingress.example/ws")).toEqual({ kind: "direct", endpoint: "wss://ingress.example/ws" });
+    for (const uri of ["did:", "did:web:", "did:Web:mediator.example", "did:web:mediator.example#key-1", "did:web:mediator.example/inbox", "did:web:mediator.example?service=didcomm", "http://ingress.example/didcomm", "ws://ingress.example/ws", "/didcomm", "ingress.example", ""]) {
+      expect(serviceTargetOf(uri), uri).toBeNull();
+    }
   });
 });

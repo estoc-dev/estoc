@@ -19,7 +19,7 @@ The WASM itself is *not* loaded here — see [Didcomm API](#didcomm-api).
 Agent            a vault running: one receiver, one dispatcher, a line to each mediator; open recovers and sends nothing
   ├─ identity    the SQLite runtime opened with the seed's keys: createVault · openVault · inspectRuntime · inspectSnapshot
   ├─ mediation   an arrangement recorded before the mediator is asked, granted, its recipients reconciled on every connection
-  ├─ dids        routes, communication DIDs minted from their ID and route alone, disclosure, invitations, retirement
+  ├─ dids        communication DIDs minted from their ID and route alone, disclosure, invitations, retirement
   ├─ send        what a message is, committed as an intent in its channel before any network work
   ├─ prepare     an intent → the one exact envelope every transport call of it carries
   ├─ dispatch    the one transport call of a prepared package, under a live action; dispatcher waits for prerequisites

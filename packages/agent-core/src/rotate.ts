@@ -62,14 +62,14 @@ import {
   type LocalDidEntity,
   type MessageId,
   type MintedDid,
-  type RouteId,
+  type RouteTarget,
   type VaultDraft,
   type VaultEvent,
   type VaultFold,
 } from "@estoc/vault";
 
 import { LiveAction } from "./action.js";
-import { didOf, mediatedRouteOf, routeTargetOf } from "./dids.js";
+import { didOf, routeTargetOf, sameDocument, usableTarget, type RouteSpec } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
 import { EntityConflict, NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
@@ -84,8 +84,8 @@ export interface RotationTarget {
 }
 
 export interface RotateOptions {
-  /** the successor's route; when left out, the preferred arrangement's usable route, or with none the predecessor's */
-  routeId?: RouteId;
+  /** the successor's route; when left out, the preferred arrangement, or with none the predecessor's own route */
+  route?: RouteSpec;
   /** the successor's entity ID, for a rotation repeated after a lost result; a fresh UUIDv7 when left out */
   didId?: DidId;
   /** the clock the proof's issue time is read from, in milliseconds since the epoch; `Date.now` when left out */
@@ -195,33 +195,37 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
 }
 
 /**
- * The successor: minted from a fresh entity ID on the route given, or
+ * The successor: minted from a fresh entity ID for the route given, or
  * the one new addresses go on, and created in the decision's own
  * commit. The route is chosen for the successor rather than handed
- * down: the usable route over the preferred arrangement where there
- * is one, so that an address leaves a mediator the vault has moved
- * away from, and the predecessor's otherwise. An entity already
- * recorded under the ID given keeps the route it was created on, and is the
- * successor of a manual rotation only, when the seed and the route
- * give exactly its document and it is live; a rotation an input
- * selected is the private-address policy's, whose successor is an
- * address no one has yet. What would differ is refused rather than
- * replaced.
+ * down: the preferred arrangement where there is one, so that an
+ * address leaves a mediator the vault has moved away from, and the
+ * predecessor's own route otherwise. An entity already recorded under
+ * the ID given keeps the route its document names, and is the
+ * successor of a manual rotation only, when the seed gives exactly its
+ * document and it is live; a rotation an input selected is the
+ * private-address policy's, whose successor is an address no one has
+ * yet. What would differ is refused rather than replaced.
  */
-async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEntity, selected: boolean, options: Pick<RotateOptions, "routeId" | "didId">): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
+async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEntity, selected: boolean, options: Pick<RotateOptions, "route" | "didId">): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
   const didId = options.didId ?? (uuidv7() as DidId);
-  const existing = fold.routes.dids.get(didId);
-  const preferred = fold.mediations.preferred === null ? null : mediatedRouteOf(fold, fold.mediations.preferred);
-  const routeId = options.routeId ?? existing?.created?.boundRouteId ?? preferred?.routeId ?? predecessor.created!.boundRouteId;
-  const successor = await mintDid(keys, didId, routeTargetOf(fold, routeId));
-  if (existing === undefined) return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid, boundRouteId: routeId })], successor };
-  const same = existing.created !== null && existing.created.did === successor.did && existing.created.longFormDid === successor.longFormDid && existing.created.boundRouteId === routeId;
-  if (!same) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
+  const existing = fold.dids.entities.get(didId);
+  const successor = await mintDid(keys, didId, successorTarget(fold, predecessor, existing, options.route));
+  if (existing === undefined) return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid })], successor };
+  if (!sameDocument(existing, successor)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
   const faults: string[] = [];
   if (selected) faults.push("a rotation an input selects takes a fresh successor");
   if (!existing.live) faults.push(...(existing.retired !== null ? [`retired: ${existing.retired}`, ...existing.faults] : existing.faults));
   if (faults.length > 0) throw new Unusable("DID", didId, faults);
   return { drafts: [], successor };
+}
+
+function successorTarget(fold: VaultFold, predecessor: LocalDidEntity, existing: LocalDidEntity | undefined, route: RouteSpec | undefined): RouteTarget {
+  if (route !== undefined) return routeTargetOf(fold, route);
+  if (existing?.routeTarget != null) return usableTarget(fold, existing.routeTarget);
+  if (fold.mediations.preferred !== null) return routeTargetOf(fold, { kind: "mediated", mediationId: fold.mediations.preferred });
+  if (predecessor.routeTarget === null) throw new Unusable("DID", predecessor.didId, ["its document names no route a successor could take"]);
+  return usableTarget(fold, predecessor.routeTarget);
 }
 
 /**

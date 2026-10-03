@@ -529,7 +529,7 @@ export class Receiver {
 
 /** Watches what keeps each of these entities from receiving: a delivery waiting on them is retried when that changes for any of them. */
 export function recipientWatch(didIds: readonly DidId[]): Watch {
-  return (fold) => JSON.stringify(didIds.map((didId) => [fold.routes.receipt(didId), fold.routes.dids.get(didId)?.faults ?? null]));
+  return (fold) => JSON.stringify(didIds.map((didId) => [fold.dids.receipt(didId), fold.dids.entities.get(didId)?.faults ?? null]));
 }
 
 function bounded(reason: string): string {

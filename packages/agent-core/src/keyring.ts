@@ -57,7 +57,7 @@ export class Keyring {
    */
   async reload(fold: VaultFold): Promise<void> {
     const dids = new Map<DidId, Held>();
-    for (const entity of fold.routes.dids.values()) {
+    for (const entity of fold.dids.entities.values()) {
       if (entity.created === null || entity.resolution === null || entity.conflict || entity.identity !== "verified") continue;
       const keys = this.dids.get(entity.didId)?.keys ?? (await this.keys.didKeys(entity.didId));
       dids.set(entity.didId, { keys, secrets: secretsOf(keys, [entity.created.longFormDid, entity.created.did], entity.methodIds) });

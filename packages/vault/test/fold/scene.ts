@@ -44,7 +44,7 @@ import {
   type VaultEvent,
   type WireMessageId,
 } from "../../src/index.js";
-import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, HASH, MEDIATED, MEDIATION, OTHER_SEED, ROUTE, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
+import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, HASH, MEDIATED, MEDIATION, OTHER_SEED, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
 
 export const PEER_ID0 = "019b7000-0000-7000-8000-000000000b00" as DidId;
 export const PEER_ID1 = "019b7000-0000-7000-8000-000000000b01" as DidId;
@@ -95,9 +95,9 @@ export async function vaults() {
   const peerKeys = await openKeys(OTHER_SEED);
   const scene = new Scene();
   mediatedRoute(scene, { me: (await mintMediationDid(keys, MEDIATION)).longFormDid });
-  const a0 = await createdDid(scene, keys, DID_ID, ROUTE, MEDIATED);
-  const a1 = await createdDid(scene, keys, DID_ID2, ROUTE, MEDIATED);
-  const a2 = await createdDid(scene, keys, DID_ID3, ROUTE, MEDIATED);
+  const a0 = await createdDid(scene, keys, DID_ID, MEDIATED);
+  const a1 = await createdDid(scene, keys, DID_ID2, MEDIATED);
+  const a2 = await createdDid(scene, keys, DID_ID3, MEDIATED);
   const b0 = await peerDid(peerKeys, PEER_ID0);
   const b1 = await peerDid(peerKeys, PEER_ID1);
   const b2 = await peerDid(peerKeys, PEER_ID2);

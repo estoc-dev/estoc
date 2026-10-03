@@ -3,8 +3,8 @@ import { Message } from "@estoc/didcomm-node";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
 
-import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, Pickup, STATUS, createDid, ensureRoute, establish, plainMessage, reconcile, secretsResolverFor, type Delivered, type IMessage, type MediatorLink, type Opened } from "../src/index.js";
-import { newMediator, party, reloaded, until } from "./helpers.js";
+import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, Pickup, STATUS, createDid, establish, plainMessage, reconcile, secretsResolverFor, type Delivered, type IMessage, type MediatorLink, type Opened } from "../src/index.js";
+import { newMediator, party, reloaded, until, mediatedRoute } from "./helpers.js";
 
 const resolver = { resolve: resolveDIDCommDoc };
 
@@ -20,8 +20,8 @@ describe("pickup over the ring", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-    const { minted } = await createDid(p.runtime, p.keys, routeId);
+    const route = mediatedRoute(p.mediationId);
+    const { minted } = await createDid(p.runtime, p.keys, route);
     await reloaded(p);
     await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     const account = p.created.data.me.did;

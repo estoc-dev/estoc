@@ -19,7 +19,7 @@ afterEach(stopAll);
 
 const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
-const didOf = (fold: VaultFold, didId: DidId): Did => fold.routes.dids.get(didId)!.created!.did;
+const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 /** Every link of the positive history, from every pair a fact mentions, as comparable rows: from, to, the side replaced, whether it is usable. */
 const links = (fold: VaultFold): string[][] => {
