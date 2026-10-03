@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Message } from "@estoc/didcomm-node";
 import type { IMessage } from "@estoc/didcomm-node";
 import canonicalize from "canonicalize";
+import { v7 as uuidv7 } from "uuid";
 import WebSocket from "ws";
 
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
@@ -68,7 +69,6 @@ console.log(`mediator: ${mediatorDid}`);
 const alice = await mintIdentity("https://smoke-alice.test/didcomm");
 const ctx = new DIDCommContext(alice.did, alice.didDoc, alice.secrets);
 
-/** Who seals a request to the mediator, and the spelling it is sent from. */
 interface Speaker {
   did: string;
   ctx: DIDCommContext;
@@ -289,11 +289,6 @@ ws.close();
 
 const REPLICA = "https://estoc.dev/replica-mediation/1.0";
 const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
-
-function uuidv7(): string {
-  const hex = randomUUID().replaceAll("-", "");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
-}
 
 /** The short form, sealed with the long form's keys: how an account or a replica speaks once the mediator holds its long form. */
 const known = (who: Peer4Agent): Speaker => ({ did: who.did, ctx: who.shortCtx });
