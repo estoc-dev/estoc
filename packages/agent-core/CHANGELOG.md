@@ -5,15 +5,17 @@
 - **One entry per authority**: `LiveAction.manual(messageId)` is the
   host's explicit step for a message already recorded, a retry or a
   completion; the constructor is private, and the initial action of an
-  intent is minted only by `send`, by a rotation and by a live input.
-  `LiveInput` is minted by the receipt alone: `ReceiptOutcome.live` and
+  intent is minted only by `send`, by a rotation and by the effects a
+  live input decides. `LiveInput` is minted by the receipt alone and
+  carries nothing but its `cid`: `ReceiptOutcome.live` and
   `Received.live` are the input itself, or null where the call earns
   the input nothing, in place of a boolean, and `Agent` decides the
-  effects under the one the receipt gave it. Migration:
+  effects under the one the receipt gave it. Neither authority can be
+  assembled from a plain object. Migration:
   `new LiveAction(id, "manual")` becomes `LiveAction.manual(id)`;
-  `new LiveAction(id, "initial")` and `new LiveInput(cid)` have no
-  replacement, since the event that decided a message carries its
-  action (`Sent.action`, `EffectOutcome.action`,
+  `new LiveAction(id, "initial")`, `new LiveInput(cid)` and
+  `LiveInput.mint` have no replacement, since the event that decided a
+  message carries its action (`Sent.action`, `EffectOutcome.action`,
   `Rotated.notification.action`) and the receipt carries the input; a
   check of `received.live` compares with null.
 - **One arrangement per mediator, under its derived ID**:

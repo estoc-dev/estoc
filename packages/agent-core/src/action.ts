@@ -11,10 +11,10 @@
  * outcome is unknown, leaves the message where a fresh manual action is
  * needed and nothing repeats the call on its own.
  *
- * The constructors are private so that the package has one entry for
- * each authority: `LiveAction.manual` for a host's explicit step, and
- * for the rest the two functions below, which the package keeps to
- * itself.
+ * The constructors are private and each class has a private field, so
+ * that an authority is minted and never assembled: `LiveAction.manual`
+ * is a host's one entry, and the two functions below are the package's
+ * own.
  */
 
 import type { EventReference, MessageId } from "@estoc/vault";
@@ -58,26 +58,29 @@ export class LiveAction {
 /**
  * A live input is the authority to decide an input's automatic
  * effects: the receipt that recorded the observation, in the same
- * call chain, still running. It mints the initial action of each
- * intent the input decides, and nothing else mints one for them: an
- * observation found by an open, brought by an import or delivered
- * again is not live, and what such an input still earns is listed for
- * manual completion.
+ * call chain, still running. Each intent the input decides gets its
+ * initial action, and nothing else mints one for them: an observation
+ * found by an open, brought by an import or delivered again is not
+ * live, and what such an input still earns is listed for manual
+ * completion.
  */
 export class LiveInput {
   static {
     mintInput = (cid) => new LiveInput(cid);
   }
 
-  private constructor(readonly cid: EventReference<"message.in">) {}
+  readonly #cid: EventReference<"message.in">;
 
-  /** The initial action of an intent this input decided. */
-  mint(messageId: MessageId): LiveAction {
-    return mintInitial(messageId);
+  private constructor(cid: EventReference<"message.in">) {
+    this.#cid = cid;
+  }
+
+  get cid(): EventReference<"message.in"> {
+    return this.#cid;
   }
 }
 
-/** The initial action of an intent, for the step that decided it under the lock: a send, a rotation's notification. */
+/** The initial action of an intent, for the step that decided it under the lock: a send, a rotation's notification, the effects of a live input. */
 export function initialAction(messageId: MessageId): LiveAction {
   return mintInitial(messageId);
 }

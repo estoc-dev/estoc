@@ -53,7 +53,7 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { LiveAction, type LiveInput } from "./action.js";
+import { LiveAction, initialAction, type LiveInput } from "./action.js";
 import type { Dispatched } from "./dispatch.js";
 import { UnknownEntity } from "./errors.js";
 import { effectTypesOf, handlerFor, handlersOf, type Handler, type Input, type Response } from "./handlers/index.js";
@@ -127,7 +127,7 @@ export async function decideEffects(runtime: VaultRuntime, keys: Keys, live: Liv
     const standing = notWitnessing(fold, execution, cid);
     if (standing !== null) return { cid, executionId: execution.id, because: standing, drafted: [] };
     const settled = await settle(held, fold, execution, options);
-    return { cid, executionId: execution.id, because: settled.because, drafted: settled.drafted.map((draft) => (draft.outcome === "created" ? { ...draft, action: live.mint(draft.messageId) } : draft)) };
+    return { cid, executionId: execution.id, because: settled.because, drafted: settled.drafted.map((draft) => (draft.outcome === "created" ? { ...draft, action: initialAction(draft.messageId) } : draft)) };
   });
 }
 
