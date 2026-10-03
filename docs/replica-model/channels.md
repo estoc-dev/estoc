@@ -1,6 +1,6 @@
 # Channels, continuity and operation evidence
 
-Status: **phase 1; continuity integration, application admission and rotation restrictions specified, implementation pending**. This document owns channel identity, invitations,
+Status: **phase 1, implemented**. This document owns channel identity, invitations,
 the vault evidence adapter and operation eligibility. The
 [`@estoc/continuity` API and host contract](../../packages/continuity/README.md)
 own proof and graph semantics; this document specifies their application use. Storage
@@ -500,7 +500,7 @@ host evidence is still unresolved in the inventory. Before successor allocation,
 inspect those records as well as `localDecisions()`; a pending saved choice
 cannot be mistaken for permission to allocate another successor.
 
-**Proof boundary.** Use `inspectFromPrior` only to locate issuer material, then
+**Proof boundary.** Use `precheckFromPrior` to refuse what can never verify and to locate issuer material, then
 `verifyFromPrior` with the retained issuer long form and `bindFromPrior` with
 the exact original token, receipt reference, authenticated sender and local
 recipient. The bound rotation yields the two same-receipt facts above. Proof
@@ -511,15 +511,14 @@ returned token before dependent work. Import never trusts a cached verified type
 Decoding success is not profile validation. Document-independent failures must
 be distinguishable from missing issuer material, including malformed claims,
 unsupported JOSE headers/time claims and canonical sender/subject mismatch.
-Keep that validation in the shared package boundary. If its public API does
-not expose the necessary precheck, extend and test the package API before
-completing the adapter; do not create another JWT parser in vault or agent-core.
-The current `inspectFromPrior` already rejects `exp`, `nbf`, non-integer `iat`
-and invalid `b64`/`crit` use. The remaining document-independent precheck needs
-to validate `alg`, optional `typ`, canonical equivalence of the DID in `kid`
-with `iss`, distinct canonical `sub` and `iss`, and canonical `sub` against the
-authenticated sender. These checks still do not verify a signature or key
-authorization; those require the issuer document and shared verifier.
+That validation lives in the shared package:
+`precheckFromPrior(token, { authenticatedSender })` applies every rule of
+the profile that needs no issuer document, from the JOSE header and time
+claims to the canonical DIDs in `kid`, `iss` and `sub` and the canonical
+`sub` against the authenticated sender, and a token it refuses is invalid
+without waiting for material. Do not create another JWT parser in vault or
+agent-core. The precheck verifies no signature or key authorization; those
+require the issuer document, `verifyFromPrior` and `bindFromPrior`.
 
 Phase 1 supports **rotations only** and has no application relationship-ended
 state. Retain otherwise

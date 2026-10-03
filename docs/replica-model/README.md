@@ -52,7 +52,7 @@ permits at most one compatible intent per execution.
 | --- | --- | --- |
 | Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event API, identity/order, object bytes and retention |
 | Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
-| Domain facts | [Vault events](vault-events.md) | Message, delivery, contact and local policy payloads/folds |
+| Domain facts | [Vault events](vault-events.md) | Message, delivery, contact and local policy payloads; the folds over them are code |
 | Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, continuity adapter, operation/admission policy, contact selections |
 | Runtime | [Delivery](distributed-delivery.md) | Channel-local identity, ACK paths, fixed packaging and live dispatch actions |
 
@@ -62,9 +62,10 @@ The [`@estoc/continuity` package](../../packages/continuity/README.md)
 implements shared `from_prior` proof verification, creation and context
 binding alongside a pure continuity model. Its README defines the package
 inputs, queries, replica merge contract and host responsibilities. The
-package owns proof and graph semantics in this target contract. The vault
-integration is specified in [channels](channels.md#continuity-integration) and
-is not yet implemented. Keep package semantics in its code, public contract and
+package owns proof and graph semantics. [Channels](channels.md#continuity-integration)
+specifies their application use and
+[`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts)
+implements it. Keep package semantics in its code, public contract and
 tests; app policy and storage integration belong in this suite. The package's
 [illustrated guide](../../packages/continuity/docs/guide.md) explains its queries
 and boundary cases. This app revision supports rotations only, not endings.

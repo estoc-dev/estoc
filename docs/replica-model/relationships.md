@@ -4,7 +4,7 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1; application-admission and rotation restrictions specified, implementation pending** — ordinary DIDComm channels, discovery and
+Status: **phase 1, implemented** — ordinary DIDComm channels, discovery and
 early private-address allocation for one active writable vault runtime.
 Phase-1 channel endpoints support only `did:peer:4`; mediator DID resolution
 is independent of that restriction.
@@ -486,15 +486,13 @@ After durable receipt and without delaying pickup ACK, verify the carrier's
 original JWT through [the continuity adapter](channels.md#continuity-integration).
 Use the shared package's proof profile and canonical DID binding, including
 equivalent issuer/`kid` DID spellings and subject/sender spellings. Preserve
-document-independent rejection separately from missing material: malformed
-claims, unsupported profile headers and `exp`/`nbf`, or a mismatched canonical
-subject are invalid even without an issuer document. `inspectFromPrior` locates
-material and already rejects `exp`, `nbf`, non-integer `iat` and invalid
-`b64`/`crit` use. It still lacks the document-independent precheck of `alg`,
-optional `typ`, canonical equivalence of the DID in `kid` with `iss`, distinct
-canonical `sub` and `iss`, and canonical `sub` against the authenticated sender.
-Keep that precheck extension in the package, without a second parser in the runtime. Decoding
-supplies no signature or channel authority.
+document-independent rejection separately from missing material:
+`precheckFromPrior(token, { authenticatedSender })` refuses malformed
+claims, unsupported profile headers and time claims, non-canonical or
+mismatched DIDs and a `sub` that is not the authenticated sender, all
+without an issuer document. Keep that precheck in the package, without a
+second parser in the runtime. Decoding supplies no signature or channel
+authority.
 
 Resolve a long-form issuer locally from its validated encoded document using
 [the fixed document representation](vault-events.md#peer-resolved). For a

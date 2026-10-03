@@ -4,7 +4,7 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1; application-admission and rotation restrictions specified, implementation pending** — phase-1 delivery profile for one active full vault
+Status: **phase 1, implemented** — phase-1 delivery profile for one active full vault
 runtime.
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,

@@ -10,8 +10,8 @@ backup format.
 The capitalized requirement words in this document have their BCP 14 meanings.
 [event-store.md](event-store.md) owns the API and event semantics;
 [dasl-objects.md](dasl-objects.md) owns CID identity and object verification;
-[vault-events.md](vault-events.md) owns payloads, folds and held roots. This
-file owns SQLite storage and recovery, not a second implementation of SQLite's
+[vault-events.md](vault-events.md) owns payloads and held roots, and the folds
+over them are code. This file owns SQLite storage and recovery, not a second implementation of SQLite's
 transaction or version-management machinery.
 
 <!-- reading-guide:start -->

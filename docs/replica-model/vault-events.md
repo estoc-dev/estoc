@@ -2192,15 +2192,24 @@ The folds over these events, and the procedures that decide what to
 append, are specified by their code and its tests, not by this document.
 Each fold is a module of
 [`packages/vault/src/fold/`](../../packages/vault/src/fold/) whose leading
-comment states the rule it implements; every fold is a pure function of
-the event set, and `packages/vault/test/fold/` checks each by shuffling.
+comment states the rule it implements. A fold is deterministic over the
+same event set, the verdicts handed to it and its interpretation options,
+in whatever order the events arrived: what needs the seed or the retained
+objects is checked once beside the fold, in
+[`packages/vault/src/fold/vault.ts`](../../packages/vault/src/fold/vault.ts),
+and the verdicts are passed in, so the event frontier alone is not the
+whole input and a repaired or lost object changes the projection without
+a new event. `packages/vault/test/fold/` checks each fold by shuffling.
 The procedures that write the vault are
 [`packages/vault/src/procedures.ts`](../../packages/vault/src/procedures.ts)
 and the modules of
 [`packages/agent-core/src/`](../../packages/agent-core/src/); each reads
-the fold under the writer lock, decides over it and commits what it
-decided in one batch, and their tests sit beside them. Where a section
-above refers to a fold or a procedure, it links the module that owns it.
+the fold under the writer lock, decides over it and commits each decision
+in one batch. Where one procedure commits twice, such as a rotation and
+its notification, its module states what a crash between the commits
+leaves. Their tests sit beside them. This document keeps the event schemas
+and the retention contract that the folds obey; where a section above
+refers to a fold or a procedure, it links the module that owns it.
 
 <a id="merge-and-restore"></a>
 
@@ -2348,9 +2357,11 @@ author remain unchanged.
 - A valid `from_prior` is channel-context evidence. It MUST NOT globally
   link or retire addresses used by unrelated channels.
 - The phase-1 mediator stores only encrypted inner DIDComm envelopes and
-  routing/account-delivery metadata. It does not receive a replica ID.
-- The mediator of a replica-mediation arrangement is given each enrolled
-  replica's ID and DID in its grant and can group them under the account.
+  routing/account-delivery metadata. The mediator of a replica-mediation
+  arrangement is given each enrolled replica's ID and DID in its
+  account-signed grant and can group them under the account; it is given
+  no application plaintext or content-decryption key, and a communication
+  peer learns no local replica ID from that enrollment.
 - The mediator may observe its account DID, recipient DID and method,
   ciphertext size, arrival, pickup, ACK, expiry, IP and traffic timing. It is
   not sent a contact ID.
