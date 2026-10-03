@@ -133,7 +133,7 @@ export function foldSources(set: VaultEventSet, dids: DidFold, resolutionChecks:
 
 function sourceOf(event: VaultEvent<"message.in">, localDidId: DidId | null, local: LocalDidEntity | null, set: VaultEventSet, resolutionChecks: ReadonlyMap<EventCid, EvidenceCheck>): Source {
   const { data } = event;
-  if (data.peerResolutionEventCid === null || data.did === null) return { event, localDidId, resolution: null, channel: null, standing: { status: "complete" } };
+  if (data.peerResolutionEventCid === null) return { event, localDidId, resolution: null, channel: null, standing: { status: "complete" } };
   const missing: string[] = [];
   let channel: Channel | null = null;
   let resolution: VaultEvent<"peer.resolved"> | null = null;

@@ -65,13 +65,17 @@ export type DeliveryFailureCode = "expired" | "cancelled";
 /** The headers of a message that no dedicated field models; none of them a reserved DIDComm name. */
 export type AdditionalHeaders = JsonObject;
 
+/** A locally initiated send: no producing tuple, no source. */
+export type LocalSend = { executionId: null; effectType: null; effectKey: null; sourceEventCid: null };
+
+/** An automatic effect: the producing tuple, its key, and the exact observation the effect derives from. */
+export type AutomaticEffect = { executionId: ExecutionId; effectType: string; effectKey: EffectKey; sourceEventCid: EventReference<"message.in"> };
+
 /**
  * The intent an outbound event freezes: what the plaintext will carry,
- * and the channel it is fixed to. The three effect fields are all null
- * for a locally initiated send and all non-null for an automatic
- * effect, where they are the producing tuple and its key; the source
- * is the exact observation an effect derives from, the rotation the
- * decision a notification announces.
+ * and the channel it is fixed to. The rotation is the decision a
+ * notification announces, whether its source triggered it or the user
+ * completed it by hand.
  */
 export type MessageOut = {
   messageId: MessageId;
@@ -88,22 +92,19 @@ export type MessageOut = {
   bodyCid: Cid;
   attachmentCids: Cid[];
   intentHash: MessageHash;
-  executionId: ExecutionId | null;
-  effectType: string | null;
-  effectKey: EffectKey | null;
-  sourceEventCid: EventReference<"message.in"> | null;
   rotationEventCid: EventReference<"did.rotationSelected"> | null;
-};
+} & (LocalSend | AutomaticEffect);
 
 /** Where an inbound observation arrived: both null for direct transport without them. */
 export type ReceivedVia = { mediationId: MediationId | null; deliveryId: DeliveryId | null };
 
-/**
- * One durable inbound observation. An anonymous observation has null
- * `peerResolutionEventCid`, `did` and `presentedDid` together; every
- * other observation names its resolution evidence. `fromPrior` is the
- * original string off the wire, whatever it turns out to be.
- */
+/** An anonymous observation: no resolution evidence, so no sender DID. */
+export type AnonymousPeer = { peerResolutionEventCid: null; presentedDid: null; did: null };
+
+/** An authenticated observation: its resolution evidence, the sender's DID as presented and its canonical short form. */
+export type ResolvedPeer = { peerResolutionEventCid: EventReference<"peer.resolved">; presentedDid: Did; did: Did };
+
+/** One durable inbound observation. `fromPrior` is the original string off the wire, whatever it turns out to be. */
 export type MessageIn = {
   messageId: MessageId;
   wireMessageId: WireMessageId;
@@ -111,9 +112,6 @@ export type MessageIn = {
   plaintextHash: MessageHash;
   localKeyName: KeyName;
   msgType: string;
-  peerResolutionEventCid: EventReference<"peer.resolved"> | null;
-  presentedDid: Did | null;
-  did: Did | null;
   thid: string | null;
   pthid: string | null;
   createdTime: EpochSeconds | null;
@@ -126,7 +124,7 @@ export type MessageIn = {
   attachmentCids: Cid[];
   bytes: number;
   receivedVia: ReceivedVia;
-};
+} & (AnonymousPeer | ResolvedPeer);
 
 /** The payload of each version-4 event type, by type name. */
 export type VaultData = {

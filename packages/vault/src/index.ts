@@ -8,7 +8,9 @@
 
 export type {
   AdditionalHeaders,
+  AnonymousPeer,
   AuthorId,
+  AutomaticEffect,
   Channel,
   Cid,
   ContactId,
@@ -26,6 +28,7 @@ export type {
   EventReference,
   ExecutionId,
   KeyName,
+  LocalSend,
   MediationId,
   MessageHash,
   MessageId,
@@ -35,6 +38,7 @@ export type {
   PublicKey,
   ReceivedVia,
   ReplicaId,
+  ResolvedPeer,
   SyncId,
   VaultData,
   VaultEventType,
