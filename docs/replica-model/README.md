@@ -121,7 +121,7 @@ receive gate, the private-address policy and retry are code.
 | Complete witnesses | [VE witnesses](vault-events.md#complete-observation-witnesses) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
 | Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
 | Invitations | [VE disclosure](vault-events.md#did-disclosed), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
-| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/procedures.ts), [application views](vault-events.md#application-message-views) |
+| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/contact-commands.ts), [application views](vault-events.md#application-message-views) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
 
