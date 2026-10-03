@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Every arrangement is a replica-mediation account**: `mediation.created`
+  has no `profile` member, and `MediationProfile` and `Mediation.profile`
+  are gone. An arrangement is an account of the mediator's
+  replica-mediation protocol and is routed through that mediator itself,
+  so a grant naming any other routing DID is a conflict, and the account
+  DID is recorded by its did:peer:4 long form. A `mediation.created`
+  carrying `profile` is an invalid payload: a vault recorded before this
+  change is read anew.
 - **A DID's route is its document's**: `did.created` records only the
   entity ID and the two spellings; where the DID sends is the one
   DIDComm service of its long form, read back by the fold
@@ -18,11 +26,7 @@
   under `entities`, in place of `foldRoutes`, `RouteFold` and
   `VaultFold.routes`. A `did.created` carrying `boundRouteId` is an
   invalid payload: a vault recorded before this change is read anew.
-- **Replica-mediation membership**: `mediation.created` takes an optional
-  `profile`, whose only value `"replica-mediation/1.0"` makes the
-  arrangement an account of the mediator's replica-mediation protocol
-  (`Mediation.profile`; such an arrangement granted a routing DID other
-  than its mediator is a conflict). The new event `replica.created`
+- **Replica-mediation membership**: the new event `replica.created`
   records one replica's grant, and `foldReplicas` (`VaultFold.replicas`)
   reads which replicas are members of which arrangement, with
   `verifyReplicaGrants` as the seed's check beside it
@@ -38,8 +42,7 @@
   that creation (`mediationCreations`) and does not follow the
   arrangement's routing grants or retirement. Nothing enrolls or picks up yet: this is
   the vault's side of the contract only. A reader older than this
-  version refuses a `mediation.created` carrying `profile` and keeps a
-  `replica.created` unapplied.
+  version keeps a `replica.created` unapplied.
 - **Recipient proof**: `signRecipientProof` signs, with a communication
   DID's own authentication key, the compact JWS
   (`RECIPIENT_PROOF_TYP`) that lets a replica-mediation account hold

@@ -113,7 +113,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
     } as Data<"peer.resolved">,
     [DOC],
   ],
-  "mediation.created": [{ mediationId: MEDIATION, mediatorDid: "did:web:mediator.example", me: { keyName: `mediation/${MEDIATION}/me`, did: SHORT } } as Data<"mediation.created">, []],
+  "mediation.created": [{ mediationId: MEDIATION, mediatorDid: "did:web:mediator.example", me: { keyName: `mediation/${MEDIATION}/me`, did: LONG } } as Data<"mediation.created">, []],
   "mediation.granted": [{ mediationId: MEDIATION, routingDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" } as Data<"mediation.granted">, []],
   "mediation.selected": [{ mediationId: MEDIATION } as Data<"mediation.selected">, []],
   "mediation.retired": [{ mediationId: MEDIATION, because: "replaced" } as Data<"mediation.retired">, []],
@@ -311,15 +311,13 @@ describe("identifiers in payloads", () => {
 describe("rules between members", () => {
   test("mediation.created names the arrangement's own key", () => {
     const data = ALL["mediation.created"][0] as Loose;
-    rejects("mediation.created", { ...data, me: { keyName: KEY, did: SHORT } }, [], /me\.keyName is the arrangement's own key/);
+    rejects("mediation.created", { ...data, me: { keyName: KEY, did: LONG } }, [], /me\.keyName is the arrangement's own key/);
   });
 
-  test("mediation.created may name the replica-mediation profile and nothing else, for an account recorded by its did:peer:4 long form", () => {
+  test("mediation.created records its account by its did:peer:4 long form, and names no profile", () => {
     const data = ALL["mediation.created"][0] as Loose;
-    accepts("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: "replica-mediation/1.0" });
-    rejects("mediation.created", { ...data, profile: "replica-mediation/1.0" }, [], /recorded in its long form/);
-    rejects("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: null }, [], /profile must be one of "replica-mediation\/1\.0"/);
-    rejects("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG }, profile: "replica-mediation/2.0" }, [], /profile/);
+    rejects("mediation.created", { ...data, me: { keyName: `mediation/${MEDIATION}/me`, did: SHORT } }, [], /recorded in its long form/);
+    rejects("mediation.created", { ...data, profile: "replica-mediation/1.0" }, [], /profile/);
   });
 
   test("replica.created carries a grant spelled as one, for the replica and the arrangement it names", () => {

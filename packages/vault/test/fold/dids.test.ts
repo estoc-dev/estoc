@@ -64,7 +64,7 @@ async function editedDid(scene: Scene, didId: DidId, edit: (document: Record<str
 }
 
 const secondArrangement = (scene: Scene, routingDid = ROUTING_DID): void => {
-  scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } });
+  scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: routingDid, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } });
   scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid });
 };
 
@@ -134,7 +134,7 @@ describe("the DID fold", () => {
     const scene = new Scene();
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
     expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`], routeTarget: MEDIATED, mediations: [] });
-    scene.add("mediation.created", { mediationId: MEDIATION, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
+    scene.add("mediation.created", { mediationId: MEDIATION, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
     expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`] });
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
     expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: true, faults: [], mediations: [MEDIATION] });
@@ -320,7 +320,7 @@ describe("receipt eligibility and the required receiving set", () => {
     const s = new Scene();
     mediatedRoute(s, { me });
     s.add("mediation.retired", { mediationId: MEDIATION, because: "replaced" });
-    s.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } });
+    s.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } });
     const created = await createdDid(s, keys, DID_ID, MEDIATED);
     let { mediations, dids } = await foldWithSeed(s.set(), keys);
     expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, created, mediations: [], faults: [`mediation ${MEDIATION} is retired`] });
@@ -353,7 +353,7 @@ describe("receipt eligibility and the required receiving set", () => {
     const s = new Scene();
     await createdDid(s, keys, DID_ID, MEDIATED);
     expect((await checked(s)).receipt(DID_ID)).toBe("pending");
-    s.add("mediation.created", { mediationId: MEDIATION, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
+    s.add("mediation.created", { mediationId: MEDIATION, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
     expect((await checked(s)).receipt(DID_ID)).toBe("pending");
     s.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
     expect(unchecked(s.set()).receipt(DID_ID)).toBe("pending");

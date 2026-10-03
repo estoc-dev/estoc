@@ -27,7 +27,6 @@ export type {
   ExecutionId,
   KeyName,
   MediationId,
-  MediationProfile,
   MessageHash,
   MessageId,
   MessageIn,

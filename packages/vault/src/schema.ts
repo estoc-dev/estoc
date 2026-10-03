@@ -287,10 +287,10 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     (data) => [data.documentCid]
   ),
   "mediation.created": schema(
-    checked(shape({ mediationId: idMembers.mediationId, mediatorDid: did, me: shape({ keyName, did }) }, { profile: oneOf(["replica-mediation/1.0"]) }), (data) => {
+    checked(shape({ mediationId: idMembers.mediationId, mediatorDid: did, me: shape({ keyName, did }) }), (data) => {
       const expected = mediationKeyName(data.mediationId);
       if (data.me.keyName !== expected) throw new Fault(`me.keyName is the arrangement's own key, ${expected}`);
-      if (data.profile !== undefined && !isPeer4Long(data.me.did)) throw new Fault("a replica-mediation account is a did:peer:4, recorded in its long form");
+      if (!isPeer4Long(data.me.did)) throw new Fault("an account is a did:peer:4, recorded in its long form");
     }),
     none
   ),

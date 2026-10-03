@@ -74,7 +74,7 @@ describe("an invitation", () => {
     expect(await over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: `mediation ${MEDIATION} is retired` });
 
     const me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
-    const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];
+    const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];
     expect(await over(second)).toEqual({ status: "unavailable", because: `several arrangements route through ${ROUTING_DID}: ${MEDIATION}, ${MEDIATION2}` });
 
     const ungranted = settled.filter((event) => event.type !== "mediation.granted");

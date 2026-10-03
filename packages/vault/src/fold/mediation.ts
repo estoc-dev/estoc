@@ -3,9 +3,10 @@
  * consistent creation, the one grant that makes it usable, whether it
  * has been retired, and the conflicts that make it unusable. The
  * preferred arrangement is the latest selection, when that one is
- * usable. A replica-mediation arrangement is routed through its
- * mediator itself, so a grant naming another routing DID is a conflict
- * there. Whether the arrangement's own DID carries the keys its name
+ * usable. An arrangement is an account of the replica-mediation
+ * protocol at its mediator and is routed through that mediator itself,
+ * so a grant naming another routing DID is a conflict. Whether the
+ * arrangement's own DID carries the keys its name
  * derives needs the seed, so that check runs beside the fold and its
  * verdict is handed in; until it is, the arrangement is pending, since
  * nothing may receive on an identity the seed has not confirmed.
@@ -14,7 +15,7 @@
 import { IdentityMismatch, InvalidDidDocument } from "../errors.js";
 import { checkMediationKeys, type Keys } from "../identity.js";
 import { peerResolution } from "../peer-document.js";
-import type { Did, KeyName, MediationId, MediationProfile, VaultData } from "../types.js";
+import type { Did, KeyName, MediationId, VaultData } from "../types.js";
 import { groupBy, latest, samePayload, type VaultEventSet } from "./set.js";
 
 /** Whether a recorded entity's document carries the keys the seed derives for it. */
@@ -25,8 +26,8 @@ export type IdentityCheck = KeyCheck | "unchecked";
 /**
  * `usable` receives; `pending` waits for its creation, its grant or
  * its key check; `retired` and `conflict` are terminal, a conflict
- * being disagreeing creations or grants, a grant its profile does not
- * allow, or keys the seed does not derive.
+ * being disagreeing creations or grants, a grant naming a routing DID
+ * other than the mediator, or keys the seed does not derive.
  */
 export type MediationStatus = "usable" | "pending" | "retired" | "conflict";
 
@@ -36,8 +37,6 @@ export interface Mediation {
   readonly mediatorDid: Did | null;
   /** the consistent creation's own identity toward the mediator */
   readonly me: { keyName: KeyName; did: Did } | null;
-  /** what the consistent creation makes the arrangement: null for an ordinary Coordinate Mediation account, and while there is no consistent creation */
-  readonly profile: MediationProfile | null;
   /** the one granted routing DID, null while ungranted or grants disagree */
   readonly routingDid: Did | null;
   /** the reason of the first retirement in canonical order, null while not retired */
@@ -87,8 +86,7 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
     if (created.has(mediationId) && creation === null) faults.push("creations disagree");
     const routingDids = new Set((granted.get(mediationId) ?? []).map((event) => event.data.routingDid));
     if (routingDids.size > 1) faults.push(`grants disagree: ${[...routingDids].sort().join(", ")}`);
-    const profile = creation?.profile ?? null;
-    if (creation !== null && profile !== null && routingDids.size === 1 && !routingDids.has(creation.mediatorDid)) faults.push("a replica-mediation arrangement is routed through its mediator");
+    if (creation !== null && routingDids.size === 1 && !routingDids.has(creation.mediatorDid)) faults.push("an arrangement is routed through its mediator");
     const identity: IdentityCheck = options.keyChecks?.get(mediationId) ?? "unchecked";
     if (identity === "mismatch") faults.push("the seed does not derive the arrangement's keys");
     const conflict = faults.length > 0;
@@ -98,7 +96,6 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
       mediationId,
       mediatorDid: creation !== null && !conflict ? creation.mediatorDid : null,
       me: creation !== null && !conflict ? creation.me : null,
-      profile: conflict ? null : profile,
       routingDid,
       retired: retirement,
       faults,
