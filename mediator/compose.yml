@@ -19,6 +19,8 @@ services:
       # to the mediator DID it registered with.
       MEDIATOR_PUBLIC_URL: ${MEDIATOR_PUBLIC_URL:?set MEDIATOR_PUBLIC_URL before first start}
       MEDIATOR_OPEN_REGISTRATION: ${MEDIATOR_OPEN_REGISTRATION:-true}
+      # The Estoc app enrolls only as a replica-mediation account.
+      MEDIATOR_REPLICA_MEDIATION: ${MEDIATOR_REPLICA_MEDIATION:-true}
       MEDIATOR_CORS_ORIGIN: ${MEDIATOR_CORS_ORIGIN:-*}
     volumes:
       - mediator-data:/data

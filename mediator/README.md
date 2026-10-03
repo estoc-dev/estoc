@@ -36,9 +36,14 @@ one, and if you later attach a custom domain in the dashboard, that domain
 becomes a second, equally live DID off the same keys. Locally, `pnpm run
 dev:workers` serves `did:web:localhost%3A8787` the same way.
 
-`pnpm run smoke <url>` drives a real client through the whole surface —
-grant, keylist, anonymous forward, pickup, WebSocket live delivery — against
-any running mediator, whichever target it is.
+`pnpm run smoke <url>` drives a real client through the whole surface
+against any running mediator, whichever target it is: under
+coordinate-mediation, grant, keylist, anonymous forward, pickup and
+WebSocket live delivery; then, as the Estoc app does, a replica-mediation
+account that registers, adds a replica under its grant, adds a recipient
+under the recipient's proof, and picks up, acknowledges and is pushed that
+recipient's mail under the replica's own DID. A mediator with
+replica-mediation off fails the smoke, since the app cannot enroll with it.
 
 ## Quick start (Docker)
 
@@ -113,7 +118,7 @@ nothing is configured, and no name is more real than another.
 | [trust-ping/2.0](https://didcomm.org/trust-ping/2.0) | liveness |
 | [out-of-band/2.0](https://didcomm.org/out-of-band/2.0) | invitation issuing (`GET /invitation`, `?_oob=` URL) |
 | `https://estoc.dev/blob-store/1.0` | content-addressed blobs one mediation holds and anyone may fetch; on when blob storage is configured |
-| `https://estoc.dev/replica-mediation/1.0` | one account, several replicas that each pick up their own copy of its mail ([below](#replica-mediation)); on when `MEDIATOR_REPLICA_MEDIATION=true` |
+| `https://estoc.dev/replica-mediation/1.0` | one account, several replicas that each pick up their own copy of its mail ([below](#replica-mediation)); on when `MEDIATOR_REPLICA_MEDIATION=true`, which `wrangler.jsonc` and `compose.yml` set, since the Estoc app enrolls only this way |
 
 ## Transport
 
@@ -368,7 +373,7 @@ enrolled can still pick up what waits.
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
-| `MEDIATOR_REPLICA_MEDIATION` | `false` | `true` turns on replica-mediation/1.0 (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
+| `MEDIATOR_REPLICA_MEDIATION` | `false`; `true` in `wrangler.jsonc` and `compose.yml` | `true` turns on replica-mediation/1.0, which the Estoc app requires of its mediator (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing or a recipient listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may hold at once |
