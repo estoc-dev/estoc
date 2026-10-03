@@ -16,7 +16,7 @@
 import { IdentityMismatch, InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { checkDidKeys, didDocumentOf, serviceTargetOf, type Keys, type RouteTarget } from "../identity.js";
 import { didKeyName } from "../ids.js";
-import { authorizedMethodIds, didcommServiceUris, type PeerResolution } from "../peer-document.js";
+import { authorizedMethodIds, canonicalDidOf, didcommServiceUris, type PeerResolution } from "../peer-document.js";
 import type { VaultEvent } from "../schema.js";
 import type { Did, DidId, DidUrl, KeyName, MediationId, VaultData } from "../types.js";
 import { foldMediations, verifyMediationKeys, type IdentityCheck, type KeyCheck, type MediationFold } from "./mediation.js";
@@ -160,8 +160,8 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
         const uris = didcommServiceUris(read.document);
         methodIds = { authentication: authorizedMethodIds(read.document, "authentication"), keyAgreement: authorizedMethodIds(read.document, "keyAgreement") };
         resolution = read;
-        routeTarget = uris.length === 1 ? serviceTargetOf(uris[0]!) : null;
-        if (routeTarget === null) conflicts.push(uris.length === 1 ? `the document sends to ${uris[0]}, neither a DID nor an HTTPS or WSS URL` : "the document does not send to exactly one endpoint");
+        routeTarget = uris.length === 1 ? routeTargetOfService(uris[0]!) : null;
+        if (routeTarget === null) conflicts.push("the document does not send to exactly one endpoint");
       } catch (err) {
         if (!isDocumentFault(err)) throw err;
         conflicts.push(err.message);
@@ -196,6 +196,27 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
     });
   }
   return dids;
+}
+
+/**
+ * Where the document's one service sends. Reading the document checks
+ * the URI as a string and no further, so a did:peer:4 long form named
+ * there, a second document, is validated on its own: one that is not
+ * the document its hash commits to, or does not read as a document,
+ * routes nothing.
+ */
+function routeTargetOfService(uri: string): RouteTarget {
+  const target = serviceTargetOf(uri);
+  if (target === null) throw new InvalidDidDocument(`the document sends to ${uri}, neither a DID nor an HTTPS or WSS URL`);
+  if (target.kind === "mediated") {
+    try {
+      canonicalDidOf(target.routingDid);
+    } catch (err) {
+      if (!(err instanceof InvalidDidDocument)) throw err;
+      throw new InvalidDidDocument(`the document sends to ${uri}, a did:peer:4 long form that does not resolve: ${err.message}`);
+    }
+  }
+  return target;
 }
 
 /** A fault the document itself carries, as opposed to a programming error: recorded against the entity, never thrown out of a fold. */

@@ -62,17 +62,16 @@ import {
   type LocalDidEntity,
   type MessageId,
   type MintedDid,
-  type RouteTarget,
   type VaultDraft,
   type VaultEvent,
   type VaultFold,
 } from "@estoc/vault";
 
 import { LiveAction } from "./action.js";
-import { didOf, routeTargetOf, sameDocument, usableTarget, type RouteSpec } from "./dids.js";
+import { didOf, namedRouteOf, recordedDid, routeTargetOf, type RouteSpec } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
-import { EntityConflict, NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
+import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
 import type { AgentTrace } from "./trace.js";
 
@@ -200,19 +199,23 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
  * commit. The route is chosen for the successor rather than handed
  * down: the preferred arrangement where there is one, so that an
  * address leaves a mediator the vault has moved away from, and the
- * predecessor's own route otherwise. An entity already recorded under
- * the ID given keeps the route its document names, and is the
- * successor of a manual rotation only, when the seed gives exactly its
- * document and it is live; a rotation an input selected is the
- * private-address policy's, whose successor is an address no one has
- * yet. What would differ is refused rather than replaced.
+ * arrangement or endpoint the predecessor's own document names
+ * otherwise; the document is built for it as any new address is. An
+ * entity already recorded under the ID given is read back as it was
+ * committed, and is the successor of a manual rotation only, when it
+ * names the route given, if one is, and is live; a rotation an input
+ * selected is the private-address policy's, whose successor is an
+ * address no one has yet. What would differ is refused rather than
+ * replaced.
  */
 async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEntity, selected: boolean, options: Pick<RotateOptions, "route" | "didId">): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
   const didId = options.didId ?? (uuidv7() as DidId);
   const existing = fold.dids.entities.get(didId);
-  const successor = await mintDid(keys, didId, successorTarget(fold, predecessor, existing, options.route));
-  if (existing === undefined) return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid })], successor };
-  if (!sameDocument(existing, successor)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
+  if (existing === undefined) {
+    const successor = await mintDid(keys, didId, routeTargetOf(fold, options.route ?? successorRoute(fold, predecessor)));
+    return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid })], successor };
+  }
+  const successor = recordedDid(existing, options.route ?? null);
   const faults: string[] = [];
   if (selected) faults.push("a rotation an input selects takes a fresh successor");
   if (!existing.live) faults.push(...(existing.retired !== null ? [`retired: ${existing.retired}`, ...existing.faults] : existing.faults));
@@ -220,12 +223,11 @@ async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEnt
   return { drafts: [], successor };
 }
 
-function successorTarget(fold: VaultFold, predecessor: LocalDidEntity, existing: LocalDidEntity | undefined, route: RouteSpec | undefined): RouteTarget {
-  if (route !== undefined) return routeTargetOf(fold, route);
-  if (existing?.routeTarget != null) return usableTarget(fold, existing.routeTarget);
-  if (fold.mediations.preferred !== null) return routeTargetOf(fold, { kind: "mediated", mediationId: fold.mediations.preferred });
-  if (predecessor.routeTarget === null) throw new Unusable("DID", predecessor.didId, ["its document names no route a successor could take"]);
-  return usableTarget(fold, predecessor.routeTarget);
+function successorRoute(fold: VaultFold, predecessor: LocalDidEntity): RouteSpec {
+  if (fold.mediations.preferred !== null) return { kind: "mediated", mediationId: fold.mediations.preferred };
+  const route = namedRouteOf(predecessor);
+  if (route === null) throw new Unusable("DID", predecessor.didId, ["its document names no route a successor could take"]);
+  return route;
 }
 
 /**

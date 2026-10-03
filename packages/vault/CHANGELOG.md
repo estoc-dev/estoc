@@ -15,7 +15,10 @@
   identities: a `did:peer:4` long form in either place must be the one
   its hash commits to, resolving the replica's document validating no
   mediator document nested in its service URI, and `InvalidDidDocument`
-  refuses one that is not.
+  refuses one that is not. The DID fold validates the same way the
+  `did:peer:4` long form a communication document's service names: one
+  that is not the document its hash commits to, or does not read as a
+  document, is the entity's conflict, with no route and no arrangement.
 - **Derived arrangement and DID entity IDs**: `mediationIdOf(mediatorDid)`
   names the one arrangement with a mediator by the UUIDv5 its canonical
   DID derives, so every replica that arranges with a mediator records the

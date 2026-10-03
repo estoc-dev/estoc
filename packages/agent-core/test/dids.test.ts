@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "vitest";
 
 import { longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
 import { createSeedKeystore } from "@estoc/keystore";
-import { InvalidIdentifier, didcommServiceUris, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
+import { InvalidIdentifier, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, createMediation, createVault, disclose, dispatch, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf, send } from "../src/index.js";
@@ -119,6 +119,18 @@ describe("communication DIDs", () => {
     await a.runtime.close();
     await earlier.runtime.close();
     await stranger.runtime.close();
+  });
+
+  it("reads back no committed document whose service names a did:peer:4 long form other than the one its hash commits to: the same ID under that mediator's arrangement is refused and nothing written", async () => {
+    const mediator = await newMediator();
+    const a = await party(mediator);
+    const forged = `${longToShort(mediator.did)}:${a.created.data.me.did.slice(a.created.data.me.did.lastIndexOf(":") + 1)}` as Did;
+    const bad = await mintDid(a.keys, DID, { kind: "mediated", routingDid: forged });
+    await a.runtime.vault.commit([], [vaultDraft("did.created", { didId: DID, did: bad.did, longFormDid: bad.longFormDid })]);
+    expect((await scanVault(a.runtime.vault, a.keys)).dids.entities.get(DID)).toMatchObject({ live: false, conflict: true, routeTarget: null });
+    await expect(createDid(a.runtime, a.keys, mediatedRoute(a.mediationId), DID)).rejects.toThrow(EntityConflict);
+    expect((await scanVault(a.runtime.vault, a.keys)).set.of("did.created")).toHaveLength(1);
+    await a.runtime.close();
   });
 
   it("retires once: new sending and disclosure stop, the record stays", async () => {

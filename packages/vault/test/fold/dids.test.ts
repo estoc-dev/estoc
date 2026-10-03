@@ -295,6 +295,24 @@ describe("receipt eligibility and the required receiving set", () => {
     expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([mediationId]));
   });
 
+  it("makes a document whose service names a did:peer:4 long form other than the one its hash commits to, or one that does not read as a document, a conflict: resolving the outer document validates nothing nested in its service", async () => {
+    const long = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid;
+    const mediationId = mediationIdOf(long);
+    const forged = `${longToShort(long)}:${me.slice(me.lastIndexOf(":") + 1)}` as Did;
+    const unreadable = encodeLongForm({ service: [{ id: "#didcomm", type: "DIDCommMessaging", serviceEndpoint: 5 }] } as never) as Did;
+    const s = new Scene();
+    mediatedRoute(s, { me: (await mintMediationDid(keys, mediationId)).longFormDid }, mediationId, longToShort(long) as Did);
+    await createdDid(s, keys, DID_ID, { kind: "mediated", routingDid: forged });
+    await createdDid(s, keys, DID_ID2, { kind: "mediated", routingDid: unreadable });
+    await createdDid(s, keys, DID_ID3, { kind: "mediated", routingDid: long });
+    const { dids } = await foldWithSeed(s.set(), keys);
+    for (const [didId, service] of [[DID_ID, forged], [DID_ID2, unreadable]] as const) {
+      expect(dids.entities.get(didId)).toMatchObject({ live: false, conflict: true, identity: "verified", routeTarget: null, mediation: null, faults: [expect.stringContaining(`the document sends to ${service}, a did:peer:4 long form that does not resolve: `)] });
+      expect(dids.receipt(didId)).toBe("terminal");
+    }
+    expect(dids.entities.get(DID_ID3)).toMatchObject({ live: true, mediation: mediationId, routeTarget: { kind: "mediated", routingDid: long } });
+  });
+
   it("waits, rather than ends, while the arrangement naming its routing DID is ungranted or retired: its grant may not have arrived here yet, and its retirement is the arrangement's state", async () => {
     const s = new Scene();
     s.add("mediation.created", { mediationId: MEDIATION, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });

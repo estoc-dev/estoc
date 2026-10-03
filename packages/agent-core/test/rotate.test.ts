@@ -2,7 +2,7 @@ import { decodeJwt } from "jose";
 import { v7 as uuidv7 } from "uuid";
 import { describe, expect, test } from "vitest";
 
-import { resolveDIDCommDoc, type DIDDoc } from "@estoc/did-peer";
+import { longToShort, resolveDIDCommDoc, type DIDDoc } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
 import {
   EMPTY_MESSAGE_TYPE,
@@ -14,6 +14,7 @@ import {
   blockChannels,
   channelKey,
   effectKey,
+  mintDid,
   reconcileAdmissions,
   scanVault,
   signFromPrior,
@@ -31,6 +32,7 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
+  EntityConflict,
   Keyring,
   LiveInput,
   NotificationConflict,
@@ -49,6 +51,7 @@ import {
   receiptOf,
   rotate,
   selectMediation,
+  send,
   unpack,
   type EffectOutcome,
   type Reacted,
@@ -57,7 +60,8 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
+import { MEDIATOR_HTTP } from "./fake-mediator.js";
+import { didcomm, directParty, freshVault, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -205,6 +209,52 @@ describe("a local rotation", () => {
     const given = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: dave.did }, { ...options, route: direct });
     expect(await successorRoute(alice, given)).toEqual(direct);
     await closeAll(alice, bob, charlie, dave);
+  });
+
+  test("a successor recorded with the mediator's short form as its service is read back as committed by a manual rotation naming its arrangement or none, and refused another route; a fresh successor names the mediator's validated long form whichever spelling its predecessor's document names, and while none is in evidence nothing is written", async () => {
+    const { alice, bob } = await parties();
+    const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
+    const dave = await directParty(4, "https://dave.example/didcomm", DAVE);
+    const { options, receive } = await rotating(alice);
+    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE });
+    const mediator = await newMediator();
+    const short = longToShort(mediator.did) as Did;
+    const { mediationId } = (await createMediation(alice.runtime, alice.keys, short)).data;
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: short })]);
+    const mediated = mediatedRoute(mediationId);
+
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, route: mediated })).rejects.toThrow(new Unusable("mediation", mediationId, [`no long form of ${short} is in evidence`]));
+    let fold = await foldOf(alice);
+    expect([fold.set.of("did.rotationSelected"), fold.dids.entities.size]).toEqual([[], 1]);
+
+    const recorded = { next: await mintDid(alice.keys, ALICE_NEXT, { kind: "mediated", routingDid: short }), other: await mintDid(alice.keys, ALICE_OTHER, { kind: "mediated", routingDid: short }) };
+    for (const { didId, did, longFormDid } of Object.values(recorded)) await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId, did, longFormDid })]);
+    await createMediation(alice.runtime, alice.keys, mediator.did as Did);
+    fold = await foldOf(alice);
+    expect([fold.mediations.mediations.get(mediationId)!.mediatorDid, fold.dids.entities.get(ALICE_NEXT)]).toMatchObject([short, { live: true, mediation: mediationId }]);
+    expect((await createDid(alice.runtime, alice.keys, mediated, ALICE_NEXT)).minted).toEqual(recorded.next);
+
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, didId: ALICE_NEXT, route: { kind: "direct", endpoint: BOB_ENDPOINT } })).rejects.toThrow(new EntityConflict("DID", ALICE_NEXT, "another route"));
+    const named = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, didId: ALICE_NEXT, route: mediated });
+    const unnamed = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, { ...options, didId: ALICE_OTHER });
+    expect([named.existed, named.successor, unnamed.existed, unnamed.successor]).toEqual([false, ALICE_NEXT, false, ALICE_OTHER]);
+    fold = await foldOf(alice);
+    expect([(await successorOf(alice, named)).longFormDid, (await successorOf(alice, unnamed)).longFormDid, fold.set.of("did.created").length]).toEqual([recorded.next.longFormDid, recorded.other.longFormDid, 3]);
+
+    await receive(dave, { type: BASIC_MESSAGE }, undefined, recorded.next.longFormDid);
+    expect(fold.mediations.preferred).toBeNull();
+    const fresh = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: dave.did }, options);
+    const minted = await successorOf(alice, fresh);
+    expect([fresh.existed, await successorRoute(alice, fresh)]).toEqual([false, mediated]);
+    expect((await resolveDIDCommDoc(minted.longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
+
+    const stranger = await freshVault(5);
+    const local = await createDid(stranger.runtime, stranger.keys, { kind: "direct", endpoint: "https://stranger.example/didcomm" });
+    const { messageId, action } = await send(stranger.runtime, stranger.keys, { channel: { localDid: local.minted.did, peerDid: minted.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const wire = posting(accepted);
+    expect(await dispatch(stranger.runtime, stranger.keys, action, { didcomm, fetch: wire.fetch })).toMatchObject({ outcome: "submitted", messageId });
+    expect(wire.posts.map((post) => post.url)).toEqual([MEDIATOR_HTTP]);
+    await closeAll(alice, bob, charlie, dave, stranger);
   });
 
   test("no rotation from an address the peer never wrote to, or wrote to only in an observation not admitted, in a denied channel, toward oneself, from an unknown entity, over a control input, or where decisions already compete", async () => {

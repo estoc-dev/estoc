@@ -1035,12 +1035,15 @@ The arrangements a routing DID is looked up by are indexed under `N` of the
 DIDs their grants name.
 
 The reported spelling presents the evidence and is the input of no document:
-it changes as earlier events are merged in. A new mediated document names a
-`did:peer:4` mediator by its long form, validated against its hash, so that
-whoever is given the address resolves the mediator from the address alone; the
-long form of a mediator is found among every `mediation.created` and
-`mediation.granted` of the arrangement and the other long forms in evidence,
-and while none is, no such document is minted. A retry that supplies a
+it changes as earlier events are merged in. A new communication DID's mediated
+document names a `did:peer:4` mediator by its long form, validated against its
+hash, so that whoever is given the address resolves the mediator from the
+address alone; the long form of a mediator is found among every
+`mediation.created` and `mediation.granted` of the arrangement and the other
+long forms in evidence, and while none is, no such document is minted. A
+replica's DID is read by the mediator itself and by the vault's own replicas,
+which hold the evidence; its document names the mediator as the arrangement
+reports it. A retry that supplies a
 validated long form of a mediator so far in evidence by its short form alone
 records it as one more creation of the same arrangement, with the same `me`;
 once a long form is in evidence, repeating the arrangement writes nothing.
@@ -1121,7 +1124,10 @@ The fold verifies all of the following:
 - the entity stores a valid long form and its derived canonical short form;
 - the document names exactly one DIDComm service, a DID or an absolute
   HTTPS or WSS URL, under [section 5.3](#delivery-routes); a document that
-  does not is a conflict; and
+  does not is a conflict. A `did:peer:4` long form named there is a second
+  document, which resolving the entity's own document does not validate: it
+  must be the document its hash commits to and read as a document, and one
+  that is not is a conflict too; and
 - a mediated document's routing DID is named, under `N`, by the grant of a
   usable arrangement, which routes the DID.
 
@@ -2588,13 +2594,19 @@ failure after step 1 leaves a retryable intent, not a half identity.
 5. commit `did.created` with canonical short form and long form.
 
 There is no role field. A committed ID reuses its exact keys, document and route
-after a crash: a retry reads the retained document and compares the route it
-names with the route asked for, a mediated route by the arrangement its routing
-DID derives under the [mediation arrangement rule](#mediation-arrangement-rule),
-whichever spelling the document names, a direct route by its endpoint, and
-rebuilds nothing from the spelling the arrangement is reported under now. It
-cannot be recreated for another route. A conflicting or retired
-entity cannot be silently replaced. Registration of a mediated recipient must
+after a crash: a retry reads the retained document of an entity not in conflict
+and compares the route it names with the route asked for, a mediated route by
+the arrangement its routing DID derives under the
+[mediation arrangement rule](#mediation-arrangement-rule), whichever spelling
+the document names, a direct route by its endpoint, and rebuilds nothing from
+the spelling the arrangement is reported under now. It cannot be recreated for
+another route. A conflicting or retired entity cannot be silently replaced. The
+same rules select a rotation's successor under
+[section 13.7](#rotate-a-local-relationship-address): one recorded already is
+read back as retained and checked against an explicit route without being
+rebuilt; a fresh one inherits an arrangement or an endpoint, never the
+spelling its predecessor's document names, and its document is built as any
+new communication DID's is. Registration of a mediated recipient must
 be verified before disclosure. First disclosure uses the long form under
 [relationships.md section 10.2](relationships.md#peer-did-numalgo-4-profile). Address allocation may prefer another mediator to
 reduce linkability, but route choice does not establish channel authority.
@@ -2659,9 +2671,13 @@ Shared keys and arrangements are not retired merely because one display contact 
    peer DID, verify exact predecessor confirmation and check current rotation
    policy. Check for an existing decision throughout its verified peer-only
    context before allocating; reuse it, or defer on missing references.
-2. For a usable route, the preferred arrangement or the predecessor's own,
-   allocate a fresh local DID and sign one frozen predecessor proof without
-   committing that new DID yet.
+2. For a usable route, the one given, the preferred arrangement or the
+   arrangement or endpoint the predecessor's own document names, allocate a
+   fresh local DID under [section 13.3](#create-a-communication-did), or
+   read back the successor given by ID as that section reads a committed
+   entity, and sign one frozen predecessor proof without committing a new DID
+   yet. A route whose document cannot be built yet, a `did:peer:4` mediator
+   with no validated long form in evidence, writes nothing.
 3. Under the lock, fold complete available continuity and recheck lifecycle,
    denial, source-input supersession, conflict and existing decisions from the
    same local predecessor throughout its verified peer-only context under
@@ -3294,4 +3310,4 @@ derivation requires a new vault version.
 
 - <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives as a Multikey or Ed25519VerificationKey2020 multibase value or a JsonWebKey2020 JWK, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.
 
-- <a id="ve-162"></a> **VE-162.** A mediator is one DID however it is spelled: creations of one arrangement that agree under N(mediatorDid) with identical me are one creation, grants that agree under N(routingDid) are one grant, a routing DID is looked up under N, and a replica grant's mediator is compared with the arrangement's under N. Each event keeps the spelling it recorded and no event is rewritten; the fold reports the spelling of the first event in canonical order, and every recorded long form, a grant's routing DID included, stays available as resolution material. The reported spelling is the input of no document: a new mediated document names a did:peer:4 mediator by a validated long form in evidence or is not minted, a committed entity retried is read from its record and matched to the route by the arrangement its routing DID derives, a retry supplying the first validated long form of a mediator records one more creation of the same arrangement, and a replica grant's mediator and the replica's service are compared only after each did:peer:4 long form among them passes its hash and document checks.
+- <a id="ve-162"></a> **VE-162.** A mediator is one DID however it is spelled: creations of one arrangement that agree under N(mediatorDid) with identical me are one creation, grants that agree under N(routingDid) are one grant, a routing DID is looked up under N, and a replica grant's mediator is compared with the arrangement's under N. Each event keeps the spelling it recorded and no event is rewritten; the fold reports the spelling of the first event in canonical order, and every recorded long form, a grant's routing DID included, stays available as resolution material. The reported spelling is the input of no document: a new mediated document names a did:peer:4 mediator by a validated long form in evidence or is not minted, a committed entity retried, as a new DID or as a rotation's successor, is read from its record and matched to the route by the arrangement its routing DID derives, a fresh successor inherits its predecessor's arrangement or endpoint and not its spelling, a retry supplying the first validated long form of a mediator records one more creation of the same arrangement, a retained document whose service names a did:peer:4 long form that fails its hash and document checks is a conflict, since resolving the enclosing document validates no document nested in it, and a replica grant's mediator and the replica's service are compared only after each did:peer:4 long form among them passes its hash and document checks.
