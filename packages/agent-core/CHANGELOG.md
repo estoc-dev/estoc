@@ -18,15 +18,19 @@
   minted, refusing one in conflict or one whose document does not name
   the route asked for, and both `createDid` and a rotation given a
   successor's ID go through it, rebuilding nothing; a rotation's fresh
-  successor inherits the arrangement or endpoint its predecessor's
-  document names, not the spelling, and is built as any new address is,
+  successor goes on the route given, else the preferred arrangement,
+  else the arrangement or endpoint its predecessor's document names,
+  never a spelling, and is built as any new address is,
   so the two take the same document for the same route and a successor
   recorded under a mediator's short form is kept whether or not the
   rotation names its arrangement; `createMediation` validates a
   `did:peer:4` long form and, given the first long form of a mediator so
   far in evidence by its short form alone, records one more creation of
   the same arrangement; `knownLongForms` reads the routing DID of every
-  `mediation.granted` too.
+  `mediation.granted` too, and the mediator every retained document of
+  the vault's own entities sends through, so that an address another
+  replica minted on the mediator's long form carries that long form to
+  its successor before the arrangement's own long form arrives.
 - **Every arrangement is a replica-mediation account** (behaviour
   change): the coordinate-mediation client is gone — `establish`,
   `reconcile`, `reconcileNow`, `registered`, `Reconciled`, `Established`,

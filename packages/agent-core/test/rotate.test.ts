@@ -257,6 +257,32 @@ describe("a local rotation", () => {
     await closeAll(alice, bob, charlie, dave, stranger);
   });
 
+  test("a predecessor whose document names the mediator's long form, minted by another replica and merged before any record of the arrangement spelled it long, hands that long form to its successor: a rotation naming the arrangement or none goes through and writes no further record of the arrangement", async () => {
+    const { alice, bob } = await parties();
+    const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
+    const { options, receive } = await rotating(alice);
+    const mediator = await newMediator();
+    const short = longToShort(mediator.did) as Did;
+    const { mediationId } = (await createMediation(alice.runtime, alice.keys, short)).data;
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: short })]);
+    const elsewhere = await mintDid(alice.keys, ALICE_NEXT, { kind: "mediated", routingDid: mediator.did as Did });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: ALICE_NEXT, did: elsewhere.did, longFormDid: elsewhere.longFormDid })]);
+    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE }, undefined, elsewhere.longFormDid);
+    let fold = await foldOf(alice);
+    expect([fold.mediations.mediations.get(mediationId)!.routingDid, fold.mediations.preferred, fold.dids.entities.get(ALICE_NEXT)]).toMatchObject([short, null, { live: true, mediation: mediationId }]);
+
+    const mediated = mediatedRoute(mediationId);
+    const inherited = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: bob.did }, options);
+    const named = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: charlie.did }, { ...options, route: mediated });
+    for (const rotation of [inherited, named]) {
+      expect([rotation.existed, await successorRoute(alice, rotation)]).toEqual([false, mediated]);
+      expect((await resolveDIDCommDoc((await successorOf(alice, rotation)).longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
+    }
+    fold = await foldOf(alice);
+    expect([fold.set.of("did.rotationSelected").length, fold.set.of("mediation.created").length, fold.dids.entities.size]).toEqual([2, 1, 4]);
+    await closeAll(alice, bob, charlie);
+  });
+
   test("no rotation from an address the peer never wrote to, or wrote to only in an observation not admitted, in a denied channel, toward oneself, from an unknown entity, over a control input, or where decisions already compete", async () => {
     const { alice, bob } = await parties();
     const { options, receive } = await rotating(alice);
