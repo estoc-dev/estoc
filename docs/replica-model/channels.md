@@ -209,11 +209,11 @@ ACK only removes a transport delivery and grants no application authority.
 
 When an admission is effective, what stands in the way of a new one and the
 disposition shown beside every observation are
-[`packages/vault/src/fold/admission.ts`](../../packages/vault/src/fold/admission.ts). The pass
+[`packages/vault/src/admission/model.ts`](../../packages/vault/src/admission/model.ts). The pass
 that records the admissions a vault owes, under the writer lock and in
 canonical event order, is
-[`packages/agent-core/src/receive/after.ts`](../../packages/agent-core/src/receive/after.ts) over
-[the vault procedures](../../packages/vault/src/procedures.ts); pure fold or replay never
+[`packages/vault/src/admission/record.ts`](../../packages/vault/src/admission/record.ts), run by
+[`packages/agent-core/src/receive/after.ts`](../../packages/agent-core/src/receive/after.ts); pure fold or replay never
 appends an admission. Which admitted observations speak for one logical input,
 and when they conflict, is [the inbound fold](../../packages/vault/src/fold/inbound.ts). As
 with other local decisions, the event records a trusted vault runtime's
@@ -346,7 +346,8 @@ its tests sit beside it. This document describes none of them a second time.
   new work: [`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) over
   `@estoc/continuity`.
 - Effective admission, admission blockers and disposition:
-  [`fold/admission.ts`](../../packages/vault/src/fold/admission.ts). Logical inputs and intent
+  [`admission/model.ts`](../../packages/vault/src/admission/model.ts); the pass that
+  records what is owed: [`admission/record.ts`](../../packages/vault/src/admission/record.ts). Logical inputs and intent
   agreement: [`fold/inbound.ts`](../../packages/vault/src/fold/inbound.ts).
 - Rotation decisions and their notification: [`rotate.ts`](../../packages/agent-core/src/rotate.ts).
   The early private-address policy: [`privacy.ts`](../../packages/agent-core/src/privacy.ts).
