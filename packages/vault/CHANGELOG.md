@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `DidFold.desiredRecipients` and `DesiredRecipient` are gone. Which DIDs
+  an account is to hold at its mediator is the agent's to decide, over
+  `receipt`, and it keeps retired DIDs: nothing reads a projection of the
+  live ones.
 - **Every arrangement is a replica-mediation account**: `mediation.created`
   has no `profile` member, and `MediationProfile` and `Mediation.profile`
   are gone. An arrangement is an account of the mediator's
