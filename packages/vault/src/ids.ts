@@ -60,7 +60,6 @@ export function canonicalDid(did: string): Did {
   return (isLongForm(did) ? longToShort(did) : did) as Did;
 }
 
-/** Do two spellings name one DID? */
 export function sameDid(a: string, b: string): boolean {
   return a === b || canonicalDid(a) === canonicalDid(b);
 }
@@ -178,11 +177,13 @@ export function mediationIdOf(mediatorDid: Did): MediationId {
  * The entity that succeeds one of our DIDs in place, named by the
  * predecessor's canonical DID: the DID commits to the whole document,
  * keys and route, so every replica rotating from it arrives at one
- * successor whose key names, and so whose keys and document, agree. The
- * peer's current DID is no input: replicas learn of a peer's rotation at
- * different times and would otherwise part. The version tag covers this
- * transcript together with the key derivation and document builder the
- * entity's keys and DID are made by.
+ * successor whose key names, and so whose keys, agree. Its document
+ * further depends on the route and every other builder input, which
+ * the procedure minting it must fix for replicas to agree on it too.
+ * The peer's current DID is no input: replicas learn of a peer's
+ * rotation at different times and would otherwise part. The version
+ * tag covers this transcript together with the key derivation and
+ * document builder the entity's keys and DID are made by.
  */
 export function successorDidId(predecessor: Did): DidId {
   return derive("did-entity", ["v1", "next", canonical(predecessor, "predecessor DID")]) as DidId;

@@ -51,7 +51,7 @@ function multibase(prefix: number[], key: Uint8Array): string {
   return `z${bs58.encode(bytes)}`;
 }
 
-/** A did:peer:4 with both an HTTP and a WebSocket service. */
+/** A did:peer:4 with both an HTTP and a WebSocket service, its keys held under both spellings as any did:peer:4 recipient holds them. */
 export function mintMediatorIdentity(
   identity: DerivedIdentity,
   http = MEDIATOR_HTTP,
@@ -73,10 +73,10 @@ export function mintMediatorIdentity(
   });
   return {
     did,
-    secrets: [
-      { id: `${did}#key-1`, type: "JsonWebKey2020", privateKeyJwk: { ...jwks.ed25519 } },
-      { id: `${did}#key-2`, type: "JsonWebKey2020", privateKeyJwk: { ...jwks.x25519 } },
-    ],
+    secrets: [did, longToShort(did)].flatMap((spelling) => [
+      { id: `${spelling}#key-1`, type: "JsonWebKey2020", privateKeyJwk: { ...jwks.ed25519 } },
+      { id: `${spelling}#key-2`, type: "JsonWebKey2020", privateKeyJwk: { ...jwks.x25519 } },
+    ]),
   };
 }
 

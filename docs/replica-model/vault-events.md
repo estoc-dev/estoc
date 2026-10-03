@@ -1034,6 +1034,17 @@ every long form any of them records stays available as resolution material.
 The arrangements a routing DID is looked up by are indexed under `N` of the
 DIDs their grants name.
 
+The reported spelling presents the evidence and is the input of no document:
+it changes as earlier events are merged in. A new mediated document names a
+`did:peer:4` mediator by its long form, validated against its hash, so that
+whoever is given the address resolves the mediator from the address alone; the
+long form of a mediator is found among every `mediation.created` and
+`mediation.granted` of the arrangement and the other long forms in evidence,
+and while none is, no such document is minted. A retry that supplies a
+validated long form of a mediator so far in evidence by its short form alone
+records it as one more creation of the same arrangement, with the same `me`;
+once a long form is in evidence, repeating the arrangement writes nothing.
+
 The preferred mediation is the latest `mediation.selected`. If it is missing,
 ungranted, retired or conflicted, preferred is null and policy must select
 another before minting a new mediated DID.
@@ -1076,7 +1087,10 @@ one binding is a member of its arrangement when all of these hold:
 - the grant's signature verifies under that key; and
 - the replica's document carries the keys the seed derives for
   `replica/<replicaId>/me` and names that mediator, under `N`, as its only
-  DIDComm service.
+  DIDComm service, a `did:peer:4` long form given as the grant's `mediator` or
+  as that service passing the method's hash and document checks before the
+  two are compared: resolving the replica's document validates no mediator
+  document nested in its service URI.
 
 A missing creation or an unavailable seed leaves the replica pending; a failed
 condition, disagreeing creations included, makes it a conflict. Membership is
@@ -2574,7 +2588,12 @@ failure after step 1 leaves a retryable intent, not a half identity.
 5. commit `did.created` with canonical short form and long form.
 
 There is no role field. A committed ID reuses its exact keys, document and route
-after a crash; it cannot be recreated for another route. A conflicting or retired
+after a crash: a retry reads the retained document and compares the route it
+names with the route asked for, a mediated route by the arrangement its routing
+DID derives under the [mediation arrangement rule](#mediation-arrangement-rule),
+whichever spelling the document names, a direct route by its endpoint, and
+rebuilds nothing from the spelling the arrangement is reported under now. It
+cannot be recreated for another route. A conflicting or retired
 entity cannot be silently replaced. Registration of a mediated recipient must
 be verified before disclosure. First disclosure uses the long form under
 [relationships.md section 10.2](relationships.md#peer-did-numalgo-4-profile). Address allocation may prefer another mediator to
@@ -3275,4 +3294,4 @@ derivation requires a new vault version.
 
 - <a id="ve-161"></a> **VE-161.** A replica is a member of its arrangement by one consistent binding, the arrangement's replica-mediation creation naming the same account and mediator, a kid that names, under the account's short form or its recorded long form, an authentication method of the recorded account document carrying the key the seed derives as a Multikey or Ed25519VerificationKey2020 multibase value or a JsonWebKey2020 JWK, and the seed's verdict on the grant's signature and on the replica's keys and service. The same binding recorded by several authors or under another kid spelling is one member; different bindings for one replica ID conflict without a winner. A missing creation or seed leaves it pending. Neither mediation.granted, whether missing, consistent, contradicting or naming another routing DID, nor retirement changes membership; an arrangement those make unusable still carries no mail.
 
-- <a id="ve-162"></a> **VE-162.** A mediator is one DID however it is spelled: creations of one arrangement that agree under N(mediatorDid) with identical me are one creation, grants that agree under N(routingDid) are one grant, a routing DID is looked up under N, and a replica grant's mediator is compared with the arrangement's under N. Each event keeps the spelling it recorded and no event is rewritten; the fold reports the spelling of the first event in canonical order, and every recorded long form stays available as resolution material.
+- <a id="ve-162"></a> **VE-162.** A mediator is one DID however it is spelled: creations of one arrangement that agree under N(mediatorDid) with identical me are one creation, grants that agree under N(routingDid) are one grant, a routing DID is looked up under N, and a replica grant's mediator is compared with the arrangement's under N. Each event keeps the spelling it recorded and no event is rewritten; the fold reports the spelling of the first event in canonical order, and every recorded long form, a grant's routing DID included, stays available as resolution material. The reported spelling is the input of no document: a new mediated document names a did:peer:4 mediator by a validated long form in evidence or is not minted, a committed entity retried is read from its record and matched to the route by the arrangement its routing DID derives, a retry supplying the first validated long form of a mediator records one more creation of the same arrangement, and a replica grant's mediator and the replica's service are compared only after each did:peer:4 long form among them passes its hash and document checks.

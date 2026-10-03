@@ -11,8 +11,12 @@
 
 import { v7 as uuidv7 } from "uuid";
 
-import type { VaultRuntime } from "@estoc/event-store";
+import { decodeLongForm, isShortForm } from "@estoc/did-peer";
+import type { JsonObject, VaultRuntime } from "@estoc/event-store";
 import {
+  InvalidIdentifier,
+  canonicalDid,
+  mediationIdOf,
   mintDid,
   scanVault,
   serviceTargetOf,
@@ -39,6 +43,7 @@ import { mediationOf } from "./mediation.js";
 import { decide, serially } from "./procedure.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipientsNow, holds } from "./replica-recipients.js";
+import { knownLongForms } from "./resolver.js";
 
 /** The route a DID is minted for: a mediation arrangement by its ID, or a direct HTTPS or WSS endpoint. */
 export type RouteSpec = { kind: "mediated"; mediationId: MediationId } | { kind: "direct"; endpoint: string };
@@ -49,7 +54,16 @@ export function didOf(fold: VaultFold, didId: DidId): LocalDidEntity {
   return entity;
 }
 
-/** Where a route sends, once it can carry a DID: the routing DID of a usable arrangement, or the endpoint itself. `Unusable` otherwise. */
+/**
+ * Where a route sends, once it can carry a DID: the mediator of a
+ * usable arrangement, or the endpoint itself. A did:peer:4 mediator is
+ * named by its long form, validated against its hash, so that whoever
+ * is given the address resolves the mediator from the address alone;
+ * the spelling an arrangement is reported under changes with the
+ * evidence merged here and names no document. `Unusable` while the
+ * arrangement is not usable or no long form of its mediator is in
+ * evidence.
+ */
 export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
   if (route.kind === "direct") {
     const target = serviceTargetOf(route.endpoint);
@@ -57,8 +71,11 @@ export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
     return target;
   }
   const mediation = mediationOf(fold, route.mediationId);
-  if (mediation.status !== "usable" || mediation.routingDid === null) throw new Unusable("mediation", route.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
-  return usableTarget(fold, { kind: "mediated", routingDid: mediation.routingDid });
+  if (mediation.status !== "usable" || mediation.mediatorDid === null) throw new Unusable("mediation", route.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
+  const mediator = canonicalDid(mediation.mediatorDid);
+  const routingDid = isShortForm(mediator) ? knownLongForms(fold)(mediator) : mediator;
+  if (routingDid === null) throw new Unusable("mediation", route.mediationId, [`no long form of ${mediator} is in evidence`]);
+  return { kind: "mediated", routingDid };
 }
 
 /** A target a DID may be minted for now: a direct endpoint, or a routing DID a usable arrangement routes through. */
@@ -86,19 +103,25 @@ export interface CreatedDid {
  * `did.created` for a route: the fixed keys derived from the entity
  * ID, the numalgo-4 document built over them and the route's target,
  * the short form and long form committed. The same ID again returns
- * what was recorded when the seed and route give the same document; an
- * entity that would differ, or one in conflict, is refused rather than
- * replaced.
+ * what was recorded, read from the record, when its document sends by
+ * the route asked for: a mediated route by the arrangement its routing
+ * DID derives, whichever spelling the document names, a direct one by
+ * its endpoint. Nothing is rebuilt from the evidence as it stands now,
+ * so what is returned is what was committed, before or after a merge.
+ * An entity on another route, or one in conflict, is refused rather
+ * than replaced.
  */
 export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
   let minted!: MintedDid;
   const { fold, events } = await decide(runtime, keys, async (fold) => {
-    minted = await mintDid(keys, didId, routeTargetOf(fold, route));
     const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
-      if (!sameDocument(existing, minted)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
+      if (existing.conflict || existing.created === null) throw new EntityConflict("DID", didId, existing.faults.join("; "));
+      if (!sendsBy(existing, route)) throw new EntityConflict("DID", didId, "another route");
+      minted = { didId, did: existing.created.did, longFormDid: existing.created.longFormDid, inputDocument: decodeLongForm(existing.created.longFormDid) as JsonObject };
       return [];
     }
+    minted = await mintDid(keys, didId, routeTargetOf(fold, route));
     return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid })];
   });
   const created = events[0] as VaultEvent<"did.created"> | undefined;
@@ -110,6 +133,24 @@ export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteS
 /** Does the recorded entity carry exactly this document? The long form encodes the keys and the route, so equal spellings are the same entity on the same route. */
 export function sameDocument(existing: LocalDidEntity, minted: MintedDid): boolean {
   return existing.created !== null && existing.created.did === minted.did && existing.created.longFormDid === minted.longFormDid;
+}
+
+/** Does the recorded document send by this route? A mediated route is the arrangement the document's routing DID derives, whatever its spelling; a direct one is the exact endpoint. */
+function sendsBy(entity: LocalDidEntity, route: RouteSpec): boolean {
+  const target = entity.routeTarget;
+  if (target === null) return false;
+  if (route.kind === "direct") return target.kind === "direct" && target.endpoint === route.endpoint;
+  return target.kind === "mediated" && arrangementOf(target.routingDid) === route.mediationId;
+}
+
+/** The arrangement a routing DID names, null for a DID that derives none. */
+function arrangementOf(routingDid: Did): MediationId | null {
+  try {
+    return mediationIdOf(routingDid);
+  } catch (err) {
+    if (err instanceof InvalidIdentifier) return null;
+    throw err;
+  }
 }
 
 export interface Disclosure {

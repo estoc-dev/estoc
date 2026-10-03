@@ -10,7 +10,12 @@
   one grant, and `through` finds an arrangement under either spelling;
   the replica fold and `sameBinding` compare a grant's `mediator` the
   same way. Events keep the spelling they recorded, and the fold reports
-  the spelling of the first in canonical order.
+  the spelling of the first in canonical order. `verifyReplicaGrant`
+  compares the grant's `mediator` with the replica's service as validated
+  identities: a `did:peer:4` long form in either place must be the one
+  its hash commits to, resolving the replica's document validating no
+  mediator document nested in its service URI, and `InvalidDidDocument`
+  refuses one that is not.
 - **Derived arrangement and DID entity IDs**: `mediationIdOf(mediatorDid)`
   names the one arrangement with a mediator by the UUIDv5 its canonical
   DID derives, so every replica that arranges with a mediator records the

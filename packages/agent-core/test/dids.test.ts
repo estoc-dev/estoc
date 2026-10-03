@@ -1,10 +1,13 @@
 import { describe, expect, it, test } from "vitest";
 
-import { resolveDIDCommDoc } from "@estoc/did-peer";
-import { InvalidIdentifier, didcommServiceUris, scanVault, vaultDraft, type DidId, type MediationId } from "@estoc/vault";
+import { longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
+import { createSeedKeystore } from "@estoc/keystore";
+import { InvalidIdentifier, didcommServiceUris, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
-import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, disclose, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf } from "../src/index.js";
-import { freshVault, mediatedRoute, newMediator, party } from "./helpers.js";
+import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
+import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, createMediation, createVault, disclose, dispatch, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf, send } from "../src/index.js";
+import { MEDIATOR_HTTP } from "./fake-mediator.js";
+import { PASSPHRASE, didcomm, freshVault, mediatedRoute, memoryDriver, newMediator, party, posting, seedOf, ticking } from "./helpers.js";
 
 const ENDPOINT = "https://ingress.example/didcomm";
 const DIRECT = { kind: "direct", endpoint: ENDPOINT } as const;
@@ -83,6 +86,39 @@ describe("communication DIDs", () => {
     expect((await scanVault(p.runtime.vault, p.keys)).set.of("did.created")).toEqual([]);
     await runtime.close();
     await p.runtime.close();
+  });
+
+  it("keeps the document it committed when a merge changes the spelling its arrangement is reported under, and names a did:peer:4 mediator by its long form so that a stranger resolves it from the address alone", async () => {
+    const mediator = await newMediator();
+    const a = await party(mediator);
+    await enroll(a.link, a.runtime, a.keys, a.confirmations, a.mediationId);
+    const route = mediatedRoute(a.mediationId);
+    const first = await createDid(a.runtime, a.keys, route, DID);
+    const short = longToShort(mediator.did) as Did;
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const earlier = await createVault(memoryDriver(), { seedKey, wrapped: doc, label: "the same seed, earlier", now: ticking("2026-09-13T00:00:00.000Z") });
+    await createMediation(earlier.runtime, earlier.keys, short);
+    await earlier.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: a.mediationId, routingDid: short })]);
+    await a.runtime.ingest([...(await scanVault(earlier.runtime.vault, earlier.keys)).set.all()]);
+    const merged = await scanVault(a.runtime.vault, a.keys);
+    expect(merged.mediations.mediations.get(a.mediationId)).toMatchObject({ status: "usable", mediatorDid: short, routingDid: short });
+    expect(merged.dids.entities.get(DID)).toMatchObject({ live: true, routeTarget: { kind: "mediated", routingDid: mediator.did } });
+
+    const again = await createDid(a.runtime, a.keys, route, DID);
+    expect(again).toMatchObject({ existed: true, created: { cid: first.created.cid }, minted: first.minted });
+    expect(routeTargetOf(merged, route)).toEqual({ kind: "mediated", routingDid: mediator.did });
+    const fresh = await createDid(a.runtime, a.keys, route);
+    expect(didcommServiceUris(fresh.minted.inputDocument)).toEqual([mediator.did]);
+
+    const stranger = await freshVault(2);
+    const local = await createDid(stranger.runtime, stranger.keys, DIRECT);
+    const { messageId, action } = await send(stranger.runtime, stranger.keys, { channel: { localDid: local.minted.did, peerDid: fresh.minted.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const { fetch, posts } = posting(() => new Response(null, { status: 202 }));
+    expect(await dispatch(stranger.runtime, stranger.keys, action, { didcomm, fetch })).toMatchObject({ outcome: "submitted", messageId });
+    expect(posts.map((post) => post.url)).toEqual([MEDIATOR_HTTP]);
+    await a.runtime.close();
+    await earlier.runtime.close();
+    await stranger.runtime.close();
   });
 
   it("retires once: new sending and disclosure stop, the record stays", async () => {

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { longToShort, resolveDIDCommDoc, type Secret } from "@estoc/did-peer";
-import { VaultEventSet, foldWithSeed, mediationIdOf, mediationKeyName, sameDid, scanVault, vaultDraft, type Did } from "@estoc/vault";
+import { InvalidDidDocument, VaultEventSet, foldWithSeed, mediationIdOf, mediationKeyName, sameDid, scanVault, vaultDraft, type Did } from "@estoc/vault";
 
 import { Message } from "@estoc/didcomm-node";
 
 import {
   ACCOUNT_REGISTER,
   ACCOUNT_REGISTERED,
+  Agent,
   AgentTrace,
   EntityConflict,
   MediatorLink,
@@ -19,6 +20,7 @@ import {
   createMediation,
   enroll,
   holds,
+  knownLongForms,
   plainMessage,
   secretsResolverFor,
   selectMediation,
@@ -26,7 +28,7 @@ import {
   type IMessage,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { freshVault, newMediator, party, reloaded, mediatedRoute } from "./helpers.js";
+import { didcomm, freshVault, newMediator, party, reloaded, mediatedRoute } from "./helpers.js";
 
 describe("creating an arrangement", () => {
   it("records the vault's identity toward the mediator before any request, under the ID the mediator's DID derives, and says the same again for the same mediator", async () => {
@@ -79,6 +81,45 @@ describe("creating an arrangement", () => {
     const created = await createMediation(p.runtime, p.keys, mediator.did as Did);
     expect(created.data.mediationId).toBe(mediationId);
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(mediationId)).toMatchObject({ status: "usable", me: { did: created.data.me.did } });
+    await p.runtime.close();
+  });
+
+  it("keeps the long form a retry supplies for a mediator first arranged with by its short form, as one more creation of the one arrangement, so that the mediator resolves and the enrollment proceeds", async () => {
+    const mediator = await newMediator();
+    const p = await freshVault(1);
+    const short = longToShort(mediator.did) as Did;
+    const first = await createMediation(p.runtime, p.keys, short);
+    const mediationId = first.data.mediationId;
+    const options = { didcomm, fetch: ((input, init) => mediator.fetch(input, init)) as typeof fetch, WebSocket: mediator.WebSocket, trace: await AgentTrace.open(p.runtime.local), liveDelivery: false };
+    const unresolved = await Agent.open(p, options);
+    await expect(unresolved.enroll(mediationId)).rejects.toThrow(/does not resolve/);
+    unresolved.close();
+    expect(mediator.seenTypes).toEqual([]);
+
+    const second = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    expect(second.cid).not.toBe(first.cid);
+    expect(second.data).toEqual({ ...first.data, mediatorDid: mediator.did });
+    let fold = await scanVault(p.runtime.vault, p.keys);
+    expect(fold.mediations.mediations.get(mediationId)).toMatchObject({ status: "pending", faults: [], mediatorDid: short });
+    expect(knownLongForms(fold)(short)).toBe(mediator.did);
+    await createMediation(p.runtime, p.keys, mediator.did as Did);
+    await createMediation(p.runtime, p.keys, short);
+    fold = await scanVault(p.runtime.vault, p.keys);
+    expect(fold.set.of("mediation.created")).toHaveLength(2);
+
+    const agent = await Agent.open(p, options);
+    expect((await agent.enroll(mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
+    agent.close();
+    expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(mediationId)?.status).toBe("usable");
+    await p.runtime.close();
+  });
+
+  it("refuses a did:peer:4 long form whose document is not the one its hash commits to, and writes nothing", async () => {
+    const mediator = await newMediator();
+    const p = await freshVault(1);
+    const tampered = (mediator.did.slice(0, -1) + (mediator.did.endsWith("a") ? "b" : "a")) as Did;
+    await expect(createMediation(p.runtime, p.keys, tampered)).rejects.toBeInstanceOf(InvalidDidDocument);
+    expect((await scanVault(p.runtime.vault, p.keys)).set.of("mediation.created")).toEqual([]);
     await p.runtime.close();
   });
 

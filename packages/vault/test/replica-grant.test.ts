@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   IdentityMismatch,
+  InvalidDidDocument,
   InvalidReplicaGrant,
   Keys,
   MAX_GRANT_JWS_CHARS,
@@ -227,5 +228,23 @@ describe("verifyReplicaGrant", () => {
     const communication = await mintDid(keys, DID_ID, { kind: "mediated", routingDid: MEDIATOR });
     await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: communication.did, replica_long_form: communication.longFormDid }, account, kid), mediation.me.did)).rejects.toThrow(IdentityMismatch);
     await expect(verifyReplicaGrant(keys, await signed({ ...payload, mediator: "did:web:other.example" }, account, kid), mediation.me.did)).rejects.toThrow(/not the grant's mediator/);
+  });
+
+  it("compares the mediator the replica serves with the grant's as validated identities: a long form whose document is not the one its hash commits to is refused wherever it stands", async () => {
+    const long = (await mintDid(keys, DID_ID, { kind: "direct", endpoint: "https://peer-mediator.example/didcomm" })).longFormDid;
+    const short = peerResolution(long).did;
+    const peerMediation: GrantingMediation = { mediationId: mediationIdOf(long), mediatorDid: long, me: { did: (await mintMediationDid(keys, mediationIdOf(long))).longFormDid } };
+    const key = (await keys.mediationKeys(peerMediation.mediationId)).authentication;
+    const jws = await signReplicaGrant(keys, peerMediation, REPLICA);
+    const kid = decodeProtectedHeader(jws).kid as string;
+    expect(didcommServiceUris(peerResolution(readReplicaGrant(jws).replicaLongForm).document)).toEqual([long]);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(jws), mediator: short }, key, kid), peerMediation.me.did)).resolves.toMatchObject({ mediator: short });
+
+    const other = (await mintDid(keys, DID_ID, { kind: "direct", endpoint: "https://elsewhere.example/didcomm" })).longFormDid;
+    const forged = `${short}:${other.slice(other.lastIndexOf(":") + 1)}` as Did;
+    expect(() => peerResolution(forged)).toThrow(InvalidDidDocument);
+    const servedByForged = await signReplicaGrant(keys, { ...peerMediation, mediatorDid: forged }, REPLICA);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(servedByForged), mediator: short }, key, kid), peerMediation.me.did)).rejects.toThrow(InvalidDidDocument);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(jws), mediator: forged }, key, kid), peerMediation.me.did)).rejects.toThrow(InvalidDidDocument);
   });
 });

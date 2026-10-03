@@ -9,7 +9,17 @@
   creation recorded, and an arrangement in conflict is refused.
   `canonicalDid` and `sameDid` are `@estoc/vault`'s, re-exported here. `usableTarget` refuses only a routing DID no usable
   arrangement routes through, and `routeOf` reads the entity's one
-  arrangement.
+  arrangement. The spelling an arrangement is reported under is the
+  input of no document: `routeTargetOf` names a `did:peer:4` mediator by
+  a long form in evidence, validated against its hash, and is `Unusable`
+  while none is; `createDid` returns a committed entity read from its
+  record whenever its document sends by the route asked for, the
+  arrangement its routing DID derives or the exact endpoint, and
+  refuses another route; `createMediation` validates a `did:peer:4` long
+  form and, given the first long form of a mediator so far in evidence
+  by its short form alone, records one more creation of the same
+  arrangement; `knownLongForms` reads the routing DID of every
+  `mediation.granted` too.
 - **Every arrangement is a replica-mediation account** (behaviour
   change): the coordinate-mediation client is gone — `establish`,
   `reconcile`, `reconcileNow`, `registered`, `Reconciled`, `Established`,

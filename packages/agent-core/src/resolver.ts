@@ -622,8 +622,9 @@ export async function resolve(presented: string, known: KnownLongForms, options:
 /**
  * Every numalgo-4 long form the fold has in evidence, by short form:
  * what a peer presented and was resolved under, what an intent was
- * addressed to, and this vault's own entities and mediation
- * identities. A short form presented later resolves through it. A
+ * addressed to, this vault's own entities and mediation identities,
+ * and the mediator as any creation or grant of an arrangement spells
+ * it. A short form presented later resolves through it. A
  * spelling is validated when looked up — its hash, its document, the
  * short form it derives — so that an invalid one in evidence never
  * stands in for a valid one recorded beside it.
@@ -645,6 +646,7 @@ export function knownLongForms(fold: VaultFold): KnownLongForms {
     note(event.data.me.did);
     note(event.data.mediatorDid);
   }
+  for (const event of fold.set.of("mediation.granted")) note(event.data.routingDid);
   return (shortFormDid) => {
     for (const candidate of candidates.get(shortFormDid) ?? []) {
       try {
