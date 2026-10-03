@@ -53,7 +53,7 @@ permits at most one compatible intent per execution.
 | Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event API, identity/order, object bytes and retention |
 | Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
 | Domain facts | [Vault events](vault-events.md) | Message, delivery, contact and local policy payloads; the folds over them are code |
-| Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, continuity adapter, operation/admission policy, contact selections |
+| Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, invitations, channel event payloads, DID profiles and address policy; the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Channel-local identity, ACK paths, fixed packaging and live dispatch actions |
 
 Ordinary DIDComm messages need no Estoc wire handshake or contact ID.
@@ -62,11 +62,12 @@ The [`@estoc/continuity` package](../../packages/continuity/README.md)
 implements shared `from_prior` proof verification, creation and context
 binding alongside a pure continuity model. Its README defines the package
 inputs, queries, replica merge contract and host responsibilities. The
-package owns proof and graph semantics. [Channels](channels.md#continuity-integration)
-specifies their application use and
-[`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts)
-implements it. Keep package semantics in its code, public contract and
-tests; app policy and storage integration belong in this suite. The package's
+package owns proof and graph semantics. [Channels](channels.md#continuity)
+states the application model, and
+[`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts) and
+[`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) implement its use. Keep
+package semantics in its code, public contract and tests; app policy and
+storage integration belong in this suite and its code. The package's
 [illustrated guide](../../packages/continuity/docs/guide.md) explains its queries
 and boundary cases. This app revision supports rotations only, not endings.
 
@@ -79,9 +80,9 @@ and boundary cases. This app revision supports rotations only, not endings.
 | Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [address/contact policy](relationships.md#what-it-is-for) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
 | Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [EventStore/Vault](event-store.md#reading-guide) → [SQLite](vault-sqlite.md#reading-guide) |
 | Implement application state | [Identifier vocabulary](vault-events.md#identifier-and-reference-vocabulary) → [schemas](vault-events.md#reading-guide) → [folds and procedures](vault-events.md#folds-and-procedures) |
-| Integrate continuity | [Event identity](event-store.md#invariants) → [vault adapter](channels.md#continuity-integration) → [admission](channels.md#application-admission) |
+| Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](relationships.md#ordinary-sending-and-birth-selection) → [package preparation](distributed-delivery.md#preparing-a-package) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
-| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receipt gates](relationships.md#uniform-receipt) → [evidence](vault-events.md#receipt-and-relationship-evidence) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
+| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [evidence](vault-events.md#receipt-and-relationship-evidence) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Back up or recover | [Recovery material](vault-sqlite.md#recovery-material-and-product-requirement) → [export](vault-sqlite.md#snapshot-and-export) → [restore/import](vault-sqlite.md#restore-and-import) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
 
 <a id="rule-ownership"></a>
@@ -89,13 +90,16 @@ and boundary cases. This app revision supports rotations only, not endings.
 ## Rule ownership
 
 Change the defining section and align its consumers. ES owns event envelopes,
-DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channels,
-rotation/denial events, the continuity adapter and dispatch authority.
+DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel identity,
+invitations and the rotation, admission and denial payloads; the continuity
+adapter, operation eligibility, admission and dispatch authority are owned by
+their code in `packages/vault` and `packages/agent-core`.
 The continuity package owns proof verification and graph semantics. VE owns contact selections, display payloads and the remaining
 domain payloads, while the folds over them and the procedures that append
 them are owned by their code in `packages/vault` and `packages/agent-core`;
 DD owns runtime ordering and message/effect identity;
-RZ owns DID resolution and address/display policy.
+RZ owns the DID profiles, local resolution and address/display policy; the
+receive gate, the private-address policy and retry are code.
 
 | Rule | Definition | Consumers |
 | --- | --- | --- |
@@ -104,18 +108,18 @@ RZ owns DID resolution and address/display policy.
 | Storage ownership and recovery | [SQ](vault-sqlite.md#ownership-and-lifecycle) | [agent open](../../packages/agent-core/src/identity.ts) |
 | Object identity and held roots | [DO](dasl-objects.md#accepted-dasl-cids), [VE retention](vault-events.md#held-roots) | [SQ objects](vault-sqlite.md#objects-and-streams) |
 | Channel pair and selectors | [CH identity](channels.md#channel-identity) | [VE vocabulary](vault-events.md#identifier-and-reference-vocabulary), [contact selection](vault-events.md#contact-channelsset) |
-| Proof verification, links, joins and query semantics | [Continuity package](../../packages/continuity/README.md) | [CH adapter](channels.md#continuity-integration) |
-| Source projection, admitted confirmation and query policy | [CH adapter](channels.md#continuity-integration) | [RZ rotation](relationships.md#peer-address-changes), [DD receive](distributed-delivery.md#receive-a-message) |
-| New-send head selection | [CH](channels.md#fixed-outbound-channel) | [contact view](../../packages/vault/src/fold/views.ts), [DD built-in replies](distributed-delivery.md#built-in-independent-operations), [RZ sending](relationships.md#ordinary-sending-and-birth-selection), [rotation](../../packages/agent-core/src/rotate.ts) |
-| Deferred-proof adapter boundary | [CH](channels.md#carried-proof-and-library-boundary) | [RZ wait/gate](relationships.md#uniform-receipt), [DD receipt](distributed-delivery.md#receive-a-message), [VE carrier](vault-events.md#message-in) |
-| Receipt verification status | [CH status](channels.md#verification-status) | [DD recovery](distributed-delivery.md#receive-recovery) |
-| Durable application admission and operation eligibility | [CH](channels.md#application-admission) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Fixed intent/package and manual dispatch | [CH](channels.md#fixed-outbound-channel) | [VE intent](vault-events.md#message-out), [package](vault-events.md#message-prepared), [DD send](distributed-delivery.md#send-an-ordinary-message) |
+| Proof verification, links, joins and query semantics | [Continuity package](../../packages/continuity/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [continuity fold](../../packages/vault/src/fold/continuity.ts) |
+| Source projection, admitted confirmation and query policy | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [rotation](../../packages/agent-core/src/rotate.ts), [DD receive](distributed-delivery.md#receive-a-message) |
+| New-send head selection | [contact view](../../packages/vault/src/fold/views.ts) | [DD built-in replies](distributed-delivery.md#built-in-independent-operations), [RZ sending](relationships.md#ordinary-sending-and-birth-selection), [rotation](../../packages/agent-core/src/rotate.ts) |
+| Deferred-proof adapter boundary | [DIDComm API](../../packages/agent-core/README.md#didcomm-api) | [receive gate](../../packages/agent-core/src/receive/gate.ts), [DD receipt](distributed-delivery.md#receive-a-message), [VE carrier](vault-events.md#message-in) |
+| Receipt verification status | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [DD recovery](distributed-delivery.md#receive-recovery) |
+| Durable application admission and operation eligibility | [CH](channels.md#application-admission), [admission fold](../../packages/vault/src/fold/admission.ts) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
+| Fixed intent/package and manual dispatch | [live action](../../packages/agent-core/src/action.ts), [dispatch](../../packages/agent-core/src/dispatch.ts) | [VE intent](vault-events.md#message-out), [package](vault-events.md#message-prepared), [DD send](distributed-delivery.md#send-an-ordinary-message) |
 | Inbound/execution IDs | [DD identity](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Content/intent/plaintext normalization | [DD hashes](distributed-delivery.md#canonical-projections-and-hashes), [VE stored content](vault-events.md#stored-message-document) | [VE package](vault-events.md#message-prepared) |
 | ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [VE ACK witness](vault-events.md#delivery-acknowledged) |
 | Complete witnesses | [VE witnesses](vault-events.md#complete-observation-witnesses) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
-| Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [gate](relationships.md#hard-pre-vault-gate) | [CH receipt](channels.md#receipt), [DD receipt](distributed-delivery.md#receive-a-message) |
+| Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
 | Invitations | [VE disclosure](vault-events.md#did-disclosed), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
 | Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/procedures.ts), [application views](vault-events.md#application-message-views) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |

@@ -581,7 +581,7 @@ successful complete import, and old source bytes do not revive an erased relatio
 destination with fresh local IDs and reconstructed retention/pending state.
 Domain dispatch authority is separate: restoring events never automatically
 sends historical messages or effects under
-[channels.md](channels.md#fixed-outbound-channel).
+[the live action](../../packages/agent-core/src/action.ts).
 An exact move may preserve IDs only with a permanently stopped source; a stale
 runtime recovery copy refreshes them. Missing required objects are incomplete
 local data, never erasure.

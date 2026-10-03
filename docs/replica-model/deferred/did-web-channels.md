@@ -100,7 +100,7 @@ current preparation, never authority to add a continuity link.
 This section also owns sender-authentication freshness. A `did:peer:4` sender
 authenticates against its validated long-form document, retained or supplied
 with this disclosure. For every other supported method, whenever a delivery
-enters or resumes authentication under [the local receive wait rules](../relationships.md#deferred-delivery), the receiver MUST resolve
+enters or resumes authentication under [the receiver's wait rules](../../../packages/agent-core/src/receive/receiver.ts), the receiver MUST resolve
 the presented sender DID and authenticate its authcrypt key against that
 current document. Unopened-delivery waits follow the suspension rule below. Post-receipt
 operation recovery uses saved authentication evidence. Online conditional revalidation is sufficient; a local
@@ -108,7 +108,7 @@ TTL or stale/offline cache is not. A retained
 `peer.resolved` may be reused only when that freshly validated document's raw
 CID equals its `documentCid` and its `localKeyName`, `peerPublicKey`, `did` and `presentedDid`
 match the observation; otherwise commit new evidence before `message.in`.
-A key absent from the current document fails [the receive gate](../relationships.md#hard-pre-vault-gate) even when a historical
+A key absent from the current document fails [the receive gate](../../../packages/agent-core/src/receive/gate.ts) even when a historical
 snapshot authorized it. Saved evidence validates historical operations; it
 does not authenticate new deliveries. Unavailable resolution defers without
 pickup ACK only within the budget below; it cannot fall back to a stale snapshot.
@@ -138,7 +138,7 @@ document, and resolution forbidden by the SSRF/resource policy above. These
 categories include the corresponding
 [DID Resolution errors](https://www.w3.org/TR/did-resolution/#errors), whatever
 the resolver API's spelling. For inbound sender authentication they are
-terminal [receive-gate](../relationships.md#hard-pre-vault-gate) failures: pickup-ACK when mediated and create no
+terminal [receive-gate](../../../packages/agent-core/src/receive/gate.ts) failures: pickup-ACK when mediated and create no
 `message.in`. Only unavailable answers defer, within the inbound budget below.
 For recipient resolution before preparation, the future profile must decide
 whether definitive resolution failure terminates the intent and, if so, define
@@ -159,7 +159,7 @@ key replacement. The diagnostic and any portable failure model remain open.
 Once local receive prerequisites are
 satisfied, the runtime MUST use finite per-attempt timeouts, a finite attempt
 budget and local backoff with a finite cap for each delivery. It SHOULD use
-[the prerequisite retry policy](../relationships.md#retry-replacement-and-address-rollover)'s retry-interval, backoff-cap and attempt-count defaults, applied
+[the dispatcher's retry policy](../../../packages/agent-core/src/dispatcher.ts)'s retry-interval, backoff-cap and attempt-count defaults, applied
 to resolution calls rather than transport submissions; the outbound wire
 expiry rule does not apply. Count an attempt before invoking the resolver,
 including failure and unknown outcomes. While receive-ready, schedule retries
@@ -175,7 +175,7 @@ the future, the interval from that attempt to the deadline caps active elapsed
 time; a past or unknown deadline supplies no such cap. An advertised
 retention duration also caps active elapsed time, measured from the first
 attempt. Active elapsed time includes resolver calls and backoff, but excludes
-all non-resolution deferral waits under [the local receive wait rules](../relationships.md#deferred-delivery), including interruptions
+all non-resolution deferral waits under [the receiver's wait rules](../../../packages/agent-core/src/receive/receiver.ts), including interruptions
 after the first attempt. Time before the first attempt never counts. A past
 deadline alone never makes a delivery the mediator still delivers terminal;
 unknown retention or lost local state still requires a finite attempt budget.
@@ -211,7 +211,7 @@ current-sender rule before it can add another observation.
 #### Exhaustion and non-resolution deferral
 
 When the budget or retention stop is reached without a definitive answer,
-classify that delivery as terminal input under [the receive gate](../relationships.md#hard-pre-vault-gate): pickup-ACK when
+classify that delivery as terminal input under [the receive gate](../../../packages/agent-core/src/receive/gate.ts): pickup-ACK when
 mediated, no `message.in`, contact or response effect, and at most a bounded
 local diagnostic. Exhaustion does not prove a key change or permanently reject
 the DID; the sender may make a new explicit attempt under ordinary sending
@@ -219,7 +219,7 @@ rules. It never authorizes automatic retry of a submitted message ID. A successf
 resolution within budget instead proceeds through normal authentication and
 durable receipt. Locked-vault, incomplete-recovery, recoverable local
 key/document/route deferrals under
-[the local receive wait rules](../relationships.md#deferred-delivery) suspend this
+[the receiver's wait rules](../../../packages/agent-core/src/receive/receiver.ts) suspend this
 accounting: do not schedule resolution calls or apply this
 terminal path while the delivery remains in such a wait. This bounds an
 unresolved authentication attempt, not the age, expiry or acceptance time of a

@@ -23,8 +23,9 @@ and after ingest.
 
 This document defines portable vault state. Socket state, pickup cursors,
 retry timers, caches and traces are local state and do not appear here.
-[channels.md](channels.md) owns channel identity, invitations and
-operation eligibility; receipt precedes source-derived decisions and continuity work.
+[channels.md](channels.md) owns channel identity, invitations and the channel
+event payloads; operation eligibility is the linked modules' code. Receipt
+precedes source-derived decisions and continuity work.
 
 <!-- reading-guide:start -->
 <a id="reading-guide"></a>
@@ -40,10 +41,10 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 | --- | --- | --- | --- |
 | Identity and naming | [Identity, keys and identifier types](#identity-seed-and-key-names); [Identity label](#identity-label) | [Runtime author](#runtime-author-fold) | [Open runtime](../../packages/agent-core/src/identity.ts) |
 | Mediation and DIDs | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation and DID events](#mediation-communication-dids-and-routes) | [Mediation](../../packages/vault/src/fold/mediation.ts); [Replicas](../../packages/vault/src/fold/replicas.ts); [DIDs and keys](../../packages/vault/src/fold/dids.ts) | [Establish mediation](../../packages/agent-core/src/mediation.ts); [Enroll a replica](../../packages/agent-core/src/replica-enrollment.ts); [Create and disclose a DID](../../packages/agent-core/src/dids.ts) |
-| Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](relationships.md#early-private-address-policy-and-notifications); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
+| Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](../../packages/agent-core/src/privacy.ts); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
 | Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](../../packages/vault/src/fold/contacts.ts); [Contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/procedures.ts) |
 | Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events and witnesses](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
-| Invitations | [Disclosure](#disclosure) | [Invitation availability](../../packages/vault/src/fold/invitations.ts) | [Discovery](relationships.md#out-of-band-discovery); [Receipt integrity](relationships.md#integrity-checks-and-durable-receipt) |
+| Invitations | [Disclosure](#disclosure) | [Invitation availability](../../packages/vault/src/fold/invitations.ts) | [Discovery](relationships.md#out-of-band-discovery); [Receipt](../../packages/agent-core/src/receive/receipt.ts) |
 | Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held-root rules](#held-roots) | [Erase message](../../packages/vault/src/procedures.ts) |
 
 <details>
@@ -613,7 +614,7 @@ This event is durable resolution evidence for one authenticated or selected
 peer key. `localKeyName` identifies the local communication key/context.
 
 - `presentedDid` is the exact numalgo-4 DID string supplied for resolution.
-- `did` is its canonical short form under [relationships.md section 10.2](relationships.md#peer-did-numalgo-4-profile);
+- `did` is its canonical short form under [the peer DID profile](relationships.md#peer-did-numalgo-4-profile);
   first disclosure keeps the long form in `presentedDid`.
 - `documentCid` names the raw DASL object containing exact RFC 8785 canonical
   resolved DID document JSON. Its CID commits to those bytes.
@@ -1003,7 +1004,7 @@ allocated addresses. Receipt does not wait for a `recipient-add`: an
 addition the mediator has not confirmed to this runtime is asked for on
 connection as any is, and that asks nothing new of sending or disclosure.
 An invitation on a retired local DID is unavailable.
-[relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;
+[the receiver](../../packages/agent-core/src/receive/receiver.ts) owns the receipt gates;
 [distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
 
 Retain key/document evidence and usable mediation needed by retained channels.
@@ -1076,7 +1077,7 @@ Membership grants no protocol authority. Derived related history follows
 ### 6.3 Peer proof evidence and continuity
 
 Derive the issuer document and verify each committed carrier's original
-`fromPrior` under [channels.md](channels.md#peer-proof-evidence). A long-form
+`fromPrior` under [the channel evidence fold](../../packages/vault/src/fold/channels.ts). A long-form
 issuer supplies its immutable document directly; a short-form issuer requires
 the matching retained `peer.resolved` document. The original JWT is event
 metadata, and `peer.resolved` independently retains its document root, so
@@ -1085,7 +1086,7 @@ No association, link or trusted verification result is stored as an event.
 Verification requires neither handler execution nor a known predecessor channel.
 
 Use the shared proof profile through
-[the vault adapter](channels.md#continuity-integration), with
+[the vault's proof adapter](../../packages/vault/src/from-prior.ts), with
 `@estoc/continuity/from-prior` owning parsing, profile checks, signature
 verification, creation and receipt binding. The issuer material is its validated
 long-form DID: an arbitrary document with the same claimed ID cannot replace
@@ -1104,7 +1105,7 @@ profile, not permission for a separate vault parser. `iat` elects no branch.
 Local producers additionally use the fixed long-form spellings required by
 [local rotation](channels.md#did-rotationselected).
 
-Verification and rebuild follow [predecessor resolution](relationships.md#predecessor-resolution).
+Verification and rebuild follow [the channel evidence fold](../../packages/vault/src/fold/channels.ts).
 Restored issuer material can complete a short-form proof only when its validated
 long form derives the exact issuer; referenced document bytes can be repaired
 only when their canonical CID matches.
@@ -1126,7 +1127,7 @@ fixed predecessor pair, successor, proof, nullable source and independent
 confirmation requirement. Commit it before disclosure under
 [the rotation procedure](../../packages/agent-core/src/rotate.ts). Rotation selects
 channels for new intents only; existing intents retain their channel and may
-become undispatchable under [dispatch authority](channels.md#fixed-outbound-channel).
+become undispatchable under [the continuity fold](../../packages/vault/src/fold/continuity.ts).
 
 <a id="144-relationship-fold-and-address-index"></a>
 <a id="relationship-fold-and-address-index"></a>
@@ -1243,7 +1244,7 @@ with the contact. `data.didId` is that entity's `did.created.data.didId` under
 
 This selects among eligible channels for a new send under [the contact view](../../packages/vault/src/fold/views.ts)
 without changing `contact.channelsSet`. Publicly disclosed addresses may send;
-private allocation follows [the address policy](relationships.md#early-private-address-policy-and-notifications).
+private allocation follows [the private-address policy](../../packages/agent-core/src/privacy.ts).
 
 <a id="contact-merged"></a>
 
@@ -1295,7 +1296,7 @@ Applications MAY derive display data from retained messages under a supported
 protocol and local display policy. The protocol defines fields, interpretation
 and ordering. Every value retains its exact source and channel; inbound claims
 require a complete source witness and consistent logical intent under
-[operation eligibility](channels.md#operation-eligibility). Missing evidence
+[the inbound fold](../../packages/vault/src/fold/inbound.ts). Missing evidence
 defers attribution; conflicting evidence supports no verified claim. Duplicates
 and cache rebuilds neither create facts nor advance their ordering.
 
@@ -1491,13 +1492,13 @@ therefore identify one logical response.
 
 `senderDidId` and `recipientDid` are REQUIRED and immutable. Under the operation
 lock, select an eligible local DID entity and a peer DID before intent commit.
-Their canonical pair fixes the channel under [fixed outbound channels](channels.md#fixed-outbound-channel).
+Their canonical pair fixes the channel under [channel identity](channels.md#channel-identity).
 `recipientDid` retains the exact supplied spelling, including a validated Peer
 long form for offline preparation; canonicalize it for channel/package comparison.
 Selection requires no resolver lookup; preparation retains its own peer evidence.
 
 An automatic output selects the source's channel or a verified role-preserving
-successor under [operation eligibility](channels.md#operation-eligibility).
+successor under [the continuity fold](../../packages/vault/src/fold/continuity.ts).
 A UI may select through a contact, but its ID is not protocol identity. The
 fixed address fields are excluded from the intent hash and included in full
 event equality.
@@ -1614,7 +1615,7 @@ Requirements:
   Its `localKeyName` equals the package's local key and its canonical `did` matches
   `recipientDid`. It is non-null for every phase-1 package, including a
   retained numalgo-4 resolution. Local resolution and evidence reuse follow
-  [relationships.md section 10.1](relationships.md#did-resolution-requirements);
+  [the DID resolution requirements](relationships.md#did-resolution-requirements);
 - `fromPrior` is the exact compact JWT included in the package or null;
 - the envelope object contains `UTF8(RFC8785(parsedEncryptedEnvelope))` under
   a raw DASL CID; duplicate members or invalid I-JSON are rejected before
@@ -1635,7 +1636,7 @@ A retained package reference whose preparation is missing remains pending;
 it is not evidence that no package was selected.
 
 Initial sends and manual retries use this package unchanged under
-[dispatch authority](channels.md#fixed-outbound-channel). An uncertain commit
+[dispatch](../../packages/agent-core/src/dispatch.ts). An uncertain commit
 must be resolved before dispatch or further preparation. A package records no
 transport invocation; call counts and retry diagnostics are local trace.
 Submission or message-scoped termination stops preparation and retry. Recheck
@@ -1741,7 +1742,7 @@ Sensitive strings remain in local trace; `code` is a stable non-secret value.
 ```
 
 The exact carrier is an admitted complete source witness under
-[operation eligibility](channels.md#operation-eligibility). Its explicit `ack`
+[the admission fold](../../packages/vault/src/fold/admission.ts). Its explicit `ack`
 names this outbound wire ID. Its channel must be the
 outbound's fixed channel or a verified role-preserving successor under
 [channels.md](channels.md#continuity). Validate the outbound intent and exact
@@ -1813,7 +1814,7 @@ See [distributed-delivery.md section 9](distributed-delivery.md#observation-iden
 ```
 
 Phase 1 records no separate inner-signature evidence. Channel sender authority
-requires authenticated encryption under [the receive gate](relationships.md#hard-pre-vault-gate);
+requires authenticated encryption under [the receive gate](../../packages/agent-core/src/receive/gate.ts);
 an inner signature does not supply an alternative authenticated sender. The
 carried `fromPrior` retains its separate continuity-verification role.
 
@@ -1830,7 +1831,7 @@ Requirements:
   the authenticated peer key under [section 4.1](#key-evidence); its `localKeyName`, `did` and
   `presentedDid` match this observation. Sender authentication and evidence
   reuse MUST satisfy [relationships.md sender freshness](relationships.md#sender-authentication-freshness)
-  and [rules for duplicates and recovery](relationships.md#duplicate-authentication-and-historical-recovery).
+  and [the receipt](../../packages/agent-core/src/receive/receipt.ts).
   Commit/reuse that event and document first, then use its returned event CID
   in the separate inbound commit; later resolutions cannot replace the
   reference. It is local
@@ -1839,7 +1840,7 @@ Requirements:
   from the local DID owning `localKeyName` and the authenticated canonical `did`.
   Validate that local DID/key mapping against the exact local key-agreement
   method that successfully decrypted the authcrypt layer, under the
-  [recipient evidence rule](channels.md#carried-proof-and-library-boundary).
+  [recipient evidence rule](../../packages/agent-core/src/receive/gate.ts).
   The plaintext `to` header is audience information, not recipient evidence;
   its absence or failure to name that local DID does not by itself invalidate
   receipt or change its channel. Missing exact DID/key evidence defers
@@ -1913,7 +1914,7 @@ does not prove that every historical author is fork-free.
 Commit the observation with its objects after its exact resolution evidence.
 Pickup ACK follows [the receive procedure](distributed-delivery.md#receive-a-message),
 including its separate hard-rejection path. Subsequent consumers independently
-check [operation eligibility](channels.md#operation-eligibility).
+check [admission](../../packages/vault/src/fold/admission.ts).
 
 <a id="message-admitted"></a>
 
@@ -2001,7 +2002,7 @@ duplicate can witness that claim. In contrast, `sourceEventCid` in a
 names one exact observation and cannot replace it with a duplicate. That source
 must supply its own complete sender authentication and immutable claims.
 If that source carries a JWT, it must independently verify under
-[the proof rules](channels.md#peer-proof-evidence). Immutable issuer material may
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts). Immutable issuer material may
 be shared, but another carrier's authentication or proof result cannot replace
 this source's checks. Every exact reference required by a schema must match as specified.
 
@@ -2045,8 +2046,10 @@ work and dispatch independently of saved-record validity.
 
 ### 10.6 Operation evidence
 
-[Operation eligibility](channels.md#operation-eligibility) defines the independent
-evidence and policy checks for intents, rotation decisions and observations.
+The folds in [`packages/vault/src/fold/`](../../packages/vault/src/fold/) define the independent
+evidence checks for observations and rotation decisions, and the procedures
+that commit intents define their policy checks under
+[section 13](#folds-and-procedures).
 
 <a id="13-automatic-effects"></a>
 
@@ -2057,8 +2060,8 @@ evidence and policy checks for intents, rotation decisions and observations.
 [distributed-delivery.md section 11](distributed-delivery.md#automatic-effects) defines effect identity and commit ordering;
 [section 8.2](distributed-delivery.md#deterministic-pure-ack) there owns the pure-ACK vector. [Section 9.1](#ids) of this document defines
 outbound ID derivation. [Built-in independent operations](distributed-delivery.md#built-in-independent-operations)
-owns rotation-notification selection; [relationships.md section 13](relationships.md#remote-errors-and-integrity-failures)
-defines remote error handling.
+owns rotation-notification selection; [the channel view](../../packages/vault/src/fold/views.ts)
+owns remote error attribution.
 
 <a id="15-erasure-and-collection"></a>
 
@@ -2284,7 +2287,7 @@ absent after restore. The seed alone cannot reconstruct the missing UUIDv7
 entity IDs in its key names. Once local recipient state is authoritative,
 deliveries with no known or recoverably pending recipient mapping follow the
 terminal wrong-recipient gate and its bounded visible diagnostic under
-[relationships.md](relationships.md#hard-pre-vault-gate). Such an address stays
+[the receiver](../../packages/agent-core/src/receive/receiver.ts). Such an address stays
 held by the account under [the DID fold](../../packages/vault/src/fold/dids.ts); nothing is
 taken off the mediator.
 
@@ -2299,7 +2302,7 @@ A snapshot can predate a peer's successor long form even though the peer has
 already received confirmation and now sends its short form. Such a delivery
 cannot authenticate after restore and follows the terminal receive gate:
 pickup ACK when mediated, no `message.in`, and the bounded visible diagnostic
-under [relationships.md](relationships.md#hard-pre-vault-gate). Waiting alone
+under [the receiver](../../packages/agent-core/src/receive/receiver.ts). Waiting alone
 does not recover the long form. A new long-form disclosure can enable sender
 authentication but does not itself recover missing continuity history or a
 discarded delivery. Importing a newer complete snapshot may restore retained
