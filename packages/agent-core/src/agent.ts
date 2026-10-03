@@ -600,11 +600,8 @@ export class Agent {
    * A delivery's local work: what the vault owes recorded and, for a
    * live input, the private-address policy and then its automatic
    * effects decided under the lock, each intent committed with the
-   * action the input minted for it. The policy goes first so that the
-   * effects are fixed to the channel the input may still be answered
-   * in: the address the policy replaces answers nothing after, and
-   * the successor answers carrying the proof. What is returned makes
-   * the calls, in that order, and tells the host.
+   * action the input minted for it. What is returned makes the calls,
+   * in that order, and tells the host.
    */
   private async decide(received: Received): Promise<Finish> {
     const inbound: Inbound = { received, after: null, reacted: null, address: null };

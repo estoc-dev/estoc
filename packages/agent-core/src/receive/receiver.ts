@@ -104,14 +104,9 @@ export type Receipt = (authenticated: Authenticated) => Promise<ReceiptOutcome>;
 /**
  * What became of a delivery. `key` is what it is kept under; null only
  * for a direct post that is not strict JSON. `live` is the authority
- * over the input's automatic effects, held by one call alone for any
- * input: the one that recorded the first observation the vault holds
- * of it and had it admitted, before the receipt's lock was released,
- * as the witness its input speaks through. An input the vault already
- * held, delivered again under any delivery and to any receiver, is
- * observed again and is not live; neither is a first observation whose
- * admission still waits, whatever admits it later, nor a delivery only
- * told how it ended before.
+ * over the input's automatic effects as the receipt minted it
+ * (`ReceiptOutcome`); a delivery only told how it ended before carries
+ * none.
  */
 export type Received =
   | { outcome: "received"; key: string; cid: EventReference<"message.in">; live: LiveInput | null }

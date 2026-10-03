@@ -1808,15 +1808,16 @@ A portable SQLite restore creates a new local `replica_id` and
 `store_generation`. An exact local move is a separate operation that may retain
 them only with the old writer permanently stopped under
 [vault-sqlite.md section 12.3](vault-sqlite.md#exact-local-move). The restored
-runtime derives the mediation and communication keys named by retained entity
-records, enrolls as a new replica of each required arrangement, has the account
-hold the required recipients, drains its own mailbox, and exposes pending outbox
-records for manual action. Mail the mediator fanned out to the earlier replica
-before the restore stays with that replica. Opening never
-supplies initial or retry dispatch authority, even after an exact local move.
-It also reconciles unfinished committed inbound work under [the open](../../packages/agent-core/src/agent.ts),
-including observations already pickup-ACKed before the snapshot. Local queue
-state is not a recovery source.
+runtime is another replica of the vault: it derives the keys its retained
+entity records name, enrolls at each arrangement it must keep receiving on,
+has the account hold every address the arrangement routes, and picks up its
+own mailbox; mail the mediator fanned out to the earlier replica before the
+restore stays with that replica. Opening records what the vault owes on its
+own, observations already pickup-ACKed before the snapshot included, mints no
+initial or retry dispatch authority, even after an exact local move, and
+shows what it finds unfinished for manual action. The open is
+[`packages/agent-core/src/agent.ts`](../../packages/agent-core/src/agent.ts) over
+[`identity.ts`](../../packages/agent-core/src/identity.ts); local queue state is not a recovery source.
 
 A local DID created after the snapshot, including a privacy successor, may be
 absent after restore. The seed alone cannot reconstruct the missing UUIDv7

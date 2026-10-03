@@ -2,94 +2,81 @@
 
 The DIDComm v2 agent behind Estoc's clients, over an `.estoc` vault:
 `@estoc/event-store` holds it, `@estoc/vault` says what its events mean,
-and this package is what runs on it — mediation (an account of the
-mediator's replica-mediation protocol, each runtime a replica of it),
-pickup and live delivery (messagepickup 3.0 over HTTP and
-WebSocket), routing 2.0 forwards, channels of did:peer:4 pairs rotated
-by `from_prior`, invitations, trust-ping, basicmessage and user-profile.
-The rules are the [replica model](../../docs/replica-model/README.md)'s
-[channels](../../docs/replica-model/channels.md) and
-[distributed delivery](../../docs/replica-model/distributed-delivery.md).
+and this package is what runs on it. A message is decided over the fold
+read under the vault's writer lock and committed as an intent, then as
+a package, before its one transport call, which goes under a live
+action once the lock is released. A delivery passes one gate, is
+recorded as one observation under that same lock, and earns automatic
+work only in the call that recorded it. On the wire: the mediator's
+replica-mediation protocol (each runtime a replica of one account),
+messagepickup 3.0 over HTTP and WebSocket, routing 2.0 forwards,
+channels of did:peer:4 pairs rotated by `from_prior`, invitations,
+trust-ping, basicmessage, user-profile and report-problem.
+
+The identifiers, the hashes, the commit boundaries and the wire
+profiles are the [replica model](../../docs/replica-model/README.md)'s:
+[distributed delivery](../../docs/replica-model/distributed-delivery.md)
+for the inbound and execution identities, the effect keys, the commit
+boundaries and the mediator's envelope profile,
+[channels](../../docs/replica-model/channels.md) for the channel
+payloads, and
+[address and contact policy](../../docs/replica-model/relationships.md)
+for the DID profiles. The code and its tests define what the procedures
+do; each module's leading comment states what it is responsible for.
 
 Runs wherever didcomm-rust's WASM does: the browser (Vite), workerd, Node.
 The WASM itself is *not* loaded here — see [Didcomm API](#didcomm-api).
 
-## Layers
+## Modules
 
-```
-Agent            a vault running: one receiver, one dispatcher, a line to each mediator; open recovers and sends nothing
-  ├─ identity    the SQLite runtime opened with the seed's keys: createVault · openVault · inspectRuntime · inspectSnapshot
-  ├─ mediation   an arrangement recorded before the mediator is asked, enrolled in as this runtime's replica, its addresses held by the account
-  ├─ dids        communication DIDs minted from their ID and route alone, disclosure, invitations, retirement
-  ├─ send        what a message is, committed as an intent in its channel before any network work
-  ├─ prepare     an intent → the one exact envelope every transport call of it carries
-  ├─ dispatch    the one transport call of a prepared package, under a live action; dispatcher waits for prerequisites
-  ├─ receive/    the gate before the vault, the receipt as one observation admitted or not before its lock is released, and what a receipt owes afterwards
-  ├─ effects     what an established input earns on its own: the receipt it asks for, a handler's reply
-  ├─ handlers/   trust-ping 2.0 · basicmessage 2.0 · user-profile 1.0 · report-problem 2.0 · empty 1.0, through the handler seam
-  ├─ rotate      a local rotation frozen with its proof; privacy: a disclosed address gives way to a private successor
-  ├─ records     what an application is shown, as plain JSON; views: reading them, and the manual steps they name
-  ├─ link        the line to a mediator: sealing to it, opening what it sends, HTTP and the socket; pickup rides it
-  ├─ keyring     the keys this runtime holds in hand, derived by name and checked against what the vault recorded
-  ├─ trace       what this runtime observed, in the runtime's local state — never a fact of the vault
-  └─ protocol/   message types and shapes as the specifications have them; nothing here reads a vault
-```
+Each module answers one question. Its leading comment states its
+responsibility, its exports are the entry points, and `test/` mirrors
+`src/`; `test/e2e/` runs two agents against an in-process mediator over
+file vaults, one scenario per test: first contact, rotation, admission,
+races, crashes, restore, closing and a hostile peer.
 
-A message is decided over the fold read under the vault's writer lock
-and committed as an intent, then as a package, before its one transport
-call. That call is made under a live action: the user's send, the input
-a live receipt answered, or an explicit manual step. A receipt is live
-when it recorded the first observation the vault holds of its input
-and the admission pass under its lock admitted that observation as
-the witness its input speaks through; one whose admission waited for
-evidence is not, whatever admits it later. The receipt hands the live
-input back with its outcome, and the event that decided a message
-hands back its action; a host mints nothing but `LiveAction.manual`.
-Opening, importing or restoring a vault mints none, so whatever such a
-runtime finds waiting is shown as pending work, each item naming the
-manual procedure (`agent.manual`) that completes it.
+| Question | Module | Entry points |
+| --- | --- | --- |
+| How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
+| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
+| What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput` |
+| How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
+| How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
+| How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica`, `transientConfirmations` |
+| Which addresses does the account hold? | `replica-recipients.ts` | `addRecipients`, `holds` |
+| What is the line to a mediator? | `link.ts` | `MediatorLink`, `ritual`, `bounded` |
+| How is the replica's mail fetched and acknowledged? | `pickup.ts` | `Pickup` |
+| Which keys does this runtime hold in hand? | `keyring.ts` | `Keyring`, `secretsOf` |
+| How is a communication DID minted, disclosed, retired? | `dids.ts` | `createDid`, `disclose`, `retireDid`, `routeOf` |
+| What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `webDidUrl`, `WebResolverOptions` |
+| What is retained of a peer's document, and how does didcomm read it? | `evidence.ts` | `commitResolution`, `readResolution`, `pinnedResolver` |
+| What is a message, before any network work? | `send.ts` | `send`, `automaticDraft`, `manualNotificationDraft` |
+| What goes on the wire for an intent? | `prepare.ts` | `prepare`, `prepareAll`, `hasExpired` |
+| How is the one call made? | `dispatch.ts` | `dispatch`, `cancel` |
+| What waits for a prerequisite, and for how long? | `dispatcher.ts` | `Dispatcher`, `RETRY_POLICY` |
+| What does an acceptance the disk has not recorded owe? | `acceptance.ts` | `recordAcceptance` |
+| Which key opens a delivery, and whose is it? | `receive/gate.ts` | `classifyRecipients`, `senderEvidence`, `senderProof` |
+| How does a delivery reach the vault, wait, or end? | `receive/receiver.ts` | `Receiver`, `deliveryKey` |
+| How is a delivery recorded as one observation? | `receive/receipt.ts` | `recordReceipt`, `receiptOf` |
+| What does the vault owe on its own? | `reconcile.ts` | `recordOwed`, `recordOwedUnderLock` |
+| What does a peer's acknowledgement earn? | `acknowledgements.ts` | `recordAcks` |
+| What follows a receipt? | `receive/after.ts` | `afterReceipt` |
+| What does an input earn on its own? | `effects.ts` | `reactTo`, `decideEffects`, `callEffects`, `completeResponse` |
+| What does a protocol answer? | `handlers/` | `Handler`, `handlerFor`, `BUILT_IN_HANDLERS`, `effectTypesOf` |
+| When does a disclosed address give way? | `privacy.ts` | `privateAddress`, `decidePrivateAddress`, `privacyPolicy` |
+| How is a local DID replaced toward a peer? | `rotate.ts` | `rotate`, `decideRotation`, `completeNotification` |
+| What is an application shown, and which manual steps are there? | `records.ts`, `views.ts` | `readRecords`, `manualProcedures`, `recorder` |
+| What did this runtime observe? | `trace.ts` | `AgentTrace`, `tracePolicy` |
+| What is on the wire? | `protocol/` | `unpack`, `parseInvitation`, `invitationUrl`, `resolveMediatorInput`, the type URIs |
+| Which entity is missing, or in conflict? | `errors.ts` | `UnknownEntity`, `EntityConflict`, `Unusable`, `NoTarget`, … |
 
-An inbound envelope is opened with the one key of this vault it names,
-its sender read from what the vault already holds and never from the
-network, and recorded as an observation with its rotation proof as it
-came. Before the receipt's lock is released, the vault's ordered
-admission pass decides, among every observation still owed one in
-canonical event order, whether this one is admitted for application use,
-so that the writer lock is the one sequence every receipt and
-admission goes through whichever way the delivery came. Whether the
-proof verifies, which channel the input is established in and what it
-earns are the fold's to say, over the admitted observations alone.
-Over a pickup, that sequence holds a delivery's local work alone: the
-mediator is told of the delivery, and the calls it decided are made,
-off its turn, so the delivery behind it is received meanwhile.
-Evidence that arrives outside a receipt — the document a preparation
-resolves, an import the host tells the agent of — is reconciled when
-it arrives, admitting what waited for it and dispatching nothing:
-every preparation of an open message runs that pass under its lock,
-whatever the message comes to, and a dispatch prepares first, so a
-pass a refused commit cut short is completed by the next message
-prepared or dispatched.
+## Reading order
 
-What an application is shown reads the same way: a message record is
-an input some admission names an observation of, its content that of
-the admitted witness, while every observation — admitted, refused,
-ignored because the peer moved on, or pending with what stands in the
-way — is listed apart with nothing it carries, so that what the
-runtime has not accepted is inspectable and never read as the peer's.
-
-Every path to the wire — a user send, a reply, a package, the first
-call and a manual retry — reads the one send gate the vault keeps at
-both ends of the channel: a channel a verified replacement of the
-peer, or a decision replacing the local DID, has moved on from takes
-no new message and carries no old one; the intent, the package and a
-call already made stay as they are, and the successor takes a new
-message under a new ID. New work that needs the peer to know an
-address — a proof-free package, a rotation from the address, a
-mediated sender's registration — needs an admitted receipt showing
-the peer wrote to exactly it; a receipt the runtime has not admitted
-confirms nothing new. A live input at a disclosed address has the
-private-address policy decided before its effects, so its reply goes
-from the successor the policy selected, carrying the proof.
+1. `action.ts` and `procedure.ts`: what authorizes a transport call, and the shape of every procedure that writes the vault.
+2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, one package and one call; `dispatcher.ts` for the wait in between.
+3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, and what a live input earns.
+4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
+5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`: the mediator side.
 
 ## Usage
 
