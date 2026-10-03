@@ -14,8 +14,7 @@ initial history uses existing portable recovery/import; missing history remains
 pending rather than being inferred complete from successful registration.
 
 [Suite guide](../README.md) · [Identity](replica-mediation.md#identity-model) ·
-[Messages](#messages) · [Durability](#durability-and-acknowledgments) ·
-[Conformance](#required-conformance-cases)
+[Messages](#messages) · [Durability](#durability-and-acknowledgments)
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** and
 **MAY** are interpreted as in BCP 14 when written in capitals.
@@ -688,84 +687,3 @@ traffic anonymity. Sender protection is an independent feature. No bespoke
 cryptography, deterministic JWE randomness or server decryption is needed for
 replication; exact event identity is preserved inside ordinary randomized
 authcrypted envelopes.
-
-<a id="required-conformance-cases"></a>
-
-## 10. Required conformance scenarios
-
-These are proposed requirements; application-effect convergence requires the
-separate domain revision as well as transport tests.
-
-1. Peers with the same anchor and verified grants exchange data. A forged
-   discovery entry, wrong seed/account/anchor, mismatched sender or conflicting
-   identity cannot obtain plaintext vault data.
-2. Reordered and repeated identical events preserve exact CIDs/authors and
-   add no extra portable events. Reusing a batch ID for different contents fails.
-3. A local commit followed by a crash before worker notification is eventually
-   discovered and sent; a mediator acceptance without `stored` does not complete it.
-4. Drop a sync envelope or `stored` receipt, expire it in a mailbox, restart
-   either peer and reset local progress: retry/reconciliation still finds the
-   missing data without producing an ACK-of-ACK or portable sync-event loop.
-5. Append during a paged inventory; the frozen cut has no gaps/duplicates and
-   later work discovers the new CID. Lose/expire the inventory session and retry
-   from a fresh cut without deleting local-only events.
-6. Two peers request each other's history simultaneously; both continue serving
-   requests before their own outbound batches are acknowledged.
-7. Deliver an object in reordered/repeated chunks, interrupt and resume it,
-   supply conflicting overlapping bytes and a bad final digest. Only a complete
-   verified object can become visible in the vault.
-8. Deliver dependent event batches before their objects and prerequisite events.
-   Stage and combine them, then atomically publish events plus required objects;
-   a publication failure exposes none of that import and sends no `stored`.
-9. Import succeeds and the response is lost; retry sends the receipt without
-   rewriting events or dispatching historical messages/effects.
-10. A stale peer offers content erased by the learned union. Full reconciliation
-    learns the event cut first, and current retention prevents publishing the
-    released relation's bytes; independently retained objects remain available.
-11. A source no longer holds requested bytes; explicit unavailability leaves
-    progress incomplete and permits another peer or backup to repair it.
-12. Restore a new device while other replicas append and external mail arrives.
-    Its author is fresh; only packages first accepted after its registration
-    create shared deliveries for it. New mail can remain queued while vault
-    sync obtains available earlier history. That queue does not replace catch-up
-    or authorize effects; the current profile never silently enables multiple
-    executors.
-13. A maximum legal event fits a single-event batch at the negotiated plaintext
-    and mediator wire floors. Smaller limits fail negotiation. Oversized legacy
-    events need the adoption policy; no event is truncated or given a new CID.
-    Object/queue/staging limits keep blocked work visibly unsatisfied without
-    falsely acknowledging it as stored.
-14. Repair missing bytes for an already accepted held root without any new event;
-    only the verified repair becomes visible, and no synthetic sync event is made.
-15. An unseen current-author event refuses the import with no partial publication;
-    recovery creates a new incarnation instead of rewriting incoming authors.
-16. No source/target cursor, wrapper, local option, trace, device key or operational
-    receipt is imported as another replica's runtime state.
-17. One batch contains independent events and an event requiring unavailable
-    bytes. Import the independent subset; retain the rest as incomplete without
-    `stored`. Unimported event references defer projections, not event union.
-    Apply learned release evidence before or with affected subsets, and check
-    roots newly held by existing target events at each atomic boundary.
-18. Cross `hello` requests while both peers wait for their own result. Each sends
-    the other's correlated `hello-result`; neither treats `hello` as that result
-    nor blocks inbound handling on its own exchange.
-19. Repackage an immutable batch under a fresh wire ID and discard the old ID.
-    A delayed valid `stored` still advances only the matching peer/batch progress;
-    the same batch ID from another peer or an unknown batch advances nothing.
-20. A mediator identity-conflict response suspends operational sends without
-    changing portable membership or completing a batch. Missing discovery rows
-    and offline peers do not remove verified membership; authenticated binding
-    reconciliation can resume suspended work once the conflict is resolved.
-21. Restart a receiver after a completed `hello` exchange, then deliver an
-    existing batch without another `hello`. It recovers the verified binding
-    and limits and completes the batch without human intervention. Resetting
-    batch/inventory progress preserves that peer state; a newly learned local
-    identity conflict still prevents traffic under that binding. A crash during
-    `hello` leaves either a retryable pending exchange or durable verified state, never a
-    successful reply whose peer state existed only in memory.
-22. Initialize an account without Coordinate Mediation, then restore and enroll
-    a second replica using that verified account intent. Account registration
-    and replica pickup use their respective DIDs. Ordinary account evidence
-    cannot substitute for the replica-mediation intent or transfer old mail.
-    Synchronizing retired communication DIDs preserves their recipient bindings
-    without authorizing new application work through those DIDs.

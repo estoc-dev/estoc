@@ -120,31 +120,21 @@ RZ owns DID resolution and address/display policy.
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
 
-<a id="conformance-and-references"></a>
+<a id="evidence-and-references"></a>
 
-## Conformance and references
+## Evidence and references
 
-| Prefix | Cases | Status |
-| --- | --- | --- |
-| ES | [Event store](event-store.md#required-conformance-cases) | Phase 1 |
-| DO | [DASL objects](dasl-objects.md#required-conformance-cases) | Phase 1 |
-| SQ | [SQLite vault](vault-sqlite.md#required-conformance-cases) | Phase 1 |
-| DD | [Distributed delivery](distributed-delivery.md#required-conformance-cases) | Phase 1 |
-| CH | [Channels and continuity](channels.md#required-conformance-cases) | Phase 1 |
-| RZ | [Channel address and contact policy](relationships.md#required-conformance-cases) | Phase 1 |
-
-The vault events list no cases: their folds and procedures are code, and
-the tests of `packages/vault` and `packages/agent-core` are their evidence.
-
-The seven documents above are the complete phase-1 contract. Multi-replica
-mediation, network vault synchronization and mutable channel DIDs have only
-[deferred design notes](deferred/README.md). Those notes reserve no phase-1
-fields, error codes, key names, extension APIs or conformance requirements.
-Future features will define their schemas and conformance requirements when adopted.
+The seven documents above are the complete phase-1 contract. No document
+lists conformance cases: the tests of the package that implements a
+document are its evidence, and the folds and procedures over the vault's
+events are specified by their code (see
+[vault events section 13](vault-events.md#folds-and-procedures)).
+Multi-replica mediation, network vault synchronization and mutable channel
+DIDs have only [deferred design notes](deferred/README.md). Those notes
+reserve no phase-1 fields, error codes, key names or extension APIs; future
+features will define their schemas when adopted.
 
 Named anchors support direct links independently of displayed section numbers.
-Conformance case IDs identify the requirements each implementation must verify.
-Removed cases leave gaps; remaining IDs are stable and are not renumbered or reused.
 
 <a id="editing-conventions"></a>
 
@@ -152,5 +142,4 @@ Removed cases leave gaps; remaining IDs are stable and are not renumbered or reu
 
 Describe the specified behavior and its constraints directly. Keep a rule with
 its owning document, or with its owning module when it is code, and link to
-it from consumers. Use stable named anchors and conformance case IDs for
-references.
+it from consumers. Use stable named anchors for references.

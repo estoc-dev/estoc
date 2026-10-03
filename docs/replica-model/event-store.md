@@ -1,7 +1,7 @@
 # The Estoc event store, version 4
 
 <!-- suite-navigation:start -->
-[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide) · [Conformance cases](#required-conformance-cases)
+[Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
 Status: **phase 1, implemented** — version-4 content-addressed events. SQLite is the sole persistent vault and interchange
@@ -611,82 +611,3 @@ additions are new event types, optional payload fields with a fixed absent
 meaning, or negotiated capabilities. Changing existing
 meaning, envelope/ID/CID formats, derivation or required folds needs a new vault
 version. Changing portable schema needs a new SQLite schema version.
-
-<a id="required-conformance-cases"></a>
-
-## 13. Required conformance cases
-
-Storage procedures are tested under [SQLite conformance](vault-sqlite.md#required-conformance-cases).
-
-<a id="commit-validation-and-event-identity-es-1-es-7"></a>
-
-### Commit, validation and identity (ES-1–ES-7)
-
-1. <a id="es-1"></a> Append returns the five-field envelope plus its computed raw CID
-    under the local author and survives restart.
-2. <a id="es-2"></a> Pre-resolution crash leaves the whole event or none.
-3. <a id="es-3"></a> A batch and its new objects commit entirely, with one timestamp.
-4. <a id="es-4"></a> JCS-ineligible events fail before acceptance.
-5. <a id="es-5"></a> Different JSON spellings with equal canonical bytes ingest as duplicates.
-6. <a id="es-6"></a> Different canonical envelopes produce different events; equal
-    bytes ingest once in either order. A supplied CID for other bytes is rejected
-    before duplicate detection, even when that CID is already retained.
-7. <a id="es-7"></a> Unseen valid current-author input aborts the whole ingest;
-    identical retained events remain duplicates.
-
-<a id="folds-scans-and-interchange-es-8-es-16"></a>
-
-### Folds, scans and interchange (ES-8–ES-16)
-
-8. <a id="es-8"></a> Shuffling/repartitioning events does not change folds.
-9. <a id="es-9"></a> Scans have `(at, cid)` canonical order regardless of physical order;
-    memory and SQLite use CID text order even where decoded-byte order differs.
-    An exact CID filter yields at most one event, still conjoined with author,
-    type and data filters; a CID absent from the event set yields none, and an
-    invalid CID is rejected.
-10. <a id="es-10"></a> Event BLOBs contain only the five envelope fields, round-trip
-    exactly without LF, hash to their row CID and agree with indexed fields.
-    Acceptance, full portable validation and `damaged()` detect CID/bytes mismatch;
-    ordinary scans and deltas return stored CIDs without recomputing those hashes.
-11. <a id="es-11"></a> Deltas are complete for their cut and reject wrong-generation tokens.
-    Each new CID advances the token; exact-duplicate append or ingest allocates
-    no position. Object-only repair still invalidates dependent projections.
-12. <a id="es-12"></a> Full reconciliation needs no local token.
-13. <a id="es-13"></a> Portable values round-trip under the defined wrapper import policy.
-14. <a id="es-14"></a> Portable restore creates fresh local identity.
-15. <a id="es-15"></a> No API interprets hardware or OS identifiers.
-16. <a id="es-16"></a> Historical authors remain valid after retirement or restore.
-
-<a id="time-ordering-and-durability-es-17-es-22"></a>
-
-### Time and durability (ES-17–ES-22)
-
-17. <a id="es-17"></a> Timestamps have the exact UTC millisecond grammar and lexical time order.
-18. <a id="es-18"></a> Process durability is not presented as a power-loss guarantee.
-19. <a id="es-19"></a> A large same-millisecond batch has one timestamp
-    and one result per input in input order. Identical drafts return the same CID
-    and add one row/position; different envelopes remain distinct.
-20. <a id="es-20"></a> Clock rollback changes sampled `at`, not the batch timestamp
-    rule. If a repeated draft recreates a retained envelope, it deduplicates.
-21. <a id="es-21"></a> Event identity is the canonical envelope's raw CID, not a
-    UUID. Reject extra envelope fields, noncanonical CIDs and mismatched digests;
-    the author's UUID time is not compared with the event's `at`.
-22. <a id="es-22"></a> Canonicalization or hashing failure commits no part of a batch.
-
-<a id="import-collection-and-reader-protection-es-23-es-32"></a>
-
-### Import, collection and readers (ES-23–ES-32)
-
-23. <a id="es-23"></a> Export cannot mix cuts or publish missing held objects.
-24. <a id="es-24"></a> Import recovery exposes the whole old or new union, not staging.
-25. <a id="es-25"></a> Any cached projections are updated/invalidated atomically and not used stale.
-26. <a id="es-26"></a> Runtime/local data and executable schema never travel as portable state.
-27. <a id="es-27"></a> Commits and maintenance may explicitly cancel readers; their bytes never silently change.
-28. <a id="es-28"></a> Read/GC races yield complete bytes, absence or an explicit error, never partial success.
-29. <a id="es-29"></a> Public stores expose no append/ingest/put/collect bypass; unused commit objects fail.
-30. <a id="es-30"></a> A cancelled paused reader cannot resume as a successful unprotected read.
-31. <a id="es-31"></a> Independent clients cannot bypass runtime ownership; a broker is optional.
-32. <a id="es-32"></a> Offline inspection excludes a later writer; separate immutable snapshots need no live owner.
-    Portable inspection exposes the read-only `Vault` members, no local author,
-    and the complete CID-addressed event set. Every `commit` and `changes` call fails
-    with `UnsupportedOperation` without consuming sources or minting local IDs.

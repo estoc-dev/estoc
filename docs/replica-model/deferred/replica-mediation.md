@@ -30,7 +30,7 @@
 > wherever this document differs. `replica.label` is not adopted.
 
 [Suite guide](../README.md) · [Identity model](#identity-model) ·
-[Protocol boundary](#protocol-boundary) · [Conformance](#required-conformance-cases)
+[Protocol boundary](#protocol-boundary)
 
 This document defines standalone mediation accounts, vault-authorized replica
 membership, append-only communication recipients, fan-out of external mail and
@@ -829,107 +829,3 @@ profile and not a way to hide an explicitly registered replica group.
 Default logs MUST NOT contain decrypted control bodies, mail ciphertext,
 attachment bytes, vault content or private keys. A mediator must not be given
 application content keys. Distinct device identities do not revoke a shared seed.
-
-<a id="required-conformance-cases"></a>
-
-## 12. Required conformance scenarios
-
-These are proposed requirements, not claims about the current implementation.
-
-1. Two restored writable copies have different replica IDs/DIDs and preserve
-   historical event authors; an exact move cannot leave a second writer alive.
-2. An account-authenticated `register` with a valid matching account-signed
-   grant creates an account and its first replica without Coordinate Mediation.
-   A failure creates neither; a lost response and retry return the same binding.
-   The reply returns to the account over the request's transport exchange,
-   without requiring an account pickup queue.
-   A forged list entry, wrong account/mediator, altered document or replica-DID
-   requester does not enroll a replica. Pickup still authenticates the replica.
-   A client with valid peer grants from backup, import or discovery submits
-   only its own grant; learning another member does not register that member.
-3. Ordinary and replica-mediation accounts use different identities and state.
-   Neither registration path converts the other account kind; ordinary controls
-   and ACKs cannot mutate the new account. Old recipients and queued mail stay
-   with their old account. New recipients require control proof from creation.
-4. With A already active, register B and accept a shared package in both
-   transaction orders. If B registers first, the accepted package creates one
-   delivery for B. If acceptance commits first, B gets none, even when it joins
-   before package expiry. Re-registration and duplicate forwards preserve
-   that original target set and existing ACK state.
-5. A and B receive identical original shared ciphertext with different delivery
-   IDs. A's ACK, including an attempted B ID, cannot consume B's delivery.
-6. A private envelope addressed to B is delivered only to B and never copied
-   to C when C joins. A replica DID cannot be registered as a shared recipient.
-   B identifies private traffic from the enclosed message's verified recipient
-   key, independently of pickup filters or plaintext audience claims. With no
-   supported inter-replica protocol, it rejects an unpacked private message,
-   ACKs its delivery and retains only a bounded local diagnostic. It creates
-   no portable message/event, application effect or sync receipt.
-   An envelope naming only B's retained replica key-agreement methods but
-   failing unpacking or verification is likewise rejected and ACKed, including
-   unavailable sender material and invalid ciphertext. B does not wait for
-   history or attribute an authenticated sender to this rejected input.
-7. Recipient filters narrow both status and pickup within the caller's queue;
-   they cannot reach another principal. Disconnecting live push loses no mail.
-8. Offline members keep their bindings and delivery eligibility. A fresh
-   incarnation adds a binding without removing the old one; both count toward
-   the membership limit. Repeating registration consumes no extra slot, and
-   exhausting the limit refuses new enrollment without changing existing members.
-9. C joins after a shared package was accepted, while it is still retained:
-   C receives no delivery whether the original targets have ACKed it or not.
-   Registration supplies no earlier history or application readiness. After
-   all original targets ACK, an identical forward before expiry remains a
-   duplicate and creates no deliveries; changed bytes under that key conflict.
-10. An accepted shared package creates one delivery for every active replica,
-    including an offline replica with a backlog, while counting its ciphertext
-    and package only once against the account budget. Shared and private mail
-    consume that same budget. Account storage exhaustion or a delivery-write
-    failure publishes no package, partial deliveries or acceptance record.
-    A refused package may be submitted later once the account has capacity.
-    Pickup response limits do not cap a replica's backlog. SQLite and D1 enforce
-    the same registration and fan-out transaction boundaries.
-11. A mediator list cannot authorize an unverified replica binding. Missing
-    entries do not delete portable membership or trigger registration on a
-    peer's behalf. A discrepancy with local confirmation is diagnostic and
-    does not clear completed work or start automatic reconstruction.
-12. No delivery or membership operation independently authorizes historical
-    application effects or changes a committed application's channel/package.
-13. Membership-removal controls are unsupported and change neither bindings nor
-    queued deliveries. Stopping a runtime does not create a portable removal
-    event, a drain plan or a special final sync exchange.
-14. A creates and registers a communication DID while B lacks its entity.
-    B's adds for its own known bindings leave A's recipient untouched.
-    Missing or account-key-signed recipient proofs fail. For another previously
-    unregistered DID known to both replicas, concurrent adds produce one
-    permanent binding: one `added`, one `no_change`, with no registration churn.
-    Another account cannot claim the DID, including an ordinary account.
-15. A communication DID or route retires, or a channel is blocked: existing
-    recipient bindings remain. Rotation adds the new address while old addresses
-    remain transport destinations; application eligibility is checked separately.
-    A remove/replacement request fails without mutation. Package ACK and expiry
-    still clear mail without deleting recipients.
-16. Confirm the local replica's registration before pickup and recipient adds.
-    Record verified success durably for each operation. On normal restart or
-    reconnection, resume pickup directly and retry only unconfirmed work;
-    completed registration and adds are not re-sent. New validated bindings,
-    including historical DIDs learned through import, receive an add when they
-    lack local confirmation. Existing remote bindings return `no_change`.
-    A lost reply or crash before recording success permits an idempotent retry
-    of that same binding, without changing other completions or delivery/ACK
-    state. A fresh incarnation uses its own grant and local confirmations.
-17. Two first registrations for different replicas race under the same account
-    and mediation ID: both share one account. Conflicting account bindings,
-    cross-protocol account reuse and recipient/private-destination collisions
-    fail atomically.
-18. Reuse a recipient proof in later account-authenticated requests with new
-    request IDs: it remains valid without a time check, and replies correlate
-    to their enclosing requests. A mismatched request account, mediator or
-    recipient is refused, and altering the proof's payload invalidates its
-    signature. Proof checks also apply to an existing binding. A batch-shaped
-    body is invalid and changes no recipient binding; each valid request and
-    response names one recipient.
-19. With no vault-sync worker, peer negotiation, inventory or sync receipt,
-    exercise registration/listing, recipient adds, shared fan-out, private
-    delivery and independent pickup/ACK. These transport operations succeed
-    independently; an application with missing history remains pending rather
-    than treating registration or pickup as completed catch-up.

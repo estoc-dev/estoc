@@ -16,7 +16,7 @@ Phase 1 implements immutable `did:peer:4` application channels, one active
 writable runtime, pickup as a replica of a replica-mediation account and portable SQLite recovery.
 Mediator and routing-service DID resolution remains independent of the channel
 method restriction. These drafts will be revisited when their features are
-adopted, together with the owning specifications and conformance cases.
+adopted, together with the owning specifications.
 
 ## Multi-replica design
 
@@ -159,7 +159,7 @@ options; no synchronization format or transport has been selected for adoption.
 When this work resumes, choose the transfer model and its authorization,
 durability, retention, retry and resource bounds together. Reconcile that choice
 with the owning import contracts and define automatic device catch-up. The
-existing candidate's detailed rules and conformance cases must be reconsidered
+existing candidate's detailed rules must be reconsidered
 then; they do not gate the replica-mediation milestone.
 
 If the event/object candidate is selected, define bounded staged-input imports
