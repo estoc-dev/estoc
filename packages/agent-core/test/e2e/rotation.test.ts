@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { EMPTY_MESSAGE_TYPE, ROTATION_NOTIFICATION_EFFECT, channelKey, type Channel, type Did, type DidId, type MessageId, type Outbound, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import type { Rotated } from "../../src/index.js";
+import { LiveInput, type Rotated } from "../../src/index.js";
 import { newMediator, peerSealer, sealed, type DirectParty } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, run, stopAll, until, type Running } from "./running.js";
 
@@ -56,7 +56,7 @@ describe("rotation between two agents", () => {
     expect(address.rotation.decision.data).toMatchObject({ fromDidId: ALICE, peerDid: b0, sourceEventCid: alice.inbounds[0]!.received.outcome === "received" ? alice.inbounds[0]!.received.cid : null });
 
     await until("bob has followed the notification", () => bob.inbounds.length === 1);
-    expect(bob.inbounds[0]).toMatchObject({ received: { outcome: "received", live: true }, after: { proof: { status: "verified" } }, reacted: { effects: [{ outcome: "created", dispatched: { outcome: "submitted" } }] }, address: { outcome: "none" } });
+    expect(bob.inbounds[0]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" } }, reacted: { effects: [{ outcome: "created", dispatched: { outcome: "submitted" } }] }, address: { outcome: "none" } });
     const ofBob = await foldOf(bob);
     expect(links(ofBob)).toEqual([[channelKey(channelOf(b0, a0)), channelKey(channelOf(b0, a1)), "peer", "true"]]);
     expect(ofBob.continuity.head(channelOf(b0, a0))).toEqual(channelOf(b0, a1));
@@ -74,12 +74,12 @@ describe("rotation between two agents", () => {
     expect(second.dispatched).toMatchObject({ outcome: "submitted" });
     expect(packageOf((await foldOf(alice)).outbound.outbounds.get(SECOND)!)).toMatchObject({ fromPrior: null, recipientDid: b0 });
     await until("bob has the message from the private address", () => bob.inbounds.length === 2);
-    expect(bob.inbounds[1]).toMatchObject({ received: { live: true }, after: { proof: { status: "not-present" } } });
+    expect(bob.inbounds[1]).toMatchObject({ received: { live: expect.any(LiveInput) }, after: { proof: { status: "not-present" } } });
 
     await expect(bob.agent.send({ channel: channelOf(b0, a0) }, hello("to the old address"))).rejects.toThrow("the peer has replaced its DID");
     await forwarded(mediator, a0, await sealed(await peerSealer(bob.party as unknown as DirectParty), a0, hello("to the old address")));
     await until("alice has the message at the old address", () => alice.inbounds.length === 3);
-    expect(alice.inbounds[2]).toMatchObject({ received: { outcome: "received", live: true }, address: { outcome: "reused" } });
+    expect(alice.inbounds[2]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, address: { outcome: "reused" } });
     const replaced = await foldOf(alice);
     expect(replaced.set.of("did.rotationSelected")).toHaveLength(1);
     expect(replaced.outbound.outbounds.size).toBe(2);
@@ -145,7 +145,7 @@ describe("rotation between two agents", () => {
     expect(joined.dispatched).toMatchObject({ outcome: "submitted" });
     expect(carriesProof((await foldOf(alice)).outbound.outbounds.get(THIRD)!)).toBe(false);
     await until("bob has the message at the join", () => bob.inbounds.length === 4);
-    expect(bob.inbounds[3]).toMatchObject({ received: { outcome: "received", live: true }, after: { proof: { status: "not-present" } } });
+    expect(bob.inbounds[3]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "not-present" } } });
     expect((await foldOf(bob)).views.channel(channelOf(b1, a1)).inbound.map((execution) => execution.status.status)).toEqual(["complete", "complete"]);
 
     await bob.agent.send({ channel: channelOf(b1, a1) }, hello("and back"), { messageId: FOURTH });

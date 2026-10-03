@@ -29,6 +29,7 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
+import { liveInput } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
@@ -96,14 +97,26 @@ async function reacting(alice: DirectParty, over: Partial<EffectOptions> = {}, a
   const wire = posting(answer);
   const effectTypes = effectTypesOf(handlersOf(over.handlers));
   const options: EffectOptions = { dispatch: (action) => dispatch(alice.runtime, alice.keys, action, { didcomm, fetch: wire.fetch, effectTypes }), ...over };
-  const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<EventReference<"message.in">> => {
+  const observed = async (peer: DirectParty, extra: Partial<IMessage>, as?: string) => {
     const received = await receiver.receive({ packed: await sealed(await peerSealer(peer, as), alice.longFormDid, extra), source: DIRECT });
     if (received.outcome !== "received") throw new Error(`not received: ${JSON.stringify(received)}`);
-    return received.cid;
+    return received;
   };
-  const live = async (peer: DirectParty, extra: Partial<IMessage>): Promise<Reacted> => reactTo(alice.runtime, alice.keys, new LiveInput(await receive(peer, extra)), options);
+  const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<EventReference<"message.in">> => (await observed(peer, extra, as)).cid;
+  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<LiveInput> => {
+    const received = await observed(peer, extra, as);
+    if (received.live === null) throw new Error(`not live: ${received.cid}`);
+    return received.live;
+  };
+  const live = async (peer: DirectParty, extra: Partial<IMessage>): Promise<Reacted> => reactTo(alice.runtime, alice.keys, await arrived(peer, extra), options);
+  /** The effects decided under an authority the receipt did not mint, so that the decision's own re-check of the observation is what refuses it. */
+  const claimed = async (peer: DirectParty, extra: Partial<IMessage>): Promise<Reacted> => {
+    const received = await observed(peer, extra);
+    expect(received.live).toBeNull();
+    return reactTo(alice.runtime, alice.keys, liveInput(received.cid), options);
+  };
   const executionOf = async (cid: EventReference<"message.in">): Promise<ExecutionId> => (await foldOf(alice)).inbound.ofSource(cid)!.id;
-  return { receiver, wire, options, effectTypes, receive, live, executionOf };
+  return { receiver, wire, options, effectTypes, arrived, receive, live, claimed, executionOf };
 }
 
 const packageOf = async (holder: Holder, messageId: MessageId): Promise<PackageId> => (await foldOf(holder)).outbound.outbounds.get(messageId)!.package!.event.data.packageId;
@@ -141,7 +154,7 @@ async function openedByBob(bob: DirectParty, alice: DirectParty, messageId: Mess
 describe("the automatic effects of a live input", () => {
   test("a Ping asking for a receipt and a reply earns two independent intents under their tuples, each dispatched once under an initial action; delivered again it earns nothing new, and an open lists nothing", async () => {
     const { alice, bob } = await parties();
-    const { wire, live } = await reacting(alice);
+    const { wire, live, claimed } = await reacting(alice);
     const wireId = crypto.randomUUID() as WireMessageId;
 
     const reacted = await live(bob, ping(wireId));
@@ -181,7 +194,7 @@ describe("the automatic effects of a live input", () => {
     expect(await openedByBob(bob, alice, ack!.messageId)).toMatchObject({ type: EMPTY_MESSAGE_TYPE, thid: wireId, ack: [wireId], body: {} });
     expect(await openedByBob(bob, alice, reply!.messageId)).toMatchObject({ type: PING_RESPONSE_TYPE, thid: wireId, body: {} });
 
-    const again = await live(bob, ping(wireId));
+    const again = await claimed(bob, ping(wireId));
     expect([again.executionId, again.because, outcomes(again.effects)]).toEqual([reacted.executionId, "the input is established by another observation", []]);
     fold = await foldOf(alice);
     expect([wire.posts.length, fold.set.of("message.in").length, fold.set.of("message.out").length, unfinishedWork(fold).responses]).toEqual([2, 2, 2, []]);
@@ -190,12 +203,12 @@ describe("the automatic effects of a live input", () => {
 
   test("an observation contradicting the intent its input has admitted is refused admission and listed as the discrepancy it is: the input stays established by the first, earns what the first earned and no more, and the receipt already handed over stays the message it was, handed over", async () => {
     const { alice, bob } = await parties();
-    const { wire, options, receive, live, executionOf } = await reacting(alice);
+    const { wire, options, receive, live, claimed, executionOf } = await reacting(alice);
     const answered = crypto.randomUUID() as WireMessageId;
     const ack = created((await live(bob, ping(answered, { body: { response_requested: false } }))).effects[0]);
     expect(wire.posts).toHaveLength(1);
 
-    const contradicting = await live(bob, ping(answered));
+    const contradicting = await claimed(bob, ping(answered));
     expect([contradicting.because, contradicting.effects]).toEqual(["the observation is not admitted: the observation contradicts the intent its input has admitted", []]);
     const unanswered = crypto.randomUUID() as WireMessageId;
     const executionId = await executionOf(await receive(bob, ping(unanswered)));
@@ -237,7 +250,7 @@ describe("the automatic effects of a live input", () => {
       const fold = await foldOf(alice);
       const execution = fold.inbound.ofSource(first.cid)!;
       expect([first.first, duplicate.first, fold.admissions.admitted(first.cid), fold.admissions.admitted(duplicate.cid), execution.firstWitness!.source.event.cid]).toEqual([true, false, false, true, duplicate.cid]);
-      const reacted = await reactTo(alice.runtime, alice.keys, new LiveInput(first.cid), options);
+      const reacted = await reactTo(alice.runtime, alice.keys, liveInput(first.cid), options);
       expect(reacted).toEqual({ cid: first.cid, executionId: execution.id, because: expect.stringMatching(disposition), effects: [] });
       expect(unfinishedWork(fold).responses.filter((owed) => owed.execution.id === execution.id).map((owed) => owed.effectType)).toEqual([PURE_ACK_EFFECT, PING_RESPONSE_EFFECT]);
       executions.push(execution.id);
@@ -350,7 +363,7 @@ describe("the automatic effects of a live input", () => {
     const packageId = await packageOf(alice, messageId);
     expect(wire.posts).toHaveLength(1);
 
-    const untold = await dispatch(alice.runtime, alice.keys, new LiveAction(messageId, "manual"), { didcomm, fetch: wire.fetch });
+    const untold = await dispatch(alice.runtime, alice.keys, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
     expect([untold.outcome, wire.posts.length]).toEqual(["none", 1]);
     const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, effectTypes });
     expect((await dispatcher.pending()).map((pending) => [pending.outbound.messageId, pending.outbound.work.kind])).toEqual([[messageId, "dispatch"]]);
@@ -384,11 +397,11 @@ describe("the automatic effects of a live input", () => {
   test("each operation is its own boundary: the disk refusing the Ping's body costs the reply alone and the receipt goes; the disk refusing to record an acceptance once costs the receipt's call step alone, the reply goes, and the acceptance is recorded by the next action without a second call", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
-    const { wire, options, receive, live } = await reacting(alice, { trace });
-    const cid = await receive(bob, ping(crypto.randomUUID()));
-    const executionId = (await foldOf(alice)).inbound.ofSource(cid)!.id;
+    const { wire, options, arrived, live } = await reacting(alice, { trace });
+    const input = await arrived(bob, ping(crypto.randomUUID()));
+    const executionId = (await foldOf(alice)).inbound.ofSource(input.cid)!.id;
     refuseReads(alice.runtime, await bodyCidOf(alice, executionId), 1);
-    const unread = await reactTo(alice.runtime, alice.keys, new LiveInput(cid), options);
+    const unread = await reactTo(alice.runtime, alice.keys, input, options);
     expect(outcomes(unread.effects)).toEqual([
       [PURE_ACK_EFFECT, "created", "submitted"],
       [PING_RESPONSE_EFFECT, "refused", "the disk refuses the read"],
@@ -407,7 +420,7 @@ describe("the automatic effects of a live input", () => {
     const [ack] = unrecorded.effects.map(created);
     expect([ack!.action.spent, ack!.dispatched, wire.posts.length]).toEqual([true, { outcome: "threw", messageId: ack!.messageId, reason: "the disk is full for now" }, 4]);
     expect((await trace.read({ type: "diag.effect" })).map((entry) => entry.data)).toContainEqual({ messageId: ack!.messageId, executionId: unrecorded.executionId, effectType: PURE_ACK_EFFECT, reason: "the disk is full for now" });
-    const recorded = await dispatch(alice.runtime, alice.keys, new LiveAction(ack!.messageId, "manual"), { didcomm, fetch: wire.fetch });
+    const recorded = await dispatch(alice.runtime, alice.keys, LiveAction.manual(ack!.messageId), { didcomm, fetch: wire.fetch });
     expect([recorded.outcome, wire.posts.length, (await foldOf(alice)).outbound.outbounds.get(ack!.messageId)!.outcome]).toEqual(["submitted", 4, { status: "submitted" }]);
     await closeAll(alice, bob);
   });
@@ -484,7 +497,7 @@ describe("the automatic effects of a live input", () => {
 
   test("no effect for a denied channel, for the input of a peer that has replaced its DID, or for an anonymous observation", async () => {
     const { alice, bob } = await parties();
-    const { receiver, options, receive, live, executionOf } = await reacting(alice);
+    const { receiver, options, receive, live, claimed, executionOf } = await reacting(alice);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const old = await executionOf(await receive(bob, ping(crypto.randomUUID()), prior.longFormDid));
@@ -497,13 +510,13 @@ describe("the automatic effects of a live input", () => {
     expect(outcomes([await completeResponse(alice.runtime, alice.keys, old, PURE_ACK_EFFECT, options)])).toEqual([[PURE_ACK_EFFECT, "none", "the peer has replaced its DID"]]);
 
     await blockChannels(alice.runtime, alice.keys, [{ localDid: alice.did, peerDid: bob.did }], false);
-    const denied = await live(bob, ping(crypto.randomUUID()));
+    const denied = await claimed(bob, ping(crypto.randomUUID()));
     expect(denied).toMatchObject({ because: "the input is not established: no observation of the input is admitted", effects: [] });
     expect((await foldOf(alice)).dispositions.disposition(denied.cid)).toEqual({ status: "pending-admission", because: "the channel is denied" });
 
     const anonymous = await receiver.receive({ packed: await sealed(null, alice.longFormDid, { type: BASIC_MESSAGE, please_ack: [""] }), source: DIRECT });
     if (anonymous.outcome !== "received") throw new Error(`not received: ${JSON.stringify(anonymous)}`);
-    const reacted = await reactTo(alice.runtime, alice.keys, new LiveInput(anonymous.cid), options);
+    const reacted = await reactTo(alice.runtime, alice.keys, liveInput(anonymous.cid), options);
     expect(reacted).toEqual({ cid: anonymous.cid, executionId: null, because: "the observation is anonymous or in no input here", effects: [] });
     await closeAll(alice, bob);
   });

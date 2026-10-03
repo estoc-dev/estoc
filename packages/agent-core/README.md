@@ -42,10 +42,12 @@ a live receipt answered, or an explicit manual step. A receipt is live
 when it recorded the first observation the vault holds of its input
 and the admission pass under its lock admitted that observation as
 the witness its input speaks through; one whose admission waited for
-evidence is not, whatever admits it later. Opening, importing
-or restoring a vault mints none, so whatever such a runtime finds
-waiting is shown as pending work, each item naming the manual procedure
-(`agent.manual`) that completes it.
+evidence is not, whatever admits it later. The receipt hands the live
+input back with its outcome, and the event that decided a message
+hands back its action; a host mints nothing but `LiveAction.manual`.
+Opening, importing or restoring a vault mints none, so whatever such a
+runtime finds waiting is shown as pending work, each item naming the
+manual procedure (`agent.manual`) that completes it.
 
 An inbound envelope is opened with the one key of this vault it names,
 its sender read from what the vault already holds and never from the

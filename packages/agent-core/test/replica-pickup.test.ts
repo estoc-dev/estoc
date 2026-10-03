@@ -6,7 +6,7 @@ import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MintedDid,
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, DELIVERY_REQUEST, LiveInput, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
 
@@ -86,7 +86,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     const [connection] = await alice.agent.connect();
     expect(connection).toMatchObject({ unreachable: null, drained: { acked: 1, ended: "empty" } });
     await alice.agent.settled();
-    expect(alice.inbounds).toMatchObject([{ received: { outcome: "received", live: true } }]);
+    expect(alice.inbounds).toMatchObject([{ received: { outcome: "received", live: expect.any(LiveInput) } }]);
     expect(mediator.queues.get(alice.replica.did)).toEqual([]);
     expect(senders.filter((sender) => sender !== bob.replica.did)).toEqual([alice.replica.did]);
   });
@@ -99,7 +99,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     const { bob, agent } = await peer(mediator);
     await hello(bob, agent, alice.address);
     await until("the pushed delivery is followed", () => alice.inbounds.length === 1, 10_000);
-    expect(alice.inbounds[0]!.received).toMatchObject({ outcome: "received", live: true });
+    expect(alice.inbounds[0]!.received).toMatchObject({ outcome: "received", live: expect.any(LiveInput) });
     await until("the pushed delivery is acknowledged", () => mediator.queues.get(alice.replica.did)?.length === 0, 10_000);
     expect(alice.agent.connections()).toMatchObject([{ live: true }]);
   });

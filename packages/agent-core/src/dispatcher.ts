@@ -109,7 +109,7 @@ export class Dispatcher {
 
   /** A fresh manual action for a message already recorded: the user's retry of one that is prepared, or whose call was refused or lost. */
   retry(messageId: MessageId): Promise<Dispatched> {
-    return this.run(new LiveAction(messageId, "manual"));
+    return this.run(LiveAction.manual(messageId));
   }
 
   /** `cancel`, with the action waiting on the message, if any, dropped first. */

@@ -127,7 +127,7 @@ describe("Dispatcher", () => {
     const s = await scene();
     const sent = await toShortForm(s, MESSAGE);
     await s.dispatcher.run(sent.action);
-    const manual = new LiveAction(MESSAGE, "manual");
+    const manual = LiveAction.manual(MESSAGE);
     expect(await s.dispatcher.run(manual)).toMatchObject({ outcome: "pending" });
     expect(s.timers.waits.map((wait) => wait.cleared)).toEqual([true, false]);
     expect(s.dispatcher.waiting()).toMatchObject([{ messageId: MESSAGE, kind: "manual", attempts: 1 }]);
@@ -135,7 +135,7 @@ describe("Dispatcher", () => {
     s.dispatcher.close();
     expect(s.timers.waits.map((wait) => wait.cleared)).toEqual([true, true]);
     expect(s.dispatcher.waiting()).toEqual([]);
-    expect(await s.dispatcher.run(new LiveAction(MESSAGE, "manual"))).toEqual({ outcome: "none", messageId: MESSAGE, because: "the dispatcher is closed" });
+    expect(await s.dispatcher.run(LiveAction.manual(MESSAGE))).toEqual({ outcome: "none", messageId: MESSAGE, because: "the dispatcher is closed" });
     await s.close();
   });
 });

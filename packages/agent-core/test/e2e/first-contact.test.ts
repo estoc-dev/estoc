@@ -5,6 +5,7 @@ import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, kindOf, type DidId, t
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
 import { FORWARD } from "../../src/protocol/spec.js";
+import { LiveInput } from "../../src/index.js";
 import { newMediator } from "../helpers.js";
 import { foldOf as fold, run, stopAll, until } from "./running.js";
 
@@ -37,7 +38,7 @@ describe("first contact over a mediator", () => {
 
     await until("alice has followed the Ping", () => alice.inbounds.length === 1);
     const [first] = alice.inbounds;
-    expect(first!.received).toMatchObject({ outcome: "received", live: true });
+    expect(first!.received).toMatchObject({ outcome: "received", live: expect.any(LiveInput) });
     const effects = first!.reacted!.effects;
     expect(effects.map((effect) => [effect.effectType, effect.outcome])).toEqual([
       [PURE_ACK_EFFECT, "created"],
@@ -71,7 +72,7 @@ describe("first contact over a mediator", () => {
     expect(await alice.agent.connect()).toMatchObject([{ drained: { acked: 1, ended: "empty" } }]);
     await alice.agent.settled();
     expect(alice.inbounds).toHaveLength(2);
-    expect(alice.inbounds[1]).toMatchObject({ received: { outcome: "received", live: false }, reacted: null, address: null });
+    expect(alice.inbounds[1]).toMatchObject({ received: { outcome: "received", live: null }, reacted: null, address: null });
     const again = await fold(alice);
     expect(again.set.of("message.in")).toHaveLength(2);
     expect(again.inbound.executions.size).toBe(1);

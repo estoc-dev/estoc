@@ -44,6 +44,7 @@ import { rawCidOfBytes, sameDid, scanVault, type Did, type DidId, type DidUrl, t
 
 import { secretsResolverFor, unpack, type DidcommApi, type IMessage, type UnpackMetadata } from "../protocol/didcomm.js";
 import { envelopeHeader } from "../protocol/envelope.js";
+import type { LiveInput } from "../action.js";
 import { ReceiverClosed, ReceiverInUse } from "../errors.js";
 import { pinnedResolver } from "../evidence.js";
 import type { Keyring } from "../keyring.js";
@@ -86,33 +87,34 @@ export type Watch = (fold: VaultFold) => string;
  * observation named, which ends it; terminal; or deferred for
  * something of this runtime's that the fold can show is not ready,
  * with a watch over it. `first` says the vault held no observation of
- * the same input when this one was recorded; `live` says this call may
- * earn the input automatic work, which is decided under the receipt's
- * lock and never later: the observation is the first, and the
- * admission pass run before the lock was released admitted it as the
- * witness its input speaks through. A first observation whose
+ * the same input when this one was recorded; `live` is the authority
+ * to earn the input automatic work, which is minted under the
+ * receipt's lock and never later: the observation is the first, and
+ * the admission pass run before the lock was released admitted it as
+ * the witness its input speaks through. A first observation whose
  * admission waited for evidence is admitted when the evidence comes,
- * by whatever brings it, and that makes no call live. A receipt that
+ * by whatever brings it, and that mints none. A receipt that
  * cannot record for another reason throws instead, and the delivery is
  * not kept.
  */
-export type ReceiptOutcome = { outcome: "received"; cid: EventReference<"message.in">; first: boolean; live: boolean } | { outcome: "terminal"; reason: string } | { outcome: "deferred"; reason: string; watch: Watch };
+export type ReceiptOutcome = { outcome: "received"; cid: EventReference<"message.in">; first: boolean; live: LiveInput | null } | { outcome: "terminal"; reason: string } | { outcome: "deferred"; reason: string; watch: Watch };
 
 export type Receipt = (authenticated: Authenticated) => Promise<ReceiptOutcome>;
 
 /**
  * What became of a delivery. `key` is what it is kept under; null only
- * for a direct post that is not strict JSON. `live` is true of one call
- * alone for any input: the one that recorded the first observation the
- * vault holds of it and had it admitted, before the receipt's lock was
- * released, as the witness its input speaks through. An input the
- * vault already held, delivered again under any delivery and to any
- * receiver, is observed again and is not live; neither is a first
- * observation whose admission still waits, whatever admits it later,
- * nor a delivery only told how it ended before.
+ * for a direct post that is not strict JSON. `live` is the authority
+ * over the input's automatic effects, held by one call alone for any
+ * input: the one that recorded the first observation the vault holds
+ * of it and had it admitted, before the receipt's lock was released,
+ * as the witness its input speaks through. An input the vault already
+ * held, delivered again under any delivery and to any receiver, is
+ * observed again and is not live; neither is a first observation whose
+ * admission still waits, whatever admits it later, nor a delivery only
+ * told how it ended before.
  */
 export type Received =
-  | { outcome: "received"; key: string; cid: EventReference<"message.in">; live: boolean }
+  | { outcome: "received"; key: string; cid: EventReference<"message.in">; live: LiveInput | null }
   | { outcome: "terminal"; key: string | null; reason: string }
   | { outcome: "deferred"; key: string; reason: string };
 
@@ -327,7 +329,7 @@ export class Receiver {
   private enter(key: string, delivery: Delivery): Promise<Received> {
     this.refuseClosed();
     const ended = this.ended.get(key);
-    if (ended !== undefined) return Promise.resolve(ended.outcome === "received" ? { ...ended, live: false } : ended);
+    if (ended !== undefined) return Promise.resolve(ended.outcome === "received" ? { ...ended, live: null } : ended);
     const wait = this.waits.get(key);
     if (wait !== undefined && !wait.retry) {
       this.hold(key, delivery);
@@ -460,7 +462,7 @@ export class Receiver {
     return { outcome: "deferred", key, reason: left };
   }
 
-  private async record(key: string, delivery: Delivery, cid: EventReference<"message.in">, live: boolean): Promise<Received> {
+  private async record(key: string, delivery: Delivery, cid: EventReference<"message.in">, live: LiveInput | null): Promise<Received> {
     this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "received", key, cid, live };

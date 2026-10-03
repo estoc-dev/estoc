@@ -36,7 +36,7 @@ describe("first messages that race", () => {
     // Both wait at the mediator, in the order it took them; the pickup that finds them may also find what the peers answer meanwhile.
     expect(await alice.agent.connect()).toMatchObject([{ unreachable: null, drained: { ended: "empty" } }]);
     await alice.agent.settled();
-    expect(alice.inbounds.slice(0, 2).map(({ received, after, address }) => [received.outcome === "received" && received.live, after!.disposition.status, address!.outcome])).toEqual([
+    expect(alice.inbounds.slice(0, 2).map(({ received, after, address }) => [received.outcome === "received" && received.live !== null, after!.disposition.status, address!.outcome])).toEqual([
       [true, "admitted", "rotated"],
       [true, "admitted", "rotated"],
     ]);
@@ -87,7 +87,7 @@ describe("first messages that race", () => {
       [alice, FROM_ALICE, channelOf(a0, b0)],
       [bob, FROM_BOB, channelOf(b0, a0)],
     ] as const) {
-      expect(party.inbounds.map(({ received }) => received.outcome === "received" && received.live)).toEqual([true, true]);
+      expect(party.inbounds.map(({ received }) => received.outcome === "received" && received.live !== null)).toEqual([true, true]);
       const fold = await foldOf(party);
       expect((await party.agent.records()).channels().map(channelKey)).toEqual([channelKey(channel)]);
       expect(fold.continuity.model.history(channel).links).toEqual([]);

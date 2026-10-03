@@ -88,7 +88,7 @@ describe("what a stranger hands the mediator", () => {
     const { sealer, proof } = await claimingToSucceed(mallory, bob);
     await forwarded(mediator, a0, await sealed(sealer, alice.party.longFormDid, { from_prior: proof, please_ack: [""] } as Partial<IMessage>));
     await until("alice has recorded the claim", () => alice.inbounds.length === 5);
-    expect(alice.inbounds[4]).toMatchObject({ received: { outcome: "received", live: false }, after: { proof: { status: "invalid" }, disposition: { status: "refused" } }, reacted: null, address: null });
+    expect(alice.inbounds[4]).toMatchObject({ received: { outcome: "received", live: null }, after: { proof: { status: "invalid" }, disposition: { status: "refused" } }, reacted: null, address: null });
     expect(queuedFor(mediator, alice)).toBe(0);
     expect(forwardsSeen(mediator)).toBe(forwards + 4);
 
@@ -125,7 +125,7 @@ describe("a peer that writes from the address it rotated away from", () => {
     const forwards = forwardsSeen(mediator);
     await forwarded(mediator, a0, await sealed(await sealerOf(bob, b0), a0, { ...hello("from the old address"), please_ack: [""] }));
     await until("alice has the message from the old address", () => alice.inbounds.length === 3);
-    expect(alice.inbounds[2]).toMatchObject({ received: { outcome: "received", live: false }, after: { proof: { status: "not-present" }, disposition: { status: "ignored-superseded" } }, reacted: null, address: null });
+    expect(alice.inbounds[2]).toMatchObject({ received: { outcome: "received", live: null }, after: { proof: { status: "not-present" }, disposition: { status: "ignored-superseded" } }, reacted: null, address: null });
     expect(forwardsSeen(mediator)).toBe(forwards + 1);
     const fold = await foldOf(alice);
     expect(fold.continuity.head(channelOf(a0, b0))).toEqual(channelOf(a0, b1));

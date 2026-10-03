@@ -10,6 +10,11 @@
  * transport, so that a crash before or after the call, or a call whose
  * outcome is unknown, leaves the message where a fresh manual action is
  * needed and nothing repeats the call on its own.
+ *
+ * The constructors are private so that the package has one entry for
+ * each authority: `LiveAction.manual` for a host's explicit step, and
+ * for the rest the two functions below, which the package keeps to
+ * itself.
  */
 
 import type { EventReference, MessageId } from "@estoc/vault";
@@ -17,13 +22,25 @@ import type { EventReference, MessageId } from "@estoc/vault";
 /** `initial`: minted with the intent by the live event that decided it. `manual`: minted by an explicit later step for a message already recorded. */
 export type ActionKind = "initial" | "manual";
 
+let mintInitial: (messageId: MessageId) => LiveAction;
+let mintInput: (cid: EventReference<"message.in">) => LiveInput;
+
 export class LiveAction {
+  static {
+    mintInitial = (messageId) => new LiveAction(messageId, "initial");
+  }
+
   #spent = false;
 
-  constructor(
+  private constructor(
     readonly messageId: MessageId,
     readonly kind: ActionKind
   ) {}
+
+  /** The explicit manual step for a message already recorded: the user's retry, a completion. */
+  static manual(messageId: MessageId): LiveAction {
+    return new LiveAction(messageId, "manual");
+  }
 
   /** The one invocation is used up: no transport call is made under this action again. */
   get spent(): boolean {
@@ -48,10 +65,24 @@ export class LiveAction {
  * manual completion.
  */
 export class LiveInput {
-  constructor(readonly cid: EventReference<"message.in">) {}
+  static {
+    mintInput = (cid) => new LiveInput(cid);
+  }
+
+  private constructor(readonly cid: EventReference<"message.in">) {}
 
   /** The initial action of an intent this input decided. */
   mint(messageId: MessageId): LiveAction {
-    return new LiveAction(messageId, "initial");
+    return mintInitial(messageId);
   }
+}
+
+/** The initial action of an intent, for the step that decided it under the lock: a send, a rotation's notification. */
+export function initialAction(messageId: MessageId): LiveAction {
+  return mintInitial(messageId);
+}
+
+/** The authority of a receipt over the observation it recorded and had admitted as its input's witness, minted under the receipt's lock. */
+export function liveInput(cid: EventReference<"message.in">): LiveInput {
+  return mintInput(cid);
 }

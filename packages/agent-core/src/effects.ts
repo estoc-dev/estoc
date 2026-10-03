@@ -173,7 +173,7 @@ export async function completeResponse(runtime: VaultRuntime, keys: Keys, execut
     const draft = settled.drafted.find((draft) => draft.effectType === effectType);
     if (draft === undefined) return { effectType, outcome: "none", because: "no operation here gives the input this output" };
     if (draft.outcome === "none" || draft.outcome === "refused") return draft;
-    return { ...draft, action: new LiveAction(draft.messageId, "manual") };
+    return { ...draft, action: LiveAction.manual(draft.messageId) };
   });
   return dispatched(decided, executionId, options);
 }

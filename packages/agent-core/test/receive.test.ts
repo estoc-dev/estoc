@@ -4,6 +4,7 @@ import { encodeLongForm, longToShort, resolveDIDCommDoc, toDIDCommDIDDoc, type D
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
 import { didKeyName, inputDocumentOf, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type MediationId, type PublicKey } from "@estoc/vault";
 
+import { liveInput } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, type IMessage, type Unpacked } from "../src/protocol/didcomm.js";
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
@@ -52,6 +53,7 @@ const pickup = (deliveryId: string): Source => ({ kind: "pickup", mediationId: M
 const DIRECT: Source = { kind: "direct" };
 /** what a receipt standing in for the vault's says it recorded */
 const RECORDED = "019b0000-0000-7000-8000-0000000000ff" as EventReference<"message.in">;
+const LIVE = liveInput(RECORDED);
 
 /** A `did:web` party sealing against its own document and the peers' long forms. */
 async function webSealer(did: string): Promise<Sealer> {
@@ -66,7 +68,7 @@ function addressedTo(packed: string, kid: string): string {
   return JSON.stringify({ ...envelope, recipients: envelope.recipients.map((recipient) => ({ ...recipient, header: { ...recipient.header, kid } })) });
 }
 
-function recording(answer: () => ReceiptOutcome = () => ({ outcome: "received", cid: RECORDED, first: true, live: true })): { receipt: ReceiverOptions["receipt"]; seen: Authenticated[] } {
+function recording(answer: () => ReceiptOutcome = () => ({ outcome: "received", cid: RECORDED, first: true, live: LIVE })): { receipt: ReceiverOptions["receipt"]; seen: Authenticated[] } {
   const seen: Authenticated[] = [];
   return {
     seen,
@@ -153,7 +155,7 @@ describe("the gate before the vault", () => {
     const packed = await sealed(sealer, alice.longFormDid);
     const delivery: Delivery = { packed, source: DIRECT };
 
-    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: true });
+    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: LIVE });
     const resolution = await peerResolutionOf(bob.longFormDid);
     expect(seen.map(({ recipient, sender, plaintext, fromPrior }) => ({ recipient, sender, body: plaintext.body, fromPrior }))).toEqual([
       {
@@ -164,7 +166,7 @@ describe("the gate before the vault", () => {
       },
     ]);
 
-    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: false });
+    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: null });
     expect(seen).toHaveLength(1);
     expect(await trace.read({ type: "envelope.open" })).toHaveLength(1);
 
@@ -393,7 +395,7 @@ describe("the gate before the vault", () => {
     await copy.runtime.ingest(await arrangement());
     expect(await receiver.localStateChanged()).toEqual([]);
     resume();
-    expect(await first).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: true });
+    expect(await first).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: LIVE });
     expect(seen).toHaveLength(1);
     expect(receiver.waiting()).toEqual([]);
     await closeAll(alice, bob, copy);
@@ -415,7 +417,7 @@ describe("the gate before the vault", () => {
       receipt: async ({ recipient }) => {
         calls.push(recipient.didId);
         if (failing) throw new Error("the disk is full");
-        if (recipient.didId !== DID) return { outcome: "received", cid: RECORDED, first: true, live: true };
+        if (recipient.didId !== DID) return { outcome: "received", cid: RECORDED, first: true, live: LIVE };
         return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.dids.entities.get(DID)?.disclosures.length ?? 0) };
       },
     });
@@ -506,7 +508,7 @@ describe("the gate before the vault", () => {
         receipt: async ({ recipient }) => {
           seen.push(recipient.didId);
           if (failing && failure === "write") throw new Error("the disk is full");
-          return { outcome: "received", cid: RECORDED, first: true, live: true };
+          return { outcome: "received", cid: RECORDED, first: true, live: LIVE };
         },
       });
       const delivery: Delivery = { packed: await sealed(await peerSealer(bob), alice.longFormDid), source: PICKUP };
@@ -598,7 +600,7 @@ describe("the gate before the vault", () => {
 
     expect(await receiver.receive(delivery)).toMatchObject({ outcome: "deferred", reason: "the vault is not read: the database is locked; the delivery is left where it came from" });
     expect([receiver.waiting(), seen]).toEqual([[], []]);
-    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: true });
+    expect(await receiver.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: LIVE });
     await closeAll(alice, bob);
   });
 
@@ -688,7 +690,7 @@ describe("the receiver's lifecycle", () => {
     const receipt: ReceiverOptions["receipt"] = async (authenticated) => {
       seen.push(authenticated);
       await gate;
-      return { outcome: "received", cid: RECORDED, first: true, live: true };
+      return { outcome: "received", cid: RECORDED, first: true, live: LIVE };
     };
     const receiver = await receiverOver(alice, { receipt });
     expect(() => new Receiver(alice.runtime, alice.keys, null as unknown as Keyring, { didcomm, receipt })).toThrow(ReceiverInUse);
@@ -701,7 +703,7 @@ describe("the receiver's lifecycle", () => {
     await expect(receiver.receive({ packed: "{}", source: DIRECT })).rejects.toThrow(ReceiverClosed);
     await expect(receiver.pickupHandle(MEDIATION)({ attachmentId: "a", packed: "{}" })).rejects.toThrow(ReceiverClosed);
     release();
-    expect(await first).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: true });
+    expect(await first).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: LIVE });
     await expect(second).rejects.toThrow(ReceiverClosed);
     expect(seen).toHaveLength(1);
     expect(receiver.waiting()).toEqual([]);
