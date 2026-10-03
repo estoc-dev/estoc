@@ -52,13 +52,9 @@ export interface LocalDidEntity {
   readonly live: boolean;
 }
 
-/** One pair the mediator is asked to deliver for: a live DID by its short form and the arrangement that routes it. */
-export type DesiredRecipient = { did: Did; didId: DidId; mediationId: MediationId };
 
 export interface DidFold {
   readonly entities: ReadonlyMap<DidId, LocalDidEntity>;
-  /** the live mediated DIDs, by short form */
-  readonly desiredRecipients: readonly DesiredRecipient[];
   /** the entity a key name derives from, whatever its state, since one entity ID names each key; null for a name no entity here records */
   entityOfKey(name: KeyName): DidId | null;
   /** the entity a spelling belongs to, short or long form; null for a spelling no consistent entity records */
@@ -95,17 +91,8 @@ export function foldDids(set: VaultEventSet, mediations: MediationFold, options:
     byDid.set(did.created.longFormDid, did.didId);
   }
 
-  const desiredRecipients: DesiredRecipient[] = [];
-  for (const did of dids.values()) {
-    const mediationId = did.mediations[0];
-    if (!did.live || did.created === null || mediationId === undefined) continue;
-    desiredRecipients.push({ did: did.created.did, didId: did.didId, mediationId });
-  }
-  desiredRecipients.sort((a, b) => (a.did < b.did ? -1 : a.did > b.did ? 1 : 0));
-
   return {
     entities: dids,
-    desiredRecipients,
     entityOfKey: (name) => byKey.get(name) ?? null,
     entityOfDid: (did) => byDid.get(did) ?? null,
     receipt(didId) {

@@ -30,14 +30,17 @@ const recipientAddedKey = (mediationId: MediationId, didId: DidId): string => `r
 type SharedAddress = LocalDidEntity & { created: VaultData["did.created"] };
 
 /**
- * The DIDs the account is to hold: every entity the arrangement routes
- * that may still receive, retired or not, whose keys the seed derives.
- * By short form, in order.
+ * The DIDs the account is to hold: every entity eligible for receipt
+ * that this arrangement alone routes, retired or not. One whose
+ * receipt is pending is not: while several usable arrangements name
+ * its routing DID, which account holds it is undecided, and an account
+ * holding it meanwhile would keep the one left standing from ever
+ * holding it. By short form, in order.
  */
 function sharedAddresses(fold: VaultFold, mediationId: MediationId): SharedAddress[] {
   const addresses: SharedAddress[] = [];
   for (const entity of fold.dids.entities.values()) {
-    if (entity.created === null || entity.identity !== "verified" || fold.dids.receipt(entity.didId) === "terminal") continue;
+    if (entity.created === null || fold.dids.receipt(entity.didId) !== "eligible") continue;
     if (entity.mediations.includes(mediationId)) addresses.push(entity as SharedAddress);
   }
   return addresses.sort((a, b) => (a.created.did < b.created.did ? -1 : a.created.did > b.created.did ? 1 : 0));

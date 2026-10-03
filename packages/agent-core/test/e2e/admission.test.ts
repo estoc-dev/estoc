@@ -21,7 +21,7 @@ const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
 
-const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
+const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.replica.did)?.length ?? 0;
 
 const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
@@ -59,7 +59,8 @@ async function acquainted(): Promise<{ mediator: FakeMediator; alice: Running; b
  * The vault opened again over the same file, and its history merged
  * into a replica restored from before the batch: neither open records
  * an admission that was missing, tells the host of a delivery or calls
- * the transport, and both replicas read the same records.
+ * the transport, and once the restored replica's own enrollment is
+ * merged back both replicas hold the same events and read the same records.
  */
 async function converging(alice: Running, snapshot: string, mediator: FakeMediator): Promise<void> {
   const forwards = forwardsSeen(mediator);
@@ -76,6 +77,7 @@ async function converging(alice: Running, snapshot: string, mediator: FakeMediat
   expect(await imported(other, await snapshotOf(alice))).toMatchObject({ added: expect.any(Number) });
   expect(await other.agent.localStateChanged()).toEqual([]);
   expect([other.inbounds, forwardsSeen(mediator)]).toEqual([[], forwards]);
+  expect(await imported(alice, await snapshotOf(other))).toMatchObject({ added: 1 });
   expect(eventIds(await foldOf(other))).toEqual(eventIds(await foldOf(alice)));
   expect(await recordsOf(other)).toEqual(before);
 }

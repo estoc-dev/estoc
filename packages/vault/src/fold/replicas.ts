@@ -78,8 +78,7 @@ export function foldReplicas(set: VaultEventSet, options: ReplicaFoldOptions = {
       } else if (creation === null) {
         faults.push(`the creations of mediation ${binding.mediationId} disagree`);
       } else {
-        if (creation.profile === undefined) faults.push(`mediation ${binding.mediationId} is no replica-mediation arrangement`);
-        else if (accountOf(creation.me.did) !== binding.account) faults.push("the grant's account is not the arrangement's");
+        if (accountOf(creation.me.did) !== binding.account) faults.push("the grant's account is not the arrangement's");
         if (creation.mediatorDid !== binding.mediator) faults.push("the grant's mediator is not the arrangement's");
       }
     }

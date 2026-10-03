@@ -1,5 +1,5 @@
 /**
- * The line to the mediator: what every ritual (coordinate-mediation,
+ * The line to the mediator: what every ritual (replica-mediation,
  * messagepickup) and every pickup rides. Sealing to the mediator from
  * the identity it knows this vault by — the mediation arrangement's
  * own DID — opening what it sends back, the HTTP round trip a ritual

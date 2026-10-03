@@ -108,8 +108,8 @@ is authoritative.
 3. **Portable folds have no current-runtime parameter.** Event `author` is
    provenance, not ownership of communication state.
 4. **Mediation and communication keys are vault-scoped.** The active full
-   runtime derives them from the vault seed and can reconcile recipient
-   registration, receive and expose pending delivery for explicit manual action.
+   runtime derives them from the vault seed and can have the account hold
+   its addresses, receive and expose pending delivery for explicit manual action.
 5. **Stable IDs identify exact manual retries.** A logical message, an encrypted package
    and a mediator delivery have different IDs and different lifetimes.
 6. **Duplicate work is expected.** Manual retry and mailbox redelivery may repeat work; recovery grants
@@ -622,17 +622,13 @@ This intent creates the stable vault-controlled identity for one mediation
 arrangement. `me.keyName` MUST use the arrangement ID and `me.did` MUST match the
 seed-derived key.
 
-`profile` is OPTIONAL. Without it the arrangement is an ordinary Coordinate
-Mediation account. Its only value is `"replica-mediation/1.0"`: the arrangement
-is an account of the mediator's replica-mediation protocol, whose mail each
-replica picks up under its own DID. Such an arrangement records `me.did` as a
-`did:peer:4` long form, uses a mediation ID and account no ordinary arrangement
-has used, and is never an ordinary arrangement retagged. `null` and every other
-value are invalid. A reader that does not know the member refuses the payload
-and so has no such arrangement, instead of treating it as an ordinary one.
+Every arrangement is an account of the mediator's replica-mediation protocol,
+whose mail each replica picks up under its own DID. `me.did` is recorded as a
+`did:peer:4` long form; a short form is an invalid payload. The payload names
+no profile: there is one kind of arrangement.
 
-Repeating the same arrangement ID with different values, `profile` included, is
-an integrity conflict. A new attempt against the same mediator uses a new ID.
+Repeating the same arrangement ID with different values is an integrity
+conflict. A new attempt against the same mediator uses a new ID.
 
 <a id="mediation-granted"></a>
 
@@ -901,14 +897,18 @@ First disclosure exposes the validated `did:peer:4` long form.
 }
 ```
 
-Retirement is terminal for new sending and disclosure using this DID. Its mediated recipient registration leaves the desired set.
-It does not erase keys, documents, received messages or continuity evidence.
+Retirement is terminal for new sending and disclosure using this DID.
+It does not erase keys, documents, received messages or continuity evidence,
+and it takes the DID off no mediator: the DID stays in the desired recipient
+set of [section 5.7](#route-did-and-key-fold), held by its account.
 
 A retained exact local key remains eligible for authenticated channel
 receipt, including after DID retirement; a mediated DID's key waits while
 no usable arrangement routes it. This rule applies equally to publicly disclosed and privately
-allocated addresses. No renewed registration is required to drain retained
-deliveries. An invitation on a retired local DID is unavailable.
+allocated addresses. Receipt does not wait for a `recipient-add`: an
+addition the mediator has not confirmed to this runtime is asked for on
+connection as any is, and that asks nothing new of sending or disclosure.
+An invitation on a retired local DID is unavailable.
 [relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;
 [distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
 
@@ -930,8 +930,8 @@ For each mediation ID:
 - one consistent `mediation.granted` makes it usable;
 - any `mediation.retired` makes it terminal; and
 - conflicting create or grant values make it unusable and visible as a
-  conflict, as does a replica-mediation arrangement granted a routing DID
-  other than its mediator.
+  conflict, as does an arrangement granted a routing DID other than its
+  mediator.
 
 The preferred mediation is the latest `mediation.selected`. If it is missing,
 ungranted, retired or conflicted, preferred is null and policy must select
@@ -945,15 +945,15 @@ instead of removing it. Allocation/disclosure
 policy has no effect on this set. An unpreferred mediation leaves only when no
 such dependency remains or it becomes unusable.
 
-This is independent of the desired recipient registration set: draining
-retained messages does not re-register a retired DID. A retired mediation
-routes nothing and is never required; receipt under a DID it routed waits
-for another usable arrangement naming the routing DID. Temporary
-unavailability does not erase dependencies.
+This set and the desired recipient set of [section 5.7](#route-did-and-key-fold)
+both serve receipt: a retired DID stays in both while an arrangement routes it.
+A retired mediation routes nothing and is never required; receipt under a DID
+it routed waits for another usable arrangement naming the routing DID.
+Temporary unavailability does not erase dependencies.
 
-The active runtime reconciles recipients and drains account-scoped pickup on
-every reachable mediation in this set. A hosted runtime receives no special
-ownership.
+The active runtime has the account hold its recipients and, as a replica,
+drains its own pickup on every reachable mediation in this set. A hosted
+runtime receives no special ownership.
 
 For each replica ID, grants equal in `account`, `mediation_id`, `mediator`,
 `replica_id` and `replica_long_form` are one binding, whatever `kid` each was
@@ -961,8 +961,7 @@ signed under and whoever authored the events. Different bindings for one
 replica ID are a conflict; no canonical-order winner is chosen. A replica with
 one binding is a member of its arrangement when all of these hold:
 
-- the arrangement has one consistent creation naming the replica-mediation
-  profile;
+- the arrangement has one consistent creation;
 - the grant's `account` is the short form of that creation's `me.did` and its
   `mediator` equals `mediatorDid`;
 - the grant's `kid` spells the account as its short form or as exactly the
@@ -1016,26 +1015,29 @@ may name a routing DID are an open set, and a grant that has not arrived
 MUST NOT be mistaken for one that never will. A temporarily unavailable
 endpoint is not a fold state. A direct DID waits only for its key check.
 
-For recipient reconciliation, a live DID is a non-retired, conflict-free
-entity satisfying those local identity and route checks. Current recipient
-registration is not a prerequisite for entering the desired set; reconciliation
-establishes it. Many DIDs may send through one arrangement or endpoint. This
-is transport reuse, not DID or contact equivalence.
+The **desired mediator recipient set** contains exactly each
+`(canonical DID short form, mediation ID)` pair for a mediated DID that is not
+terminal for receipt and the one usable arrangement that routes it. The DID's
+identity must be verified by the seed; a DID whose route is pending enters no
+pair until one usable arrangement routes it. Retirement does not take a DID
+out of the set: it ends sending and disclosure, not the delivery of what is
+still addressed there. Whether the mediator holds the DID yet is not a
+condition of entering; the addition establishes that. Many DIDs may send
+through one arrangement or endpoint. This is transport reuse, not DID or
+contact equivalence.
 
-The desired mediator recipient set contains exactly each
-`(canonical DID short form, mediation ID)` pair for a live mediated DID and
-the arrangement that routes it. On every connection the phase-1 runtime queries each mediator
-and reconciles that desired set with ordinary Coordinate Mediation
-`recipient-query` and `recipient-update`. Current registration is runtime state,
-not portable vault state. A restore re-queries the mediator before disclosure
-or submission.
-
-If the mediator reports a registered recipient with no retained local DID
-entity, the runtime MUST expose a bounded visible local diagnostic of the
-registration/state mismatch. The observation does not recreate a DID or
-establish why its local record is absent. Reconciliation still removes
-registrations outside the desired set. Other registration diagnostics MAY be
-kept in local trace.
+On every connection, once its own replica is confirmed added, the phase-1
+runtime asks the mediator, with `recipient-add` under a proof the DID signed,
+to hold each DID of that set the mediator has not confirmed holding for this
+runtime; what it confirmed is kept in the runtime's local options, not in the
+vault, and is asked for no more, and a confirmation lost costs one request
+more, which the mediator answers as it did the first. Nothing is taken off the
+mediator: a retired DID stays held and keeps receiving under
+[section 5.5](#did-retired); a DID a restored vault does not know stays held
+too, and its mail is discarded on arrival only as the terminal wrong-recipient
+input of [relationships.md](relationships.md#hard-pre-vault-gate), a
+recoverable prerequisite leaving it waiting instead. Registration diagnostics
+MAY be kept in local trace.
 
 Direct DIDs do not enter that set. They lead to a full vault runtime
 or ingress service without naming a replica as the application recipient.
@@ -1044,8 +1046,8 @@ The fold also maintains a reverse map from every local communication key name
 to exactly one DID entity. Both validated Peer spellings map to that entity,
 but a recipient fragment must still identify its exact key-agreement method.
 The map retains retired DIDs and DIDs whose arrangements retired for historical
-input and proof joins. Present liveness controls sending and desired
-registration; new receipt uses [section 5.5](#did-retired) and [relationships.md section 9.2](relationships.md#hard-pre-vault-gate)'s
+input and proof joins. Present liveness controls sending and disclosure;
+receipt, and with it the desired recipient set, uses [section 5.5](#did-retired) and [relationships.md section 9.2](relationships.md#hard-pre-vault-gate)'s
 eligibility rule for live and retained historical addresses.
 Ambiguous or inconsistent mapping is an integrity conflict and prevents
 cryptographic use.
@@ -2423,8 +2425,9 @@ list when no new objects are needed; `Vault.events` is read-only.
    never infer a past acceptance. No admission is created for an unadmitted
    superseded peer. Relevant evidence, rotation and denial commits repeat this
    pass during operation; no reopen or redelivery is required.
-7. Start recipient reconciliation and pickup. Enable
-   new user sends and manual actions only after normal runtime/evidence checks.
+7. Enroll as a replica, have the account hold the desired recipients, and
+   start pickup. Enable new user sends and manual actions only after normal
+   runtime/evidence checks.
 
 Open/import/restore MUST NOT dispatch historical work under
 [dispatch authority](channels.md#fixed-outbound-channel). Duplicate delivery of
@@ -2439,14 +2442,17 @@ no exactly-once claim across loss of authoritative history.
 
 1. append `mediation.created` before the network request;
 2. derive its vault-scoped account key;
-3. perform ordinary Coordinate Mediation;
-4. on grant, append `mediation.granted`;
-5. reconcile desired recipient DIDs through Coordinate Mediation; and
-6. append `mediation.selected` when policy chooses it for new mediated DIDs.
+3. register the account with the mediator (`account-register`);
+4. on the registration's reply, append `mediation.granted` with the mediator's
+   DID as routing DID;
+5. append `replica.created` for this runtime and enroll it (`replica-add`);
+6. have the account hold the desired recipient DIDs (`recipient-add`); and
+7. append `mediation.selected` when policy chooses it for new mediated DIDs.
 
-The phase-1 runtime uses ordinary account-scoped Message Pickup. It sends no
-`replica_id` to the mediator. A network failure after step 1 leaves a retryable
-intent, not a half identity.
+The phase-1 runtime picks up as a replica, under the replica's own DID. A host
+keeps one arrangement with a mediator: asked for the same mediator again, it
+selects the arrangement that stands rather than creating another. A network
+failure after step 1 leaves a retryable intent, not a half identity.
 
 <a id="163-create-a-communication-did"></a>
 
@@ -2476,7 +2482,8 @@ reduce linkability, but route choice does not establish channel authority.
 ### 13.4 Disclose an address
 
 Create or select a live DID under [section 13.3](#create-a-communication-did),
-reconcile the arrangement that routes it and verify recipient registration. Commit
+have the account of the arrangement that routes it hold the DID and verify the
+mediator confirmed it. Commit
 [did.disclosed](#did-disclosed), fixing its form before
 exposing the long form through the chosen discovery transport.
 
@@ -2621,9 +2628,10 @@ A portable SQLite restore creates a new local `replica_id` and
 them only with the old writer permanently stopped under
 [vault-sqlite.md section 12.3](vault-sqlite.md#exact-local-move). The restored
 runtime derives the mediation and communication keys named by retained entity
-records, reconciles required recipients using ordinary Coordinate Mediation,
-drains the account-scoped mailbox, and exposes pending outbox records for manual
-action. Opening never
+records, enrolls as a new replica of each required arrangement, has the account
+hold the required recipients, drains its own mailbox, and exposes pending outbox
+records for manual action. Mail the mediator fanned out to the earlier replica
+before the restore stays with that replica. Opening never
 supplies initial or retry dispatch authority, even after an exact local move.
 It also reconciles unfinished committed inbound work under [section 13.1](#open-the-writable-full-runtime),
 including observations already pickup-ACKed before the snapshot. Local queue
@@ -2634,9 +2642,9 @@ absent after restore. The seed alone cannot reconstruct the missing UUIDv7
 entity IDs in its key names. Once local recipient state is authoritative,
 deliveries with no known or recoverably pending recipient mapping follow the
 terminal wrong-recipient gate and its bounded visible diagnostic under
-[relationships.md](relationships.md#hard-pre-vault-gate). Ordinary recipient
-reconciliation removes registrations outside the restored desired set and
-reports unknown registered recipients under [section 5.7](#route-did-and-key-fold).
+[relationships.md](relationships.md#hard-pre-vault-gate). Such an address stays
+held by the account under [section 5.7](#route-did-and-key-fold); nothing is
+taken off the mediator.
 
 A snapshot can omit a known peer rotation and its admission history. In that
 case restore cannot reconstruct the missing restriction or the exact past
@@ -2880,7 +2888,7 @@ derivation requires a new vault version.
 
 ### Lifecycle, erasure and restore (VE-50–VE-55)
 
-- <a id="ve-50"></a> **VE-50.** Desired registration includes each live mediated DID with the arrangement that routes it. Retained eligible old DIDs can drain receipt without requiring continuity history.
+- <a id="ve-50"></a> **VE-50.** Desired registration includes each mediated DID that may still receive, retired included, with the arrangement that routes it. Retained eligible old DIDs can drain receipt without requiring continuity history.
 
 - <a id="ve-51"></a> **VE-51.** Each local DID derives fixed authentication and key-agreement keys and
     sends where its document says. Rotation creates another entity; the local
@@ -2889,9 +2897,9 @@ derivation requires a new vault version.
     erasure closure. Importing a distinct event CID for an already erased
     message/root relation cannot re-hold that contribution or require its bytes.
     A different message's non-erased contribution can still retain the same root.
-- <a id="ve-53"></a> **VE-53.** SQLite restore creates fresh local IDs, restores state and reconciles pickup, but pending outbounds require manual action. Exact moves require a stopped source and also grant no dispatch by opening.
+- <a id="ve-53"></a> **VE-53.** SQLite restore creates fresh local IDs, restores state and picks up as a new replica, but pending outbounds require manual action. Exact moves require a stopped source and also grant no dispatch by opening.
 
-- <a id="ve-54"></a> **VE-54.** Open/restore uses ordinary account-scoped pickup and exposes pending outbounds for manual action without starting another protocol.
+- <a id="ve-54"></a> **VE-54.** Open/restore picks up as a replica of each arrangement's account, under the replica's own DID, and exposes pending outbounds for manual action without starting another protocol.
 - <a id="ve-55"></a> **VE-55.** Shuffling the same event set leaves every phase-1 fold result unchanged.
 
 <a id="commit-ack-and-retention-regressions-ve-56-ve-72"></a>
@@ -3154,7 +3162,7 @@ derivation requires a new vault version.
 
 ### Replica-mediation membership (VE-158–VE-161)
 
-- <a id="ve-158"></a> **VE-158.** mediation.created without profile is an ordinary arrangement. Its only profile value is "replica-mediation/1.0", with me.did a did:peer:4 long form; null and other values are invalid. Creations of one arrangement that differ only in profile disagree. A replica-mediation arrangement granted a routing DID other than its mediatorDid is a conflict.
+- <a id="ve-158"></a> **VE-158.** mediation.created records me.did as a did:peer:4 long form and names no profile; a short form or a profile member is an invalid payload. An arrangement granted a routing DID other than its mediatorDid is a conflict.
 
 - <a id="ve-159"></a> **VE-159.** replica/<replicaId>/me derives a replica's DID with its mediator as the only DIDComm service: the same replica ID and mediator give the same DID, another mediator or replica ID another DID. No payload field accepts a replica key name.
 

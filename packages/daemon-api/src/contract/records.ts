@@ -18,7 +18,7 @@ export interface Snapshot {
    * The vault was restored from a backup and the person has not yet
    * been told what a restore cannot bring back. Until `explainedRestore`
    * commits, the daemon refuses user sends and manual dispatch;
-   * receiving, reconciliation and what the runtime owes on its own go on.
+   * receiving, holding its addresses and what the runtime owes on its own go on.
    */
   restoreUnexplained: boolean;
   mediations: MediationRecord[];
@@ -36,8 +36,6 @@ export interface Snapshot {
 export interface MediationRecord {
   mediationId: MediationId;
   mediatorDid: string | null;
-  /** the mediation profile the arrangement was created under; null for an ordinary one */
-  profile?: string | null;
   selected: boolean;
   usable: boolean;
   /** why it was retired; null while it stands */

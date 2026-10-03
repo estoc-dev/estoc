@@ -6,15 +6,12 @@
   arrangement itself, and `setMediator` records no route. The test
   corpus is regenerated without `route.configured` events; a vault
   written by an earlier daemon is read anew.
-- **A mediator can be arranged with as a replica-mediation account**:
-  `setMediator(mediatorDid, profile?)` given `"replica-mediation/1.0"`
-  makes the arrangement under that profile, enrolls this runtime in it
-  as a replica and selects it; with `null`, or no profile, it makes an
-  ordinary arrangement, granted as before. The arrangement that
-  already stands with the mediator under the profile asked for is the
-  one selected, so an ordinary arrangement made earlier is neither
-  converted nor reused for the other profile. A mediator that does not
-  offer replica-mediation refuses the enrollment and the call fails. A
+- **Every arrangement is a replica-mediation account**:
+  `setMediator(mediatorDid)` makes the one arrangement with that
+  mediator when none stands, enrolls this runtime in it as a replica
+  and selects it; the arrangement that already stands with the mediator
+  is the one selected again. A mediator that does not offer
+  replica-mediation refuses the enrollment and the call fails. A
   backup restored into a fresh runtime enrolls that runtime as a replica
   of its own at its first connection, and each replica picks up its own
   copy of the account's mail. A runtime's files moved or copied as they
@@ -24,10 +21,20 @@
   arrangement can each replace a private address and leave the peer no
   channel to write to: until one runtime alone is made to answer, the
   profile is for one live runtime at a time. Once its replica intent is
-  recorded, a runtime enrolls only in that arrangement.
-- What a replica-mediation mediator confirmed is kept in the runtime's
-  local options, so a reopened vault asks for none of it again.
-- A `MediationRecord` carries `profile`.
+  recorded, a runtime enrolls only in that arrangement: asked for another
+  mediator, `setMediator` refuses before writing anything. Two calls at
+  once for one mediator make one arrangement.
+- What the mediator confirmed is kept in the runtime's local options, so
+  a reopened vault asks for none of it again. Nothing is taken off a
+  mediator any more: a vault restored from before an address was made
+  leaves that address held by the account, its mail discarded on
+  arrival, and a daemon closing waits only for the requests its agent
+  has out.
+- A `MediationRecord` carries no `profile`; a `ConnectionRecord` carries
+  `recipients`, what the connection had the account hold, in place of
+  `reconciled` and `unknownRegistrations`. The test corpus is
+  regenerated: its arrangement is enrolled in, with a `replica.created`
+  of the recording runtime.
 
 ## 0.4.0 — 2026-09-29
 

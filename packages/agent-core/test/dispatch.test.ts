@@ -5,12 +5,11 @@ import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@est
 import { EMPTY_MESSAGE_TYPE, PURE_ACK_EFFECT, channelOf, scanVault, vaultDraft, type DidId, type MessageId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { ENCRYPTED_MIME, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
+import { ENCRYPTED_MIME, secretsResolverFor } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import { RECIPIENT, RECIPIENT_QUERY } from "../src/protocol/mediation.js";
-import { AgentTrace, Keyring, LiveAction, UnknownEntity, automaticDraft, cancel, completeResponse, createVault, dispatch, pinnedResolver, prepare, reconcile, send, unpack, type Content, type DispatchOptions, type Dispatched } from "../src/index.js";
+import { AgentTrace, Keyring, LiveAction, UnknownEntity, automaticDraft, cancel, completeResponse, createVault, dispatch, pinnedResolver, prepare, send, unpack, type Content, type DispatchOptions, type Dispatched } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { carrierWaitingForIssuer, delivered, didcomm, directParty, issuerRecovered, mediatedParty, memoryDriver, newMediator, observed, posting, proofOfSuccession, received, refuseSubmissions, ticking, type DirectParty, type MediatedParty } from "./helpers.js";
+import { carrierWaitingForIssuer, delivered, didcomm, directParty, issuerRecovered, mediatedParty, memoryDriver, newMediator, observed, posting, proofOfSuccession, received, refuseSubmissions, ticking, type DirectParty, type MediatedParty, holdAddresses } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -472,14 +471,14 @@ describe("dispatch through a mediator", () => {
   test("a recipient behind a mediator gets the envelope inside a forward sealed to the mediator alone, under the package's ID, and it arrives intact", async () => {
     const mediator = await newMediator();
     const bob = await mediatedParty(mediator, 2, BOB);
-    await reconcile(bob.link, bob.runtime, bob.keys, bob.mediationId);
+    await holdAddresses(bob);
     const alice = await directParty(1, ALICE_ENDPOINT, ALICE);
     const trace = await AgentTrace.open(alice.runtime.local);
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     const result = submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: mediator.fetch, trace }));
 
     expect(mediator.seenTypes).toContain(FORWARD);
-    const queued = mediator.queues.get(bob.created.data.me.did) ?? [];
+    const queued = mediator.queues.get(bob.replica.did) ?? [];
     expect(queued).toHaveLength(1);
     const envelope = await envelopeOf(alice, MESSAGE);
     expect(parseStrict(queued[0]!.packed)).toEqual(parseStrict(envelope));
@@ -501,29 +500,31 @@ describe("dispatch through a mediator", () => {
     const carol = await mediatedParty(mediator, 3, CAROL);
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const wire = posting(accepted);
-    const links = (party: MediatedParty) => (mediationId: string) => (mediationId === party.mediationId ? party.link : null);
+    const through = (party: MediatedParty) => ({ links: (mediationId: string) => (mediationId === party.mediationId ? party.link : null), confirmations: party.confirmations });
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
 
     const unlinked = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch });
     expect(unlinked).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((unlinked as { because: string }).because).toMatch(/no link to the mediator/);
+    const unconfirmed = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, links: through(alice).links });
+    expect((unconfirmed as { because: string }).because).toMatch(/could not be asked to hold .*confirmations are not given/);
     alice.offline.reason = "no route to host";
-    const unreachable = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, links: links(alice) });
+    const unreachable = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) });
     expect((unreachable as { because: string }).because).toMatch(/could not be asked to hold .*no route to host/);
     alice.offline.reason = null;
-    expect(mediator.recipients.has(alice.did)).toBe(false);
+    expect(mediator.sharedRecipients.has(alice.did)).toBe(false);
     expect(wire.posts).toEqual([]);
     expect(sent.action.spent).toBe(false);
 
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, links: links(alice) }));
-    expect(mediator.recipients.has(alice.did)).toBe(true);
+    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) }));
+    expect(mediator.sharedRecipients.has(alice.did)).toBe(true);
     expect(wire.posts).toHaveLength(1);
     expect(wire.posts[0]!.url).toBe(BOB_ENDPOINT);
     expect(await openedBy(bob, alice, wire.posts[0]!.body)).toMatchObject({ id: MESSAGE, from: alice.longFormDid });
 
-    mediator.refuse.add(carol.did);
+    mediator.refuseShared.add(carol.did);
     const fromCarol = await send(carol.runtime, carol.keys, { channel: { localDid: carol.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
-    const refused = await dispatch(carol.runtime, carol.keys, fromCarol.action, { didcomm, fetch: wire.fetch, links: links(carol) });
+    const refused = await dispatch(carol.runtime, carol.keys, fromCarol.action, { didcomm, fetch: wire.fetch, ...through(carol) });
     expect((refused as { because: string }).because).toMatch(/does not hold/);
     expect(wire.posts).toHaveLength(1);
 
@@ -531,28 +532,8 @@ describe("dispatch through a mediator", () => {
     expect((await fold(carol)).continuity.confirmedBy(carol.did, bob.did)).not.toBeNull();
     submitted(await dispatch(carol.runtime, carol.keys, fromCarol.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(2);
-    expect(mediator.recipients.has(carol.did)).toBe(false);
+    expect(mediator.sharedRecipients.has(carol.did)).toBe(false);
     await closeAll(alice, carol, bob);
   });
 
-  test("a mediator that pages its recipients without end holds up neither the message nor its cancellation: the attempt is refused after the page that made no progress, the action stays live, and the cancel goes through", async () => {
-    const mediator = await newMediator();
-    const alice = await mediatedParty(mediator, 1, ALICE);
-    const bob = await directParty(2, BOB_ENDPOINT, BOB);
-    const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const established = mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY).length;
-    mediator.intercept = (msg: IMessage, from) =>
-      msg.type === RECIPIENT_QUERY ? mediator.reply(RECIPIENT, from!, { dids: [{ recipient_did: alice.did }], pagination: { count: 1, offset: (msg.body as { paginate: { offset: number } }).paginate.offset, remaining: 1 } }, msg.id) : undefined;
-    const attempt = dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, links: () => alice.link });
-    const cancelling = cancel(alice.runtime, alice.keys, MESSAGE);
-    const refused = await attempt;
-    expect(refused).toMatchObject({ outcome: "pending", messageId: MESSAGE });
-    expect((refused as { because: string }).because).toMatch(/could not be asked to hold .*recipient-query lists .* again at offset 1/);
-    expect(mediator.seenTypes.filter((type) => type === RECIPIENT_QUERY)).toHaveLength(established + 2);
-    expect(sent.action.spent).toBe(false);
-    expect(await cancelling).toMatchObject({ outcome: "cancelled", messageId: MESSAGE });
-    expect(wire.posts).toEqual([]);
-    await closeAll(alice, bob);
-  });
 });

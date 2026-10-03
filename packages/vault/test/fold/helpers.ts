@@ -122,7 +122,7 @@ export function expectOrderFree(events: readonly Event[], fold: (set: VaultEvent
 
 /** A mediation created, granted and selected. */
 export function mediatedRoute(scene: Scene, keys: { me: Did }, mediationId = MEDIATION, routingDid = ROUTING_DID): void {
-  scene.add("mediation.created", { mediationId, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${mediationId}/me` as KeyName, did: keys.me } });
+  scene.add("mediation.created", { mediationId, mediatorDid: routingDid, me: { keyName: `mediation/${mediationId}/me` as KeyName, did: keys.me } });
   scene.add("mediation.granted", { mediationId, routingDid });
   scene.add("mediation.selected", { mediationId });
 }

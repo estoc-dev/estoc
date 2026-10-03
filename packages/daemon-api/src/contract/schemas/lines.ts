@@ -1,17 +1,14 @@
 import { z } from "zod";
 
-import type { ConnectionRecord, DeliverySource, DiscardRecord, DrainRecord, Lines, LinesState, LogLine, ReconciliationRecord, WaitingDeliveryRecord } from "../lines.js";
+import type { ConnectionRecord, DeliverySource, DiscardRecord, DrainRecord, Lines, LinesState, LogLine, RecipientsRecord, WaitingDeliveryRecord } from "../lines.js";
 import { epoch, mediationId, revision } from "./values.js";
 
 const strings = z.array(z.string());
 
-export const reconciliationRecord: z.ZodType<ReconciliationRecord> = z.object({
-  desired: strings,
-  held: strings,
+export const recipientsRecord: z.ZodType<RecipientsRecord> = z.object({
+  wanted: strings,
   added: strings,
-  removed: strings,
-  refused: strings,
-  unknown: strings,
+  refused: z.array(z.object({ did: z.string(), because: z.string() })),
 });
 
 export const drainRecord: z.ZodType<DrainRecord> = z.object({ acked: z.int().nonnegative(), ended: z.enum(["empty", "left", "rounds"]) });
@@ -19,8 +16,7 @@ export const drainRecord: z.ZodType<DrainRecord> = z.object({ acked: z.int().non
 export const connectionRecord: z.ZodType<ConnectionRecord> = z.object({
   mediationId,
   unreachable: z.string().nullable(),
-  reconciled: reconciliationRecord.nullable(),
-  unknownRegistrations: strings,
+  recipients: recipientsRecord.nullable(),
   drained: drainRecord.nullable(),
   live: z.boolean(),
 });

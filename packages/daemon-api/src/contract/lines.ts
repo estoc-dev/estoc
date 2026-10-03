@@ -6,18 +6,14 @@
 
 import type { Epoch, MediationId, Revision } from "./ids.js";
 
-/** What one reconciliation of a mediator's registrations found; nothing here says whether the mediator acted on it. */
-export interface ReconciliationRecord {
-  /** the live DIDs on the arrangement's mediated routes: what the mediator is to hold */
-  desired: string[];
-  /** what the mediator held before this run */
-  held: string[];
+/** What the last connection had the account hold at its mediator. A DID among `refused` is not held, and is asked for again by the next connection. */
+export interface RecipientsRecord {
+  /** the DIDs the account is to hold, by short form */
+  wanted: string[];
+  /** those this connection asked for and the mediator confirmed */
   added: string[];
-  removed: string[];
-  /** what the mediator would not add or remove; a desired DID among them is not registered */
-  refused: string[];
-  /** what the mediator held that no DID this vault ever created accounts for: asked to be removed */
-  unknown: string[];
+  /** those not added, and why */
+  refused: { did: string; because: string }[];
 }
 
 export interface DrainRecord {
@@ -32,9 +28,7 @@ export interface ConnectionRecord {
   mediationId: MediationId;
   /** why the last connection stopped short; null when it ran through */
   unreachable: string | null;
-  reconciled: ReconciliationRecord | null;
-  /** registrations a reconciliation found that no DID of the vault accounts for, a bounded first few */
-  unknownRegistrations: string[];
+  recipients: RecipientsRecord | null;
   drained: DrainRecord | null;
   /** whether the socket is open, or opening */
   live: boolean;

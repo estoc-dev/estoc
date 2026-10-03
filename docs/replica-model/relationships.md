@@ -79,8 +79,9 @@ A conforming implementation uses:
 - `distributed-delivery/1.0`; and
 - [vault-events.md](vault-events.md).
 
-Phase 1 uses ordinary Coordinate Mediation and account-scoped Message Pickup
-when a mediator is used.
+Phase 1 uses the mediator's replica-mediation protocol when a mediator is
+used: one account per arrangement, each runtime a replica picking up under its
+own DID.
 
 Every instruction to append an event in this document means
 `Vault.commit(objects, drafts)`, with an empty object list when none are new;
@@ -288,8 +289,10 @@ wrong-recipient input: a mediated delivery MUST be pickup-ACKed and MUST create
 no `message.in`, contact or response effect.
 
 Input to an eligible retired local key MUST pass through ordinary
-decryption, authentication and durable receipt. It does not require renewed
-recipient registration. Channel denials and
+decryption, authentication and durable receipt. It does not wait for a
+`recipient-add`: the DID stays in the desired recipient set under
+[vault-events.md section 5.7](vault-events.md#route-did-and-key-fold), and an addition the
+mediator has not confirmed to this runtime is asked for on connection as any is. Channel denials and
 the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target) still govern subsequent work. Its mediation stays in the required
 receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while the
 arrangement that routes it is usable.
@@ -682,7 +685,7 @@ network prerequisite attempt budget per active sequence = 32
 
 These network bounds apply to mediation and transport prerequisites, not
 phase-1 channel DID or predecessor-proof resolution, which is local. Pickup and
-recipient reconciliation may retry normally;
+recipient addition may retry normally;
 they are not replay of a user message.
 
 Message retries and new sends follow [dispatch authority](channels.md#fixed-outbound-channel):
@@ -857,4 +860,4 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-67"></a> **RZ-67.** A snapshot retains disclosed A0 but predates Alice's (A0,B0) to A1 decision, whose proof Bob has verified. After restoring it, eligible live input from B0 at A0 may select A1' because the earlier decision is absent. A queued message can supply that input even when the snapshot has no prior B0-channel history. Bob retains both valid replacement proofs and exposes the fork as a conflict: no default send head in that context and no authority through its conflicted continuity. Otherwise eligible authenticated receipt still commits and pickup-ACKs, and recorded outcomes remain intact. Phase 1 has no operation to choose a branch or clear the conflict. Communication may be established independently from a fresh local DID without resolving the old context.
 
-- <a id="rz-68"></a> **RZ-68.** A local DID created after a snapshot is absent after restoring that snapshot; the seed alone cannot reconstruct its UUIDv7 entity ID and key names. Once local recipient state is authoritative, a delivery with no known or recoverably pending recipient mapping follows the terminal wrong-recipient gate, with pickup ACK when mediated, no message.in or response, and a bounded visible diagnostic. Reconciliation removes recipient registrations outside the desired set; an unknown registered recipient produces a bounded visible registration/state-mismatch diagnostic without recreating a DID or asserting the cause of the mismatch.
+- <a id="rz-68"></a> **RZ-68.** A local DID created after a snapshot is absent after restoring that snapshot; the seed alone cannot reconstruct its UUIDv7 entity ID and key names. Once local recipient state is authoritative, a delivery with no known or recoverably pending recipient mapping follows the terminal wrong-recipient gate, with pickup ACK when mediated, no message.in or response, and a bounded visible diagnostic. Nothing is taken off the mediator: the account keeps holding the lost DID, and its mail is discarded at that gate.

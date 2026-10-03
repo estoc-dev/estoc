@@ -99,7 +99,7 @@ async function person(at: Mediator, name: string): Promise<Running> {
   const running = daemonAt(at, await folder());
   await running.daemon.boot();
   await running.daemon.createIdentity(name, PASSPHRASE);
-  await running.daemon.setMediator(at.did, "replica-mediation/1.0");
+  await running.daemon.setMediator(at.did);
   return running;
 }
 
@@ -120,9 +120,9 @@ test(
     const at = await mediator();
     const alice = await person(at, "Alice");
     const bob = await person(at, "Bob");
-    expect(alice.snapshot().mediations).toMatchObject([{ mediatorDid: at.did, profile: "replica-mediation/1.0", selected: true, usable: true }]);
+    expect(alice.snapshot().mediations).toMatchObject([{ mediatorDid: at.did, selected: true, usable: true }]);
     await until("alice's line is live", () => live(alice));
-    expect(alice.lines()?.connections).toMatchObject([{ unreachable: null, reconciled: null }]);
+    expect(alice.lines()?.connections).toMatchObject([{ unreachable: null }]);
 
     const { invitation } = await alice.daemon.createInvitation();
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");

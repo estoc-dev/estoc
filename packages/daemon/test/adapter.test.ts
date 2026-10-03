@@ -170,7 +170,6 @@ describe("an input the schema admits", () => {
     expect(await refused("rotate", { channelId: "nope" })).toEqual(invalid(/^not a channel ID: /));
     expect(await refused("addContactByDid", { did: "not a did", petname: "Bob" })).toEqual(invalid(/^not a DID: /));
     expect(await refused("setMediator", { mediatorDid: "mediator.example" })).toEqual(invalid(/^not a DID: /));
-    expect(await refused("setMediator", { mediatorDid: "did:web:mediator.example", profile: "other-mediation/1.0" })).toEqual(invalid('unknown mediation profile "other-mediation/1.0"'));
     expect(await refused("resolveChannel", { localDid: "did:example:a", peerDid: "did:example:a" })).toEqual(invalid("a channel needs two distinct DIDs"));
     expect(await refused("resolveChannel", { localDid: "did:example:a", peerDid: "" })).toEqual(invalid(/^not a DID: /));
     expect(await refused("setTraceLevel", { level: "loud" })).toEqual(invalid("no such trace level: loud"));

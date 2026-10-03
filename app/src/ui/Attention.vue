@@ -15,7 +15,7 @@ import { dispositionOf, labelOf, shortDid } from "./util.js";
  * earns, a rotation the peer was never told of, each waits here. What
  * has no step says what it waits for.
  */
-const { pending, byHand, waiting, discarded, unknownRegistrations, unplacedInputs, unplacedOutputs, count } = useAttention();
+const { pending, byHand, waiting, discarded, unplacedInputs, unplacedOutputs, count } = useAttention();
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
 
 const busy = ref(false);
@@ -47,7 +47,6 @@ const peerOf = (channelId: ChannelId): string => {
   return channel === null ? channelId : shortDid(channel.peerDid);
 };
 
-const explainingRegistrations = ref(false);
 </script>
 
 <template>
@@ -104,23 +103,6 @@ const explainingRegistrations = ref(false);
         </div>
         <div v-for="(gone, i) in discarded" :key="`d${i}`" class="card">
           <p class="error-text">{{ gone.reason }}</p>
-        </div>
-      </div>
-
-      <div v-if="unknownRegistrations.length" class="section" data-unknown-registrations>
-        <div class="eyebrow">Vault and mediator disagree</div>
-        <div class="card">
-          <p>
-            The mediator was holding {{ unknownRegistrations.length }} address{{ unknownRegistrations.length === 1 ? "" : "es" }} this vault has no record of:
-            <span class="mono">{{ unknownRegistrations.map(shortDid).join(", ") }}</span>. It asked the mediator to drop them.
-          </p>
-          <p v-if="explainingRegistrations" class="note">
-            This vault registers only addresses it minted, so it created nothing for these. A vault restored from a backup older than those addresses is one way this
-            happens.
-          </p>
-          <div class="card-actions">
-            <button class="link alone" type="button" @click="explainingRegistrations = !explainingRegistrations">{{ explainingRegistrations ? "Less" : "How that happens" }}</button>
-          </div>
         </div>
       </div>
 

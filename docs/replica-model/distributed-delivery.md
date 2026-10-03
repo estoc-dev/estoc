@@ -103,8 +103,8 @@ An external recipient's resolved document may offer transport choices; choosing
 among authorized routes does not change the application recipient. A direct
 endpoint MUST NOT expose a replica ID as the peer-visible recipient.
 
-The phase-1 mediator uses ordinary account-scoped Message Pickup with one
-active pickup client.
+The phase-1 mediator holds one replica-mediation account per arrangement; each
+runtime picks up as a replica of its own, under its own DID.
 
 A valid `from_prior` justifies one endpoint replacement in its exact channel context.
 Unrelated channels using that address retain their own endpoint decisions.
@@ -179,7 +179,7 @@ Problem Reports supply only local failure diagnostics. They MUST NOT append
 grants no automatic retry.
 
 The mediator MUST bound normalized envelope size, retained ciphertext bytes,
-retained message count, registered recipients, recipient-update rate, pickup
+retained message count, registered recipients, recipient-add rate, pickup
 batch size and retention time. A quota or validation failure MUST NOT leave a
 partially stored package. Anonymous routing responses SHOULD avoid becoming a
 precise account- or recipient-existence oracle: an unknown `body.next`, a full
@@ -1036,8 +1036,8 @@ or mediator-visible IDs.
 
 - <a id="dd-37"></a> **DD-37.** Crashes before/after a transport call or before submission commit reopen without automatic sending; manual retry preserves the exact committed package.
 
-- <a id="dd-38"></a> **DD-38.** Phase 1 works with one active full runtime and ordinary account-scoped
-    Message Pickup.
+- <a id="dd-38"></a> **DD-38.** Phase 1 works with one active full runtime, picking up as a replica of
+    its arrangement's account under its own DID.
 - <a id="dd-39"></a> **DD-39.** Preparation requires a valid fixed-channel intent and exact local-key/peer-resolution evidence. Complete source and required carried-proof evidence precede dependent automatic intents; each operation checks its own current policy.
 
 <a id="normalization-ack-and-retention-regressions-dd-40-dd-49"></a>

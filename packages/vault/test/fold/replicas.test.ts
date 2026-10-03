@@ -32,12 +32,11 @@ beforeAll(async () => {
   account2 = { mediationId: MEDIATION2, mediatorDid: MEDIATOR, me: { did: (await mintMediationDid(keys, MEDIATION2)).longFormDid } };
 });
 
-const arrangement = (scene: Scene, mediation: GrantingMediation, profile = true) =>
+const arrangement = (scene: Scene, mediation: GrantingMediation, mediatorDid = mediation.mediatorDid) =>
   scene.add("mediation.created", {
     mediationId: mediation.mediationId,
-    mediatorDid: mediation.mediatorDid,
+    mediatorDid,
     me: { keyName: `mediation/${mediation.mediationId}/me` as KeyName, did: mediation.me.did },
-    ...(profile ? { profile: "replica-mediation/1.0" as const } : {}),
   });
 
 async function enrolled(scene: Scene, mediation: GrantingMediation, replicaId: ReplicaId, signer = keys) {
@@ -50,30 +49,6 @@ async function checked(scene: Scene, seed = keys): Promise<(set: VaultEventSet) 
   const grantChecks = await verifyReplicaGrants(seed, scene.set());
   return (set) => foldReplicas(set, { grantChecks });
 }
-
-describe("the mediation fold", () => {
-  it("reads an arrangement's profile from its creation, and holds a replica-mediation arrangement to its mediator as its routing DID", async () => {
-    const scene = new Scene();
-    arrangement(scene, account);
-    arrangement(scene, account2, false);
-    scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: MEDIATOR });
-    scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
-    const keyChecks = await verifyMediationKeys(keys, foldMediations(scene.set()));
-    const fold = foldMediations(scene.set(), { keyChecks });
-    expect(fold.mediations.get(MEDIATION)).toMatchObject({ status: "usable", profile: "replica-mediation/1.0", routingDid: MEDIATOR });
-    expect(fold.mediations.get(MEDIATION2)).toMatchObject({ status: "usable", profile: null, routingDid: ROUTING_DID });
-
-    const elsewhere = new Scene();
-    arrangement(elsewhere, account);
-    elsewhere.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    expect(foldMediations(elsewhere.set(), { keyChecks }).mediations.get(MEDIATION)).toMatchObject({ status: "conflict", routingDid: null, faults: ["a replica-mediation arrangement is routed through its mediator"] });
-
-    const disagreeing = new Scene();
-    arrangement(disagreeing, account);
-    arrangement(disagreeing, account, false);
-    expect(foldMediations(disagreeing.set(), { keyChecks }).mediations.get(MEDIATION)).toMatchObject({ status: "conflict", profile: null, faults: ["creations disagree"] });
-  });
-});
 
 describe("the replica fold", () => {
   it("makes a replica a member of its arrangement by its grant and the seed's verdict, before any grant from the mediator, and pending before either", async () => {
@@ -119,12 +94,7 @@ describe("the replica fold", () => {
     expectOrderFree(scene.events, await checked(scene));
   });
 
-  it("refuses a binding that is not its arrangement's: an ordinary arrangement, another mediator, an arrangement whose creations disagree", async () => {
-    const ordinary = new Scene();
-    arrangement(ordinary, account, false);
-    await enrolled(ordinary, account, REPLICA);
-    expect((await checked(ordinary))(ordinary.set()).replicas.get(REPLICA)).toMatchObject({ status: "conflict", faults: [`mediation ${MEDIATION} is no replica-mediation arrangement`] });
-
+  it("refuses a binding that is not its arrangement's: another mediator, an arrangement whose creations disagree", async () => {
     const moved = new Scene();
     arrangement(moved, { ...account, mediatorDid: "did:web:other.example" as Did });
     await enrolled(moved, account, REPLICA);

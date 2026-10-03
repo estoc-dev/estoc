@@ -2,8 +2,9 @@
 
 The DIDComm v2 agent behind Estoc's clients, over an `.estoc` vault:
 `@estoc/event-store` holds it, `@estoc/vault` says what its events mean,
-and this package is what runs on it — mediation (coordinate-mediation
-3.0), pickup and live delivery (messagepickup 3.0 over HTTP and
+and this package is what runs on it — mediation (an account of the
+mediator's replica-mediation protocol, each runtime a replica of it),
+pickup and live delivery (messagepickup 3.0 over HTTP and
 WebSocket), routing 2.0 forwards, channels of did:peer:4 pairs rotated
 by `from_prior`, invitations, trust-ping, basicmessage and user-profile.
 The rules are the [replica model](../../docs/replica-model/README.md)'s
@@ -18,7 +19,7 @@ The WASM itself is *not* loaded here — see [Didcomm API](#didcomm-api).
 ```
 Agent            a vault running: one receiver, one dispatcher, a line to each mediator; open recovers and sends nothing
   ├─ identity    the SQLite runtime opened with the seed's keys: createVault · openVault · inspectRuntime · inspectSnapshot
-  ├─ mediation   an arrangement recorded before the mediator is asked, granted, its recipients reconciled on every connection
+  ├─ mediation   an arrangement recorded before the mediator is asked, enrolled in as this runtime's replica, its addresses held by the account
   ├─ dids        communication DIDs minted from their ID and route alone, disclosure, invitations, retirement
   ├─ send        what a message is, committed as an intent in its channel before any network work
   ├─ prepare     an intent → the one exact envelope every transport call of it carries

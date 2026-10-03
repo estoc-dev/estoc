@@ -2,18 +2,25 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Message } from "@estoc/didcomm-node";
 import type { IMessage } from "@estoc/didcomm-node";
 import canonicalize from "canonicalize";
+import { v7 as uuidv7 } from "uuid";
 import WebSocket from "ws";
 
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
 import { resolveDIDCommDoc } from "../src/didcomm/did-resolver.js";
 import { blobName } from "../src/blobs/hash.js";
 import { mintIdentity } from "../src/identity-core.js";
+import { RECIPIENT_PROOF_TYP, peer4Agent, signedBy, type Peer4Agent } from "../test/helpers.js";
 
 /**
  * Drive a full client flow against a *running* mediator — the deploy
- * verification tool. Exercises mediation grant, keylist binding, anonymous
- * forward, the pickup loop, and WebSocket live delivery (asserting text
- * frames, the thing headless clients never catch).
+ * verification tool. Exercises, under coordinate-mediation: grant, keylist
+ * binding, anonymous forward, the pickup loop, and WebSocket live delivery
+ * (asserting text frames, the thing headless clients never catch). Then,
+ * under replica-mediation, what the Estoc app does: register an account,
+ * add a replica under the account's grant, add a recipient under its own
+ * proof, and pick up, acknowledge and be pushed that recipient's mail under
+ * the replica's DID. A mediator with replica-mediation off fails here, since
+ * the app cannot enroll with it.
  *
  *   pnpm run smoke http://127.0.0.1:8787
  */
@@ -62,12 +69,19 @@ console.log(`mediator: ${mediatorDid}`);
 const alice = await mintIdentity("https://smoke-alice.test/didcomm");
 const ctx = new DIDCommContext(alice.did, alice.didDoc, alice.secrets);
 
-function plaintext(type: string, body: Record<string, unknown>): IMessage {
+interface Speaker {
+  did: string;
+  ctx: DIDCommContext;
+}
+
+const asAlice: Speaker = { did: alice.did, ctx };
+
+function plaintext(type: string, body: Record<string, unknown>, from: string = alice.did): IMessage {
   return {
     id: randomUUID(),
     typ: "application/didcomm-plain+json",
     type,
-    from: alice.did,
+    from,
     to: [mediatorDid],
     created_time: Math.floor(Date.now() / 1000),
     // messagepickup 3.0: every request must declare the return route.
@@ -78,16 +92,17 @@ function plaintext(type: string, body: Record<string, unknown>): IMessage {
 
 async function send(
   type: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  speaker: Speaker = asAlice
 ): Promise<IMessage> {
-  const packed = await ctx.packEncrypted(plaintext(type, body), mediatorDid);
+  const packed = await speaker.ctx.packEncrypted(plaintext(type, body, speaker.did), mediatorDid);
   const res = await fetch(base, {
     method: "POST",
     headers: { "content-type": ENCRYPTED },
     body: packed,
   });
   check(res.ok, `POST ${type.split("/").pop()} → ${res.status}`);
-  const { message } = await ctx.unpack(await res.text());
+  const { message } = await speaker.ctx.unpack(await res.text());
   return message;
 }
 
@@ -96,19 +111,26 @@ const ANONYMOUS = {
   secrets: { get_secret: async () => null, find_secrets: async () => [] },
 };
 
-/** A real envelope for Alice, as the JSON a forward carries: the mediator takes nothing else. */
-async function sealedNote(content: string): Promise<unknown> {
+/** A real envelope for `to` (Alice unless said), as the JSON a forward carries: the mediator takes nothing else. */
+async function sealedNote(content: string, to: string = alice.did): Promise<unknown> {
   const note = new Message({
     ...plaintext("https://example.test/note", { content }),
     from: undefined,
-    to: [alice.did],
+    to: [to],
     return_route: undefined,
   } as IMessage);
-  const [packed] = await note.pack_encrypted(alice.did, null, null, ANONYMOUS.resolver, ANONYMOUS.secrets, {
+  const [packed] = await note.pack_encrypted(to, null, null, ANONYMOUS.resolver, ANONYMOUS.secrets, {
     forward: false,
   });
   return JSON.parse(packed);
 }
+
+const PICKUP = "https://didcomm.org/messagepickup/3.0";
+const DELIVERY = `${PICKUP}/delivery`;
+
+type Attached = { id: string; data: { base64: string } };
+
+const decoded = (attachment: Attached): unknown => JSON.parse(Buffer.from(attachment.data.base64, "base64url").toString("utf8"));
 
 async function forwardAnonymously(next: string, inner: unknown, id: string = randomUUID()): Promise<number> {
   const msg = new Message(
@@ -139,7 +161,7 @@ async function forwardAnonymously(next: string, inner: unknown, id: string = ran
   return res.status;
 }
 
-// --- Mediation + pickup loop over HTTP ---------------------------------
+// --- coordinate-mediation/3.0: mediation + pickup loop over HTTP --------
 
 const grant = await send(
   "https://didcomm.org/coordinate-mediation/3.0/mediate-request",
@@ -199,13 +221,17 @@ check(afterAck.body.message_count === 0, "acknowledged messages deleted");
 // --- Live delivery over WebSocket --------------------------------------
 
 const wsUrl = base.replace(/^http/, "ws");
-const ws = new WebSocket(wsUrl);
-await new Promise<void>((resolve, reject) => {
-  ws.once("open", () => resolve());
-  ws.once("error", reject);
-});
 
-function nextTextFrame(label: string): Promise<string> {
+async function openSocket(): Promise<WebSocket> {
+  const socket = new WebSocket(wsUrl);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", () => resolve());
+    socket.once("error", reject);
+  });
+  return socket;
+}
+
+function nextTextFrame(ws: WebSocket, label: string): Promise<string> {
   return new Promise((resolve, reject) => {
     ws.once("message", (data, isBinary) => {
       try {
@@ -220,7 +246,8 @@ function nextTextFrame(label: string): Promise<string> {
   });
 }
 
-const statusFrame = nextTextFrame("live-delivery-change status");
+const ws = await openSocket();
+const statusFrame = nextTextFrame(ws, "live-delivery-change status");
 ws.send(
   await ctx.packEncrypted(
     plaintext("https://didcomm.org/messagepickup/3.0/live-delivery-change", {
@@ -232,7 +259,7 @@ ws.send(
 const liveStatus = (await ctx.unpack(await statusFrame)).message;
 check(liveStatus.body.live_delivery === true, "live delivery enabled");
 
-const pushFrame = nextTextFrame("live delivery push");
+const pushFrame = nextTextFrame(ws, "live delivery push");
 const liveInner = await sealedNote("hello live");
 check(
   (await forwardAnonymously(alias, liveInner)) === 202,
@@ -257,6 +284,90 @@ const afterLiveAck = await send(
 );
 check(afterLiveAck.body.message_count === 0, "live message acknowledged over http");
 ws.close();
+
+// --- replica-mediation/1.0: what the Estoc app enrolls as ---------------
+
+const REPLICA = "https://estoc.dev/replica-mediation/1.0";
+const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
+
+/** The short form, sealed with the long form's keys: how an account or a replica speaks once the mediator holds its long form. */
+const known = (who: Peer4Agent): Speaker => ({ did: who.did, ctx: who.shortCtx });
+
+const account = await peer4Agent(null);
+const registered = await send(`${REPLICA}/account-register`, {}, { did: account.longForm, ctx: account.ctx });
+if (registered.type === PROBLEM) {
+  throw new Error(
+    `FAILED: replica-mediation/1.0 is refused here (${String(registered.body.code)}); the Estoc app enrolls only as a replica-mediation account, so deploy with MEDIATOR_REPLICA_MEDIATION=true`
+  );
+}
+check(
+  registered.type === `${REPLICA}/account-registered` && registered.body.account === account.did && registered.body.routing_did === mediatorDid,
+  "account registered, routed through the mediator"
+);
+
+const replica = await peer4Agent(mediatorDid);
+const replicaGrant = await signedBy(account, {
+  account: account.did,
+  mediation_id: uuidv7(),
+  mediator: mediatorDid,
+  replica_id: uuidv7(),
+  replica_did: replica.did,
+  replica_long_form: replica.longForm,
+});
+const replicaAdded = await send(`${REPLICA}/replica-add`, { grant: replicaGrant }, known(account));
+check(
+  replicaAdded.type === `${REPLICA}/replica-added` && replicaAdded.body.replica_did === replica.did && replicaAdded.body.state === "active",
+  "replica added under the account's grant"
+);
+
+const recipient = await peer4Agent(mediatorDid);
+const proof = await signedBy(recipient, { account: account.did, aud: mediatorDid, recipient: recipient.did }, { typ: RECIPIENT_PROOF_TYP });
+const recipientAdded = await send(
+  `${REPLICA}/recipient-add`,
+  { recipient_did: recipient.did, resolution_material: recipient.longForm, proof },
+  known(account)
+);
+check(
+  recipientAdded.type === `${REPLICA}/recipient-added` && recipientAdded.body.recipient_did === recipient.did,
+  "recipient added under its own proof"
+);
+
+const shared = await sealedNote("hello replica", recipient.longForm);
+check((await forwardAnonymously(recipient.did, shared)) === 202, "anonymous forward to the shared recipient accepted");
+const replicaStatus = await send(`${PICKUP}/status-request`, {}, known(replica));
+check(replicaStatus.body.message_count === 1, "one message waiting for the replica");
+const replicaDelivery = await send(`${PICKUP}/delivery-request`, { limit: 10 }, known(replica));
+const replicaAttachments = replicaDelivery.attachments as Attached[];
+check(
+  replicaDelivery.type === DELIVERY && replicaAttachments.length === 1 && sameJson(decoded(replicaAttachments[0]), shared),
+  "the replica is handed the shared message under its own DID"
+);
+const replicaAcked = await send(
+  `${PICKUP}/messages-received`,
+  { message_id_list: replicaAttachments.map((attachment) => attachment.id) },
+  known(replica)
+);
+check(replicaAcked.body.message_count === 0, "the replica's acknowledgement empties its queue");
+
+const replicaWs = await openSocket();
+const replicaStatusFrame = nextTextFrame(replicaWs, "replica live-delivery-change status");
+replicaWs.send(
+  await replica.shortCtx.packEncrypted(plaintext(`${PICKUP}/live-delivery-change`, { live_delivery: true }, replica.did), mediatorDid)
+);
+check((await replica.shortCtx.unpack(await replicaStatusFrame)).message.body.live_delivery === true, "live delivery enabled for the replica");
+const replicaPushFrame = nextTextFrame(replicaWs, "replica live delivery push");
+const sharedLive = await sealedNote("hello replica, live", recipient.longForm);
+check((await forwardAnonymously(recipient.did, sharedLive)) === 202, "anonymous forward to the shared recipient while the replica's socket is open");
+const replicaPush = (await replica.shortCtx.unpack(await replicaPushFrame)).message;
+const pushedToReplica = replicaPush.attachments as Attached[];
+check(replicaPush.type === DELIVERY && sameJson(decoded(pushedToReplica[0]), sharedLive), "the push to the replica carries the live message");
+const replicaLiveAcked = await send(
+  `${PICKUP}/messages-received`,
+  { message_id_list: pushedToReplica.map((attachment) => attachment.id) },
+  known(replica)
+);
+check(replicaLiveAcked.body.message_count === 0, "the replica's live message acknowledged over http");
+replicaWs.close();
 
 // --- Edges --------------------------------------------------------------
 

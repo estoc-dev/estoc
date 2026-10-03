@@ -12,14 +12,13 @@ export function useAttention() {
   });
   const waiting = computed(() => state.lines?.waiting ?? []);
   const discarded = computed(() => state.lines?.discarded ?? []);
-  const unknownRegistrations = computed(() => (state.lines?.connections ?? []).flatMap((c) => c.unknownRegistrations));
   const unplacedInputs = computed(() => {
     const index = state.index;
     return index === null ? [] : index.snapshot.unplaced.observationIds.flatMap((cid): ObservationRecord[] => (index.observation(cid) === null ? [] : [index.observation(cid)!]));
   });
   const unplacedOutputs = computed(() => state.snapshot?.unplaced.outputs ?? []);
   const count = computed(
-    () => byHand.value + waiting.value.length + discarded.value.length + unknownRegistrations.value.length + unplacedInputs.value.length + unplacedOutputs.value.length
+    () => byHand.value + waiting.value.length + discarded.value.length + unplacedInputs.value.length + unplacedOutputs.value.length
   );
-  return { pending, byHand, waiting, discarded, unknownRegistrations, unplacedInputs, unplacedOutputs, count };
+  return { pending, byHand, waiting, discarded, unplacedInputs, unplacedOutputs, count };
 }

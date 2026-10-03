@@ -23,8 +23,9 @@
 > compared with anything.
 
 > The vault side has adopted from this document the `replica/<replicaId>/me`
-> key name, the `profile` member of `mediation.created`, the grant and
-> `replica.created`. They are specified in
+> key name, the grant and `replica.created`; every arrangement of the vault is
+> such an account, so `mediation.created` carries no `profile`. They are
+> specified in
 > [vault events](../vault-events.md#replica-created), which takes precedence
 > wherever this document differs. `replica.label` is not adopted.
 
@@ -223,20 +224,15 @@ to derive another replica identity.
 
 A mediator list is discovery information, not sufficient authority for a
 client to send vault data to a listed DID. Each member carries a portable
-grant signed by the selected replica-mediation account. This candidate profile
-adds `profile: "replica-mediation/1.0"` to that arrangement's `mediation.created`
-data. Commit this intent before the first network request, using a fresh
-`mediationId` and the existing `mediation/<mediationId>/me` named-key derivation
-to create a fresh account DID. An existing ordinary arrangement is never
-retagged. Records without this profile identify ordinary mediation and cannot
-authorize replica membership.
+grant signed by the selected replica-mediation account. In the vault every
+arrangement is such an account: its `mediation.created` is committed before
+the first network request, using a fresh `mediationId` and the existing
+`mediation/<mediationId>/me` named-key derivation to create a fresh account
+DID, recorded as a `did:peer:4` long form.
 
 That independently verified intent and seed-derived account key bind the
 account to the vault; they do not assert that the mediator has accepted it.
-Clients MUST NOT accept an unknown account supplied by a mediator. The
-owning event schemas must adopt the profile field and registration-observation
-rules before vault-client integration; this draft does not extend phase-1
-schemas.
+Clients MUST NOT accept an unknown account supplied by a mediator.
 
 A grant is compact JWS with these protected headers:
 

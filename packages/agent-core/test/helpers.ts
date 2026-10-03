@@ -9,8 +9,10 @@ import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type Seed
 import {
   AUTHENTICATION_METHOD,
   PLAINTEXT_TYP,
+  authorizedMethodIds,
   didKeyName,
   inboundMessageId,
+  peerResolution,
   readPlaintext,
   scanVault,
   vaultDraft,
@@ -18,9 +20,9 @@ import {
   type DidId,
   type EventReference,
   type MediationId,
-  type MediationProfile,
   type MintedDid,
   type PublicKey,
+  type Replica,
   type VaultEvent,
   type VaultEventType,
   type WireMessageId,
@@ -33,21 +35,26 @@ import {
   Keyring,
   MediatorLink,
   Receiver,
+  addRecipients,
   authorizedKeys,
+  canonicalDid,
   commitResolution,
   createDid,
   createMediation,
   createVault,
-  establish,
+  enroll,
   pinnedResolver,
   receiptOf,
   resolve,
   routeOf,
+  type Confirmations,
   type LinkOptions,
   type OpenedVault,
+  type RecipientsAdded,
   type Timers,
   type RouteSpec,
 } from "../src/index.js";
+import { secretsOf } from "../src/keyring.js";
 import { FakeMediator, MEDIATOR_HTTP } from "./fake-mediator.js";
 
 export const didcomm = { Message };
@@ -87,6 +94,8 @@ export interface Party extends Fresh {
   created: VaultEvent<"mediation.created">;
   ring: Keyring;
   trace: AgentTrace;
+  /** what the mediator confirmed to this runtime, in the runtime's local options */
+  confirmations: Confirmations;
   link: MediatorLink;
   /** what `link` was built from: another link over the same account, or one speaking as another, is `new MediatorLink({ ...linkOptions, ... })` */
   linkOptions: LinkOptions;
@@ -95,10 +104,10 @@ export interface Party extends Fresh {
   offline: { reason: string | null };
 }
 
-/** A vault with a mediation created toward `mediator` (not yet granted), its ring loaded, and a link over it. */
-export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver(), profile?: MediationProfile): Promise<Party> {
+/** A vault with a mediation created toward `mediator` (not yet enrolled in), its ring loaded, and a link over it. */
+export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver()): Promise<Party> {
   const fresh = await freshVault(fill, `party ${fill}`, driver);
-  const created = await createMediation(fresh.runtime, fresh.keys, mediator.did as Did, undefined, profile);
+  const created = await createMediation(fresh.runtime, fresh.keys, mediator.did as Did);
   const fold = await scanVault(fresh.runtime.vault, fresh.keys);
   const ring = await Keyring.load(fresh.keys, fold);
   const trace = await AgentTrace.open(fresh.runtime.local);
@@ -118,7 +127,21 @@ export async function party(mediator: FakeMediator, fill = 1, over: Partial<Link
     ...over,
   };
   const link = new MediatorLink(linkOptions);
-  return { ...fresh, fold, mediator, mediationId: created.data.mediationId, created, ring, trace, link, linkOptions, log, offline };
+  return { ...fresh, fold, mediator, mediationId: created.data.mediationId, created, ring, trace, confirmations: fresh.runtime.local.options, link, linkOptions, log, offline };
+}
+
+/** A link speaking as the runtime's replica DID with that DID's keys alone, under both its spellings: what picks the replica's mail up. */
+export async function replicaLink(p: Pick<Party, "keys" | "linkOptions">, replica: Replica): Promise<MediatorLink> {
+  const { did, longFormDid } = replica;
+  if (did === null || longFormDid === null) throw new Error(`the replica ${replica.replicaId} has no DID`);
+  const { document } = peerResolution(longFormDid);
+  const secrets = secretsOf(await p.keys.replicaKeys(replica.replicaId), [longFormDid, did], { authentication: authorizedMethodIds(document, "authentication"), keyAgreement: authorizedMethodIds(document, "keyAgreement") });
+  return new MediatorLink({ ...p.linkOptions, me: longFormDid, secrets: () => secrets });
+}
+
+/** The mediator made to hold every address of the party's arrangement, as a connection has it. */
+export function holdAddresses(p: Party): Promise<RecipientsAdded> {
+  return addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
 }
 
 /** Waits for `condition`, giving up after `ms` with `what` in the error. */
@@ -313,15 +336,21 @@ export interface MediatedParty extends Party {
   didId: DidId;
   did: Did;
   longFormDid: Did;
+  /** the account's short form: what the mediator holds its addresses under */
+  account: string;
+  /** this runtime's replica in the arrangement */
+  replica: Replica & { did: Did; longFormDid: Did };
+  /** the replica's own line: what picks up and is pushed its mail */
+  inbox: MediatorLink;
 }
 
-/** A party with its arrangement granted and one communication DID, `didId`, routed through the mediator: the DID's document sends to the mediator. */
+/** A party enrolled in its arrangement, with one communication DID, `didId`, routed through the mediator: the DID's document sends to the mediator, and the mediator does not hold it yet. */
 export async function mediatedParty(mediator: FakeMediator, fill: number, didId: DidId, driver = memoryDriver()): Promise<MediatedParty> {
   const p = await party(mediator, fill, {}, driver);
-  await establish(p.link, p.runtime, p.keys, p.mediationId);
+  const { replica } = await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
   const route = mediatedRoute(p.mediationId);
   const { minted } = await createDid(p.runtime, p.keys, route, didId);
-  return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid };
+  return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid, account: canonicalDid(p.created.data.me.did), replica: replica as MediatedParty["replica"], inbox: await replicaLink(p, replica) };
 }
 
 export interface Post {

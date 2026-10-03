@@ -64,7 +64,7 @@ export function replicaAdded(confirmations: Confirmations, mediationId: Mediatio
   return confirmed(confirmations, replicaAddedKey(mediationId, replicaId), "replicaDid", replicaDid);
 }
 
-/** The replica-mediation arrangement as the fold has it, fit to be enrolled in: created, neither retired nor in conflict. */
+/** The arrangement as the fold has it, fit to be enrolled in: created, its keys confirmed, neither retired nor in conflict. */
 export function accountOf(fold: VaultFold, mediationId: MediationId): Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> } {
   const mediation = mediationOf(fold, mediationId);
   const faults =
@@ -74,11 +74,9 @@ export function accountOf(fold: VaultFold, mediationId: MediationId): Mediation 
         ? [`retired: ${mediation.retired}`]
         : mediation.me === null || mediation.mediatorDid === null
           ? ["no creation"]
-          : mediation.profile === null
-            ? ["an ordinary arrangement holds no replicas"]
-            : mediation.identity !== "verified"
-              ? ["the seed has not confirmed the arrangement's keys"]
-              : [];
+          : mediation.identity !== "verified"
+            ? ["the seed has not confirmed the arrangement's keys"]
+            : [];
   if (faults.length > 0) throw new Unusable("mediation", mediationId, faults);
   return mediation as Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> };
 }
@@ -124,8 +122,8 @@ export interface Enrolled {
  * when the arrangement has no grant, `replica.created` when the vault
  * has none for this runtime, replica-add when no confirmation of it is
  * kept. A replica this runtime could not join the account as is refused
- * before the mediator is asked for the account. Needs a replica-mediation arrangement created toward the
- * link's mediator, neither retired nor in conflict. Only the runtime's
+ * before the mediator is asked for the account. Needs an arrangement
+ * created toward the link's mediator, neither retired nor in conflict. Only the runtime's
  * own replica is ever added: another member's grant in the vault is
  * that member's to enroll with. Runs as the account's one procedure at
  * a time. `proceed` is called before each request is begun and stops

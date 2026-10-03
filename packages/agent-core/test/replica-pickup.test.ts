@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, test } from "vitest";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
-import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MediationProfile, type MintedDid, type Replica } from "@estoc/vault";
+import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MintedDid, type Replica } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
@@ -10,7 +10,6 @@ import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDi
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
 
-const PROFILE: MediationProfile = "replica-mediation/1.0";
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const PICKUP = [STATUS_REQUEST, DELIVERY_REQUEST, MESSAGES_RECEIVED];
 
@@ -30,9 +29,9 @@ afterEach(async () => {
   }
 });
 
-/** A runtime enrolled in a replica-mediation arrangement it selected, with one address its account holds, and its agent connected. */
+/** A runtime enrolled in an arrangement it selected, with one address its account holds, and its agent connected. */
 async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}): Promise<Enrolled> {
-  const p = await party(mediator, 1, {}, undefined, PROFILE);
+  const p = await party(mediator, 1);
   const inbounds: Inbound[] = [];
   const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, privateAddresses: false, liveDelivery: false, onInbound: (inbound) => inbounds.push(inbound), ...over });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
@@ -43,7 +42,7 @@ async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}
   return { ...p, agent, inbounds, replica: replica as Enrolled["replica"], address };
 }
 
-/** An ordinary account's agent, to send as a peer. */
+/** A peer's agent, to send from. */
 async function peer(mediator: FakeMediator): Promise<{ bob: MediatedParty; agent: Agent }> {
   const bob = await mediatedParty(mediator, 2, BOB);
   const agent = await Agent.start(bob, { didcomm, fetch: bob.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: bob.trace, privateAddresses: false, liveDelivery: false });
@@ -79,7 +78,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     const mediator = await newMediator();
     const senders = pickupSenders(mediator);
     const alice = await enrolled(mediator);
-    expect(alice.agent.connections()).toMatchObject([{ unreachable: null, reconciled: null, drained: { acked: 0, ended: "empty" }, live: false }]);
+    expect(alice.agent.connections()).toMatchObject([{ unreachable: null, drained: { acked: 0, ended: "empty" }, live: false }]);
     const { bob, agent } = await peer(mediator);
     expect((await hello(bob, agent, alice.address)).dispatched).toMatchObject({ outcome: "submitted" });
     expect(mediator.queues.get(alice.replica.did)).toHaveLength(1);
@@ -89,7 +88,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     await alice.agent.settled();
     expect(alice.inbounds).toMatchObject([{ received: { outcome: "received", live: true } }]);
     expect(mediator.queues.get(alice.replica.did)).toEqual([]);
-    expect(senders.filter((sender) => sender !== canonicalDid(bob.created.data.me.did))).toEqual([alice.replica.did]);
+    expect(senders.filter((sender) => sender !== bob.replica.did)).toEqual([alice.replica.did]);
   });
 
   it("is pushed down a socket the replica opened, sealed to the replica's short form", async () => {

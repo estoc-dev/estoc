@@ -21,8 +21,6 @@ import {
   createMediation,
   deliveryKey,
   disclose,
-  establish,
-  reconcile,
   resolve,
   retireDid,
   senderProof,
@@ -34,7 +32,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, freshVault, kidOf, mediatedParty, mediatedRoute, newMediator, party, peerSealer, reloaded, sealed, webIdentity, type DirectParty, type Fresh, type MediatedParty, type Party, type Sealer } from "./helpers.js";
+import { didcomm, directParty, freshVault, kidOf, mediatedParty, mediatedRoute, newMediator, peerSealer, reloaded, sealed, webIdentity, type DirectParty, type Fresh, type MediatedParty, type Sealer, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -136,16 +134,13 @@ async function closeAll(...parties: Fresh[]): Promise<void> {
   for (const p of parties) await p.runtime.close();
 }
 
-/** A party whose DID `DID` is registered with a fake mediator, and the account the mediator queues its mail under. */
-async function mediated(): Promise<{ mediator: Awaited<ReturnType<typeof newMediator>>; p: Party; longFormDid: string; account: string }> {
+/** A party whose DID `DID` its account holds at a fake mediator, and the replica the mediator queues its mail for. */
+async function mediated(): Promise<{ mediator: Awaited<ReturnType<typeof newMediator>>; p: MediatedParty; longFormDid: string; account: string }> {
   const mediator = await newMediator();
-  const p = await party(mediator);
-  await establish(p.link, p.runtime, p.keys, p.mediationId);
-  const route = mediatedRoute(p.mediationId);
-  const { minted } = await createDid(p.runtime, p.keys, route, DID);
+  const p = await mediatedParty(mediator, 1, DID);
   await reloaded(p);
-  await reconcile(p.link, p.runtime, p.keys, p.mediationId);
-  return { mediator, p, longFormDid: minted.longFormDid, account: p.created.data.me.did };
+  await holdAddresses(p);
+  return { mediator, p, longFormDid: p.longFormDid, account: p.replica.did };
 }
 
 describe("the gate before the vault", () => {
@@ -730,7 +725,7 @@ describe("the gate over pickup", () => {
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const { receipt, seen } = recording();
     const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt });
-    const pickup = new Pickup(p.link, receiver.pickupHandle(p.mediationId));
+    const pickup = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
     const sealer = await peerSealer(bob);
     const packed = await sealed(sealer, longFormDid);
     const foreign = await sealed(sealer, bob.longFormDid);
@@ -759,11 +754,11 @@ describe("the gate over pickup", () => {
     const { receipt, seen } = recording();
     const trace = await AgentTrace.open(p.runtime.local);
     const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt, trace });
-    const pickup = new Pickup(p.link, receiver.pickupHandle(p.mediationId));
+    const pickup = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
     const packed = await sealed(await peerSealer(bob), longFormDid);
-    const roundTrip = p.link.roundTrip.bind(p.link);
+    const roundTrip = p.inbox.roundTrip.bind(p.inbox);
     let cut = true;
-    vi.spyOn(p.link, "roundTrip").mockImplementation(async (...args: Parameters<typeof roundTrip>) => {
+    vi.spyOn(p.inbox, "roundTrip").mockImplementation(async (...args: Parameters<typeof roundTrip>) => {
       if (cut && args[0] === MESSAGES_RECEIVED) {
         cut = false;
         throw new Error("the line dropped");

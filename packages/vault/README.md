@@ -83,7 +83,7 @@ folds (`fold/`: `VaultEventSet` reads every event once against its
 schema and hands a type's events out in canonical order and a typed
 reference's target as present, missing or mismatched; `foldAuthors` and
 `foldLabel`; `foldMediations`, each arrangement's consistent creation,
-one grant, retirement and conflicts, its `profile` and the preferred one;
+one grant, retirement and conflicts, and the preferred one;
 `foldReplicas`, each replica's one binding and whether it is a member of
 its replica-mediation arrangement, read from the arrangement's creation
 (`mediationCreations`) whatever its routing grants say;

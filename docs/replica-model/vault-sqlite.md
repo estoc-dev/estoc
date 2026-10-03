@@ -491,10 +491,8 @@ snapshot may be missing. The seed alone cannot recover those missing local
 addresses. Messages for unknown local recipients or from
 unknown short-form senders can therefore be discarded under
 [the receive gate](relationships.md#hard-pre-vault-gate), even if those addresses
-were previously confirmed. Expose that gate's bounded visible diagnostics and
-the registration/state mismatch diagnostic under
-[recipient reconciliation](vault-events.md#route-did-and-key-fold). Pickup,
-recipient reconciliation and local projection recovery need not wait for this
+were previously confirmed. Expose that gate's bounded visible diagnostics. Pickup,
+recipient addition and local projection recovery need not wait for this
 explanation to be presented or acknowledged.
 
 Recovery may require importing a newer complete snapshot or establishing an
@@ -663,11 +661,11 @@ read and maintenance strategies.
     or authority through conflicted continuity; phase 1 has no branch-resolution
     operation. Explain the possible need to establish an independent channel
     from a fresh local DID, which leaves the old fork intact. Pickup,
-    reconciliation and local projection recovery do not wait for this explanation.
+    recipient addition and local projection recovery do not wait for this explanation.
     Discarded deliveries with unknown recipient mappings or unknown short-form
     senders have bounded visible diagnostics without authenticated peer attribution;
-    unknown mediator recipient registrations likewise expose a bounded visible
-    registration/state-mismatch diagnostic and are reconciled normally.
+    an address the account holds that the restored vault has no record of stays
+    held, its mail discarded at that gate.
 35. <a id="sq-35"></a> Import preserves target wrapper/local IDs and is idempotent.
     For the same two complete inputs without a current-author fork, successful
     A+B and B+A yield equal event and held-object inventories: every event CID

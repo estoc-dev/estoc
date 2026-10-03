@@ -1,7 +1,7 @@
 import type { Event } from "@estoc/event-store";
 import { describe, expect, it } from "vitest";
 
-import { VaultEventSet, foldVault, foldVaultChecked, mintMediationDid, type Did, type KeyName, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
+import { VaultEventSet, foldVault, foldVaultChecked, mintMediationDid, type KeyName, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
 import { MEDIATION, MEDIATION2, ROUTING_DID, expectOrderFree, type Scene } from "./helpers.js";
 import { invitation, noObjects, receipt, resolved, vaults, type Local, type Peer } from "./scene.js";
 
@@ -74,7 +74,7 @@ describe("an invitation", () => {
     expect(await over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: `mediation ${MEDIATION} is retired` });
 
     const me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
-    const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];
+    const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: ROUTING_DID, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];
     expect(await over(second)).toEqual({ status: "unavailable", because: `several arrangements route through ${ROUTING_DID}: ${MEDIATION}, ${MEDIATION2}` });
 
     const ungranted = settled.filter((event) => event.type !== "mediation.granted");

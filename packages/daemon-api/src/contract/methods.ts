@@ -131,8 +131,8 @@ export interface Methods {
   mergeBackup: Method<{ backup: Uint8Array }, MergeResult>;
   explainedRestore: Method<Empty, null>;
 
-  /** `profile` names what the arrangement is made as when none stands with the mediator under it: an ordinary one when null or left out, a replica-mediation account for `"replica-mediation/1.0"`. */
-  setMediator: Method<{ mediatorDid: string; profile?: string | null }, { mediationId: MediationId }>;
+  /** The arrangement with that mediator, made and enrolled in when none stands, and selected for new DIDs. */
+  setMediator: Method<{ mediatorDid: string }, { mediationId: MediationId }>;
   createInvitation: Method<{ goal?: string }, { didId: DidId; invitation: Invitation }>;
   acceptInvitation: Method<{ invitation: Invitation; petname: string }, ContactReached>;
   addContactByDid: Method<{ did: string; petname: string }, ContactReached>;

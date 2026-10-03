@@ -13,7 +13,7 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Replica-to-replica synchronization — deferred | [Vault sync](vault-sync.md) | Transfer model, transport, reconciliation and catch-up execution policy |
 
 Phase 1 implements immutable `did:peer:4` application channels, one active
-writable runtime, ordinary account-scoped pickup and portable SQLite recovery.
+writable runtime, pickup as a replica of a replica-mediation account and portable SQLite recovery.
 Mediator and routing-service DID resolution remains independent of the channel
 method restriction. These drafts will be revisited when their features are
 adopted, together with the owning specifications and conformance cases.
@@ -96,13 +96,11 @@ in a vault client, adopt the relevant contracts in
 - Adopted in [vault events](../vault-events.md#single-seed):
   `replica/<replicaId>/me` is reserved for incarnation identity; communication
   DID entity keys keep their existing meanings and names.
-- Adopted in [vault events](../vault-events.md#mediation-created): the
-  `profile: "replica-mediation/1.0"` discriminator of `mediation.created`
-  with fresh mediation/account identities, the mediator's account registration
-  as the source of `mediation.granted` for that profile with the addressed
-  mediator DID as routing DID, and [`replica.created`](../vault-events.md#replica-created).
-  Untagged records remain ordinary mediation and cannot authorize replica
-  membership.
+- Adopted in [vault events](../vault-events.md#mediation-created): every
+  `mediation.created` is such an account, with fresh mediation/account
+  identities and no profile discriminator; the mediator's account registration
+  is the source of `mediation.granted`, with the addressed mediator DID as
+  routing DID; and [`replica.created`](../vault-events.md#replica-created).
 - Implement independent account state and authorization for replica mediation.
   Account-authenticated `account-register` creates the account without a prior
   mediation grant, and `replica-add` then enrolls each replica on its grant. Ordinary accounts, their recipient

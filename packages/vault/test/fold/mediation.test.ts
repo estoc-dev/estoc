@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Keys, foldMediations, mintMediationDid, verifyMediationKeys, type Did, type KeyName, type MediationId, type VaultEventSet } from "../../src/index.js";
 import { MEDIATION, MEDIATION2, OTHER_SEED, ROUTING_DID, ROUTING_DID2, Scene, expectOrderFree, openKeys } from "./helpers.js";
 
-const MEDIATOR = "did:web:mediator.example" as Did;
+const MEDIATOR = ROUTING_DID;
 let keys: Keys;
 let me: Did;
 let me2: Did;
@@ -56,7 +56,7 @@ describe("the mediation fold", () => {
     expect(fold.preferred).toBeNull();
   });
 
-  it("makes disagreeing creations or grants a conflict that nothing later resolves", async () => {
+  it("makes disagreeing creations or grants a conflict that nothing later resolves, and a grant naming a routing DID other than the mediator too", async () => {
     const scene = new Scene();
     created(scene, MEDIATION, me);
     created(scene, MEDIATION, me, "did:web:other.example" as Did);
@@ -69,13 +69,22 @@ describe("the mediation fold", () => {
     expect(fold.mediations.get(MEDIATION)).toMatchObject({ status: "conflict", faults: ["creations disagree"], mediatorDid: null, me: null, routingDid: null });
     expect(fold.mediations.get(MEDIATION2)).toMatchObject({ status: "conflict", faults: [`grants disagree: ${[ROUTING_DID, ROUTING_DID2].sort().join(", ")}`], routingDid: null, retired: "replaced" });
     expectOrderFree(scene.events, await checked(scene));
+
+    const elsewhere = new Scene();
+    created(elsewhere, MEDIATION, me);
+    elsewhere.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID2 });
+    elsewhere.add("mediation.selected", { mediationId: MEDIATION });
+    const routedElsewhere = (await checked(elsewhere))(elsewhere.set());
+    expect(routedElsewhere.mediations.get(MEDIATION)).toMatchObject({ status: "conflict", routingDid: null, mediatorDid: null, faults: ["an arrangement is routed through its mediator"] });
+    expect(routedElsewhere.preferred).toBeNull();
+    expect(routedElsewhere.through(ROUTING_DID2).map((m) => m.mediationId)).toEqual([MEDIATION]);
   });
 
   it("retires terminally and prefers the latest selection only while it is usable", async () => {
     const scene = new Scene();
     created(scene, MEDIATION, me);
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    created(scene, MEDIATION2, me2);
+    created(scene, MEDIATION2, me2, ROUTING_DID2);
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID2 });
     scene.add("mediation.selected", { mediationId: MEDIATION2 });
     scene.add("mediation.selected", { mediationId: MEDIATION });
@@ -94,7 +103,7 @@ describe("the mediation fold", () => {
     const scene = new Scene();
     created(scene, MEDIATION, me);
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    created(scene, MEDIATION2, (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid);
+    created(scene, MEDIATION2, (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid, ROUTING_DID2);
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID2 });
     scene.add("mediation.selected", { mediationId: MEDIATION2 });
     const unchecked = foldMediations(scene.set());

@@ -27,7 +27,6 @@ export type {
   ExecutionId,
   KeyName,
   MediationId,
-  MediationProfile,
   MessageHash,
   MessageId,
   MessageIn,
@@ -159,7 +158,6 @@ export {
 export { type ReplicaStatus, type Replica, type ReplicaFold, type ReplicaFoldOptions, foldReplicas, verifyReplicaGrants } from "./fold/replicas.js";
 export {
   type LocalDidEntity,
-  type DesiredRecipient,
   type ReceiptEligibility,
   type DidFold,
   type DidFoldOptions,

@@ -30,7 +30,10 @@
   // web stays the primary (advertised) name; the did:peer:2 alias answers
   // for clients whose correspondents cannot use a did:web routing DID —
   // demo.didcomm.org's resolver mangles JWK-material did:web documents.
-  "vars": { "MEDIATOR_DID_METHODS": "web,peer2" },
+  // The Estoc app enrolls only as a replica-mediation account, and the
+  // mediator itself keeps that protocol off until told; every deployment
+  // from this file turns it on.
+  "vars": { "MEDIATOR_DID_METHODS": "web,peer2", "MEDIATOR_REPLICA_MEDIATION": "true" },
   "d1_databases": [
     {
       "binding": "DB",
@@ -51,6 +54,7 @@
       "name": "didcomm-mediator",
       "vars": {
         "MEDIATOR_DID_METHODS": "web,peer2",
+        "MEDIATOR_REPLICA_MEDIATION": "true",
         // This deployment's operator contact, shown on the invitation page.
         "MEDIATOR_ABUSE_EMAIL": "abuse@merely.ca"
       },

@@ -49,7 +49,6 @@ export function mediationRecords(mediations: VaultFold["mediations"]): Mediation
   return [...mediations.mediations.values()].map((mediation) => ({
     mediationId: apiId(mediation.mediationId),
     mediatorDid: mediation.mediatorDid,
-    profile: mediation.profile,
     selected: mediations.selected === mediation.mediationId,
     usable: mediations.usable(mediation.mediationId),
     retired: mediation.retired,
