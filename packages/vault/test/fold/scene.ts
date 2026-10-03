@@ -306,7 +306,6 @@ export function packageOf(scene: Scene, out: VaultEvent<"message.out">, input: P
   );
 }
 
-/** The checked fold over the scene's events, with no object to read. */
 export const foldScene = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
 
 export const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer, overrides: Receipt["overrides"] = {}) =>

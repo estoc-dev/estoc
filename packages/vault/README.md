@@ -11,7 +11,7 @@ storage, no agent, no protocol. What is here is the identifier
 vocabulary (`types.ts`: one nominal type per kind of value a payload
 names, over the validated string it serializes as, and the channel, an
 ordered pair of a local and a peer DID), the deterministic
-identifiers (`ids.ts`: the three UUIDv5 namespaces derived from the URL
+identifiers (`ids.ts`: the UUIDv5 namespaces derived from the URL
 namespace, an inbound observation by its canonical sender, recipient and
 wire ID or, anonymous, by the decrypting local key, an execution from
 the same three, an effect key over the tagged execution and effect type

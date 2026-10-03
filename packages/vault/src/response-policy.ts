@@ -90,7 +90,6 @@ export function notificationChannel(fold: VaultFold, decision: Decision): Notifi
   return denied === null ? { status: "selected", channel, source } : none(denied);
 }
 
-/** Why an observation is not admitted, in the disposition's words. */
 function dispositionReason(fold: VaultFold, sourceEventCid: EventCid): string {
   const disposition = fold.dispositions.disposition(sourceEventCid);
   return "because" in disposition ? disposition.because : disposition.status;
