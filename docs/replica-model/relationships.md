@@ -157,17 +157,17 @@ channel of their own, and no receipt takes it from the next under
 
 ## 7. Address lifecycle
 
-`did.created`, `did.disclosed` and `did.retired` retain their local key/route
+`did.created`, `did.disclosed` and `did.retired` retain their local key
 semantics. Retirement blocks new sending and disclosure. Exact
-retained keys may receive while their routes remain eligible. Explicit route
-or mediation retirement stops transport; temporary outage remains recoverable.
+retained keys may receive while their arrangements remain eligible. Explicit
+mediation retirement stops transport; temporary outage remains recoverable.
 
 Rotation is a channel link, not global address retirement. Keep old and new
-recipient routes through exact-successor confirmation. Existing messages keep
+recipient DIDs through exact-successor confirmation. Existing messages keep
 their fixed channels. A verified endpoint replacement prohibits new sends,
 preparation, first dispatch and manual retries on that old endpoint within its
 rotation context under [channels.md](channels.md#fixed-outbound-channel).
-Key or route retirement independently prevents sending. Old-peer inputs remain
+Key or mediation retirement independently prevents sending. Old-peer inputs remain
 receivable, but cannot gain new admission or start source-derived work after
 supersession becomes known, even if sent or received earlier. Retain prior
 admitted history and committed operations without granting another dispatch.
@@ -247,7 +247,7 @@ the committed channel, under [dispatch authority](channels.md#fixed-outbound-cha
 ### 9.1 Deferred delivery
 
 Pre-receipt waits concern only the ability to identify the exact local
-key-agreement method, recover local key/document/route state, safely open the
+key-agreement method, recover local key/document/arrangement state, safely open the
 envelope, authenticate the current sender, or commit durable channel evidence.
 Locked/incomplete recovery is not evidence that a recipient is foreign.
 Current-sender authentication uses locally available validated numalgo-4
@@ -279,8 +279,8 @@ evidence already committed.
 
 Recipient classification begins before decryption once section 9.1 says local
 key state is authoritative. An exact local key-agreement method is eligible
-for receipt when its DID/key mapping is valid and conflict-free and its bound
-route has no terminal dependency. DID retirement does not remove a retained
+for receipt when its DID/key mapping is valid and conflict-free and its
+mediation has no terminal dependency. DID retirement does not remove a retained
 exact key from channel receipt eligibility; invitation state or display membership is not read. Missing
 recoverable prerequisites defer under section 9.1. If no recipient `kid`
 identifies an eligible or recoverably pending method, the delivery is terminal
@@ -291,8 +291,8 @@ Input to an eligible retired local key MUST pass through ordinary
 decryption, authentication and durable receipt. It does not require renewed
 recipient registration. Channel denials and
 the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target) still govern subsequent work. Its mediation stays in the required
-receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while its bound route
-remains configured, non-retired and conflict-free and the mediation is usable.
+receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while the
+arrangement that routes it is usable.
 Explicit channel blocking remains independent of contact display deletion under
 [vault-events.md section 13.6](vault-events.md#delete-a-contact).
 
@@ -300,7 +300,7 @@ For an exact local recipient that can be decrypted, the receiver then checks
 only conditions needed to classify the input safely before writing portable
 application state:
 
-- recipient eligibility above, exact key-agreement method and valid bound route;
+- recipient eligibility above, exact key-agreement method and a document naming one route;
 - valid DIDComm syntax and authenticated encryption;
 - a supported authenticated sender DID under [section 10.1](#did-resolution-requirements), with matching
   `from`/`skid`/`apu` and valid first-disclosure long form for numalgo 4;
@@ -372,8 +372,8 @@ blocking preserves earlier facts; duplicates follow
 #### Local methods and retained peer documents
 
 A locally controlled communication DID MUST have its fixed key-agreement and
-authentication methods, seed-derived keys, validated numalgo-4 document and one
-immutable `boundRouteId` under [vault-events.md section 5.2](vault-events.md#did-identity-and-keys). That document must
+authentication methods, seed-derived keys and validated numalgo-4 document
+naming one DIDComm service under [vault-events.md section 5.2](vault-events.md#did-identity-and-keys). That document must
 support authenticated messages and signing `from_prior`. Recipient lifecycle
 is role-independent under section 9; sending requires a live DID.
 
@@ -567,7 +567,7 @@ matching document, a proof that passes the checks not requiring it stays pending
 A receiver compares predecessor DID spellings and authentication-method IDs
 under [vault-events.md section 6.3](vault-events.md#relationship-peertransitioned), using only the method's validated spelling
 equivalence and the exact verification document. Exact wire spellings remain retained.
-A successor may bind another route or mediation for privacy. Neither changing
+A successor may send through another arrangement or endpoint for privacy. Neither changing
 transport preference nor choosing another service changes an existing DID.
 
 <a id="early-private-address-policy-and-notifications"></a>
@@ -633,7 +633,7 @@ Use the exact-address, authenticated-peer and local-only/join context checks in
 successor. An ACK's named message IDs alone confirm no address knowledge.
 Its admitted complete authenticated carrier, including a pure ACK, can independently
 confirm the exact successor address to which it was sent.
-Retain both recipient routes through confirmation; retire a shared resource
+Retain both recipient DIDs through confirmation; retire a shared resource
 only when no other channel or disclosure still needs it.
 
 <a id="peer-address-changes"></a>
@@ -711,7 +711,7 @@ cannot transfer authority through display membership. Channel receipt never
 implies application permission. Resource/parser limits remain in force.
 Cross-channel reuse of a peer's wire ID is not deduplicated by this profile;
 channel-local processing does not promise exactly-once business execution.
-An unconfirmed local successor with a terminal route cannot silently branch or
+An unconfirmed local successor with a terminal mediation cannot silently branch or
 roll back; explicit new communication is a new channel and new message.
 
 <a id="required-conformance-cases"></a>
@@ -723,7 +723,7 @@ roll back; explicit new communication is a new channel and new message.
 
 ### DID identity and operation evidence (RZ-1–RZ-12)
 
-- <a id="rz-1"></a> **RZ-1.** Peer-DID first disclosure validates its long form, canonical short form, fixed keys and bound route without DNS.
+- <a id="rz-1"></a> **RZ-1.** Peer-DID first disclosure validates its long form, canonical short form, fixed keys and the route its document names without DNS.
 - <a id="rz-3"></a> **RZ-3.** No emitted message uses an Estoc rendezvous request, accept or decline type, or a wire contact ID.
 - <a id="rz-4"></a> **RZ-4.** Public/public, public/pairwise and pairwise/pairwise pairs use the same channel receipt and operation-evidence rules.
 
@@ -767,7 +767,7 @@ roll back; explicit new communication is a new channel and new message.
 - <a id="rz-23"></a> **RZ-23.** Input at the exact successor confirms rotation; input at a predecessor does not. Explicit ACK naming a message remains separate.
 - <a id="rz-24"></a> **RZ-24.** A local link needs exact predecessor confirmation; no second same-side link is authorized before its predecessor is known by the peer.
 
-- <a id="rz-25"></a> **RZ-25.** Both live recipient routes remain during rotation overlap. Shared routes/addresses survive until unrelated users no longer need them.
+- <a id="rz-25"></a> **RZ-25.** Both live recipient DIDs remain during rotation overlap. Shared arrangements and addresses survive until unrelated users no longer need them.
 
 <a id="peer-continuation-and-integrity-rz-26-rz-35"></a>
 
@@ -793,9 +793,9 @@ roll back; explicit new communication is a new channel and new message.
 
 ### Recipient lifecycle (RZ-36–RZ-38)
 
-- <a id="rz-36"></a> **RZ-36.** A retired local DID permits no new sending or disclosure, but retained keys may receive on eligible routes without continuity history.
+- <a id="rz-36"></a> **RZ-36.** A retired local DID permits no new sending or disclosure, but retained keys may receive through eligible arrangements without continuity history.
 
-- <a id="rz-37"></a> **RZ-37.** A terminal route or mediation rejects input; temporary missing key/route/recovery prerequisites defer without pickup ACK.
+- <a id="rz-37"></a> **RZ-37.** A terminal mediation rejects input; temporary missing key/arrangement/recovery prerequisites defer without pickup ACK.
 - <a id="rz-38"></a> **RZ-38.** Wrong recipient DID or method fragment, authentication-purpose kid and unknown Peer short form are terminal before application state.
 
 <a id="resolution-freshness-and-budgets-rz-39-rz-45"></a>
@@ -824,7 +824,7 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-52"></a> **RZ-52.** A remote problem report needs exact channel/path correlation and readable body; it changes no submission or continuity state.
 
-- <a id="rz-53"></a> **RZ-53.** An unconfirmed successor with a terminal route cannot branch or roll back; temporary outage does not invoke this terminal limitation.
+- <a id="rz-53"></a> **RZ-53.** An unconfirmed successor with a terminal mediation cannot branch or roll back; temporary outage does not invoke this terminal limitation.
 - <a id="rz-54"></a> **RZ-54.** Recovery reconstructs state for one active executor, grants no dispatch action for historical work and discloses no replica ID to peers.
 
 <a id="receipt-recovery-and-evidence-fixtures-rz-55-rz-61"></a>

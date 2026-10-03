@@ -37,7 +37,7 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 | Domain | Definitions and event schemas | Folds | Procedures |
 | --- | --- | --- | --- |
 | Identity and naming | [Identity, keys and identifier types](#identity-seed-and-key-names); [Identity label](#identity-label) | [Runtime author](#runtime-author-fold) | [Open runtime](#open-the-writable-full-runtime) |
-| Mediation, DIDs and routes | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation, DID and route events](#mediation-communication-dids-and-routes) | [Mediation](#mediation-fold); [Routes, DIDs and keys](#route-did-and-key-fold) | [Establish mediation](#establish-mediation); [Create DID](#create-a-communication-did); [Disclose address](#disclose-an-address) |
+| Mediation and DIDs | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation and DID events](#mediation-communication-dids-and-routes) | [Mediation](#mediation-fold); [DIDs and keys](#route-did-and-key-fold) | [Establish mediation](#establish-mediation); [Create DID](#create-a-communication-did); [Disclose address](#disclose-an-address) |
 | Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](relationships.md#early-private-address-policy-and-notifications); [Rotate local address](#rotate-a-local-relationship-address) |
 | Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](#contact-fold) | [Delete contact](#delete-a-contact) |
 | Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events and witnesses](#inbound-message-events) | [Inbound execution](#inbound-message-and-execution-fold); [Outbound delivery](#outbound-message-and-delivery-fold) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
@@ -51,7 +51,7 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 - [2. Principles](#principles)
 - [3. Identity, seed and key names](#identity-seed-and-key-names)
 - [4. Message keys and peer evidence](#message-keys-and-peer-evidence)
-- [5. Mediation, communication DIDs and routes](#mediation-communication-dids-and-routes)
+- [5. Mediation and communication DIDs](#mediation-communication-dids-and-routes)
 - [6. Channels, continuity and contact membership](#relationships-and-address-changes)
 - [7. Contacts and application views](#contacts)
 - [8. Stored message document](#stored-message-document)
@@ -274,7 +274,7 @@ it does not imply that every identifier has the same encoding or scope.
 | Contact | `ContactId` | `contactId`, `fromContactId` |
 | Local/peer DID pair | `Channel` | `channels` entries; `localDid` and `peerDid` in selectors |
 | Local DID entity | `DidId` | `didId`, `senderDidId`, `fromDidId`, `toDidId` |
-| Route / mediation arrangement | `RouteId` / `MediationId` | `routeId`, `boundRouteId` / `mediationId` |
+| Mediation arrangement | `MediationId` | `mediationId` |
 | One prepared package | `PackageId` | `packageId` |
 | Scoped mediator delivery | `DeliveryId` | `deliveryId` |
 | Sender/recipient-scoped automatic execution | `ExecutionId` | `executionId` |
@@ -316,7 +316,6 @@ type MessageId = EntityId<"message">;
 type ContactId = EntityId<"contact">;
 type Channel = { localDid: Did; peerDid: Did };
 type DidId = EntityId<"did">;
-type RouteId = EntityId<"route">;
 type MediationId = EntityId<"mediation">;
 type PackageId = EntityId<"package">;
 type ExecutionId = EntityId<"execution">;
@@ -582,7 +581,7 @@ document under one immutable Peer DID is invalid method evidence.
 
 <a id="mediation-communication-dids-and-routes"></a>
 
-## 5. Mediation, communication DIDs and routes
+## 5. Mediation and communication DIDs
 
 Mediation arrangements, communication DIDs and their private keys belong to
 the vault. Their meaning never depends on the event author or the process
@@ -591,8 +590,9 @@ executing the full runtime. DID-document publication is outside vault state.
 All communication DIDs have the same send, receive and continuity
 semantics. The core stores no public/pairwise role. Disclosure records and
 local address-allocation policy describe whether an address is public or was
-created for private use with one peer. Routes are reusable vault-scoped
-transport configurations. Resolving an external mediator DID, including
+created for private use with one peer. Where a DID sends is the one
+DIDComm service of its own document, a mediator's routing DID or a direct
+endpoint. Resolving an external mediator DID, including
 `did:web`, does not create a local DID entity or a publication obligation.
 
 <a id="mediation-events"></a>
@@ -673,11 +673,11 @@ arrangement or obtains an explicit current answer from the mediator.
 }
 ```
 
-This is the user's or policy's preferred mediation for newly configured
-mediated routes. The latest event by canonical order wins.
+This is the user's or policy's preferred mediation for newly minted
+mediated DIDs. The latest event by canonical order wins.
 
 Selection does not stop old arrangements from receiving. Any mediation
-still referenced by a live route remains required.
+that routes a retained DID remains required.
 
 <a id="mediation-retired"></a>
 
@@ -694,10 +694,11 @@ still referenced by a live route remains required.
 }
 ```
 
-Retirement is terminal for the arrangement ID. A procedure SHOULD retire or
-replace every live route that depends on it first. If a retired mediation is
-still referenced by a live route, the fold reports a routing configuration
-conflict rather than silently changing a DID.
+Retirement is terminal for the arrangement ID. A procedure SHOULD give
+every DID routed through it a successor first. A DID whose document still
+sends through a retired arrangement is terminal for receipt under
+[section 5.7](#route-did-and-key-fold); the fold never changes a DID's
+document.
 
 <a id="replica-created"></a>
 
@@ -776,8 +777,7 @@ A locally controlled communication DID is a Peer DID:
   "data": {
     "didId": "019b2a54-05bd-74ef-b8ac-e8375cb776c2",
     "did": "did:peer:4zQm...rendezvous-short",
-    "longFormDid": "did:peer:4zQm...rendezvous-short:z...rendezvous-input-document",
-    "boundRouteId": "019b2a58-fef5-7d59-ae1c-46e4f0a13c73"
+    "longFormDid": "did:peer:4zQm...rendezvous-short:z...rendezvous-input-document"
   }
 }
 ```
@@ -791,8 +791,10 @@ For every locally controlled communication DID:
 
 - `did` is the canonical `did:peer:4` short form;
 - `longFormDid` is the validated self-resolving long form;
-- `boundRouteId` is REQUIRED and equals the route encoded in the input document;
-- seed-derived public keys and route MUST match that document; and
+- the input document's one DIDComm service is the DID's route under
+  [section 5.3](#delivery-routes), a mediator's routing DID or an absolute
+  HTTPS or WSS direct endpoint;
+- seed-derived public keys MUST match that document; and
 - changing keys or route creates another DID entity and an explicit scoped
   transition.
 
@@ -809,67 +811,35 @@ integrity conflict.
 
 <a id="delivery-routes"></a>
 
-### 5.3 Delivery routes
+### 5.3 Where a DID sends
 
-A route is a reusable, vault-scoped transport configuration. It does not
-belong to a replica or a single communication DID. One rendezvous DID and many
-pairwise DIDs may bind the same route, which is how they reuse a mediator
-or direct ingress without sharing an application identity.
+A communication DID's document names exactly one DIDComm service, and
+that service is the DID's route: a mediator's routing DID, under which
+the DID is routed by the mediation arrangement whose grant names that
+DID, or an absolute HTTPS or WSS direct endpoint. The route is part of
+the document, so the long form fixes it; nothing beside the document
+records it and no event changes it. A transport or mediation change
+creates successor DID entities, allowing old and new DIDs to overlap
+during cutover. Each affected channel context uses its own
+[section-6.5](#relationship-localtransitioned) local decision for new
+intents; mediation selection does not migrate existing DIDs.
 
-<a id="route-configured"></a>
+A direct endpoint routes to a full vault runtime or an ingress service.
+It MUST NOT identify one replica as the DIDComm application recipient.
+Minting the DID does not itself register a recipient.
 
-#### `route.configured`
+One rendezvous DID and many pairwise DIDs may send through the same
+arrangement or endpoint, which is how they reuse a mediator or direct
+ingress without sharing an application identity.
 
-```json
-{
-  "type": "route.configured",
-  "roots": [],
-  "data": {
-    "routeId": "019b2a58-fef5-7d59-ae1c-46e4f0a13c73",
-    "kind": "mediated",
-    "mediationId": "019b2a51-118f-7e46-b31b-c63cd090c92c",
-    "endpoint": null
-  }
-}
-```
-
-`kind` is `mediated` or `direct`.
-
-- A mediated route has non-null `mediationId` and null `endpoint`.
-- A direct route has null `mediationId` and an absolute HTTPS or WSS
-  `endpoint`.
-
-A direct endpoint routes to a full vault runtime or an ingress service. It
-MUST NOT identify one replica as the DIDComm application recipient. Configuring
-the route does not itself register a recipient.
-
-Equal configurations under one route ID are semantic duplicates. Different
-values under one ID are an integrity conflict. A transport endpoint or
-mediation change creates a new route ID and successor DID entities, allowing
-old and new DIDs and routes to overlap during cutover. Each affected channel
-context uses its own [section-6.5](#relationship-localtransitioned) local decision
-for new intents; mediation selection
-does not migrate existing DIDs or change their immutable routes.
-
-<a id="route-retired"></a>
-
-#### `route.retired`
-
-```json
-{
-  "type": "route.retired",
-  "roots": [],
-  "data": {
-    "routeId": "019b2a58-fef5-7d59-ae1c-46e4f0a13c73",
-    "because": "replaced"
-  }
-}
-```
-
-Retirement is terminal for the reusable route ID. Every DID that binds it
-becomes visibly unroutable; restoring communication requires a successor DID
-bound to a live route, not a route selection on the old entity. Retirement
-does not erase retained messages.
+A mediated DID is routed by the one usable arrangement whose grant names
+its routing DID. While no arrangement does, the DID waits. While several
+usable arrangements do, which account holds the address is undecidable,
+and the DID waits until one of them is retired; a procedure MUST NOT mint
+a DID for a routing DID in that state. When every arrangement naming the
+routing DID is retired or in conflict, the DID is terminal for receipt,
+and restoring communication requires a successor DID, not a change to
+the old entity.
 
 <a id="disclosure"></a>
 
@@ -906,7 +876,7 @@ that disclosure; a new invitation receives a new `oobId`. Distinct disclosures
 with the same non-null `oobId` are an entity conflict, and republishing under
 that ID is refused.
 
-This permanently records disclosure. A mediated `boundRouteId` MUST have current
+This permanently records disclosure. A mediated DID MUST have current
 verified recipient registration before disclosure. Reusable/public disclosure
 SHOULD use a discovery address and SHOULD NOT expose an address allocated for
 private communication. These privacy policies grant no cryptographic authority.
@@ -931,7 +901,7 @@ Retirement is terminal for new sending and disclosure using this DID. Its mediat
 It does not erase keys, documents, received messages or continuity evidence.
 
 A retained exact local key remains eligible for authenticated channel
-receipt while its bound route has no terminal dependency, including after DID
+receipt while its mediation has no terminal dependency, including after DID
 retirement. This rule applies equally to publicly disclosed and privately
 allocated addresses. No renewed registration is required to drain retained
 deliveries. An invitation on a retired local DID is unavailable.
@@ -939,9 +909,9 @@ deliveries. An invitation on a retired local DID is unavailable.
 [distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
 
 Retain key/document evidence and usable mediation needed by retained channels.
-Channel denials and sender/route eligibility govern new work. Retained
+Channel denials and sender eligibility govern new work. Retained
 confirmation may justify an explicitly requested recovery rotation without reviving
-the old route. Retirement never erases committed message or delivery evidence;
+the old address. Retirement never erases committed message or delivery evidence;
 display contact deletion alone is not a transport or authorization operation.
 
 <a id="142-mediation-fold"></a>
@@ -961,19 +931,19 @@ For each mediation ID:
 
 The preferred mediation is the latest `mediation.selected`. If it is missing,
 ungranted, retired or conflicted, preferred is null and policy must select
-another before configuring a new mediated route.
+another before minting a new mediated DID.
 
 The **required receiving set** contains every usable mediation that is preferred
-or referenced by a configured, non-retired, conflict-free route bound by a
-retained local DID, including a retired DID. Its exact key/document evidence
+or that routes a retained local DID, including a retired DID, under
+[section 5.7](#route-did-and-key-fold). Its exact key/document evidence
 must be consistent; recoverable missing material leaves that dependency pending
 instead of removing it. Allocation/disclosure
 policy has no effect on this set. An unpreferred mediation leaves only when no
 such dependency remains or it becomes unusable.
 
 This is independent of the desired recipient registration set: draining
-retained messages does not re-register a retired DID. Terminal routes and
-mediations stop receipt; temporary unavailability does not erase dependencies.
+retained messages does not re-register a retired DID. Terminal mediations
+stop receipt; temporary unavailability does not erase dependencies.
 
 The active runtime reconciles recipients and drains account-scoped pickup on
 every reachable mediation in this set. A hosted runtime receives no special
@@ -1011,24 +981,12 @@ member of a conflicted or retired arrangement receives nothing through it. A wri
 
 <a id="route-did-and-key-fold"></a>
 
-### 5.7 Route, DID and key fold
-
-For each route ID:
-
-- exactly one consistent `route.configured` defines the reusable transport;
-- any `route.retired` makes it terminal; and
-- conflicting configuration values make it unusable and visible as a
-  conflict.
-
-A bound route has a **terminal dependency** when that route or its mediation
-is retired, either has a configuration conflict, or its mediation has
-conflicting creation/grant evidence. Missing recoverable configuration or a
-temporarily unavailable endpoint is not terminal.
+### 5.7 DID and key fold
 
 For each DID entity ID:
 
 - exactly one consistent `did.created` defines its spelling set, fixed
-  keys and immutable `boundRouteId`;
+  keys and, through its document, its route;
 - disclosures are every valid `did.disclosed` in canonical order; and
 - any `did.retired` makes the DID entity terminal.
 
@@ -1038,19 +996,27 @@ The fold verifies all of the following:
   in [section 3.2](#single-seed);
 - the seed-derived public keys match the Peer DID input document;
 - the entity stores a valid long form and its derived canonical short form;
-- its sole bound route matches that document and is configured, non-retired
-  and conflict-free; and
-- a mediated bound route references a usable mediation.
+- the document names exactly one DIDComm service, a DID or an absolute
+  HTTPS or WSS URL, under [section 5.3](#delivery-routes); a document that
+  does not is a conflict; and
+- a mediated document's routing DID is named by the grant of exactly one
+  usable arrangement, which routes the DID.
+
+A mediated DID has a **terminal dependency** when every arrangement whose
+grant names its routing DID is retired or has conflicting creation/grant
+evidence. No such arrangement yet, one not yet usable, several usable ones
+or a temporarily unavailable endpoint is not terminal. A direct DID has no
+such dependency.
 
 For recipient reconciliation, a live DID is a non-retired, conflict-free
 entity satisfying those local identity and route checks. Current recipient
 registration is not a prerequisite for entering the desired set; reconciliation
-establishes it. A single route may be bound by many DIDs. This is transport
-reuse, not DID or contact equivalence.
+establishes it. Many DIDs may send through one arrangement or endpoint. This
+is transport reuse, not DID or contact equivalence.
 
 The desired mediator recipient set contains exactly each
-`(canonical DID short form, boundRouteId)` pair for a live DID whose bound route
-is mediated. On every connection the phase-1 runtime queries each mediator
+`(canonical DID short form, mediation ID)` pair for a live mediated DID and
+the arrangement that routes it. On every connection the phase-1 runtime queries each mediator
 and reconciles that desired set with ordinary Coordinate Mediation
 `recipient-query` and `recipient-update`. Current registration is runtime state,
 not portable vault state. A restore re-queries the mediator before disclosure
@@ -1063,13 +1029,13 @@ establish why its local record is absent. Reconciliation still removes
 registrations outside the desired set. Other registration diagnostics MAY be
 kept in local trace.
 
-Direct bound routes do not enter that set. They lead to a full vault runtime
+Direct DIDs do not enter that set. They lead to a full vault runtime
 or ingress service without naming a replica as the application recipient.
 
 The fold also maintains a reverse map from every local communication key name
 to exactly one DID entity. Both validated Peer spellings map to that entity,
 but a recipient fragment must still identify its exact key-agreement method.
-The map retains retired DIDs and DIDs whose routes retired for historical
+The map retains retired DIDs and DIDs whose arrangements retired for historical
 input and proof joins. Present liveness controls sending and desired
 registration; new receipt uses [section 5.5](#did-retired) and [relationships.md section 9.2](relationships.md#hard-pre-vault-gate)'s
 eligibility rule for live and retained historical addresses.
@@ -1083,10 +1049,9 @@ cryptographic use.
 
 Fold each OOB disclosure into one invitation: its `oobId`, its local DID and
 whether that DID still takes a first message under it. An invitation is
-available while the disclosed DID is live on a route that may deliver, and
+available while the disclosed DID is live and routed where it may deliver, and
 unavailable once the DID is retired or in conflict, its creation is missing,
-its route is retired, misconfigured or on a terminal mediation, or while the
-DID waits to be live. An `oobId` that distinct disclosure events carry, as
+its mediation is terminal, or while the DID waits to be live. An `oobId` that distinct disclosure events carry, as
 two merged histories may each have disclosed it, names no one invitation to
 hand out again: every disclosure under it is unavailable with a reason that
 says so, none is chosen by event order, and the conflict changes nothing of
@@ -2468,7 +2433,7 @@ no exactly-once claim across loss of authoritative history.
 3. perform ordinary Coordinate Mediation;
 4. on grant, append `mediation.granted`;
 5. reconcile desired recipient DIDs through Coordinate Mediation; and
-6. append `mediation.selected` when policy chooses it for new mediated routes.
+6. append `mediation.selected` when policy chooses it for new mediated DIDs.
 
 The phase-1 runtime uses ordinary account-scoped Message Pickup. It sends no
 `replica_id` to the mediator. A network failure after step 1 leaves a retryable
@@ -2480,14 +2445,16 @@ intent, not a half identity.
 
 ### 13.3 Create a communication DID
 
-1. choose a configured live route, creating it first when necessary;
+1. choose the route, a usable arrangement whose routing DID no other usable
+   arrangement shares, or a direct endpoint;
 2. choose a fresh UUIDv7 entity ID;
 3. derive the fixed authentication and key-agreement keys;
-4. build and validate a Peer DID numalgo-4 document encoding those keys and route;
-5. commit `did.created` with canonical short form, long form and `boundRouteId`.
+4. build and validate a Peer DID numalgo-4 document encoding those keys and
+   that route as its one DIDComm service;
+5. commit `did.created` with canonical short form and long form.
 
 There is no role field. A committed ID reuses its exact keys, document and route
-after a crash; it cannot be recreated using a new route. A conflicting or retired
+after a crash; it cannot be recreated for another route. A conflicting or retired
 entity cannot be silently replaced. Registration of a mediated recipient must
 be verified before disclosure. First disclosure uses the long form under
 [relationships.md section 10.2](relationships.md#peer-did-numalgo-4-profile). Address allocation may prefer another mediator to
@@ -2500,12 +2467,12 @@ reduce linkability, but route choice does not establish channel authority.
 ### 13.4 Disclose an address
 
 Create or select a live DID under [section 13.3](#create-a-communication-did),
-reconcile its bound route and verify recipient registration. Commit
+reconcile the arrangement that routes it and verify recipient registration. Commit
 [did.disclosed](#did-disclosed), fixing its form before
 exposing the long form through the chosen discovery transport.
 
 The address belongs to the vault, not the process displaying it. A runtime
-missing authoritative local key/route state leaves incoming delivery pending
+missing authoritative local key or arrangement state leaves incoming delivery pending
 until recovery repairs those prerequisites.
 
 <a id="165-erase-a-message"></a>
@@ -2541,7 +2508,7 @@ Late channel receipt may still be saved/pickup-ACKed. Existing channel denial
 prevents new admission and automatic work, including new ACK attribution from
 a still-unadmitted source. Previously admitted ACK observations retain their
 target/path checks and historical attribution. Explicit cleanup follows retained message/root rules.
-Shared keys/routes are not retired merely because one display contact disappears.
+Shared keys and arrangements are not retired merely because one display contact disappears.
 
 <a id="167-rotate-a-local-relationship-address"></a>
 <a id="rotate-a-local-relationship-address"></a>
@@ -2552,8 +2519,9 @@ Shared keys/routes are not retired merely because one display contact disappears
    peer DID, verify exact predecessor confirmation and check current rotation
    policy. Check for an existing decision throughout its verified peer-only
    context before allocating; reuse it, or defer on missing references.
-2. With an already configured eligible route, allocate a fresh local DID and
-   sign one frozen predecessor proof without committing that new DID yet.
+2. For a usable route, the preferred arrangement or the predecessor's own,
+   allocate a fresh local DID and sign one frozen predecessor proof without
+   committing that new DID yet.
 3. Under the lock, fold complete available continuity and recheck lifecycle,
    denial, source-input supersession, conflict and existing decisions from the
    same local predecessor throughout its verified peer-only context under
@@ -2832,7 +2800,7 @@ derivation requires a new vault version.
 
 - <a id="ve-23"></a> **VE-23.** Resolution and channel receipt commit before pickup ACK.
 
-- <a id="ve-24"></a> **VE-24.** Local receive prerequisites wait without pickup ACK; continuity waits after authenticated receipt. Retired exact keys may drain eligible routes independently of contacts.
+- <a id="ve-24"></a> **VE-24.** Local receive prerequisites wait without pickup ACK; continuity waits after authenticated receipt. Retired exact keys may drain through eligible arrangements independently of contacts.
 
 - <a id="ve-25"></a> **VE-25.** Safely classified hard pre-vault rejection is pickup-ACKed before any
     `message.in` and leaves only bounded local diagnostics.
@@ -2897,17 +2865,17 @@ derivation requires a new vault version.
 
 - <a id="ve-48"></a> **VE-48.** A channel link never globally retires or aliases a public DID used by unrelated channels.
 
-- <a id="ve-49"></a> **VE-49.** Different communication DIDs may use independent immutable mediation routes.
+- <a id="ve-49"></a> **VE-49.** Different communication DIDs may send through independent arrangements or endpoints, each fixed by its own document.
 
 <a id="lifecycle-erasure-and-restore-ve-50-ve-55"></a>
 
 ### Lifecycle, erasure and restore (VE-50–VE-55)
 
-- <a id="ve-50"></a> **VE-50.** Desired registration includes live DID/route pairs. Retained eligible old routes can drain receipt without requiring continuity history.
+- <a id="ve-50"></a> **VE-50.** Desired registration includes each live mediated DID with the arrangement that routes it. Retained eligible old DIDs can drain receipt without requiring continuity history.
 
 - <a id="ve-51"></a> **VE-51.** Each local DID derives fixed authentication and key-agreement keys and
-    an immutable bound route. Rotation creates another entity; the local
-    allocator selects its independent route when creating the successor DID.
+    sends where its document says. Rotation creates another entity; the local
+    allocator chooses the successor's route when minting it.
 - <a id="ve-52"></a> **VE-52.** Erasure is checked before object presence; late roots receive equivalent
     erasure closure. Importing a distinct event CID for an already erased
     message/root relation cannot re-hold that contribution or require its bytes.

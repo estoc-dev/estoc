@@ -87,8 +87,8 @@ one grant, retirement and conflicts, its `profile` and the preferred one;
 `foldReplicas`, each replica's one binding and whether it is a member of
 its replica-mediation arrangement, read from the arrangement's creation
 (`mediationCreations`) whatever its routing grants say;
-`foldRoutes`, each route's usability and terminal dependency, each local
-DID entity's consistent record, own document, route target, disclosures,
+`foldRoutes`, each local
+DID entity's consistent record, own document, the route its document names and the arrangement that routes it, disclosures,
 retirement, faults and liveness, the key-name and spelling reverse maps,
 the desired mediator recipients and each entity's receipt eligibility;
 `requiredReceivingSet`; `heldRoots` / `foldErasures` / `readState`,
@@ -169,10 +169,10 @@ runtime to walk when it records admissions, the fold recording none), the
 invitations (`fold/invitations.ts`: `foldInvitations` reads each OOB
 disclosure as an address handed out, which whoever holds it writes to
 in a pair of their own, no receipt under it taking anything from the
-next; it is `available` while the disclosed DID is live on a route
-that may deliver, and `unavailable` while the DID is retired, in
-conflict, not yet created here or waiting to be live, or its route is
-retired, misconfigured or on a terminal mediation), the
+next; it is `available` while the disclosed DID is live and routed
+where it may deliver, and `unavailable` while the DID is retired, in
+conflict, not yet created here or waiting to be live, or its mediation
+is terminal), the
 contacts (`fold/contacts.ts`: `foldContacts` is a table of latest-wins
 decisions under each contact ID — tombstone, petname, flags, local-DID
 preference, the whole channel selection replaced or cleared, merge

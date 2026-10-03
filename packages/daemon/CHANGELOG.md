@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **No route entity**: new DIDs are minted through the selected
+  arrangement itself, and `setMediator` records no route. The test
+  corpus is regenerated without `route.configured` events; a vault
+  written by an earlier daemon is read anew.
 - **A mediator can be arranged with as a replica-mediation account**:
   `setMediator(mediatorDid, profile?)` given `"replica-mediation/1.0"`
   makes the arrangement under that profile, enrolls this runtime in it

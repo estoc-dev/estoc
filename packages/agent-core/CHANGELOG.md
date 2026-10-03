@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **DIDs are minted for a route, not bound to a route entity**:
+  `createDid(runtime, keys, route, didId?)` and `RotateOptions.route`
+  take a `RouteSpec`, a mediation arrangement by ID or a direct HTTPS or
+  WSS endpoint, and `routeTargetOf(fold, route)` says where it sends,
+  refusing an arrangement whose routing DID another usable arrangement
+  shares. `routeOf(entity)` reads a recorded DID's route back from its
+  entity; `usableTarget` and `sameDocument` are the checks `createDid`
+  and `rotate` share. `configureRoute`, `ensureRoute`, `mediatedRouteOf`
+  and `routeOf(fold, routeId)` are gone. A mediated DID whose
+  arrangement has not arrived is refused at the gate as pending with
+  the reason the fold gives, and one whose every arrangement is retired
+  or in conflict as terminal.
 - **Replica-mediation enrollment**: `createMediation` takes a `profile`,
   and an arrangement created with `"replica-mediation/1.0"` is enrolled
   in with `enroll` (`Agent.enroll`) where an ordinary one is
