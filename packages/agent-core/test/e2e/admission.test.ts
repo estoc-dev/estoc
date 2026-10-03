@@ -4,7 +4,7 @@ import { PURE_ACK_EFFECT, type Did, type DidId, type MessageId, type VaultFold }
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import type { ChannelRecord, MessageRecord } from "../../src/index.js";
+import { LiveInput, type ChannelRecord, type MessageRecord } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, peerSealer, sealed, type DirectParty, type Sealer } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, imported, restart, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
@@ -95,8 +95,8 @@ describe("one pickup batch holding a message from the address the peer then rota
     await until("alice has taken the batch", () => alice.inbounds.length === 3);
     await alice.agent.settled();
     expect(alice.inbounds.slice(1)).toMatchObject([
-      { received: { outcome: "received", live: true }, after: { proof: { status: "not-present" }, disposition: { status: "admitted" } }, reacted: { effects: [{ effectType: PURE_ACK_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } },
-      { received: { outcome: "received", live: true }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } } },
+      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "not-present" }, disposition: { status: "admitted" } }, reacted: { effects: [{ effectType: PURE_ACK_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } },
+      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } } },
     ]);
     expect((await foldOf(alice)).continuity.head(channelOf(a0, b0))).toEqual(channelOf(a0, b1));
 
@@ -130,8 +130,8 @@ describe("one pickup batch holding a message from the address the peer then rota
     await until("alice has taken the batch", () => alice.inbounds.length === 3);
     await alice.agent.settled();
     expect(alice.inbounds.slice(1)).toMatchObject([
-      { received: { outcome: "received", live: true }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } } },
-      { received: { outcome: "received", live: false }, after: { proof: { status: "not-present" }, disposition: { status: "ignored-superseded" } }, reacted: null, address: null },
+      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } } },
+      { received: { outcome: "received", live: null }, after: { proof: { status: "not-present" }, disposition: { status: "ignored-superseded" } }, reacted: null, address: null },
     ]);
     expect(forwardsSeen(mediator)).toBe(forwards + 1);
     expect((await foldOf(alice)).continuity.head(channelOf(a0, b0))).toEqual(channelOf(a0, b1));

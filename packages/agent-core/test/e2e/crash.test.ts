@@ -106,7 +106,7 @@ describe("a process that dies", () => {
     expect((await bob.agent.outbounds()).map(({ outbound }) => [outbound.messageId, outbound.outcome.status])).toEqual([[HELLO, "prepared"]]);
     expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted" });
     await until("alice has it again", () => alice.inbounds.length === 2);
-    expect(alice.inbounds[1]).toMatchObject({ received: { outcome: "received", live: false }, reacted: null, address: null });
+    expect(alice.inbounds[1]).toMatchObject({ received: { outcome: "received", live: null }, reacted: null, address: null });
     const ofAlice = await foldOf(alice);
     expect(ofAlice.set.of("message.in")).toHaveLength(2);
     expect(ofAlice.inbound.executions.size).toBe(1);

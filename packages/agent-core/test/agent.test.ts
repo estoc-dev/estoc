@@ -7,7 +7,7 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED, STATUS_REQUEST } from "../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { Agent, AgentTrace, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, selectMediation, send, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
+import { Agent, AgentTrace, LiveInput, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, selectMediation, send, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { carrierWaitingForIssuer, didcomm, freshVault, holdAddresses, issuerRecovered, json, mediatedParty, newMediator, peerSealer, proofOfSuccession, refuseCommits, sealed, until, webIdentity, type MediatedParty } from "./helpers.js";
 
@@ -185,7 +185,7 @@ describe("opening an agent", () => {
     const sent = await bobAgent.send({ channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: alice.longFormDid }, { type: BASIC_MESSAGE, body: { content: "hello" } });
     expect(sent.dispatched).toMatchObject({ outcome: "submitted" });
     await until("the frame pushed under the short form is followed", () => inbounds.length === 1, 10_000);
-    expect(inbounds[0]!.received).toMatchObject({ outcome: "received", live: true });
+    expect(inbounds[0]!.received).toMatchObject({ outcome: "received", live: expect.any(LiveInput) });
   });
 
   it("tells the host its lines whole as they change: once for a connection made, again when the mediator drops the socket, and nothing once closed", async () => {
@@ -473,7 +473,7 @@ describe("a live input", () => {
     await agent.connect();
     await agent.receive(packed);
     await agent.settled();
-    expect(inbounds.map(({ received, reacted, address }) => [received.outcome === "received" && received.live, reacted, address])).toEqual([
+    expect(inbounds.map(({ received, reacted, address }) => [received.outcome === "received" && received.live !== null, reacted, address])).toEqual([
       [false, null, null],
       [false, null, null],
       [false, null, null],
@@ -488,7 +488,7 @@ describe("a live input", () => {
     await bobAgent.send(target, { type: PING_TYPE, body: { response_requested: true } }, { messageId: PING_AGAIN });
     await agent.connect();
     await agent.settled();
-    expect(inbounds[3]).toMatchObject({ received: { live: true }, reacted: { effects: [{ effectType: PING_RESPONSE_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } });
+    expect(inbounds[3]).toMatchObject({ received: { live: expect.any(LiveInput) }, reacted: { effects: [{ effectType: PING_RESPONSE_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } });
     expect(forwards).toHaveLength(sentBefore + 2);
   });
 
@@ -516,7 +516,7 @@ describe("a live input", () => {
     expect(await agent.connect()).toMatchObject([{ drained: { acked: 0, ended: "left" } }]);
     await agent.settled();
     expect(inbounds).toHaveLength(1);
-    expect(inbounds[0]).toMatchObject({ received: { outcome: "received", live: true }, after: null, reacted: { effects: [{ outcome: "created" }, { outcome: "created" }] } });
+    expect(inbounds[0]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, after: null, reacted: { effects: [{ outcome: "created" }, { outcome: "created" }] } });
     expect(log.filter((line) => line.includes("what the vault owes"))).toHaveLength(1);
     const stopped = { messageId: expect.any(String), reason: "the pass the preparation runs stopped: the disk is full for now" };
     expect((await alice.trace.read({ type: "diag.admission" })).map((entry) => entry.data)).toEqual([stopped, stopped]);
@@ -525,7 +525,7 @@ describe("a live input", () => {
     const sentBefore = forwardsSeen(mediator);
     expect(await agent.connect()).toMatchObject([{ drained: { acked: 1, ended: "empty" } }]);
     await agent.settled();
-    expect(inbounds[1]).toMatchObject({ received: { ...inbounds[0]!.received, live: false }, after: { acknowledged: [expect.anything()] }, reacted: null, address: null });
+    expect(inbounds[1]).toMatchObject({ received: { ...inbounds[0]!.received, live: null }, after: { acknowledged: [expect.anything()] }, reacted: null, address: null });
     const told = await fold(alice);
     expect(told.set.of("message.in")).toHaveLength(1);
     expect(told.set.of("delivery.acknowledged")).toHaveLength(1);
@@ -562,7 +562,7 @@ describe("a live input", () => {
 
     release();
     await agent.settled();
-    expect(inbounds.map(({ received, reacted }) => [received.outcome === "received" && received.live, reacted!.effects.map((effect) => [effect.effectType, effect.outcome, effect.outcome === "created" && effect.dispatched.outcome])])).toEqual([
+    expect(inbounds.map(({ received, reacted }) => [received.outcome === "received" && received.live !== null, reacted!.effects.map((effect) => [effect.effectType, effect.outcome, effect.outcome === "created" && effect.dispatched.outcome])])).toEqual([
       [true, [[PURE_ACK_EFFECT, "created", "submitted"]]],
       [true, [[PURE_ACK_EFFECT, "created", "submitted"]]],
     ]);
@@ -622,14 +622,14 @@ describe("a live input", () => {
 
     resume();
     const inbound = await receiving;
-    expect(inbound).toMatchObject({ received: { outcome: "received", cid: carried!.cid, live: false }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } }, reacted: null, address: null });
+    expect(inbound).toMatchObject({ received: { outcome: "received", cid: carried!.cid, live: null }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } }, reacted: null, address: null });
     const told = await fold(alice);
     expect([told.set.of("message.out"), forwardsSeen(mediator), (await agent.pending()).missingResponses.map((owed) => owed.effectType)]).toEqual([[], 0, [PING_RESPONSE_EFFECT]]);
     expect(await agent.manual.completeResponse(told.inbound.ofSource(carried!.cid)!.id, PING_RESPONSE_EFFECT)).toMatchObject({ outcome: "created", action: { kind: "manual" }, dispatched: { outcome: "submitted" } });
     expect(forwardsSeen(mediator)).toBe(1);
 
     const next = await agent.receive(await ping());
-    expect(next).toMatchObject({ received: { outcome: "received", live: true }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } }, reacted: { effects: [{ effectType: PING_RESPONSE_EFFECT, outcome: "created", action: { kind: "initial" }, dispatched: { outcome: "submitted" } }] } });
+    expect(next).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } }, reacted: { effects: [{ effectType: PING_RESPONSE_EFFECT, outcome: "created", action: { kind: "initial" }, dispatched: { outcome: "submitted" } }] } });
     expect([forwardsSeen(mediator), (await fold(alice)).set.of("message.out")]).toEqual([2, [expect.anything(), expect.anything()]]);
   });
 });

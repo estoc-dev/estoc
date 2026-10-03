@@ -67,7 +67,7 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { LiveAction } from "./action.js";
+import { LiveAction, initialAction } from "./action.js";
 import { didOf, namedRouteOf, recordedDid, routeTargetOf, type RouteSpec } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
@@ -148,7 +148,7 @@ export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: 
     const decision = events[events.length - 1] as VaultEvent<"did.rotationSelected">;
     fold = await scanVault(held, keys);
     const settled = await settleNotification(held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
-    const drafted: Drafted = settled.drafted.outcome === "created" ? { ...settled.drafted, action: new LiveAction(settled.drafted.messageId, "initial") } : settled.drafted;
+    const drafted: Drafted = settled.drafted.outcome === "created" ? { ...settled.drafted, action: initialAction(settled.drafted.messageId) } : settled.drafted;
     return { channel, decision, existed: false, drafted, executionId: settled.executionId };
   });
 }
@@ -171,7 +171,7 @@ export async function completeNotification(runtime: VaultRuntime, keys: Keys, ro
     const fold = await scanVault(held, keys);
     const settled = await settleNotification(held, fold, rotationEventCid, options.trace ?? null);
     const { drafted } = settled;
-    return { ...settled, drafted: drafted.outcome === "created" || drafted.outcome === "existing" ? { ...drafted, action: new LiveAction(drafted.messageId, "manual") } : drafted };
+    return { ...settled, drafted: drafted.outcome === "created" || drafted.outcome === "existing" ? { ...drafted, action: LiveAction.manual(drafted.messageId) } : drafted };
   });
   return dispatched(decided.drafted, decided.executionId, options);
 }

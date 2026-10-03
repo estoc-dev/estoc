@@ -6,7 +6,7 @@ import { InvalidDidDocument, anonymousMessageId, canonicalDidOf, didKeyName, inb
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source, routeOf } from "../src/index.js";
+import { AgentTrace, Keyring, LiveInput, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source, routeOf } from "../src/index.js";
 import { didcomm, directParty, freshVault, mediatedParty, newMediator, peerSealer, refuseCommits, reloaded, sealed, type DirectParty, type Fresh, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -88,7 +88,7 @@ describe("the receipt", () => {
     const received = await receiver.receive(delivery);
     const [event, ...more] = await eventsOf(alice, "message.in");
     const [resolved] = await eventsOf(alice, "peer.resolved");
-    expect([more, received]).toEqual([[], { outcome: "received", key: deliveryKey(delivery), cid: event!.cid, live: true }]);
+    expect([more, received]).toEqual([[], { outcome: "received", key: deliveryKey(delivery), cid: event!.cid, live: expect.any(LiveInput) }]);
     const read = readPlaintext(seen[0]!.plaintext);
     expect(event!.data).toEqual({
       messageId: inboundMessageId(bob.did, alice.did, wire),
@@ -161,12 +161,12 @@ describe("the receipt", () => {
     const messageId = inboundMessageId(bob.did, alice.did, wire as WireMessageId);
     const packed = await sealed(sealer, alice.longFormDid, { id: wire });
     const { receiver: first } = await receiving(alice);
-    expect(await first.receive({ packed, source: pickup("d1") })).toMatchObject({ outcome: "received", live: true });
+    expect(await first.receive({ packed, source: pickup("d1") })).toMatchObject({ outcome: "received", live: expect.any(LiveInput) });
     first.close();
 
     const { receiver: again } = await receiving(alice);
-    expect(await again.receive({ packed, source: pickup("d1") })).toMatchObject({ outcome: "received", live: false });
-    expect(await again.receive({ packed: await sealed(sealer, alice.longFormDid, { id: wire }), source: DIRECT })).toMatchObject({ outcome: "received", live: false });
+    expect(await again.receive({ packed, source: pickup("d1") })).toMatchObject({ outcome: "received", live: null });
+    expect(await again.receive({ packed: await sealed(sealer, alice.longFormDid, { id: wire }), source: DIRECT })).toMatchObject({ outcome: "received", live: null });
     const events = await eventsOf(alice, "message.in");
     expect(events.map(({ data }) => [data.messageId, data.receivedVia])).toEqual([
       [messageId, { mediationId: MEDIATION, deliveryId: "d1" }],
@@ -178,7 +178,7 @@ describe("the receipt", () => {
     expect([fold.inbound.executions.size, fold.inbound.ofMessage(messageId)?.members.length, fold.inbound.ofMessage(messageId)?.status]).toEqual([1, 3, { status: "complete" }]);
 
     const other = await again.receive({ packed: await sealed(sealer, alice.longFormDid, { id: wire, body: { content: "other" } }), source: DIRECT });
-    expect(other).toMatchObject({ outcome: "received", live: false });
+    expect(other).toMatchObject({ outcome: "received", live: null });
     const contradicted = await foldOf(alice);
     const execution = contradicted.inbound.ofMessage(messageId)!;
     expect([contradicted.inbound.executions.size, execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual([1, { status: "complete" }, [true, true, true, false], [(other as { cid: string }).cid]]);

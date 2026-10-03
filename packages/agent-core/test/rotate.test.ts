@@ -98,13 +98,19 @@ async function rotating(alice: DirectParty, over: Partial<RotateOptions> = {}, a
   const receiver = new Receiver(alice.runtime, alice.keys, ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
   const wire = posting(answer);
   const options: RotateOptions = { dispatch: (action) => dispatch(alice.runtime, alice.keys, action, { didcomm, fetch: wire.fetch }), now: () => IAT * 1000, ...over };
-  const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to: string = alice.longFormDid): Promise<EventReference<"message.in">> => {
+  const observed = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to: string = alice.longFormDid) => {
     const received = await receiver.receive({ packed: await sealed(await peerSealer(peer, as), to, extra), source: DIRECT });
     if (received.outcome !== "received") throw new Error(`not received: ${JSON.stringify(received)}`);
-    return received.cid;
+    return received;
   };
-  const live = async (peer: DirectParty, extra: Partial<IMessage>, to?: string): Promise<Reacted> => reactTo(alice.runtime, alice.keys, new LiveInput(await receive(peer, extra, undefined, to)), options);
-  return { receiver, wire, options, receive, live };
+  const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to?: string): Promise<EventReference<"message.in">> => (await observed(peer, extra, as, to)).cid;
+  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to?: string): Promise<LiveInput> => {
+    const received = await observed(peer, extra, as, to);
+    if (received.live === null) throw new Error(`not live: ${received.cid}`);
+    return received.live;
+  };
+  const live = async (peer: DirectParty, extra: Partial<IMessage>, to?: string): Promise<Reacted> => reactTo(alice.runtime, alice.keys, await arrived(peer, extra, undefined, to), options);
+  return { receiver, wire, options, arrived, receive, live };
 }
 
 const ping = (wire: string, extra: Partial<IMessage> = {}): Partial<IMessage> => ({ id: wire, type: PING_TYPE, body: { response_requested: true }, please_ack: [""], created_time: CREATED, ...extra });
@@ -345,13 +351,13 @@ describe("a local rotation", () => {
     const route = routeOf((await foldOf(disclosed.alice)).dids.entities.get(ALICE)!)!;
     await createDid(disclosed.alice.runtime, disclosed.alice.keys, route, ALICE_OTHER);
     for (const didId of [ALICE, ALICE_OTHER]) await disclose(null, disclosed.alice.runtime, disclosed.alice.keys, didId, { as: "direct" });
-    const { wire: theirs, options: policy, receive: written } = await rotating(disclosed.alice);
+    const { wire: theirs, options: policy, arrived: written } = await rotating(disclosed.alice);
     const chat = await written(disclosed.bob, { type: BASIC_MESSAGE });
-    await expect(privateAddress(disclosed.alice.runtime, disclosed.alice.keys, new LiveInput(chat), { ...policy, didId: ALICE_OTHER })).rejects.toThrow(new Unusable("DID", ALICE_OTHER, ["a rotation an input selects takes a fresh successor"]));
+    await expect(privateAddress(disclosed.alice.runtime, disclosed.alice.keys, chat, { ...policy, didId: ALICE_OTHER })).rejects.toThrow(new Unusable("DID", ALICE_OTHER, ["a rotation an input selects takes a fresh successor"]));
     fold = await foldOf(disclosed.alice);
     expect([fold.set.of("did.rotationSelected"), fold.set.of("message.out"), theirs.posts.length, fold.dids.entities.size]).toEqual([[], [], 0, 2]);
-    const fresh = rotated(await privateAddress(disclosed.alice.runtime, disclosed.alice.keys, new LiveInput(chat), { ...policy, didId: ALICE_NEXT }));
-    expect([fresh.successor, fresh.decision.data.sourceEventCid, fresh.notification.outcome, theirs.posts.length, (await foldOf(disclosed.alice)).dids.entities.size]).toEqual([ALICE_NEXT, chat, "created", 1, 3]);
+    const fresh = rotated(await privateAddress(disclosed.alice.runtime, disclosed.alice.keys, chat, { ...policy, didId: ALICE_NEXT }));
+    expect([fresh.successor, fresh.decision.data.sourceEventCid, fresh.notification.outcome, theirs.posts.length, (await foldOf(disclosed.alice)).dids.entities.size]).toEqual([ALICE_NEXT, chat.cid, "created", 1, 3]);
     await closeAll(disclosed.alice, disclosed.bob);
   });
 
@@ -431,14 +437,15 @@ describe("a local rotation", () => {
   test("the private-address policy: the first live application input at a disclosed address selects a successor over that input and notifies on its thread; a later input reuses the decision; one at the undisclosed successor, a control input or an undisclosed address selects nothing", async () => {
     const { alice, bob } = await parties();
     await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct" });
-    const { wire, options, receive, live } = await rotating(alice);
+    const { wire, options, arrived } = await rotating(alice);
     const wireId = crypto.randomUUID() as WireMessageId;
-    const reacted = await live(bob, ping(wireId));
+    const input = await arrived(bob, ping(wireId));
+    const reacted = await reactTo(alice.runtime, alice.keys, input, options);
     expect(reacted.effects.map((effect) => [effect.effectType, effect.outcome])).toEqual([
       [PURE_ACK_EFFECT, "created"],
       [PING_RESPONSE_EFFECT, "created"],
     ]);
-    const rotation = rotated(await privateAddress(alice.runtime, alice.keys, new LiveInput(reacted.cid), options));
+    const rotation = rotated(await privateAddress(alice.runtime, alice.keys, input, options));
     expect([rotation.existed, rotation.decision.data.sourceEventCid, rotation.decision.data.peerDid]).toEqual([false, reacted.cid, bob.did]);
     const successor = await successorOf(alice, rotation);
     const notification = created(rotation.notification);
@@ -449,22 +456,23 @@ describe("a local rotation", () => {
     let fold = await foldOf(alice);
     expect([fold.outbound.outbounds.get(notification.messageId)!.effect, unfinishedWork(fold).notifications]).toEqual([{ status: "complete" }, []]);
 
-    const later = await live(bob, ping(crypto.randomUUID()));
-    expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(later.cid), options)).toEqual({ outcome: "reused", decision: rotation.decision });
+    const later = await arrived(bob, ping(crypto.randomUUID()));
+    await reactTo(alice.runtime, alice.keys, later, options);
+    expect(await privateAddress(alice.runtime, alice.keys, later, options)).toEqual({ outcome: "reused", decision: rotation.decision });
     fold = await foldOf(alice);
     expect([fold.dids.entities.size, fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, wire.posts.length]).toEqual([2, 1, 5, 5]);
 
-    const atSuccessor = await receive(bob, { type: BASIC_MESSAGE }, undefined, successor.longFormDid);
-    expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(atSuccessor), options)).toEqual({ outcome: "none", because: "the local DID is not disclosed" });
+    const atSuccessor = await arrived(bob, { type: BASIC_MESSAGE }, undefined, successor.longFormDid);
+    expect(await privateAddress(alice.runtime, alice.keys, atSuccessor, options)).toEqual({ outcome: "none", because: "the local DID is not disclosed" });
     expect((await foldOf(alice)).continuity.confirmedBy(successor.did, bob.did)).not.toBeNull();
-    const control = await receive(bob, { type: EMPTY_MESSAGE_TYPE, body: {}, ack: [wireId] });
-    expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(control), options)).toEqual({ outcome: "none", because: "a control input selects no rotation: it is pure-ack" });
+    const control = await arrived(bob, { type: EMPTY_MESSAGE_TYPE, body: {}, ack: [wireId] });
+    expect(await privateAddress(alice.runtime, alice.keys, control, options)).toEqual({ outcome: "none", because: "a control input selects no rotation: it is pure-ack" });
     await closeAll(alice, bob);
 
     const undisclosed = await parties();
-    const { options: theirs, receive: written } = await rotating(undisclosed.alice);
+    const { options: theirs, arrived: written } = await rotating(undisclosed.alice);
     const chat = await written(undisclosed.bob, { type: BASIC_MESSAGE });
-    expect(await privateAddress(undisclosed.alice.runtime, undisclosed.alice.keys, new LiveInput(chat), theirs)).toEqual({ outcome: "none", because: "the local DID is not disclosed" });
+    expect(await privateAddress(undisclosed.alice.runtime, undisclosed.alice.keys, chat, theirs)).toEqual({ outcome: "none", because: "the local DID is not disclosed" });
     expect((await foldOf(undisclosed.alice)).set.of("did.rotationSelected")).toEqual([]);
     await closeAll(undisclosed.alice, undisclosed.bob);
   });
@@ -502,22 +510,22 @@ describe("a local rotation", () => {
   test("a selecting input whose peer has since replaced its DID permits no missing notification to be made, while the decision stands and is reused", async () => {
     const { alice, bob } = await parties();
     await disclose(null, alice.runtime, alice.keys, ALICE, { as: "direct" });
-    const { wire, options, receive } = await rotating(alice);
+    const { wire, options, arrived } = await rotating(alice);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
-    const first = await receive(bob, ping(crypto.randomUUID()), prior.longFormDid);
+    const first = await arrived(bob, ping(crypto.randomUUID()), prior.longFormDid);
     refuseCommits(alice.runtime, "message.out", 1);
-    const rotation = rotated(await privateAddress(alice.runtime, alice.keys, new LiveInput(first), options));
+    const rotation = rotated(await privateAddress(alice.runtime, alice.keys, first, options));
     expect([rotation.notification.outcome, rotation.decision.data.peerDid]).toEqual(["refused", prior.did]);
     const rotationEventCid = rotation.decision.cid as EventReference<"did.rotationSelected">;
     expect(unfinishedWork(await foldOf(alice)).notifications.map((missing) => missing.decision.event.cid)).toEqual([rotation.decision.cid]);
 
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
-    const moved = await receive(bob, ping(crypto.randomUUID(), { from_prior: proof }));
+    const moved = await arrived(bob, ping(crypto.randomUUID(), { from_prior: proof }));
     let fold = await foldOf(alice);
-    expect([fold.continuity.status(moved), fold.continuity.superseded({ localDid: alice.did, peerDid: prior.did }), unfinishedWork(fold).notifications]).toEqual([{ status: "verified" }, true, []]);
+    expect([fold.continuity.status(moved.cid), fold.continuity.superseded({ localDid: alice.did, peerDid: prior.did }), unfinishedWork(fold).notifications]).toEqual([{ status: "verified" }, true, []]);
     expect(await completeNotification(alice.runtime, alice.keys, rotationEventCid, options)).toEqual({ effectType: ROTATION_NOTIFICATION_EFFECT, outcome: "none", because: "the successor cannot send to the peer: the peer has replaced its DID" });
-    expect(await privateAddress(alice.runtime, alice.keys, new LiveInput(moved), options)).toEqual({ outcome: "reused", decision: rotation.decision });
+    expect(await privateAddress(alice.runtime, alice.keys, moved, options)).toEqual({ outcome: "reused", decision: rotation.decision });
     fold = await foldOf(alice);
     expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, wire.posts.length]).toEqual([1, 2, 0]);
     expect(fold.continuity.head({ localDid: alice.did, peerDid: prior.did })).toEqual({ localDid: (await successorOf(alice, rotation)).did, peerDid: bob.did });

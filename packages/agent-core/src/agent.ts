@@ -47,7 +47,7 @@ import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
 import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
 
-import { LiveInput, type LiveAction } from "./action.js";
+import type { LiveAction } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
@@ -611,8 +611,8 @@ export class Agent {
     if (received.outcome !== "received") return async () => this.tell(inbound);
     const { handlers, acknowledge, now, trace } = this.options;
     inbound.after = await this.step("what the vault owes", () => afterReceipt(this.runtime, this.keys, received.cid, { trace }));
-    if (!received.live) return async () => this.tell(inbound);
-    const live = new LiveInput(received.cid);
+    const { live } = received;
+    if (live === null) return async () => this.tell(inbound);
     const address = (this.options.privateAddresses ?? true) ? await this.step("the private address", () => decidePrivateAddress(this.runtime, this.keys, live, { now, trace })) : null;
     const effects = await this.step("the automatic effects", () => decideEffects(this.runtime, this.keys, live, { handlers, acknowledge, now, trace }));
     const dispatch = (action: LiveAction): Promise<Dispatched> => this.dispatcher.run(action);

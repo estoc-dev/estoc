@@ -57,6 +57,7 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
+import { liveInput } from "../action.js";
 import { commitResolution } from "../evidence.js";
 import { MAX_CONTENT_BYTES } from "../prepare.js";
 import type { AuthenticatedSender } from "./gate.js";
@@ -173,6 +174,6 @@ async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticat
   const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, ...peer })])).map(readVaultEvent);
   const cid = (event as VaultEvent<"message.in">).cid as EventReference<"message.in">;
   const { fold: admitted } = await admitReceipts(held, await scanVault(held, keys));
-  const live = first && admitted.inbound.ofSource(cid)?.firstWitness?.source.event.cid === cid;
+  const live = first && admitted.inbound.ofSource(cid)?.firstWitness?.source.event.cid === cid ? liveInput(cid) : null;
   return { outcome: "received", cid, first, live };
 }

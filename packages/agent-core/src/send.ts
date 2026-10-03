@@ -54,7 +54,7 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { LiveAction } from "./action.js";
+import { LiveAction, initialAction } from "./action.js";
 import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable } from "./errors.js";
 import { objectsHeld } from "./evidence.js";
 
@@ -113,11 +113,11 @@ export async function send(runtime: VaultRuntime, keys: Keys, target: Target, co
   return runtime.locked(async (held) => {
     const fold = await scanVault(held, keys);
     const existing = fold.outbound.outbounds.get(messageId);
-    if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, fields, objects, roots)), action: new LiveAction(messageId, "manual") };
+    if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, fields, objects, roots)), action: LiveAction.manual(messageId) };
     const { sender, channel, recipientDid } = select(fold, target);
     const data: MessageOut = { ...fields, ...LOCAL, senderDidId: sender.didId, recipientDid };
     const [event] = (await held.commit(objects, [vaultDraft("message.out", data)])).map(readVaultEvent);
-    return { messageId, channel, senderDidId: sender.didId, intent: event as VaultEvent<"message.out">, existed: false, action: new LiveAction(messageId, "initial") };
+    return { messageId, channel, senderDidId: sender.didId, intent: event as VaultEvent<"message.out">, existed: false, action: initialAction(messageId) };
   });
 }
 
