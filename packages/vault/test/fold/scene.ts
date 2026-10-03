@@ -38,6 +38,7 @@ import {
   type ExecutionId,
   type Keys,
   type MessageId,
+  type MessageIn,
   type MessageOut,
   type PackageId,
   type PeerResolution,
@@ -127,6 +128,11 @@ export function resolved(scene: Scene, local: DidId, peer: Peer, options: Resolv
 
 export const ref = <T extends VaultEvent>(event: T) => event.cid as EventReference<T["type"]>;
 
+/** Any field of an observation, whichever kind of peer it comes from: a test builds the mismatched combinations too. */
+type ObservationOverrides = { [K in keyof MessageIn]?: MessageIn[K] };
+/** Any field of an intent, locally initiated or automatic: a test builds the mismatched combinations too. */
+type IntentOverrides = { [K in keyof MessageOut]?: MessageOut[K] };
+
 export type Receipt = {
   local: Local;
   peer: Peer;
@@ -134,7 +140,7 @@ export type Receipt = {
   fromPrior?: string | null;
   wire?: string;
   presentedDid?: Did;
-  overrides?: Partial<VaultData["message.in"]>;
+  overrides?: ObservationOverrides;
   /** whether the runtime's admission of the receipt is recorded right after it, as the runtime records one for every receipt it may; true unless said otherwise */
   admitted?: boolean;
 };
@@ -174,7 +180,7 @@ export function observation(scene: Scene, r: Receipt, options: EventOptions = {}
       bytes: 100,
       receivedVia: { mediationId: null, deliveryId: null },
       ...r.overrides,
-    },
+    } as MessageIn,
     options
   );
 }
@@ -246,7 +252,7 @@ export async function evidenceChecks(events: readonly Event[], readObject: ReadO
 }
 
 /** A locally initiated send in a channel: one intent under a fresh message ID, nothing automatic. */
-export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: Partial<MessageOut> = {}, options: EventOptions = {}): VaultEvent<"message.out"> {
+export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: IntentOverrides = {}, options: EventOptions = {}): VaultEvent<"message.out"> {
   const messageId = (overrides.messageId ?? uuidv7()) as MessageId;
   return scene.add(
     "message.out",
@@ -271,13 +277,13 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
       sourceEventCid: null,
       rotationEventCid: null,
       ...overrides,
-    },
+    } as MessageOut,
     options
   );
 }
 
 /** An automatic effect's intent: the tuple, its key and the message ID the key derives, from the source it answers. */
-export function automatic(scene: Scene, sender: Local, recipient: Peer, source: VaultEvent<"message.in">, executionId: ExecutionId, effectType = PURE_ACK, overrides: Partial<MessageOut> = {}): VaultEvent<"message.out"> {
+export function automatic(scene: Scene, sender: Local, recipient: Peer, source: VaultEvent<"message.in">, executionId: ExecutionId, effectType = PURE_ACK, overrides: IntentOverrides = {}): VaultEvent<"message.out"> {
   const key = effectKey(executionId, effectType);
   return intent(scene, sender, recipient, { messageId: automaticMessageId(key), msgType: "https://didcomm.org/empty/1.0/empty", executionId, effectType, effectKey: key, sourceEventCid: ref(source), ...overrides });
 }

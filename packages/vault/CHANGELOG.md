@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A payload's cross-field rules are its type**: `MessageOut` is its
+  common fields with `LocalSend` or `AutomaticEffect`, the producing
+  tuple, its key and the source all null or all present, and `MessageIn`
+  is its common fields with `AnonymousPeer` or `ResolvedPeer`, the
+  resolution evidence and both sender DIDs null together or none of them.
+  A payload mixing the two members does not typecheck; reading one field
+  of a member tells the rest. The parser refuses the same payloads as
+  before and the encoding is unchanged, so no event CID moves.
 - **A mediator is one DID however it is spelled**: `canonicalDid` and
   `sameDid` compare a `did:peer:4` by its short form and any other DID as
   it is. The mediation fold reads creations of one arrangement that name

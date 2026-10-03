@@ -45,25 +45,28 @@ import {
   readVaultEvent,
   scanVault,
   vaultDraft,
+  type AnonymousPeer,
   type Cid,
   type DeliveryId,
   type EventReference,
   type Keys,
   type MessageIn,
   type ReadPlaintext,
+  type ResolvedPeer,
   type VaultEvent,
   type WireMessageId,
 } from "@estoc/vault";
 
 import { commitResolution } from "../evidence.js";
 import { MAX_CONTENT_BYTES } from "../prepare.js";
+import type { AuthenticatedSender } from "./gate.js";
 import { recipientWatch, type Authenticated, type Receipt, type ReceiptOutcome } from "./receiver.js";
 
 export function receiptOf(runtime: VaultRuntime, keys: Keys): Receipt {
   return (authenticated) => recordReceipt(runtime, keys, authenticated);
 }
 
-type Observed = Omit<MessageIn, "peerResolutionEventCid">;
+type Observed = Omit<MessageIn, keyof ResolvedPeer>;
 
 type Objects = { cid: Cid; source: Uint8Array }[];
 
@@ -79,7 +82,7 @@ export async function recordReceipt(runtime: VaultRuntime, keys: Keys, authentic
   const read = readOrRefuse(authenticated);
   if ("outcome" in read) return read;
   const observed = observationOf(authenticated, read);
-  const refused = unrecordable(observed, authenticated.sender !== null);
+  const refused = unrecordable(observed, authenticated.sender);
   if (refused !== null) return terminal(refused);
   const { stored } = read;
   const objects: Objects = [{ cid: stored.bodyCid, source: stored.bytes }, ...stored.payloads.map(({ cid, bytes }) => ({ cid, source: bytes }))];
@@ -119,8 +122,6 @@ function observationOf({ recipient, sender, delivery }: Authenticated, read: Rea
     plaintextHash: read.plaintextHash,
     localKeyName: recipient.localKeyName,
     msgType: intent.type,
-    presentedDid: sender?.resolution.presentedDid ?? null,
-    did: sender?.resolution.did ?? null,
     thid: intent.thid,
     pthid: intent.pthid,
     createdTime: intent.createdTime,
@@ -145,9 +146,13 @@ function observationOf({ recipient, sender, delivery }: Authenticated, read: Rea
  */
 const SOME_RESOLUTION = rawCidOfBytes(new Uint8Array(32)) as unknown as EventReference<"peer.resolved">;
 
-function unrecordable(observed: Observed, authenticated: boolean): string | null {
+const ANONYMOUS: AnonymousPeer = { peerResolutionEventCid: null, presentedDid: null, did: null };
+
+const resolvedPeer = (sender: AuthenticatedSender, resolution: EventReference<"peer.resolved">): ResolvedPeer => ({ peerResolutionEventCid: resolution, presentedDid: sender.resolution.presentedDid, did: sender.resolution.did });
+
+function unrecordable(observed: Observed, sender: AuthenticatedSender | null): string | null {
   try {
-    vaultDraft("message.in", { ...observed, peerResolutionEventCid: authenticated ? SOME_RESOLUTION : null });
+    vaultDraft("message.in", { ...observed, ...(sender === null ? ANONYMOUS : resolvedPeer(sender, SOME_RESOLUTION)) });
     return null;
   } catch (err) {
     if (err instanceof InvalidPayload) return `the message does not record: ${err.message}`;
@@ -164,8 +169,8 @@ async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticat
       return { outcome: "deferred", reason: `${recipient.did} may not receive yet: ${fold.dids.entities.get(recipient.didId)?.faults.join("; ")}`, watch: recipientWatch([recipient.didId]) };
   }
   const first = !fold.set.of("message.in").some((event) => event.data.messageId === observed.messageId);
-  const resolved = sender === null ? null : await commitResolution(held, { resolution: sender.resolution, localKeyName: recipient.localKeyName, peerPublicKey: sender.peerPublicKey });
-  const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, peerResolutionEventCid: (resolved?.cid ?? null) as EventReference<"peer.resolved"> | null })])).map(readVaultEvent);
+  const peer = sender === null ? ANONYMOUS : resolvedPeer(sender, (await commitResolution(held, { resolution: sender.resolution, localKeyName: recipient.localKeyName, peerPublicKey: sender.peerPublicKey })).cid as EventReference<"peer.resolved">);
+  const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, ...peer })])).map(readVaultEvent);
   const cid = (event as VaultEvent<"message.in">).cid as EventReference<"message.in">;
   const { fold: admitted } = await admitReceipts(held, await scanVault(held, keys));
   const live = first && admitted.inbound.ofSource(cid)?.firstWitness?.source.event.cid === cid;

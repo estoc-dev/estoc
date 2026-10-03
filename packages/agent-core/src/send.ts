@@ -31,6 +31,7 @@ import {
   storeMessage,
   vaultDraft,
   type AdditionalHeaders,
+  type AutomaticEffect,
   type AutomaticIntent,
   type Channel,
   type Cid,
@@ -43,6 +44,7 @@ import {
   type Intent,
   type Keys,
   type LocalDidEntity,
+  type LocalSend,
   type MessageId,
   type MessageOut,
   type Outbound,
@@ -95,7 +97,7 @@ export interface Sent {
   action: LiveAction;
 }
 
-type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid">;
+type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid" | keyof LocalSend>;
 
 /**
  * The intent of `content` committed with its objects, in the channel
@@ -107,13 +109,13 @@ type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid">;
  */
 export async function send(runtime: VaultRuntime, keys: Keys, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
   const messageId = options.messageId ?? (uuidv7() as MessageId);
-  const { fields, objects, roots } = intentOf(messageId, content, [], LOCAL);
+  const { fields, objects, roots } = intentOf(messageId, content, [], null);
   return runtime.locked(async (held) => {
     const fold = await scanVault(held, keys);
     const existing = fold.outbound.outbounds.get(messageId);
     if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, fields, objects, roots)), action: new LiveAction(messageId, "manual") };
     const { sender, channel, recipientDid } = select(fold, target);
-    const data: MessageOut = { ...fields, senderDidId: sender.didId, recipientDid };
+    const data: MessageOut = { ...fields, ...LOCAL, senderDidId: sender.didId, recipientDid };
     const [event] = (await held.commit(objects, [vaultDraft("message.out", data)])).map(readVaultEvent);
     return { messageId, channel, senderDidId: sender.didId, intent: event as VaultEvent<"message.out">, existed: false, action: new LiveAction(messageId, "initial") };
   });
@@ -123,7 +125,7 @@ async function repeat(held: Held, fold: VaultFold, existing: Outbound, target: T
   const { messageId } = fields;
   if (existing.intent.status === "conflict" || existing.channel === null) throw new EntityConflict("message", messageId, existing.intent.status === "conflict" ? existing.intent.because : "an intent whose sender is not here");
   const { data } = existing.intent;
-  if (!samePayload({ ...fields, senderDidId: data.senderDidId, recipientDid: data.recipientDid }, data)) throw new EntityConflict("message", messageId, "another intent");
+  if (!samePayload({ ...fields, ...LOCAL, senderDidId: data.senderDidId, recipientDid: data.recipientDid }, data)) throw new EntityConflict("message", messageId, "another intent");
   if (!targetAgrees(fold, target, existing.channel, data.recipientDid)) throw new EntityConflict("message", messageId, "another target");
   const sent = { messageId, channel: existing.channel, senderDidId: data.senderDidId };
   if (await objectsHeld(held, roots)) return { ...sent, intent: existing.intents[0] as VaultEvent<"message.out">, existed: true };
@@ -184,11 +186,9 @@ function senderOf(fold: VaultFold, channel: Channel): LocalDidEntity {
   return entity;
 }
 
-type EffectFields = Pick<MessageOut, "executionId" | "effectType" | "effectKey" | "sourceEventCid" | "rotationEventCid">;
+const LOCAL: LocalSend = { executionId: null, effectType: null, effectKey: null, sourceEventCid: null };
 
-const LOCAL: EffectFields = { executionId: null, effectType: null, effectKey: null, sourceEventCid: null, rotationEventCid: null };
-
-function intentOf(messageId: MessageId, content: Content, ack: readonly string[], effect: EffectFields): { fields: IntentFields; objects: CommitObject[]; roots: readonly Cid[] } {
+function intentOf(messageId: MessageId, content: Content, ack: readonly string[], rotationEventCid: EventReference<"did.rotationSelected"> | null): { fields: IntentFields; objects: CommitObject[]; roots: readonly Cid[] } {
   const stored = storeMessage(content.body, content.attachments);
   const intent: Intent = {
     id: messageId,
@@ -215,7 +215,7 @@ function intentOf(messageId: MessageId, content: Content, ack: readonly string[]
     bodyCid: stored.bodyCid,
     attachmentCids: stored.attachmentCids,
     intentHash: intentHash(intent),
-    ...effect,
+    rotationEventCid,
   };
   const objects: CommitObject[] = [{ cid: stored.bodyCid, source: stored.bytes }, ...stored.payloads.map(({ cid, bytes }) => ({ cid, source: bytes }))];
   return { fields, objects, roots: stored.roots };
@@ -248,8 +248,8 @@ export interface EffectContent extends Content {
  */
 export function manualNotificationDraft(fold: VaultFold, messageId: MessageId, channel: Channel, content: EffectContent, rotationEventCid: EventReference<"did.rotationSelected">): { draft: VaultDraft<"message.out">; objects: CommitObject[] } {
   const sender = senderOf(fold, channel);
-  const { fields, objects } = intentOf(messageId, content, content.ack ?? [], { ...LOCAL, rotationEventCid });
-  const data: MessageOut = { ...fields, senderDidId: sender.didId, recipientDid: channel.peerDid };
+  const { fields, objects } = intentOf(messageId, content, content.ack ?? [], rotationEventCid);
+  const data: MessageOut = { ...fields, ...LOCAL, senderDidId: sender.didId, recipientDid: channel.peerDid };
   return { draft: vaultDraft("message.out", data), objects };
 }
 
@@ -268,13 +268,8 @@ export function automaticDraft(fold: VaultFold, effect: Effect, content: EffectC
   const tuple = automaticIntent(fold, effect.execution, effect.effectType);
   if (tuple.existing !== null) return { ...tuple, existing: tuple.existing, draft: null, objects: null };
   const sender = senderOf(fold, effect.channel);
-  const { fields, objects } = intentOf(tuple.messageId, content, content.ack ?? [], {
-    executionId: tuple.executionId,
-    effectType: tuple.effectType,
-    effectKey: tuple.effectKey,
-    sourceEventCid: effect.source.event.cid as EventReference<"message.in">,
-    rotationEventCid: effect.rotationEventCid ?? null,
-  });
-  const data: MessageOut = { ...fields, senderDidId: sender.didId, recipientDid: effect.channel.peerDid };
+  const { fields, objects } = intentOf(tuple.messageId, content, content.ack ?? [], effect.rotationEventCid ?? null);
+  const origin: AutomaticEffect = { executionId: tuple.executionId, effectType: tuple.effectType, effectKey: tuple.effectKey, sourceEventCid: effect.source.event.cid as EventReference<"message.in"> };
+  const data: MessageOut = { ...fields, ...origin, senderDidId: sender.didId, recipientDid: effect.channel.peerDid };
   return { ...tuple, existing: null, draft: vaultDraft("message.out", data), objects };
 }
