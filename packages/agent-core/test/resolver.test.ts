@@ -4,7 +4,7 @@ import { describe, expect, it, test } from "vitest";
 
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
 import { MemoryVault, canonicalize, envelopeOf, eventCidOf, type AuthorId, type JsonObject } from "@estoc/event-store";
-import { canonicalPublicKey, didKeyName, peerResolution, rawCidOfBytes, scanVault, type DidId, type Did, type DidUrl } from "@estoc/vault";
+import { canonicalPublicKey, didKeyName, mediationIdOf, mintDid, peerResolution, rawCidOfBytes, scanVault, vaultDraft, type DidId, type Did, type DidUrl } from "@estoc/vault";
 
 import { bls12_381 } from "@noble/curves/bls12-381";
 import { p521 } from "@noble/curves/nist";
@@ -12,7 +12,7 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import bs58 from "bs58";
 import { bases } from "multiformats/basics";
 
-import { AgentTrace, DEFINITIVE_TRANSPORT_CODES, MAX_DOCUMENT_BYTES, authorizedKeys, commitResolution, didcommDocumentOf, knownLongForms, resolve, secretsResolverFor, webDidUrl, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/index.js";
+import { AgentTrace, DEFINITIVE_TRANSPORT_CODES, MAX_DOCUMENT_BYTES, authorizedKeys, commitResolution, createMediation, didcommDocumentOf, knownLongForms, resolve, secretsResolverFor, webDidUrl, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { didcomm, freshVault, json, newMediator, party, webFetch, webIdentity } from "./helpers.js";
 
@@ -101,6 +101,48 @@ describe("did:peer:4", () => {
     const alone = await scanVault(onlyInvalid.vault, keys);
     expect(knownLongForms(alone)(shortForm)).toBeNull();
     expect(await resolve(shortForm, knownLongForms(alone))).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("no long form") });
+    await runtime.close();
+  });
+
+  test("a mediator's long form that only a grant records resolves its short form, whichever of the creation and the grant arrived first", async () => {
+    const mediator = await newMediator();
+    const short = longToShort(mediator.did) as Did;
+    const mediationId = mediationIdOf(short);
+    const creationFirst = await freshVault(1);
+    await createMediation(creationFirst.runtime, creationFirst.keys, short);
+    expect(knownLongForms(await scanVault(creationFirst.runtime.vault, creationFirst.keys))(short)).toBeNull();
+    await creationFirst.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
+    expect(knownLongForms(await scanVault(creationFirst.runtime.vault, creationFirst.keys))(short)).toBe(mediator.did);
+
+    const grantFirst = await freshVault(2);
+    await grantFirst.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
+    await createMediation(grantFirst.runtime, grantFirst.keys, short);
+    const fold = await scanVault(grantFirst.runtime.vault, grantFirst.keys);
+    expect(fold.mediations.mediations.get(mediationId)).toMatchObject({ mediatorDid: short, routingDid: mediator.did });
+    expect(knownLongForms(fold)(short)).toBe(mediator.did);
+    expect((await resolved(short, knownLongForms(fold))).cid).toBe(peerResolution(mediator.did).cid);
+    await creationFirst.runtime.close();
+    await grantFirst.runtime.close();
+  });
+
+  test("a mediator's long form that only a retained document of this vault's own entity sends through resolves its short form, while the arrangement itself is in evidence by the short form alone; one whose nested document fails its hash supplies nothing", async () => {
+    const mediator = await newMediator();
+    const short = longToShort(mediator.did) as Did;
+    const { runtime, keys } = await freshVault(3);
+    const creation = await createMediation(runtime, keys, short);
+    await runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: creation.data.mediationId, routingDid: short })]);
+    const forged = `${short}:${creation.data.me.did.slice(creation.data.me.did.lastIndexOf(":") + 1)}` as Did;
+    const bad = await mintDid(keys, "019b0000-0000-7000-8000-00000000000e" as DidId, { kind: "mediated", routingDid: forged });
+    await runtime.vault.commit([], [vaultDraft("did.created", { didId: bad.didId, did: bad.did, longFormDid: bad.longFormDid })]);
+    let fold = await scanVault(runtime.vault, keys);
+    expect([fold.dids.entities.get(bad.didId)!.conflict, knownLongForms(fold)(short)]).toEqual([true, null]);
+
+    const elsewhere = await mintDid(keys, "019b0000-0000-7000-8000-00000000000f" as DidId, { kind: "mediated", routingDid: mediator.did as Did });
+    await runtime.vault.commit([], [vaultDraft("did.created", { didId: elsewhere.didId, did: elsewhere.did, longFormDid: elsewhere.longFormDid })]);
+    fold = await scanVault(runtime.vault, keys);
+    expect([fold.mediations.mediations.get(creation.data.mediationId)!.routingDid, fold.dids.entities.get(elsewhere.didId)]).toMatchObject([short, { live: true, mediation: creation.data.mediationId }]);
+    expect(knownLongForms(fold)(short)).toBe(mediator.did);
+    expect((await resolved(short, knownLongForms(fold))).cid).toBe(peerResolution(mediator.did).cid);
     await runtime.close();
   });
 });

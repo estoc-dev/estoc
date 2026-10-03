@@ -6,7 +6,7 @@ import type { Did, MediationId } from "@estoc/vault";
 
 import { linesOf } from "../src/lines.js";
 
-const MEDIATION = "019b0000-0000-7000-8000-00000000000a" as MediationId;
+const MEDIATION = "019b0000-0000-5000-8000-00000000000a" as MediationId;
 const dids = (...names: string[]) => names.map((name) => `did:example:${name}` as Did);
 
 describe("the lines a view is shown", () => {

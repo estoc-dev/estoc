@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **One arrangement per mediator, under its derived ID**:
+  `createMediation(runtime, keys, mediatorDid)` takes no ID; the
+  arrangement is the one the mediator's DID derives, asking again for the
+  same mediator, under either spelling of a `did:peer:4`, returns the
+  creation recorded, and an arrangement in conflict is refused.
+  `canonicalDid` and `sameDid` are `@estoc/vault`'s, re-exported here.
+  `namedRouteOf` reads the route an entity's document names, the
+  arrangement its routing DID derives or its endpoint, and `routeOf` that
+  route when it carries the entity now; `usableTarget` and `sameDocument`
+  are gone. The spelling an arrangement is reported under is the
+  input of no document: `routeTargetOf` names a `did:peer:4` mediator by
+  a long form in evidence, validated against its hash, and is `Unusable`
+  while none is; `recordedDid` reads a committed entity back as it was
+  minted, refusing one in conflict or one whose document does not name
+  the route asked for, and both `createDid` and a rotation given a
+  successor's ID go through it, rebuilding nothing; a rotation's fresh
+  successor goes on the route given, else the preferred arrangement,
+  else the arrangement or endpoint its predecessor's document names,
+  never a spelling, and is built as any new address is,
+  so the two take the same document for the same route and a successor
+  recorded under a mediator's short form is kept whether or not the
+  rotation names its arrangement; `createMediation` validates a
+  `did:peer:4` long form and, given the first long form of a mediator so
+  far in evidence by its short form alone, records one more creation of
+  the same arrangement; `knownLongForms` reads the routing DID of every
+  `mediation.granted` too, and the mediator every retained document of
+  the vault's own entities sends through, so that an address another
+  replica minted on the mediator's long form carries that long form to
+  its successor before the arrangement's own long form arrives.
 - **Every arrangement is a replica-mediation account** (behaviour
   change): the coordinate-mediation client is gone — `establish`,
   `reconcile`, `reconcileNow`, `registered`, `Reconciled`, `Established`,
@@ -9,14 +38,12 @@
   `Connection.reconciled`, `Connection.unknownRegistrations`,
   `UNKNOWN_REGISTRATIONS_KEPT` and the `MEDIATE_*`, `RECIPIENT_QUERY`,
   `RECIPIENT`, `RECIPIENT_UPDATE` and `RECIPIENT_UPDATE_RESPONSE` types.
-  `createMediation(runtime, keys, mediatorDid, mediationId?)` takes no
+  `createMediation` takes no
   profile; every arrangement is enrolled in (`enroll`, `Agent.enroll`),
   its addresses held by the account (`addRecipients`,
   `Connection.recipients`) and its mail picked up as this runtime's
   replica. The account asks to hold an address only while its receipt
-  is eligible and this arrangement alone routes it: while several
-  usable arrangements name its routing DID, no account requests a new
-  binding while the route is undecided. A mediated address is
+  is eligible and this arrangement routes it. A mediated address is
   disclosed, and held before a package first discloses it as a sender,
   with the runtime's `Confirmations` alone. Nothing is ever taken off a
   mediator: an address the vault no longer knows stays held by the
@@ -24,9 +51,8 @@
 - **DIDs are minted for a route, not bound to a route entity**:
   `createDid(runtime, keys, route, didId?)` and `RotateOptions.route`
   take a `RouteSpec`, a mediation arrangement by ID or a direct HTTPS or
-  WSS endpoint, and `routeTargetOf(fold, route)` says where it sends,
-  refusing an arrangement whose routing DID another usable arrangement
-  shares. `routeOf(entity)` reads a recorded DID's route back from its
+  WSS endpoint, and `routeTargetOf(fold, route)` says where it sends.
+  `routeOf(entity)` reads a recorded DID's route back from its
   entity; `usableTarget` and `sameDocument` are the checks `createDid`
   and `rotate` share. `configureRoute`, `ensureRoute`, `mediatedRouteOf`
   and `routeOf(fold, routeId)` are gone. A mediated DID whose

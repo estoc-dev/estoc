@@ -25,6 +25,7 @@ export const GRANT_TYP = "estoc/replica-grant+jws";
 /** Several times what the did:peer:4 long forms a payload names and a signature come to. */
 const MAX_JWS_CHARS = 16 * 1024;
 
+export const UUID_V5 = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /**
@@ -35,7 +36,7 @@ export const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 export interface GrantPayload {
   /** The account's did:peer:4, in its short form. */
   account: string;
-  /** A UUIDv7 by which the account's own records name this arrangement; the mediator compares it with nothing. */
+  /** A UUIDv5 by which the account's own records name this arrangement; the mediator compares it with nothing. */
   mediation_id: string;
   /** The mediator DID the replica's document names as its service. */
   mediator: string;
@@ -280,7 +281,7 @@ export async function verifyReplicaGrant(
   if (
     account !== canonicalDid(accountDoc.id) ||
     !isShortForm(account) ||
-    !UUID_V7.test(mediationId) ||
+    !UUID_V5.test(mediationId) ||
     !UUID_V7.test(replicaId) ||
     !isLongForm(replicaLongForm) ||
     !isDecodable(replicaLongForm) ||

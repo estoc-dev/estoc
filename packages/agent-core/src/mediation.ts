@@ -9,15 +9,14 @@
  * to repeat: what the events already say is not asked for again.
  */
 
-import { v7 as uuidv7 } from "uuid";
-
+import { isLongForm } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
-import { mediationKeyName, mintMediationDid, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { canonicalDidOf, mediationIdOf, mediationKeyName, mintMediationDid, sameDid, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { EntityConflict, UnknownEntity, Unusable, WrongAccount, WrongMediator } from "./errors.js";
 import type { MediatorLink } from "./link.js";
 import { decide } from "./procedure.js";
-import { sameDid } from "./same-did.js";
+import { knownLongForms } from "./resolver.js";
 
 /** The arrangement as the fold has it; `UnknownEntity` when it has none. */
 export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediation {
@@ -28,9 +27,9 @@ export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediatio
 
 /**
  * The link must be the arrangement's own: to its mediator, speaking as
- * its identity. Two arrangements with one mediator are two accounts
- * there, and a ritual run as one and recorded against the other would
- * grant, register and disclose under the wrong one.
+ * its identity. A ritual run over another account's link and recorded
+ * against this arrangement would grant, register and disclose under
+ * the wrong one.
  */
 export function toward(link: MediatorLink, mediation: Mediation): void {
   if (mediation.mediatorDid !== null && !sameDid(mediation.mediatorDid, link.mediatorDid)) throw new WrongMediator(mediation.mediatorDid, link.mediatorDid);
@@ -38,24 +37,33 @@ export function toward(link: MediatorLink, mediation: Mediation): void {
 }
 
 /**
- * `mediation.created` for a new arrangement with `mediatorDid`: the
- * vault-controlled identity toward the mediator, minted from the
- * arrangement's own key name. Committed before any network request.
- * The same ID again returns the creation already recorded when it
- * says the same, and refuses one that says otherwise. The arrangement
- * is an account of the replica-mediation protocol at the mediator, and
- * is `enroll`ed there.
+ * `mediation.created` for the arrangement with `mediatorDid`, under the
+ * ID the mediator's DID derives: the vault-controlled identity toward
+ * the mediator, minted from the arrangement's own key name. Committed
+ * before any network request. The same mediator again, under either
+ * spelling of its DID, returns the creation already recorded, since
+ * every replica derives the same one; an arrangement whose grant
+ * arrived before any creation takes this one; and a recorded
+ * arrangement that is in conflict is refused. A did:peer:4 long form
+ * is validated against its hash, and when it is the first long form
+ * of a mediator so far in evidence by its short form alone it is
+ * recorded as one more creation of the same arrangement, so that the
+ * mediator resolves from here on. The arrangement is an account of
+ * the replica-mediation protocol at the mediator, and is `enroll`ed
+ * there.
  */
-export async function createMediation(runtime: VaultRuntime, keys: Keys, mediatorDid: Did, mediationId = uuidv7() as MediationId): Promise<VaultEvent<"mediation.created">> {
+export async function createMediation(runtime: VaultRuntime, keys: Keys, mediatorDid: Did): Promise<VaultEvent<"mediation.created">> {
+  const mediationId = mediationIdOf(mediatorDid);
+  const mediator = canonicalDidOf(mediatorDid);
   const me = await mintMediationDid(keys, mediationId);
   const data = { mediationId, mediatorDid, me: { keyName: mediationKeyName(mediationId), did: me.longFormDid } };
   const { fold, events } = await decide(runtime, keys, (fold) => {
     const existing = fold.mediations.mediations.get(mediationId);
-    if (existing === undefined) return [vaultDraft("mediation.created", data)];
-    if (existing.mediatorDid !== data.mediatorDid || existing.me?.did !== data.me.did) {
+    if (existing === undefined || (existing.me === null && existing.faults.length === 0)) return [vaultDraft("mediation.created", data)];
+    if (existing.mediatorDid === null || !sameDid(existing.mediatorDid, data.mediatorDid) || existing.me?.did !== data.me.did) {
       throw new EntityConflict("mediation", mediationId, existing.faults.join("; ") || "another mediator or identity");
     }
-    return [];
+    return isLongForm(mediatorDid) && knownLongForms(fold)(mediator) === null ? [vaultDraft("mediation.created", data)] : [];
   });
   return (events[0] as VaultEvent<"mediation.created"> | undefined) ?? (fold.set.of("mediation.created").find((event) => event.data.mediationId === mediationId) as VaultEvent<"mediation.created">);
 }

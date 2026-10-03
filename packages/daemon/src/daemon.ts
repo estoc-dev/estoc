@@ -6,6 +6,7 @@ import {
   Keys,
   PING_TYPE,
   canonicalDidOf,
+  mediationIdOf,
   objectReader,
   scanVault,
   vaultDraft,
@@ -854,15 +855,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
     setMediator: (mediatorDid) =>
       act((agent, { runtime, keys }) =>
-        // Two calls at once would each make an arrangement with the mediator: the later one looks only once the earlier has made, enrolled in and selected its own.
+        // Two calls at once would each enroll in and select the arrangement: the later one looks only once the earlier is done.
         serially(runtime, "set-mediator", async () => {
+          const mediationId = mediationIdOf(mediatorDid as Did);
           const fold = await scanVault(runtime.vault, keys, SCAN);
-          const existing = [...fold.mediations.mediations.values()].find((mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && sameDid(mediation.mediatorDid, mediatorDid));
           const own = fold.replicas.replicas.get(runtime.author);
-          if (own !== undefined && own.mediationId !== null && own.mediationId !== existing?.mediationId) {
+          if (own !== undefined && own.mediationId !== null && own.mediationId !== mediationId) {
             throw new Unmet(`this runtime is a replica of the arrangement with ${fold.mediations.mediations.get(own.mediationId)?.mediatorDid ?? "another mediator"}; moving it to another mediator is not provided`);
           }
-          const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did)).data.mediationId;
+          await createMediation(runtime, keys, mediatorDid as Did);
           await agent.enroll(mediationId);
           await selectMediation(runtime, keys, mediationId);
           return mediationId;

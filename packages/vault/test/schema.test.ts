@@ -32,10 +32,14 @@ const DOC = cidOf("did document");
 const ENVELOPE = cidOf("envelope");
 
 const AUTHOR = "019b2a40-0000-7000-8000-000000000001";
-const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c";
+const MEDIATOR = "did:web:mediator.example";
+/** `mediationIdOf(MEDIATOR)`, and the ID of the arrangement with `did:web:other.example` */
+const MEDIATION = "1922ce3b-533a-5c75-8cb1-10cdd1f80204";
+const MEDIATION2 = "a9934024-3ed4-5e9d-b04d-33ce664c4300";
 const DID_ID = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715";
 const DID_ID2 = "019b6a10-12c0-7410-89ab-38e54b097c21";
 const UUID_V5_DID_ID = "019b0000-0000-5000-8000-00000000000c";
+const UUID_V4 = "019b0000-0000-4000-8000-00000000000c";
 const CONTACT = "019b2a63-48bf-7214-961d-4c3f97cb95da";
 const CONTACT2 = "019b2a66-c794-7b41-bff1-68a4ecdd0b67";
 const PACKAGE = "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c";
@@ -61,7 +65,7 @@ const WEB = "did:web:bob.example";
 const REPLICA = "019b2a43-4a56-7c0f-862f-194c0c4124a0";
 const REPLICA_SHORT = "did:peer:4zQmDevice";
 const GRANT_HEADER = { alg: "EdDSA", typ: "estoc/replica-grant+jws", kid: `${LONG}#key-1` };
-const GRANT_PAYLOAD = { account: SHORT, mediation_id: MEDIATION, mediator: "did:web:mediator.example", replica_did: REPLICA_SHORT, replica_id: REPLICA, replica_long_form: `${REPLICA_SHORT}:z2DeviceDocument` };
+const GRANT_PAYLOAD = { account: SHORT, mediation_id: MEDIATION, mediator: MEDIATOR, replica_did: REPLICA_SHORT, replica_id: REPLICA, replica_long_form: `${REPLICA_SHORT}:z2DeviceDocument` };
 /** A compact JWS over the text given, signed by nobody: the schema reads a grant's spelling, not its signature. */
 const jwsOf = (header: unknown, payload: string) => `${base64urlnopad.encode(encoder.encode(JSON.stringify(header)))}.${base64urlnopad.encode(encoder.encode(payload))}.c2ln`;
 const grantOf = (payload: Record<string, unknown> = GRANT_PAYLOAD, header: Record<string, unknown> = GRANT_HEADER) => jwsOf(header, canonicalText(payload));
@@ -113,7 +117,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
     } as Data<"peer.resolved">,
     [DOC],
   ],
-  "mediation.created": [{ mediationId: MEDIATION, mediatorDid: "did:web:mediator.example", me: { keyName: `mediation/${MEDIATION}/me`, did: LONG } } as Data<"mediation.created">, []],
+  "mediation.created": [{ mediationId: MEDIATION, mediatorDid: MEDIATOR, me: { keyName: `mediation/${MEDIATION}/me`, did: LONG } } as Data<"mediation.created">, []],
   "mediation.granted": [{ mediationId: MEDIATION, routingDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" } as Data<"mediation.granted">, []],
   "mediation.selected": [{ mediationId: MEDIATION } as Data<"mediation.selected">, []],
   "mediation.retired": [{ mediationId: MEDIATION, because: "replaced" } as Data<"mediation.retired">, []],
@@ -247,7 +251,8 @@ describe("identifiers in payloads", () => {
   it("requires canonical lowercase UUIDs of the version the rule allows", () => {
     rejects("contact.deleted", { contactId: CONTACT.toUpperCase() }, [], /UUIDv7/);
     rejects("contact.deleted", { contactId: IN }, [], /contactId must be a canonical UUIDv7/);
-    rejects("mediation.selected", { mediationId: IN }, [], /UUIDv7/);
+    rejects("mediation.selected", { mediationId: OUT }, [], /mediationId must be a canonical UUIDv5/);
+    rejects("did.retired", { didId: UUID_V4, because: "gone" }, [], /didId must be a canonical UUIDv5 or UUIDv7/);
     rejects("delivery.acknowledged", { ...ALL["delivery.acknowledged"][0], ackMessageId: OUT }, [], /ackMessageId must be a canonical UUIDv5/);
   });
 
@@ -324,7 +329,7 @@ describe("rules between members", () => {
     const created = (grant: string) => ({ replicaId: REPLICA, mediationId: MEDIATION, grant });
     accepts("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, kid: `${SHORT}#key-1` })));
     rejects("replica.created", { ...created(grantOf()), replicaId: "019b2a43-4a56-7c0f-862f-194c0c4124a1" }, [], /replicaId and mediationId are the grant's own/);
-    rejects("replica.created", { ...created(grantOf()), mediationId: "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" }, [], /replicaId and mediationId are the grant's own/);
+    rejects("replica.created", { ...created(grantOf()), mediationId: MEDIATION2 }, [], /replicaId and mediationId are the grant's own/);
     rejects("replica.created", created("not a jws"), [], /grant: a grant is a compact JWS/);
     rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, alg: "ES256" })), [], /protected header/);
     rejects("replica.created", created(grantOf(GRANT_PAYLOAD, { ...GRANT_HEADER, typ: "JWT" })), [], /protected header/);
@@ -336,7 +341,8 @@ describe("rules between members", () => {
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, iat: "1" })), [], /the payload has exactly/);
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_id: 7 })), [], /every payload member is a string/);
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, account: LONG })), [], /account is a did:peer:4 short form/);
-    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, mediation_id: IN })), [], /canonical UUIDv7/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, mediation_id: OUT })), [], /mediation_id is a canonical UUIDv5/);
+    rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_id: IN })), [], /replica_id is a canonical UUIDv7/);
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, mediator: "mediator.example" })), [], /mediator is a DID/);
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_did: SHORT, replica_long_form: LONG })), [], /other than the account/);
     rejects("replica.created", created(grantOf({ ...GRANT_PAYLOAD, replica_long_form: PEER_LONG })), [], /the long form of replica_did/);
@@ -348,12 +354,24 @@ describe("rules between members", () => {
     rejects("message.in", { ...IN_DATA, localKeyName: `replica/${REPLICA}/me` }, [BODY, PHOTO], /localKeyName must be a vault key name/);
   });
 
-  test("a DID entity is minted, never derived: a UUIDv5 is refused wherever an entity ID is named", () => {
-    rejects("did.created", { ...(ALL["did.created"][0] as Loose), didId: UUID_V5_DID_ID }, [], /didId must be a canonical UUIDv7/);
-    rejects("did.disclosed", { ...(ALL["did.disclosed"][0] as Loose), didId: UUID_V5_DID_ID }, [], /didId must be a canonical UUIDv7/);
-    rejects("did.retired", { ...(ALL["did.retired"][0] as Loose), didId: UUID_V5_DID_ID }, [], /didId must be a canonical UUIDv7/);
-    rejects("contact.useDid", { ...(ALL["contact.useDid"][0] as Loose), didId: UUID_V5_DID_ID }, [], /didId must be a canonical UUIDv7/);
-    rejects("peer.resolved", { ...(ALL["peer.resolved"][0] as Loose), localKeyName: `did/${UUID_V5_DID_ID}/key-agreement` }, [DOC], /localKeyName must be a vault key name/);
+  test("a DID entity is minted or derived: a UUIDv5 is taken wherever an entity ID is named, and nothing of another version", () => {
+    accepts("did.disclosed", { ...(ALL["did.disclosed"][0] as Loose), didId: UUID_V5_DID_ID });
+    accepts("did.retired", { ...(ALL["did.retired"][0] as Loose), didId: UUID_V5_DID_ID });
+    accepts("contact.useDid", { ...(ALL["contact.useDid"][0] as Loose), didId: UUID_V5_DID_ID });
+    accepts("peer.resolved", { ...(ALL["peer.resolved"][0] as Loose), localKeyName: `did/${UUID_V5_DID_ID}/key-agreement` }, [DOC]);
+    for (const didId of [UUID_V4, UUID_V5_DID_ID.toUpperCase(), IN.replace("-", "")]) {
+      rejects("did.created", { ...(ALL["did.created"][0] as Loose), didId }, [], /didId must be a canonical UUIDv5 or UUIDv7/);
+      rejects("did.disclosed", { ...(ALL["did.disclosed"][0] as Loose), didId }, [], /didId must be a canonical UUIDv5 or UUIDv7/);
+    }
+    rejects("peer.resolved", { ...(ALL["peer.resolved"][0] as Loose), localKeyName: `did/${UUID_V4}/key-agreement` }, [DOC], /localKeyName must be a vault key name/);
+  });
+
+  test("mediation.created names the arrangement by the ID its mediator's canonical DID derives", () => {
+    const data = ALL["mediation.created"][0] as Loose;
+    rejects("mediation.created", { ...data, mediationId: MEDIATION2, me: { keyName: `mediation/${MEDIATION2}/me`, did: LONG } }, [], new RegExp(`mediationId is the arrangement's own, derived from mediatorDid: ${MEDIATION}`));
+    rejects("mediation.created", { ...data, mediatorDid: "did:web:other.example" }, [], /derived from mediatorDid/);
+    rejects("mediation.created", { ...data, mediatorDid: "did:peer:4abc" }, [], /mediatorDid: mediator DID is a did:peer:4 in its short or long form/);
+    rejects("mediation.created", { ...data, mediationId: "019b2a51-118f-7e46-b31b-c63cd090c92c", me: { keyName: "mediation/019b2a51-118f-7e46-b31b-c63cd090c92c/me", did: LONG } }, [], /mediationId must be a canonical UUIDv5/);
   });
 
   test("did.created holds a numalgo-4 short form and its long form", () => {
@@ -445,8 +463,8 @@ describe("message.out", () => {
     rejects("message.out", { ...OUT_DATA, headers: [] }, [BODY, PHOTO]);
     rejects("message.out", { ...OUT_DATA, pleaseAck: [1] }, [BODY, PHOTO]);
     rejects("message.out", { ...OUT_DATA, thid: "" }, [BODY, PHOTO]);
-    rejects("message.out", { ...OUT_DATA, senderDidId: KEY }, [BODY, PHOTO], /senderDidId must be a canonical UUIDv7/);
-    rejects("message.out", { ...OUT_DATA, senderDidId: UUID_V5_DID_ID }, [BODY, PHOTO], /senderDidId must be a canonical UUIDv7/);
+    rejects("message.out", { ...OUT_DATA, senderDidId: KEY }, [BODY, PHOTO], /senderDidId must be a canonical UUIDv5 or UUIDv7/);
+    rejects("message.out", { ...OUT_DATA, senderDidId: UUID_V4 }, [BODY, PHOTO], /senderDidId must be a canonical UUIDv5 or UUIDv7/);
   });
 
   test("a locally initiated send mints its ID, derives from no observation and acknowledges nothing; a manual notification names only its rotation", () => {
@@ -491,7 +509,7 @@ describe("message.in", () => {
     rejects("message.in", { ...IN_DATA, headers: { please_ack: [] } }, [BODY, PHOTO], /reserved header/);
     rejects("message.in", { ...IN_DATA, bytes: -1 }, [BODY, PHOTO], /bytes must be a non-negative integer/);
     rejects("message.in", { ...IN_DATA, receivedVia: { mediationId: MEDIATION } }, [BODY, PHOTO], /receivedVia\.deliveryId is missing/);
-    rejects("message.in", { ...IN_DATA, receivedVia: { mediationId: IN, deliveryId: null } }, [BODY, PHOTO]);
+    rejects("message.in", { ...IN_DATA, receivedVia: { mediationId: OUT, deliveryId: null } }, [BODY, PHOTO], /mediationId must be a canonical UUIDv5/);
     rejects("message.in", { ...IN_DATA, createdTime: 5, expiresTime: 4 }, [BODY, PHOTO], /expiresTime/);
     rejects("message.in", { ...IN_DATA, wireMessageId: "" }, [BODY, PHOTO]);
   });

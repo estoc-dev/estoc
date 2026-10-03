@@ -1,17 +1,21 @@
+import { longToShort } from "@estoc/did-peer";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { Keys, foldMediations, mintMediationDid, verifyMediationKeys, type Did, type KeyName, type MediationId, type VaultEventSet } from "../../src/index.js";
-import { MEDIATION, MEDIATION2, OTHER_SEED, ROUTING_DID, ROUTING_DID2, Scene, expectOrderFree, openKeys } from "./helpers.js";
+import { Keys, foldMediations, mediationIdOf, mintMediationDid, verifyMediationKeys, type Did, type KeyName, type MediationId, type VaultEventSet } from "../../src/index.js";
+import { AUTHOR2, MEDIATION, MEDIATION2, OTHER_SEED, ROUTING_DID, ROUTING_DID2, Scene, expectOrderFree, openKeys } from "./helpers.js";
 
 const MEDIATOR = ROUTING_DID;
 let keys: Keys;
 let me: Did;
 let me2: Did;
+/** the account another seed derives for the same arrangement */
+let foreign: Did;
 
 beforeAll(async () => {
   keys = await openKeys();
   me = (await mintMediationDid(keys, MEDIATION)).longFormDid;
   me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
+  foreign = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION)).longFormDid;
 });
 
 const created = (scene: Scene, mediationId: MediationId, did: Did, mediatorDid = MEDIATOR) =>
@@ -59,9 +63,9 @@ describe("the mediation fold", () => {
   it("makes disagreeing creations or grants a conflict that nothing later resolves, and a grant naming a routing DID other than the mediator too", async () => {
     const scene = new Scene();
     created(scene, MEDIATION, me);
-    created(scene, MEDIATION, me, "did:web:other.example" as Did);
+    created(scene, MEDIATION, foreign);
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    created(scene, MEDIATION2, me2);
+    created(scene, MEDIATION2, me2, ROUTING_DID2);
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
     scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID2 });
     scene.add("mediation.retired", { mediationId: MEDIATION2, because: "replaced" });
@@ -78,6 +82,25 @@ describe("the mediation fold", () => {
     expect(routedElsewhere.mediations.get(MEDIATION)).toMatchObject({ status: "conflict", routingDid: null, mediatorDid: null, faults: ["an arrangement is routed through its mediator"] });
     expect(routedElsewhere.preferred).toBeNull();
     expect(routedElsewhere.through(ROUTING_DID2).map((m) => m.mediationId)).toEqual([MEDIATION]);
+  });
+
+  it("reads creations and grants that spell one did:peer:4 mediator long and short as one creation and one grant, routes through either spelling, and reports the spelling first in canonical order", async () => {
+    const long = (await mintMediationDid(await openKeys(OTHER_SEED), MEDIATION2)).longFormDid;
+    const short = longToShort(long) as Did;
+    const mediationId = mediationIdOf(short);
+    expect(mediationIdOf(long)).toBe(mediationId);
+    const own = (await mintMediationDid(keys, mediationId)).longFormDid;
+    const scene = new Scene();
+    created(scene, mediationId, own, long);
+    scene.add("mediation.created", { mediationId, mediatorDid: short, me: { keyName: `mediation/${mediationId}/me` as KeyName, did: own } }, { author: AUTHOR2 });
+    scene.add("mediation.granted", { mediationId, routingDid: short });
+    scene.add("mediation.granted", { mediationId, routingDid: long }, { author: AUTHOR2 });
+    const fold = (await checked(scene))(scene.set());
+    expect(fold.mediations.get(mediationId)).toMatchObject({ status: "usable", mediatorDid: long, routingDid: short, me: { did: own }, faults: [], identity: "verified" });
+    expect(fold.through(long).map((m) => m.mediationId)).toEqual([mediationId]);
+    expect(fold.through(short).map((m) => m.mediationId)).toEqual([mediationId]);
+    expect(fold.through(ROUTING_DID2)).toEqual([]);
+    expectOrderFree(scene.events, await checked(scene));
   });
 
   it("retires terminally and prefers the latest selection only while it is usable", async () => {

@@ -4,12 +4,12 @@ import { base64urlnopad } from "@scure/base";
 import { compactVerify, decodeProtectedHeader, importJWK } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { IdentityMismatch, Keys, RECIPIENT_PROOF_TYP, mintDid, mintMediationDid, peerResolution, signRecipientProof, splitDidUrl, type Did, type DidId, type MediationId, type MintedDid } from "../src/index.js";
+import { IdentityMismatch, Keys, RECIPIENT_PROOF_TYP, mediationIdOf, mintDid, mintMediationDid, peerResolution, signRecipientProof, splitDidUrl, type Did, type DidId, type MintedDid } from "../src/index.js";
 
-const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
 const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 const DID_ID2 = "019b2a55-7f10-7b6a-8c21-5d3e9a0f4b17" as DidId;
 const MEDIATOR = "did:web:mediator.example" as Did;
+const MEDIATION = mediationIdOf(MEDIATOR);
 
 async function open(seed: Uint8Array): Promise<Keys> {
   const seedKey = await importSeed(seed);

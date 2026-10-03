@@ -5,15 +5,21 @@
  * preferred arrangement is the latest selection, when that one is
  * usable. An arrangement is an account of the replica-mediation
  * protocol at its mediator and is routed through that mediator itself,
- * so a grant naming another routing DID is a conflict. Whether the
- * arrangement's own DID carries the keys its name
- * derives needs the seed, so that check runs beside the fold and its
- * verdict is handed in; until it is, the arrangement is pending, since
- * nothing may receive on an identity the seed has not confirmed.
+ * so a grant naming another routing DID is a conflict. A mediator is
+ * one DID however it is spelled: a did:peer:4 arrives as its long form
+ * from one replica and its short form from another, and creations,
+ * grants and routing lookups compare the DID, not the spelling, while
+ * each event keeps the spelling it recorded, a long form being what its
+ * short form resolves from. Whether the arrangement's own DID carries
+ * the keys its name derives needs the seed, so that check runs beside
+ * the fold and its verdict is handed in; until it is, the arrangement
+ * is pending, since nothing may receive on an identity the seed has
+ * not confirmed.
  */
 
 import { IdentityMismatch, InvalidDidDocument } from "../errors.js";
 import { checkMediationKeys, type Keys } from "../identity.js";
+import { canonicalDid, sameDid } from "../ids.js";
 import { peerResolution } from "../peer-document.js";
 import type { Did, KeyName, MediationId, VaultData } from "../types.js";
 import { groupBy, latest, samePayload, type VaultEventSet } from "./set.js";
@@ -33,11 +39,11 @@ export type MediationStatus = "usable" | "pending" | "retired" | "conflict";
 
 export interface Mediation {
   readonly mediationId: MediationId;
-  /** the consistent creation's mediator, null while there is none or creations disagree */
+  /** the consistent creation's mediator, as the first creation in canonical order spells it; null while there is none or creations disagree */
   readonly mediatorDid: Did | null;
   /** the consistent creation's own identity toward the mediator */
   readonly me: { keyName: KeyName; did: Did } | null;
-  /** the one granted routing DID, null while ungranted or grants disagree */
+  /** the one granted routing DID, as the first grant in canonical order spells it; null while ungranted or grants disagree */
   readonly routingDid: Did | null;
   /** the reason of the first retirement in canonical order, null while not retired */
   readonly retired: string | null;
@@ -54,18 +60,19 @@ export interface MediationFold {
   /** the latest selection when it is usable; null tells policy to select another before minting a mediated DID */
   readonly preferred: MediationId | null;
   usable(mediationId: MediationId): boolean;
-  /** the arrangements any grant of which names `routingDid`, whatever their state, in ID order: those a document sending to that DID may be routed by */
+  /** the arrangements any grant of which names `routingDid`, under either spelling, whatever their state, in ID order: those a document sending to that DID may be routed by */
   through(routingDid: Did): readonly Mediation[];
 }
 
 export type MediationFoldOptions = { keyChecks?: ReadonlyMap<MediationId, KeyCheck> };
 
-/** Each created arrangement's creation, null where the recorded creations disagree. */
+/** Each created arrangement's creation, the first in canonical order; null where the recorded creations disagree on the mediator or on `me`. */
 export function mediationCreations(set: VaultEventSet): Map<MediationId, VaultData["mediation.created"] | null> {
   const creations = new Map<MediationId, VaultData["mediation.created"] | null>();
   for (const [mediationId, events] of groupBy(set.of("mediation.created"), (event) => event.data.mediationId)) {
     const creation = events[0]!.data;
-    creations.set(mediationId, events.every((event) => samePayload(event.data, creation)) ? creation : null);
+    const agrees = (other: VaultData["mediation.created"]) => sameDid(other.mediatorDid, creation.mediatorDid) && samePayload(other.me, creation.me);
+    creations.set(mediationId, events.every((event) => agrees(event.data)) ? creation : null);
   }
   return creations;
 }
@@ -84,14 +91,18 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
     const faults: string[] = [];
     const creation = created.get(mediationId) ?? null;
     if (created.has(mediationId) && creation === null) faults.push("creations disagree");
-    const routingDids = new Set((granted.get(mediationId) ?? []).map((event) => event.data.routingDid));
-    if (routingDids.size > 1) faults.push(`grants disagree: ${[...routingDids].sort().join(", ")}`);
-    if (creation !== null && routingDids.size === 1 && !routingDids.has(creation.mediatorDid)) faults.push("an arrangement is routed through its mediator");
+    const routingDids = new Map<Did, Did>();
+    for (const event of granted.get(mediationId) ?? []) {
+      const routingDid = canonicalDid(event.data.routingDid);
+      if (!routingDids.has(routingDid)) routingDids.set(routingDid, event.data.routingDid);
+    }
+    if (routingDids.size > 1) faults.push(`grants disagree: ${[...routingDids.keys()].sort().join(", ")}`);
+    if (creation !== null && routingDids.size === 1 && !routingDids.has(canonicalDid(creation.mediatorDid))) faults.push("an arrangement is routed through its mediator");
     const identity: IdentityCheck = options.keyChecks?.get(mediationId) ?? "unchecked";
     if (identity === "mismatch") faults.push("the seed does not derive the arrangement's keys");
     const conflict = faults.length > 0;
     const retirement = retired.get(mediationId)?.[0]?.data.because ?? null;
-    const routingDid = routingDids.size === 1 && !conflict ? [...routingDids][0]! : null;
+    const routingDid = routingDids.size === 1 && !conflict ? [...routingDids.values()][0]! : null;
     const mediation: Mediation = {
       mediationId,
       mediatorDid: creation !== null && !conflict ? creation.mediatorDid : null,
@@ -103,7 +114,7 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
       status: conflict ? "conflict" : retirement !== null ? "retired" : creation === null || routingDid === null || identity === "unchecked" ? "pending" : "usable",
     };
     mediations.set(mediationId, mediation);
-    for (const granted of routingDids) {
+    for (const granted of routingDids.keys()) {
       const through = byRoutingDid.get(granted);
       if (through === undefined) byRoutingDid.set(granted, [mediation]);
       else through.push(mediation);
@@ -112,7 +123,7 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
 
   const usable = (mediationId: MediationId) => mediations.get(mediationId)?.status === "usable";
   const selected = latest(set.of("mediation.selected"))?.data.mediationId ?? null;
-  return { mediations, selected, preferred: selected !== null && usable(selected) ? selected : null, usable, through: (routingDid) => byRoutingDid.get(routingDid) ?? [] };
+  return { mediations, selected, preferred: selected !== null && usable(selected) ? selected : null, usable, through: (routingDid) => byRoutingDid.get(canonicalDid(routingDid)) ?? [] };
 }
 
 /** Each arrangement with a consistent creation checked against the seed: does `me.did` carry the keys its name derives? */

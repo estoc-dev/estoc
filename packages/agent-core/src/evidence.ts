@@ -20,6 +20,7 @@ import {
   peerResolution,
   rawCidOfBytes,
   readVaultEvent,
+  sameDid,
   samePayload,
   vaultDraft,
   type Cid,
@@ -36,7 +37,6 @@ import {
 import type { DIDResolver } from "./protocol/didcomm.js";
 import { UnauthorizedKey } from "./errors.js";
 import { knownLongForms, type Resolution } from "./resolver.js";
-import { sameDid } from "./same-did.js";
 
 /** One resolution with the key it is evidence for: the local key that took part and the peer key authenticated or selected. */
 export interface ResolutionEvidence {

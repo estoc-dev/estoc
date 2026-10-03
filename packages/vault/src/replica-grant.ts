@@ -19,9 +19,10 @@ import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
 import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
-import { didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
+import { sameDid } from "./ids.js";
+import { canonicalDidOf, didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
 import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
-import { isCompactJwt, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
 
 export const REPLICA_GRANT_TYP = "estoc/replica-grant+jws";
@@ -98,7 +99,8 @@ export function readReplicaGrant(jws: string): ReplicaGrant {
   const payload = payloadOf(jws);
   const { account, mediator, replica_did: replicaDid, replica_long_form: replicaLongForm } = payload;
   if (!isPeer4Short(account)) refuse("account is a did:peer:4 short form");
-  if (!isMintedId(payload.mediation_id) || !isMintedId(payload.replica_id)) refuse("mediation_id and replica_id are canonical UUIDv7");
+  if (!isDerivedId(payload.mediation_id)) refuse("mediation_id is a canonical UUIDv5");
+  if (!isMintedId(payload.replica_id)) refuse("replica_id is a canonical UUIDv7");
   if (!isDid(mediator)) refuse("mediator is a DID");
   if (!isPeer4Short(replicaDid) || replicaDid === account) refuse("replica_did is a did:peer:4 short form other than the account");
   if (!isPeer4Long(replicaLongForm) || !replicaLongForm.startsWith(`${replicaDid}:`)) refuse("replica_long_form is the long form of replica_did");
@@ -118,9 +120,9 @@ export function readReplicaGrant(jws: string): ReplicaGrant {
   };
 }
 
-/** Do two grants bind the same replica to the same account, arrangement and mediator, whichever key spelling each was signed under? */
+/** Do two grants bind the same replica to the same account, arrangement and mediator, whichever key spelling each was signed under and however each spells the mediator? */
 export function sameBinding(a: ReplicaGrant, b: ReplicaGrant): boolean {
-  return a.account === b.account && a.mediationId === b.mediationId && a.mediator === b.mediator && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
+  return a.account === b.account && a.mediationId === b.mediationId && sameDid(a.mediator, b.mediator) && a.replicaId === b.replicaId && a.replicaLongForm === b.replicaLongForm;
 }
 
 /** The arrangement a grant is signed for: what its `mediation.created` records. */
@@ -162,9 +164,13 @@ export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation,
  * signature is
  * that key's, and the replica's document carries the keys the seed
  * derives for the replica's ID and sends to the grant's mediator
- * alone. `InvalidReplicaGrant`, `IdentityMismatch` or
- * `InvalidDidDocument` otherwise. Whether the mediator is the
- * arrangement's own is for whoever holds its creation.
+ * alone. The mediator may be spelled differently in the grant and in
+ * the service: each did:peer:4 long form among them is validated
+ * against its hash before the two are compared, since resolving the
+ * replica's document validates nothing nested in its service URI.
+ * `InvalidReplicaGrant`, `IdentityMismatch` or `InvalidDidDocument`
+ * otherwise. Whether the mediator is the arrangement's own is for
+ * whoever holds its creation.
  */
 export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Did): Promise<ReplicaGrant> {
   const grant = readReplicaGrant(jws);
@@ -185,6 +191,6 @@ export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Di
   const replica = peerResolution(grant.replicaLongForm);
   await checkReplicaKeys(keys, grant.replicaId, replica);
   const uris = didcommServiceUris(replica.document);
-  if (uris.length !== 1 || uris[0] !== grant.mediator) throw new IdentityMismatch(`replica ${grant.replicaId} sends to ${JSON.stringify(uris)}, not the grant's mediator`);
+  if (uris.length !== 1 || canonicalDidOf(uris[0]!) !== canonicalDidOf(grant.mediator)) throw new IdentityMismatch(`replica ${grant.replicaId} sends to ${JSON.stringify(uris)}, not the grant's mediator`);
   return grant;
 }

@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   IdentityMismatch,
+  InvalidDidDocument,
   InvalidReplicaGrant,
   Keys,
   MAX_GRANT_JWS_CHARS,
@@ -14,6 +15,7 @@ import {
   REPLICA_GRANT_TYP,
   didcommServiceUris,
   mintDid,
+  mediationIdOf,
   mintMediationDid,
   mintReplicaDid,
   peerResolution,
@@ -26,16 +28,15 @@ import {
   type DidId,
   type GrantingMediation,
   type LocalKey,
-  type MediationId,
   type ReplicaId,
 } from "../src/index.js";
 
-const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
-const MEDIATION2 = "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" as MediationId;
 const REPLICA = "019b2a43-4a56-7c0f-862f-194c0c4124a0" as ReplicaId;
 const REPLICA2 = "019b2a44-0b1c-7d2e-9f3a-4b5c6d7e8f90" as ReplicaId;
 const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 const MEDIATOR = "did:web:mediator.example" as Did;
+const MEDIATION = mediationIdOf(MEDIATOR);
+const MEDIATION2 = mediationIdOf("did:web:other.example" as Did);
 
 const encoder = new TextEncoder();
 
@@ -69,7 +70,7 @@ describe("a replica's DID", () => {
     expect(await mintReplicaDid(keys, REPLICA, MEDIATOR)).toEqual(replica);
     expect((await mintReplicaDid(keys, REPLICA2, MEDIATOR)).did).not.toBe(replica.did);
     expect((await mintReplicaDid(keys, REPLICA, "did:web:other.example" as Did)).did).not.toBe(replica.did);
-    expect((await mintMediationDid(keys, REPLICA as unknown as MediationId)).did).not.toBe(replica.did);
+    expect((await mintMediationDid(keys, MEDIATION)).did).not.toBe(replica.did);
   });
 });
 
@@ -227,5 +228,23 @@ describe("verifyReplicaGrant", () => {
     const communication = await mintDid(keys, DID_ID, { kind: "mediated", routingDid: MEDIATOR });
     await expect(verifyReplicaGrant(keys, await signed({ ...payload, replica_did: communication.did, replica_long_form: communication.longFormDid }, account, kid), mediation.me.did)).rejects.toThrow(IdentityMismatch);
     await expect(verifyReplicaGrant(keys, await signed({ ...payload, mediator: "did:web:other.example" }, account, kid), mediation.me.did)).rejects.toThrow(/not the grant's mediator/);
+  });
+
+  it("compares the mediator the replica serves with the grant's as validated identities: a long form whose document is not the one its hash commits to is refused wherever it stands", async () => {
+    const long = (await mintDid(keys, DID_ID, { kind: "direct", endpoint: "https://peer-mediator.example/didcomm" })).longFormDid;
+    const short = peerResolution(long).did;
+    const peerMediation: GrantingMediation = { mediationId: mediationIdOf(long), mediatorDid: long, me: { did: (await mintMediationDid(keys, mediationIdOf(long))).longFormDid } };
+    const key = (await keys.mediationKeys(peerMediation.mediationId)).authentication;
+    const jws = await signReplicaGrant(keys, peerMediation, REPLICA);
+    const kid = decodeProtectedHeader(jws).kid as string;
+    expect(didcommServiceUris(peerResolution(readReplicaGrant(jws).replicaLongForm).document)).toEqual([long]);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(jws), mediator: short }, key, kid), peerMediation.me.did)).resolves.toMatchObject({ mediator: short });
+
+    const other = (await mintDid(keys, DID_ID, { kind: "direct", endpoint: "https://elsewhere.example/didcomm" })).longFormDid;
+    const forged = `${short}:${other.slice(other.lastIndexOf(":") + 1)}` as Did;
+    expect(() => peerResolution(forged)).toThrow(InvalidDidDocument);
+    const servedByForged = await signReplicaGrant(keys, { ...peerMediation, mediatorDid: forged }, REPLICA);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(servedByForged), mediator: short }, key, kid), peerMediation.me.did)).rejects.toThrow(InvalidDidDocument);
+    await expect(verifyReplicaGrant(keys, await signed({ ...payloadOf(jws), mediator: forged }, key, kid), peerMediation.me.did)).rejects.toThrow(InvalidDidDocument);
   });
 });

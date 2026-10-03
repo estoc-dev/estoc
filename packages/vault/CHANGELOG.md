@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- **A mediator is one DID however it is spelled**: `canonicalDid` and
+  `sameDid` compare a `did:peer:4` by its short form and any other DID as
+  it is. The mediation fold reads creations of one arrangement that name
+  the same mediator under either spelling, with identical `me`, as one
+  creation, grants naming the same routing DID under either spelling as
+  one grant, and `through` finds an arrangement under either spelling;
+  the replica fold and `sameBinding` compare a grant's `mediator` the
+  same way. Events keep the spelling they recorded, and the fold reports
+  the spelling of the first in canonical order. `verifyReplicaGrant`
+  compares the grant's `mediator` with the replica's service as validated
+  identities: a `did:peer:4` long form in either place must be the one
+  its hash commits to, resolving the replica's document validating no
+  mediator document nested in its service URI, and `InvalidDidDocument`
+  refuses one that is not. The DID fold validates the same way the
+  `did:peer:4` long form a communication document's service names: one
+  that is not the document its hash commits to, or does not read as a
+  document, is the entity's conflict, with no route and no arrangement.
+- **Derived arrangement and DID entity IDs**: `mediationIdOf(mediatorDid)`
+  names the one arrangement with a mediator by the UUIDv5 its canonical
+  DID derives, so every replica that arranges with a mediator records the
+  same creation; a `mediation.created` whose `mediationId` is any other
+  value is an invalid payload, `mediationKeyName` and the
+  `mediation/<id>/me` key name take a UUIDv5 alone, and a replica grant's
+  `mediation_id` is one too. `successorDidId(predecessor)` and
+  `startDidId(publicDid, binding)` derive DID entity IDs; every `didId`
+  member, `didKeyName` and the `did/<id>/…` key names take a UUIDv5 or a
+  UUIDv7, and the procedures here still mint. `LocalDidEntity.mediation`,
+  the one usable arrangement routing the entity or null, replaces
+  `mediations`: a usable arrangement is routed through its own mediator and
+  a vault has one arrangement per mediator, so no routing DID is routed by
+  several. A vault recorded before this change is read anew.
 - `DidFold.desiredRecipients` and `DesiredRecipient` are gone. Which DIDs
   an account is to hold at its mediator is the agent's to decide, over
   `receipt`, and it keeps retired DIDs: nothing reads a projection of the

@@ -10,7 +10,7 @@
 import { isEventCid, isJsonObject, isRawCid, type Draft, type Event } from "@estoc/event-store";
 
 import { InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, InvalidReplicaGrant } from "./errors.js";
-import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationKeyName } from "./ids.js";
+import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationIdOf, mediationKeyName } from "./ids.js";
 import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
@@ -153,8 +153,8 @@ const contentRoots = (data: { bodyCid: Cid; attachmentCids: Cid[] }): Cid[] => m
 // ---- the schemas --------------------------------------------------------
 
 const idMembers = {
-  mediationId: minted<MediationId>(),
-  didId: minted<DidId>(),
+  mediationId: derived<MediationId>(),
+  didId: entity<DidId>(),
   contactId: minted<ContactId>(),
   packageId: minted<PackageId>(),
 };
@@ -288,6 +288,14 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
   ),
   "mediation.created": schema(
     checked(shape({ mediationId: idMembers.mediationId, mediatorDid: did, me: shape({ keyName, did }) }), (data) => {
+      let own: MediationId;
+      try {
+        own = mediationIdOf(data.mediatorDid);
+      } catch (err) {
+        if (err instanceof InvalidIdentifier) throw new Fault(`mediatorDid: ${err.message}`);
+        throw err;
+      }
+      if (data.mediationId !== own) throw new Fault(`mediationId is the arrangement's own, derived from mediatorDid: ${own}`);
       const expected = mediationKeyName(data.mediationId);
       if (data.me.keyName !== expected) throw new Fault(`me.keyName is the arrangement's own key, ${expected}`);
       if (!isPeer4Long(data.me.did)) throw new Fault("an account is a did:peer:4, recorded in its long form");

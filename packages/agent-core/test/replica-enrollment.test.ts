@@ -13,7 +13,7 @@ import {
   REPLICA_ADD,
   STATUS_REQUEST,
   Unusable,
-  WrongAccount,
+  WrongMediator,
   canonicalDid,
   createMediation,
   createReplica,
@@ -53,7 +53,7 @@ describe("creating a replica", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     await createReplica(p.runtime, p.keys, p.mediationId);
-    const second = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    const second = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
     await expect(createReplica(p.runtime, p.keys, second.data.mediationId)).rejects.toBeInstanceOf(EntityConflict);
     await p.runtime.close();
   });
@@ -61,7 +61,7 @@ describe("creating a replica", () => {
   it("refuses the arrangement whose recorded grant makes the runtime no member, and enrolling asks the mediator nothing", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const elsewhere = canonicalDid((await createMediation(p.runtime, p.keys, mediator.did as Did)).data.me.did) as Did;
+    const elsewhere = canonicalDid((await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did)).data.me.did) as Did;
     const grant = await signReplicaGrant(p.keys, { mediationId: p.mediationId, mediatorDid: elsewhere, me: p.created.data.me }, p.runtime.author);
     await decide(p.runtime, p.keys, () => [vaultDraft("replica.created", { replicaId: p.runtime.author, mediationId: p.mediationId, grant })]);
     expect((await fold(p)).replicas.replicas.get(p.runtime.author)?.status).toBe("conflict");
@@ -175,12 +175,12 @@ describe("enrolling", () => {
     await p.runtime.close();
   });
 
-  it("refuses an unknown arrangement, and a link speaking as another account, asking nothing", async () => {
+  it("refuses an unknown arrangement, and a link to another mediator, asking nothing", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), "019b0000-0000-7000-8000-000000000000" as MediationId)).rejects.toThrow(/no mediation/);
-    const other = await createMediation(p.runtime, p.keys, mediator.did as Did);
-    await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), other.data.mediationId)).rejects.toBeInstanceOf(WrongAccount);
+    await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), "019b0000-0000-5000-8000-000000000000" as MediationId)).rejects.toThrow(/no mediation/);
+    const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
+    await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), other.data.mediationId)).rejects.toBeInstanceOf(WrongMediator);
     expect((await fold(p)).replicas.replicas.size).toBe(0);
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();

@@ -275,9 +275,9 @@ JWS signed by one of the account's authentication keys (header exactly
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) text of exactly
 `account`, `mediation_id`, `mediator`, `replica_id`, `replica_did` and
 `replica_long_form`. `mediator` is the one the account registered with. The
-two ids are UUIDv7 and are the account's own names for the arrangement and
-the replica: the mediator compares them with nothing and knows a replica by
-its DID alone. The replica's document must name that mediator as its service
+two ids are the account's own names for the arrangement, a UUIDv5, and the
+replica, a UUIDv7: the mediator compares them with nothing and knows a
+replica by its DID alone. The replica's document must name that mediator as its service
 and hold Ed25519 authentication and X25519 key-agreement keys. Any grant
 naming a replica the account already has active answers as the first time
 did, and the roster keeps the first grant. A replica added later receives

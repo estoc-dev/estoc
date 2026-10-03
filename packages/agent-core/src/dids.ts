@@ -11,8 +11,11 @@
 
 import { v7 as uuidv7 } from "uuid";
 
-import type { VaultRuntime } from "@estoc/event-store";
+import { decodeLongForm, isShortForm } from "@estoc/did-peer";
+import type { JsonObject, VaultRuntime } from "@estoc/event-store";
 import {
+  canonicalDid,
+  mediationIdOf,
   mintDid,
   scanVault,
   serviceTargetOf,
@@ -39,6 +42,7 @@ import { mediationOf } from "./mediation.js";
 import { decide, serially } from "./procedure.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipientsNow, holds } from "./replica-recipients.js";
+import { knownLongForms } from "./resolver.js";
 
 /** The route a DID is minted for: a mediation arrangement by its ID, or a direct HTTPS or WSS endpoint. */
 export type RouteSpec = { kind: "mediated"; mediationId: MediationId } | { kind: "direct"; endpoint: string };
@@ -50,11 +54,14 @@ export function didOf(fold: VaultFold, didId: DidId): LocalDidEntity {
 }
 
 /**
- * Where a route sends, once it can carry a DID: the routing DID of a
- * usable arrangement that no other usable arrangement shares, since a
- * document names the routing DID alone and two accounts behind it
- * would leave undecidable which one holds the address; or the endpoint
- * itself. `Unusable` otherwise.
+ * Where a route sends, once it can carry a DID: the mediator of a
+ * usable arrangement, or the endpoint itself. A did:peer:4 mediator is
+ * named by its long form, validated against its hash, so that whoever
+ * is given the address resolves the mediator from the address alone;
+ * the spelling an arrangement is reported under changes with the
+ * evidence merged here and names no document. `Unusable` while the
+ * arrangement is not usable or no long form of its mediator is in
+ * evidence.
  */
 export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
   if (route.kind === "direct") {
@@ -63,24 +70,47 @@ export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
     return target;
   }
   const mediation = mediationOf(fold, route.mediationId);
-  if (mediation.status !== "usable" || mediation.routingDid === null) throw new Unusable("mediation", route.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
-  return usableTarget(fold, { kind: "mediated", routingDid: mediation.routingDid });
+  if (mediation.status !== "usable" || mediation.mediatorDid === null) throw new Unusable("mediation", route.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
+  const mediator = canonicalDid(mediation.mediatorDid);
+  const routingDid = isShortForm(mediator) ? knownLongForms(fold)(mediator) : mediator;
+  if (routingDid === null) throw new Unusable("mediation", route.mediationId, [`no long form of ${mediator} is in evidence`]);
+  return { kind: "mediated", routingDid };
 }
 
-/** A target a DID may be minted for now: a direct endpoint, or a routing DID exactly one usable arrangement routes through. */
-export function usableTarget(fold: VaultFold, target: RouteTarget): RouteTarget {
-  if (target.kind === "direct") return target;
-  const usable = fold.mediations.through(target.routingDid).filter((mediation) => mediation.status === "usable");
-  if (usable.length === 1) return target;
-  throw new Unusable("routing DID", target.routingDid, [usable.length === 0 ? "no usable arrangement routes through it" : `several arrangements route through it: ${usable.map((mediation) => mediation.mediationId).join(", ")}`]);
+/**
+ * The route a recorded document names, as `RouteSpec` names it: the
+ * arrangement its routing DID derives, whichever spelling the document
+ * names, or its endpoint. Null while the document names no one route.
+ */
+export function namedRouteOf(entity: LocalDidEntity): RouteSpec | null {
+  const target = entity.routeTarget;
+  if (target === null) return null;
+  return target.kind === "direct" ? { kind: "direct", endpoint: target.endpoint } : { kind: "mediated", mediationId: mediationIdOf(target.routingDid) };
 }
 
-/** The route of a recorded entity, as `RouteSpec` names it: its one arrangement, or its endpoint. Null while the document names no one route or no one usable arrangement carries it. */
+/** The route that carries a recorded entity now: the one its document names, unless that is an arrangement which is not usable. */
 export function routeOf(entity: LocalDidEntity): RouteSpec | null {
-  if (entity.routeTarget === null) return null;
-  if (entity.routeTarget.kind === "direct") return { kind: "direct", endpoint: entity.routeTarget.endpoint };
-  const mediationId = entity.mediations[0];
-  return entity.mediations.length === 1 && mediationId !== undefined ? { kind: "mediated", mediationId } : null;
+  const route = namedRouteOf(entity);
+  return route?.kind === "mediated" && entity.mediation === null ? null : route;
+}
+
+function sameRoute(a: RouteSpec | null, b: RouteSpec): boolean {
+  if (a === null) return false;
+  return a.kind === "direct" ? b.kind === "direct" && a.endpoint === b.endpoint : b.kind === "mediated" && a.mediationId === b.mediationId;
+}
+
+/**
+ * A recorded entity read back as it was minted: the committed
+ * spellings, and the input document its long form encodes. Nothing is
+ * rebuilt from the evidence as it stands now, whose reported spellings
+ * change as earlier events are merged in, so what is returned is what
+ * was committed. Refused in conflict, and for a route its document
+ * does not name.
+ */
+export function recordedDid(entity: LocalDidEntity, route: RouteSpec | null): MintedDid {
+  if (entity.conflict || entity.created === null) throw new EntityConflict("DID", entity.didId, entity.faults.join("; "));
+  if (route !== null && !sameRoute(namedRouteOf(entity), route)) throw new EntityConflict("DID", entity.didId, "another route");
+  return { didId: entity.didId, did: entity.created.did, longFormDid: entity.created.longFormDid, inputDocument: decodeLongForm(entity.created.longFormDid) as JsonObject };
 }
 
 export interface CreatedDid {
@@ -94,30 +124,24 @@ export interface CreatedDid {
  * `did.created` for a route: the fixed keys derived from the entity
  * ID, the numalgo-4 document built over them and the route's target,
  * the short form and long form committed. The same ID again returns
- * what was recorded when the seed and route give the same document; an
- * entity that would differ, or one in conflict, is refused rather than
- * replaced.
+ * the entity as recorded, when its document names the route, and
+ * writes nothing.
  */
 export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
   let minted!: MintedDid;
   const { fold, events } = await decide(runtime, keys, async (fold) => {
-    minted = await mintDid(keys, didId, routeTargetOf(fold, route));
     const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
-      if (!sameDocument(existing, minted)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
+      minted = recordedDid(existing, route);
       return [];
     }
+    minted = await mintDid(keys, didId, routeTargetOf(fold, route));
     return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid })];
   });
   const created = events[0] as VaultEvent<"did.created"> | undefined;
   return created === undefined
     ? { created: fold.set.of("did.created").find((event) => event.data.didId === didId) as VaultEvent<"did.created">, minted, existed: true }
     : { created, minted, existed: false };
-}
-
-/** Does the recorded entity carry exactly this document? The long form encodes the keys and the route, so equal spellings are the same entity on the same route. */
-export function sameDocument(existing: LocalDidEntity, minted: MintedDid): boolean {
-  return existing.created !== null && existing.created.did === minted.did && existing.created.longFormDid === minted.longFormDid;
 }
 
 export interface Disclosure {

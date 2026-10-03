@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { Hono } from "hono";
 import type { IMessage } from "@estoc/didcomm-node";
 import { CompactSign, importJWK } from "jose";
+import { v5, v7 } from "uuid";
 import canonicalize from "canonicalize";
 import bs58 from "bs58";
 import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
@@ -64,10 +65,10 @@ let mediator: MediatorIdentity;
 let account: Peer4Agent;
 let mediationId: string;
 
-function uuidv7(): string {
-  const hex = randomUUID().replaceAll("-", "");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
-}
+/** The spelling an account names its arrangement by: a UUIDv5, derived here from a random name since the mediator reads only its shape. */
+const uuidv5 = (): string => v5(randomUUID(), v5.URL);
+/** The spelling an account names a replica by: a minted UUIDv7. */
+const uuidv7 = (): string => v7();
 
 function serve(config: Partial<MediatorConfig> = {}): Hono {
   return buildServer({ identity: mediator, store, config: { ...TEST_CONFIG, ...config } }).app;
@@ -78,7 +79,7 @@ beforeEach(async () => {
   store = memoryStore();
   app = serve();
   account = await peer4Agent(null);
-  mediationId = uuidv7();
+  mediationId = uuidv5();
 });
 
 interface Speaker {
@@ -267,7 +268,7 @@ describe("account-register", () => {
     const other = await agent("other");
 
     await expectProblem(
-      await send(speaker, ACCOUNT_REGISTER, { mediation_id: uuidv7() }),
+      await send(speaker, ACCOUNT_REGISTER, { mediation_id: uuidv5() }),
       "invalid-message"
     );
     await expectProblem(
@@ -362,7 +363,7 @@ describe("replica-add", () => {
     await registerAccount();
     const first = await enrollment();
     const second = await enrollment(account, {
-      mediation_id: uuidv7(),
+      mediation_id: uuidv5(),
       replica_id: first.replicaId,
     });
 
@@ -590,9 +591,11 @@ describe("replica-add", () => {
       );
     });
 
-    it("with IDs that are not UUIDv7", async () => {
+    it("with a replica ID that is not a UUIDv7, or an arrangement ID that is not a UUIDv5", async () => {
       await refused((await enrollment(account, { replica_id: randomUUID() })).grant);
+      await refused((await enrollment(account, { replica_id: uuidv5() })).grant);
       await refused((await enrollment(account, { mediation_id: "1" })).grant);
+      await refused((await enrollment(account, { mediation_id: uuidv7() })).grant);
     });
 
     it("with a field too many, a field too few, or another spelling of its JSON", async () => {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Arrangement IDs are derived**: `setMediator` names the arrangement by
+  the ID the mediator's DID derives, so a reopened or restored runtime
+  finds the arrangement that stands by its ID, and a mediator other than
+  the one this runtime is a replica of is refused before anything is
+  written. The test corpus is regenerated with derived arrangement IDs; a
+  vault written by an earlier daemon is read anew.
 - **No route entity**: new DIDs are minted through the selected
   arrangement itself, and `setMediator` records no route. The test
   corpus is regenerated without `route.configured` events; a vault

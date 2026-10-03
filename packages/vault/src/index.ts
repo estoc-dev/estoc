@@ -47,6 +47,8 @@ export {
   NAMESPACE_PURPOSES,
   type NamespacePurpose,
   estocNamespace,
+  canonicalDid,
+  sameDid,
   compareUtf8,
   channelOf,
   channelKey,
@@ -65,6 +67,9 @@ export {
   didKeyName,
   mediationKeyName,
   replicaKeyName,
+  mediationIdOf,
+  successorDidId,
+  startDidId,
 } from "./ids.js";
 
 export { canonicalPublicKey, parsePublicKey, decodePublicKey, agreementKey, type KeyType, type DecodedPublicKey, type Jwk } from "./public-key.js";

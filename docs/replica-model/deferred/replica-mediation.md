@@ -261,7 +261,7 @@ Its payload is RFC 8785 canonical JSON with exactly these fields:
 ```json
 {
   "account": "did:peer:4...account",
-  "mediation_id": "019b2a51-118f-7e46-b31b-c63cd090c92c",
+  "mediation_id": "1922ce3b-533a-5c75-8cb1-10cdd1f80204",
   "mediator": "did:web:mediator.example",
   "replica_id": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
   "replica_did": "did:peer:4...replica",
@@ -285,8 +285,9 @@ Before registering a replica the mediator MUST verify:
    is eligible for creation under the mediator's account-creation policy.
 2. The JWS uses the permitted algorithm, type and key from that account's
    authenticated document, with no key fetched from a supplied `jku`/`x5u`.
-3. Every field has the specified form; `replica_id` and `mediation_id` are
-   canonical UUIDv7s, and `mediator` equals the DID addressed by the request.
+3. Every field has the specified form; `replica_id` is a canonical UUIDv7,
+   `mediation_id` a canonical UUIDv5, and `mediator` equals the DID addressed
+   by the request.
 4. The replica long form is no larger than 8192 UTF-8 bytes, checked before
    decoding it, resolves locally to the stated short form and its
    service names that mediator. The replica DID differs from the account,
@@ -327,7 +328,7 @@ they do not yet extend the phase-1 closed payload schemas.
   "roots": [],
   "data": {
     "replicaId": "019b2a43-4a56-7c0f-862f-194c0c4124a0",
-    "mediationId": "019b2a51-118f-7e46-b31b-c63cd090c92c",
+    "mediationId": "1922ce3b-533a-5c75-8cb1-10cdd1f80204",
     "grant": "<compact JWS>"
   }
 }

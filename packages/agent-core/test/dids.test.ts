@@ -1,18 +1,20 @@
 import { describe, expect, it, test } from "vitest";
 
-import { resolveDIDCommDoc } from "@estoc/did-peer";
-import { InvalidIdentifier, didcommServiceUris, mintMediationDid, scanVault, vaultDraft, type Did, type DidId, type KeyName, type MediationId } from "@estoc/vault";
+import { longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
+import { createSeedKeystore } from "@estoc/keystore";
+import { InvalidIdentifier, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
-import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, disclose, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf } from "../src/index.js";
-import { freshVault, mediatedRoute, newMediator, party } from "./helpers.js";
+import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
+import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, createMediation, createVault, disclose, dispatch, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf, send } from "../src/index.js";
+import { MEDIATOR_HTTP } from "./fake-mediator.js";
+import { PASSPHRASE, didcomm, freshVault, mediatedRoute, memoryDriver, newMediator, party, posting, seedOf, ticking } from "./helpers.js";
 
 const ENDPOINT = "https://ingress.example/didcomm";
 const DIRECT = { kind: "direct", endpoint: ENDPOINT } as const;
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
-const OTHER_MEDIATION = "019b0000-0000-7000-8000-000000000302" as MediationId;
 
 describe("routes", () => {
-  test("a mediated route needs a usable arrangement no other usable arrangement shares its routing DID with; a direct one needs an absolute HTTPS or WSS endpoint", async () => {
+  test("a mediated route needs a usable arrangement; a direct one needs an absolute HTTPS or WSS endpoint", async () => {
     const p = await party(await newMediator());
     const route = mediatedRoute(p.mediationId);
     const ungranted = await scanVault(p.runtime.vault, p.keys);
@@ -28,11 +30,10 @@ describe("routes", () => {
     const { minted } = await createDid(p.runtime, p.keys, route, DID);
     expect(routeOf((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(DID)!)).toEqual(route);
 
-    const me = (await mintMediationDid(p.keys, OTHER_MEDIATION)).longFormDid;
-    await p.runtime.vault.commit([], [vaultDraft("mediation.created", { mediationId: OTHER_MEDIATION, mediatorDid: p.mediator.did as Did, me: { keyName: `mediation/${OTHER_MEDIATION}/me` as KeyName, did: me } }), vaultDraft("mediation.granted", { mediationId: OTHER_MEDIATION, routingDid: p.mediator.did as Did })]);
+    await p.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: p.mediationId, because: "gone" })]);
     const fold = await scanVault(p.runtime.vault, p.keys);
-    expect(() => routeTargetOf(fold, route)).toThrow(/several arrangements route through/);
-    expect(fold.dids.entities.get(DID)).toMatchObject({ live: false, created: { did: minted.did }, faults: [`several arrangements route through ${p.mediator.did}: ${[p.mediationId, OTHER_MEDIATION].sort().join(", ")}`] });
+    expect(() => routeTargetOf(fold, route)).toThrow(Unusable);
+    expect(fold.dids.entities.get(DID)).toMatchObject({ live: false, created: { did: minted.did }, mediation: null, faults: [`mediation ${p.mediationId} is retired`] });
     expect(routeOf(fold.dids.entities.get(DID)!)).toBeNull();
     await expect(createDid(p.runtime, p.keys, route)).rejects.toBeInstanceOf(Unusable);
     await expect(disclose(p.link, p.runtime, p.keys, DID, { as: "oob" }, p.confirmations)).rejects.toBeInstanceOf(Unusable);
@@ -56,17 +57,21 @@ describe("communication DIDs", () => {
     expect(again.minted.did).toBe(first.minted.did);
     const fold = await scanVault(runtime.vault, keys);
     expect(fold.set.of("did.created")).toHaveLength(1);
-    expect(fold.dids.entities.get(DID)).toMatchObject({ live: true, routeTarget: DIRECT, mediations: [] });
+    expect(fold.dids.entities.get(DID)).toMatchObject({ live: true, routeTarget: DIRECT, mediation: null });
     expect(routeOf(fold.dids.entities.get(DID)!)).toEqual(DIRECT);
     await runtime.close();
   });
 
-  it("is minted under a UUIDv7 only: a UUIDv5 is refused and nothing written", async () => {
+  it("is minted under a derived UUIDv5 as under a minted UUIDv7; an ID of another version is refused and nothing written", async () => {
     const { runtime, keys } = await freshVault();
-    await expect(createDid(runtime, keys, DIRECT, "019b0000-0000-5000-8000-00000000000c" as DidId)).rejects.toBeInstanceOf(InvalidIdentifier);
+    const derived = "019b0000-0000-5000-8000-00000000000c" as DidId;
+    const { created, minted } = await createDid(runtime, keys, DIRECT, derived);
+    expect(created.data.didId).toBe(derived);
+    expect((await scanVault(runtime.vault, keys)).dids.entities.get(derived)).toMatchObject({ live: true, created: { did: minted.did } });
+    await expect(createDid(runtime, keys, DIRECT, "019b0000-0000-4000-8000-00000000000c" as DidId)).rejects.toBeInstanceOf(InvalidIdentifier);
     const fold = await scanVault(runtime.vault, keys);
-    expect(fold.set.of("did.created")).toEqual([]);
-    expect(fold.dids.entities.size).toBe(0);
+    expect(fold.set.of("did.created")).toHaveLength(1);
+    expect(fold.dids.entities.size).toBe(1);
     await runtime.close();
   });
 
@@ -75,12 +80,57 @@ describe("communication DIDs", () => {
     await createDid(runtime, keys, DIRECT, DID);
     await expect(createDid(runtime, keys, { kind: "direct", endpoint: "https://elsewhere.example/" }, DID)).rejects.toBeInstanceOf(EntityConflict);
     await expect(createDid(runtime, keys, { kind: "direct", endpoint: "http://elsewhere.example/" })).rejects.toBeInstanceOf(Unusable);
-    await expect(createDid(runtime, keys, mediatedRoute("019b0000-0000-7000-8000-0000000000ff" as MediationId))).rejects.toThrow(/no mediation/);
+    await expect(createDid(runtime, keys, mediatedRoute("019b0000-0000-5000-8000-0000000000ff" as MediationId))).rejects.toThrow(/no mediation/);
     const p = await party(await newMediator());
     await expect(createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).rejects.toBeInstanceOf(Unusable);
     expect((await scanVault(p.runtime.vault, p.keys)).set.of("did.created")).toEqual([]);
     await runtime.close();
     await p.runtime.close();
+  });
+
+  it("keeps the document it committed when a merge changes the spelling its arrangement is reported under, and names a did:peer:4 mediator by its long form so that a stranger resolves it from the address alone", async () => {
+    const mediator = await newMediator();
+    const a = await party(mediator);
+    await enroll(a.link, a.runtime, a.keys, a.confirmations, a.mediationId);
+    const route = mediatedRoute(a.mediationId);
+    const first = await createDid(a.runtime, a.keys, route, DID);
+    const short = longToShort(mediator.did) as Did;
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const earlier = await createVault(memoryDriver(), { seedKey, wrapped: doc, label: "the same seed, earlier", now: ticking("2026-09-13T00:00:00.000Z") });
+    await createMediation(earlier.runtime, earlier.keys, short);
+    await earlier.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: a.mediationId, routingDid: short })]);
+    await a.runtime.ingest([...(await scanVault(earlier.runtime.vault, earlier.keys)).set.all()]);
+    const merged = await scanVault(a.runtime.vault, a.keys);
+    expect(merged.mediations.mediations.get(a.mediationId)).toMatchObject({ status: "usable", mediatorDid: short, routingDid: short });
+    expect(merged.dids.entities.get(DID)).toMatchObject({ live: true, routeTarget: { kind: "mediated", routingDid: mediator.did } });
+
+    const again = await createDid(a.runtime, a.keys, route, DID);
+    expect(again).toMatchObject({ existed: true, created: { cid: first.created.cid }, minted: first.minted });
+    expect(routeTargetOf(merged, route)).toEqual({ kind: "mediated", routingDid: mediator.did });
+    const fresh = await createDid(a.runtime, a.keys, route);
+    expect(didcommServiceUris(fresh.minted.inputDocument)).toEqual([mediator.did]);
+
+    const stranger = await freshVault(2);
+    const local = await createDid(stranger.runtime, stranger.keys, DIRECT);
+    const { messageId, action } = await send(stranger.runtime, stranger.keys, { channel: { localDid: local.minted.did, peerDid: fresh.minted.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const { fetch, posts } = posting(() => new Response(null, { status: 202 }));
+    expect(await dispatch(stranger.runtime, stranger.keys, action, { didcomm, fetch })).toMatchObject({ outcome: "submitted", messageId });
+    expect(posts.map((post) => post.url)).toEqual([MEDIATOR_HTTP]);
+    await a.runtime.close();
+    await earlier.runtime.close();
+    await stranger.runtime.close();
+  });
+
+  it("reads back no committed document whose service names a did:peer:4 long form other than the one its hash commits to: the same ID under that mediator's arrangement is refused and nothing written", async () => {
+    const mediator = await newMediator();
+    const a = await party(mediator);
+    const forged = `${longToShort(mediator.did)}:${a.created.data.me.did.slice(a.created.data.me.did.lastIndexOf(":") + 1)}` as Did;
+    const bad = await mintDid(a.keys, DID, { kind: "mediated", routingDid: forged });
+    await a.runtime.vault.commit([], [vaultDraft("did.created", { didId: DID, did: bad.did, longFormDid: bad.longFormDid })]);
+    expect((await scanVault(a.runtime.vault, a.keys)).dids.entities.get(DID)).toMatchObject({ live: false, conflict: true, routeTarget: null });
+    await expect(createDid(a.runtime, a.keys, mediatedRoute(a.mediationId), DID)).rejects.toThrow(EntityConflict);
+    expect((await scanVault(a.runtime.vault, a.keys)).set.of("did.created")).toHaveLength(1);
+    await a.runtime.close();
   });
 
   it("retires once: new sending and disclosure stop, the record stays", async () => {

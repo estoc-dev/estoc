@@ -16,7 +16,7 @@
 import { IdentityMismatch, InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { checkDidKeys, didDocumentOf, serviceTargetOf, type Keys, type RouteTarget } from "../identity.js";
 import { didKeyName } from "../ids.js";
-import { authorizedMethodIds, didcommServiceUris, type PeerResolution } from "../peer-document.js";
+import { authorizedMethodIds, canonicalDidOf, didcommServiceUris, type PeerResolution } from "../peer-document.js";
 import type { VaultEvent } from "../schema.js";
 import type { Did, DidId, DidUrl, KeyName, MediationId, VaultData } from "../types.js";
 import { foldMediations, verifyMediationKeys, type IdentityCheck, type KeyCheck, type MediationFold } from "./mediation.js";
@@ -33,8 +33,8 @@ export interface LocalDidEntity {
   readonly methodIds: { authentication: readonly DidUrl[]; keyAgreement: readonly DidUrl[] };
   /** where the document sends, null while it does not read or names no one route */
   readonly routeTarget: RouteTarget | null;
-  /** the usable arrangements routed through the document's routing DID, in ID order: one for a live mediated entity, none for a direct one */
-  readonly mediations: readonly MediationId[];
+  /** the usable arrangement routed through the document's routing DID; null for a direct entity, and while none is */
+  readonly mediation: MediationId | null;
   readonly disclosures: readonly VaultEvent<"did.disclosed">[];
   /** the reason of the first retirement in canonical order, null while not retired */
   readonly retired: string | null;
@@ -67,9 +67,10 @@ export interface DidFold {
    * disclosure but not the draining of what was addressed here;
    * `pending` while the entity waits for something not its own: a
    * usable arrangement through its routing DID, the key check. The
-   * arrangements that may name a routing DID are an open set — the one
-   * that routes this entity may not have arrived here yet — so none of
-   * them retiring ends receipt.
+   * creation or grant that makes its arrangement usable may not have
+   * arrived here yet, so a missing one does not end receipt; nor does
+   * the arrangement's retirement or conflict, which is the arrangement's
+   * state and not the entity's.
    */
   receipt(didId: DidId): ReceiptEligibility;
 }
@@ -104,18 +105,19 @@ export function foldDids(set: VaultEventSet, mediations: MediationFold, options:
 }
 
 /**
- * The arrangements a mediated document is routed by: those whose
- * grant names its routing DID. None yet, or none usable yet, may
- * recover, another arrangement naming the same DID included; several
- * usable ones leave undecidable which account holds the address, until
- * one is retired.
+ * The arrangement a mediated document is routed by: the usable one
+ * whose grant names its routing DID, under either spelling. A usable
+ * arrangement is routed through its own mediator and the vault has one
+ * arrangement per mediator, so at most one is. None yet, or one whose
+ * creation or grant has not arrived, may become usable; a retired or
+ * conflicted one does not, and no other arrangement with that mediator
+ * follows it.
  */
-function routedBy(mediations: MediationFold, routingDid: Did): { usable: MediationId[]; faults: string[] } {
+function routedBy(mediations: MediationFold, routingDid: Did): { usable: MediationId | null; faults: string[] } {
   const through = mediations.through(routingDid);
-  const usable = through.filter((mediation) => mediation.status === "usable").map((mediation) => mediation.mediationId);
+  const usable = through.find((mediation) => mediation.status === "usable")?.mediationId ?? null;
+  if (usable !== null) return { usable, faults: [] };
   if (through.length === 0) return { usable, faults: [`no mediation arrangement routes through ${routingDid}`] };
-  if (usable.length > 1) return { usable, faults: [`several arrangements route through ${routingDid}: ${usable.join(", ")}`] };
-  if (usable.length === 1) return { usable, faults: [] };
   return { usable, faults: through.map((mediation) => `mediation ${mediation.mediationId} is ${mediation.status}`) };
 }
 
@@ -158,8 +160,8 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
         const uris = didcommServiceUris(read.document);
         methodIds = { authentication: authorizedMethodIds(read.document, "authentication"), keyAgreement: authorizedMethodIds(read.document, "keyAgreement") };
         resolution = read;
-        routeTarget = uris.length === 1 ? serviceTargetOf(uris[0]!) : null;
-        if (routeTarget === null) conflicts.push(uris.length === 1 ? `the document sends to ${uris[0]}, neither a DID nor an HTTPS or WSS URL` : "the document does not send to exactly one endpoint");
+        routeTarget = uris.length === 1 ? routeTargetOfService(uris[0]!) : null;
+        if (routeTarget === null) conflicts.push("the document does not send to exactly one endpoint");
       } catch (err) {
         if (!isDocumentFault(err)) throw err;
         conflicts.push(err.message);
@@ -168,10 +170,10 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
     const identity: IdentityCheck = keyChecks?.get(didId) ?? "unchecked";
     if (identity === "mismatch") conflicts.push("the seed does not derive the entity's keys");
 
-    let usableMediations: MediationId[] = [];
+    let mediation: MediationId | null = null;
     if (routeTarget?.kind === "mediated") {
       const routed = routedBy(mediations, routeTarget.routingDid);
-      usableMediations = routed.usable;
+      mediation = routed.usable;
       faults.push(...routed.faults);
     }
     if (identity === "unchecked" && resolution !== null) faults.push("the keys are not yet checked against the seed");
@@ -184,7 +186,7 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
       keyNames: { authentication: didKeyName(didId, "authentication"), keyAgreement: didKeyName(didId, "key-agreement") },
       methodIds,
       routeTarget,
-      mediations: usableMediations,
+      mediation,
       disclosures: disclosed.get(didId) ?? [],
       retired: retirement,
       faults: [...conflicts, ...faults],
@@ -194,6 +196,27 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
     });
   }
   return dids;
+}
+
+/**
+ * Where the document's one service sends. Reading the document checks
+ * the URI as a string and no further, so a did:peer:4 long form named
+ * there, a second document, is validated on its own: one that is not
+ * the document its hash commits to, or does not read as a document,
+ * routes nothing.
+ */
+function routeTargetOfService(uri: string): RouteTarget {
+  const target = serviceTargetOf(uri);
+  if (target === null) throw new InvalidDidDocument(`the document sends to ${uri}, neither a DID nor an HTTPS or WSS URL`);
+  if (target.kind === "mediated") {
+    try {
+      canonicalDidOf(target.routingDid);
+    } catch (err) {
+      if (!(err instanceof InvalidDidDocument)) throw err;
+      throw new InvalidDidDocument(`the document sends to ${uri}, a did:peer:4 long form that does not resolve: ${err.message}`);
+    }
+  }
+  return target;
 }
 
 /** A fault the document itself carries, as opposed to a programming error: recorded against the entity, never thrown out of a fold. */
@@ -231,16 +254,15 @@ export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ me
  * verdict on its keys — keeps the dependency: what is not yet
  * decidable is not decided against, and what was addressed to it must
  * not be left at the mediator meanwhile. Only a conflicted entity
- * releases it; while several usable arrangements route one DID, each
- * is kept; an arrangement that is not usable is never required,
+ * releases it; an arrangement that is not usable is never required,
  * whatever depends on it. Disclosure policy plays no part.
  */
 export function requiredReceivingSet(mediations: MediationFold, dids: DidFold): Set<MediationId> {
   const required = new Set<MediationId>();
   if (mediations.preferred !== null) required.add(mediations.preferred);
   for (const did of dids.entities.values()) {
-    if (did.created === null || dids.receipt(did.didId) === "terminal") continue;
-    for (const mediationId of did.mediations) if (mediations.usable(mediationId)) required.add(mediationId);
+    if (did.created === null || did.mediation === null || dids.receipt(did.didId) === "terminal") continue;
+    if (mediations.usable(did.mediation)) required.add(did.mediation);
   }
   return required;
 }

@@ -7,6 +7,7 @@ import {
   VaultEventSet,
   foldMediations,
   foldDids,
+  mediationIdOf,
   mintDid,
   rawCidOfBytes,
   vaultDraft,
@@ -29,13 +30,14 @@ export const SEED = new Uint8Array(32).fill(7);
 export const OTHER_SEED = new Uint8Array(32).fill(8);
 export const AUTHOR = "019b2a40-0000-7000-8000-000000000001" as AuthorId;
 export const AUTHOR2 = "019b2a40-0000-7000-8000-000000000002" as AuthorId;
-export const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
-export const MEDIATION2 = "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" as MediationId;
 export const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 export const DID_ID2 = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715" as DidId;
 export const DID_ID3 = "019b6a10-12c0-7410-89ab-38e54b097c21" as DidId;
 export const ROUTING_DID = "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" as Did;
 export const ROUTING_DID2 = "did:peer:2.Ez6LSghwSE437wnDE1pt3X6hVDUQzSjsHzinpX3XFvMjRAm7y" as Did;
+/** The arrangements with the two mediators the routing DIDs name, under the IDs their DIDs derive. */
+export const MEDIATION: MediationId = mediationIdOf(ROUTING_DID);
+export const MEDIATION2: MediationId = mediationIdOf(ROUTING_DID2);
 export const ENDPOINT = "https://ingress.example/didcomm";
 export const MEDIATED: RouteTarget = { kind: "mediated", routingDid: ROUTING_DID };
 export const DIRECT: RouteTarget = { kind: "direct", endpoint: ENDPOINT };
