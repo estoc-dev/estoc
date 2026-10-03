@@ -239,113 +239,76 @@ peer ACK or a missing submission event never supplies dispatch authority.
 
 ### 4.2 Send an ordinary message
 
-Under the operation lock, normalize content, freeze immutable headers, choose
-one concrete sender and recipient, derive their channel and commit `message.out`
-with objects. This call does no network work. An explicit user send may select
-a new channel; a new automatic output requires an admitted complete source
-witness, its operation's policy checks and a same-channel or verified role-preserving
-successor response channel.
-
-The original live initial action may then resolve/register and prepare the
-fixed channel. Missing prerequisites may wait locally before the first call.
-A manual action can resume an eligible pending intent. The action serializes
-this message's work and performs these steps:
-
-1. Recheck completion, termination, expiry, denial, conflict, retained keys/routes and bytes.
-2. Reuse the committed package; missing references or bytes defer and conflicting
-   preparations prevent sending. Prepare and commit one package in the intent's
-   fixed channel only when neither a preparation nor an unresolved package
-   reference exists.
-3. Verify local recipient registration before disclosure when needed.
-4. Under the vault lock, recheck package commitment, eligibility and the live
-   action. Release the lock, consume that action's one invocation locally and
-   call transport with the exact envelope and package ID.
-5. Record transport acceptance as `delivery.submitted` naming the message/package.
-   Other transport outcomes stay in local trace and MUST NOT produce
-   `delivery.failed`. Failure/uncertainty grants no next call;
-   explicit cancellation and expiry follow [termination](vault-events.md#delivery-failed).
-
-Keep per-message dispatch serialized across this procedure, without holding
-the vault lock across network I/O. Resolve an uncertain preparation commit
-before dispatch or another preparation. A crash loses the live action, whether
-or not transport was called; reopen cannot replay it. Further calls follow
-[the live action](../../packages/agent-core/src/action.ts).
+A send commits the content and `message.out`, with its channel and headers
+fixed, before any network work; an explicit user send may select a new
+channel, and an automatic output goes where
+[the response policy](../../packages/vault/src/response-policy.ts) says. What follows is code:
+the intent is [`packages/agent-core/src/send.ts`](../../packages/agent-core/src/send.ts), its one
+package [`prepare.ts`](../../packages/agent-core/src/prepare.ts), the one transport call of that
+package [`dispatch.ts`](../../packages/agent-core/src/dispatch.ts) under
+[the live action](../../packages/agent-core/src/action.ts), and the wait for a prerequisite
+[`dispatcher.ts`](../../packages/agent-core/src/dispatcher.ts); no vault lock is held across network
+I/O. Transport acceptance is recorded as `delivery.submitted` naming the
+message and package. Every other transport outcome stays in the runtime's
+local trace and MUST NOT produce `delivery.failed`, which only explicit
+cancellation and expiry append under
+[termination](vault-events.md#delivery-failed); failure or uncertainty
+grants no next call. A crash loses the live action, whether or not
+transport was called; reopen cannot replay it.
 
 <a id="receive-a-message"></a>
 
 ### 4.3 Receive a message
 
-Process deliveries one at a time through steps 3–6 in pickup order. Finish a
-delivery's admission decision, including a pending/ignored/refused outcome,
-before the next delivery enters step 3. A pickup batch MAY parallelize the
-checks in steps 1–2, but MUST NOT commit all receipts before admitting the first.
-Do not fold a later delivery's proof or resolution as committed evidence early.
-For direct deliveries, the active runtime's serialized receive order plays the
-same role. This is one runtime-wide receipt/admission sequence across pickup
-and direct delivery, including concurrent deliveries with different transport
-keys; per-delivery deduplication locks alone are insufficient. Import or other
-committed evidence that becomes available meanwhile still applies at step 6;
-pickup order never overrides known replacement.
-Sending the pickup ACK need not hold the operation lock or wait for application
-effects, and its network completion does not delay the next local step.
+Every delivery, picked up or posted directly, goes through one gate, is
+recorded as one `message.in` with its exact resolution evidence and content,
+and has the admissions the vault owes reconciled under
+[application admission](channels.md#application-admission) before the
+receipt's lock is released, so that the writer lock is the one runtime-wide
+receipt and admission sequence whichever way the delivery came, and a
+replacement known by then is known to the decision. A pickup ACK is
+authorized by the durable receipt, independently of channel policy and
+history, and does not wait for the transport calls of automatic outputs;
+a hard terminal rejection may pickup-ACK without `message.in`, and a
+failed durable receipt withholds it. Automatic work is earned only by the call that recorded the first
+observation the vault holds of an input and had it admitted under that
+lock as the witness its input speaks through; a retained duplicate, an
+observation admitted later by evidence, an open, an import or a restore
+earns none, and what such an input still earns is listed for manual
+completion. Control types never trigger recursive privacy notifications.
 
-1. Resolve exact local recipient/key/route eligibility and authenticate the
-   current sender under [the gate](../../packages/agent-core/src/receive/gate.ts).
-   The [phase-1 adapter](../../packages/agent-core/README.md#didcomm-api) preserves
-   any string-valued `from_prior` without verifying it. Missing local receive
-   material may require unopened wait; missing predecessor material cannot.
-2. Validate normalized wire fields, supported content and resource limits.
-3. Under the lock, commit/reuse exact resolution evidence, then commit content
-   and `message.in` with fixed channel.
-4. Pickup-ACK process-durable receipt independently of channel policy/history.
-5. If `from_prior` is present, derive its immutable issuer document and verify
-   this carrier's original JWT under [the vault's proof adapter](../../packages/vault/src/from-prior.ts).
-   Fold proof status and continuity without appending an event,
-   showing missing evidence as pending.
-6. Under the lock, fold all available evidence and reconcile
-   [application admission](channels.md#application-admission) for this exact
-   source as part of the ordered reconciliation pass. Recheck supersession,
-   denial and conflicts before committing `message.admitted`. Missing proof
-   remains pending; an unadmitted
-   old-peer source remains `ignored-superseded`. Neither changes pickup ACK.
-   After successful admission publication, refold the committed source/admission
-   view before generating dependent records. Within a pass, later candidates
-   see earlier decisions under the [ordered admission rule](channels.md#application-admission).
-   For each consumer, validate the admitted source and its required target or
-   protocol fields, then current operation policy. Commit its concrete intent
-   or local result with already committed references.
-7. Process explicit peer ACKs and ordinary local display views only from
-   admitted sources. Unadmitted observations may appear as diagnostics.
-   The sole active executor may independently create an eager ACK, a Ping reply
-   and a rotation notification when their individual policies permit. Each
-   output commits its fixed-channel intent before dispatch.
-8. A retained duplicate creates no new response obligation or dispatch action.
-
-Hard terminal rejection may pickup-ACK without `message.in` under the gate;
-failed durable receipt withholds normal pickup ACK. Control types never trigger
-recursive privacy notifications.
+The code: the gate [`packages/agent-core/src/receive/gate.ts`](../../packages/agent-core/src/receive/gate.ts),
+the receiver [`receive/receiver.ts`](../../packages/agent-core/src/receive/receiver.ts) (what waits
+for something recoverable of this runtime's, what is terminal and the
+bounded diagnostic it leaves), the receipt
+[`receive/receipt.ts`](../../packages/agent-core/src/receive/receipt.ts), the pass over what the
+vault owes [`reconcile.ts`](../../packages/agent-core/src/reconcile.ts) (admissions in canonical
+event order, then peer acknowledgements), what is reported of the
+observation afterwards [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts), and
+the automatic effects [`effects.ts`](../../packages/agent-core/src/effects.ts). The
+[phase-1 adapter](../../packages/agent-core/README.md#didcomm-api)
+preserves any string-valued `from_prior` without verifying it; the vault
+judges it from the retained evidence under
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts), showing missing
+evidence as pending.
 
 <a id="receive-recovery"></a>
 
 ### 4.4 Recovery
 
-Rebuild receipt-derived state from retained evidence without current-sender
-re-resolution or another receipt event. Recover missing bytes/references and
-recompute proofs from retained JWTs and immutable issuer material under
-[the channel evidence fold](../../packages/vault/src/fold/channels.ts).
-The active runtime reconciles missing
-[admissions](channels.md#application-admission). This pass
-also runs on relevant evidence changes during normal operation; it does not wait
-for a restart.
-
-Expose pending/unconfirmed messages for manual action under
-[the live action](../../packages/agent-core/src/action.ts), preserving message,
-execution, package and submission identities. The same uninterrupted initial
-receive operation may continue after a local receive prerequisite wait.
-Post-receipt missing predecessor material instead ends automatic eligibility
-for that carrier under [the receipt](../../packages/agent-core/src/receive/receipt.ts).
-Reopen, import and separate evidence recovery have no such action. Erased input
-starts no new content-derived effects. Fresh unrelated live input remains independent.
+Receipt-derived state is rebuilt from retained evidence, without re-resolving
+a sender or repeating a receipt: proofs are recomputed from retained JWTs and
+immutable issuer material under
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts), and the pass over what the
+vault owes runs at open and whenever evidence arrives, not only after a
+restart ([`reconcile.ts`](../../packages/agent-core/src/reconcile.ts)). Pending and unconfirmed messages
+are shown for manual action under [the live action](../../packages/agent-core/src/action.ts), with their
+message, execution, package and submission identities preserved; an open, an
+import or evidence recovered apart mints no action
+([`agent.ts`](../../packages/agent-core/src/agent.ts)). A carrier whose predecessor material was missing
+at receipt is no longer live when it arrives, under
+[the receipt](../../packages/agent-core/src/receive/receipt.ts). Erased input starts no new
+content-derived effect.
 
 <a id="canonical-projections-and-hashes"></a>
 
@@ -481,27 +444,24 @@ intent; its plaintext hash preserves the exact prepared addressing and proof.
 
 ## 6. Preparing a package
 
-Use `message.out.senderDidId`, the canonical selected recipient and its derived
-fixed channel. Resolve the peer under
-[the address profile](relationships.md#recipient-resolution-freshness); select
-keys authorized by that operation's document for the intent's fixed DID pair.
-The immutable peer document fixes its authorized keys and service. Validate the
-intent's source/proof evidence, local key and exact peer resolution under [the package schema](vault-events.md#message-prepared).
-Preparation and dispatch require current policy and a live initial/manual action.
-
-Construct the complete plaintext from immutable intent: conditional nullable
-timestamps/threads, exact `pleaseAck`, frozen `ack`, supported headers, body and
-ordered attachments. `from`/`to`, exact key methods and any frozen proof follow
-that fixed channel's evidence. The wire ID equals the outbound message ID.
-Reject forbidden `return_route`, duplicate JSON members and invalid I-JSON.
-Canonicalize with RFC 8785, encrypt through maintained DIDComm APIs, then commit
-the exact normalized envelope and `message.prepared` before transport.
-
-Commit only when no preparation exists; otherwise reuse the saved package.
-That commit freezes its plaintext, ciphertext, proof, spelling, package ID and
-envelope CID for the initial call and every retry. Missing evidence or bytes
-defer sending. Later confirmation, rotation, resolution or termination cannot
-replace it; changing the package requires a new message ID.
+A package is the one exact envelope every transport call of its intent
+carries. Its plaintext is constructed from the immutable intent alone:
+conditional nullable timestamps and threads, exact `pleaseAck`, frozen `ack`,
+supported headers, body and ordered attachments, with `from`, `to`, the exact
+key methods and any frozen proof following the fixed channel's evidence; the
+wire ID equals the outbound message ID. Forbidden `return_route`, duplicate
+JSON members and invalid I-JSON are rejected. The plaintext is canonicalized
+with RFC 8785 and encrypted through maintained DIDComm APIs, and the exact
+normalized envelope, the peer resolution it used under
+[the address profile](relationships.md#recipient-resolution-freshness) and
+`message.prepared` are committed in one lock before transport under
+[the package schema](vault-events.md#message-prepared). That commit freezes
+its plaintext, ciphertext, proof, spelling, package ID and envelope CID for
+the initial call and every retry; later confirmation, rotation, resolution or
+termination cannot replace it, and changing the package requires a new
+message ID. Which spelling and which keys the two ends take, what defers a
+package, and the pass every preparation owes are
+[`packages/agent-core/src/prepare.ts`](../../packages/agent-core/src/prepare.ts).
 
 <a id="submission-completion-and-expiration"></a>
 
@@ -510,19 +470,16 @@ replace it; changing the package requires a new message ID.
 Any valid committed submission completes the message and prevents further
 preparation or retry, regardless of ACK policy. Missing submission does not prove
 nondelivery; pending work follows [the delivery fold](../../packages/vault/src/fold/outbound.ts).
-
-Expiry stops new work at equality and records message-terminal failure when
-observed before preparation/dispatch. It does not overwrite an already recorded
-submission. Later ACK evidence can report receipt without reopening anything.
-Explicit cancellation commits message-scoped `delivery.failed` with code
-`cancelled` under [the termination rules](vault-events.md#delivery-failed),
-stopping pending work without claiming nondelivery.
-Valid expiry or cancellation terminates the entire intent without depending
-on preparation evidence. Complete submission still takes precedence.
-Erasure, security denial, key/route retirement and missing exact bytes separately
-govern manual retry. Known endpoint replacement also prohibits preparation
-or transport on the old channel under [the continuity fold](../../packages/vault/src/fold/continuity.ts),
-including queued work and manual retries; it never rewrites their packages.
+Expiry, at equality, and explicit cancellation terminate the entire intent
+under [the termination rules](vault-events.md#delivery-failed), without
+depending on preparation evidence and without claiming nondelivery; a
+complete submission takes precedence, and later ACK evidence reports receipt
+without reopening anything. Known endpoint replacement prohibits preparation
+and transport on the old channel under
+[the continuity fold](../../packages/vault/src/fold/continuity.ts), queued work and manual retries
+included; it never rewrites their packages. When expiry and cancellation are
+observed, and what each leaves of the content and the envelope, is
+[`packages/agent-core/src/dispatch.ts`](../../packages/agent-core/src/dispatch.ts).
 
 Prepared-envelope retention is owned solely by
 [vault-events.md](vault-events.md#held-roots). A paused/unconfirmed eligible
@@ -538,21 +495,14 @@ be recreated for a duplicate input or manual "send again" with a new ID.
 
 ### 8.1 The ACK target
 
-Before creating an ACK intent, require an admitted eligible complete source witness
-and choose its exact sender/recipient under
-[the built-in operation rule](#built-in-independent-operations). An unrelated
-channel in the same contact is never a substitute. If no eligible sender exists,
-preserve the input for manual action; do not commit an incomplete response or
-automatically dispatch it after a later restore. An ACK uses retained receipt
-and header evidence, so body erasure alone does not disqualify its source.
-It does not restore any permission for content-derived work.
-
-Under the operation lock, look up the pure-ACK tuple for this execution before
-choosing timing. Reuse its fixed intent without sending it on
-duplicate/recovery. Eligible live input and current ACK policy may create that
-intent immediately, independently of any natural reply or rotation notification.
-Explicit manual completion of pending ACK work follows the same checks under
-[the live action](../../packages/agent-core/src/action.ts).
+An ACK is created for an admitted complete source witness, in the channel
+[the built-in operation rule](#built-in-independent-operations) selects; an
+unrelated channel in the same contact is never a substitute, and an input with
+no eligible sender is preserved for manual action. An ACK uses retained
+receipt and header evidence, so body erasure alone does not disqualify its
+source; it restores no permission for content-derived work. When the intent
+is created, reused or completed by hand is
+[`packages/agent-core/src/effects.ts`](../../packages/agent-core/src/effects.ts).
 
 Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
 A carrier that does not request its own receipt under
@@ -573,15 +523,14 @@ new ACK is created only for an admitted carrier. Generic replies use
 `thid = carrier.thid ?? carrier.wireMessageId`, copy nullable `pthid`, and follow
 the producing protocol's response rules. No-response errors still do not reply.
 
-Send the ACK as its own Empty message once its prerequisites are ready. Do not
-wait for, attach it to, or consume the tuple of a natural reply or rotation
-notification. Those outputs may coexist with this intent. Built-in Ping replies
-and rotation notifications have `ack == []`; another application protocol may
-define its own explicit ACKs subject to the same target checks. There is no
-execution-wide limit of one ACK-bearing output. Control input may supply ACK
-observations but cannot trigger recursive privacy notifications. Never request
-an ACK for a pure ACK, or answer a pure ACK with another pure ACK. Every output
-follows normal preparation/submission boundaries.
+The ACK is its own Empty message, under its own tuple, independent of a
+natural reply or rotation notification, which may coexist with it. Built-in
+Ping replies and rotation notifications have `ack == []`; another application
+protocol may define its own explicit ACKs subject to the same target checks.
+There is no execution-wide limit of one ACK-bearing output. Control input may
+supply ACK observations but cannot trigger recursive privacy notifications.
+Never request an ACK for a pure ACK, or answer a pure ACK with another pure
+ACK. Every output follows normal preparation/submission boundaries.
 
 <a id="deterministic-pure-ack"></a>
 
@@ -613,36 +562,28 @@ algorithm below.
 
 ### 8.3 Applying `ack`
 
-Require an explicit wire ID and one admitted complete source witness. Find the exact
-outbound intent/package, then verify that the carrier's channel is the same
-or an authorized role-preserving successor of its fixed channel. The carrier's
-sender must be the original peer or its verified replacement and its recipient
-the original local endpoint or its verified local successor. Undirected graph
-connectivity, group membership, threads and ordinary responses are insufficient.
-
-All redundant witness fields must come from one admitted complete source row.
-Same-channel attribution compares the two canonical endpoints directly and
-does not query a zero-step continuity path. An aggregate graph conflict alone
-does not erase that observation; source/proof, admitted-intent and
-target/package integrity still apply. Cross-channel attribution requires the
-package's usable directed path under [channel authorization](../../packages/vault/src/fold/continuity.ts).
-An ignored old-peer carrier cannot acknowledge an outbound or change ACK timing.
-An admission recorded before supersession remains historical ACK evidence. Missing
-path/authentication/package references defer the acknowledgment. The carrier's
-key need not equal the old package's recipient key: validate it against the
-carrier's own immutable DID document and any required successor path. The
-observation records peer receipt only, not transport acceptance or permission
-to send again.
+An explicit `ack` naming an outbound's wire ID, carried by one admitted
+complete source witness whose channel is the outbound's fixed channel or a
+verified role-preserving successor of it, records that the peer received the
+message: peer receipt only, not transport acceptance and no permission to
+send again. Undirected graph connectivity, group membership, threads and
+ordinary responses are insufficient; an ignored old-peer carrier acknowledges
+nothing, while an admission recorded before supersession remains historical
+ACK evidence. The carrier's key need not equal the old package's recipient
+key. Which witnesses qualify, over which path, is
+[the delivery fold](../../packages/vault/src/fold/outbound.ts) over
+[channel authorization](../../packages/vault/src/fold/continuity.ts); each is recorded once as
+`delivery.acknowledged` by
+[`packages/agent-core/src/acknowledgements.ts`](../../packages/agent-core/src/acknowledgements.ts).
 
 <a id="duplicate-receipt-handling"></a>
 
 ### 8.4 Duplicate receipt handling
 
-An authenticated duplicate in the same channel reuses its logical input/execution.
-It creates no new effect, output ID, package, proof or dispatch action. A pending
-response remains available for explicit manual retry; a submitted response
-never sends again. Another channel has another input identity and is not a
-duplicate under this profile. A display link to old content changes nothing.
+An authenticated duplicate in the same channel is another observation of the
+same input under [the inbound fold](../../packages/vault/src/fold/inbound.ts): it creates no new
+effect, output ID, package, proof or dispatch action. Another channel has
+another input identity and is not a duplicate under this profile.
 
 <a id="observation-identity-logical-aliasing-and-execution-identity"></a>
 
@@ -780,26 +721,18 @@ The unpadded base64url key determines the outbound message and wire ID under
 stores the tuple and intent and defines their validation; conflicts follow
 [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 
-Under the operation lock in [event-store.md section 9](event-store.md#vault-interface),
-check the specific operation's source, current policy and usable authorized
-sender. Derive its tuple and look up its message ID before freezing targets,
-timing, channel or other fields. Reuse an existing non-conflicted intent; do not
-regenerate it after submission, source erasure, another observation or a changed
-clock. The exact source and any rotation decision are retained directly in the
-[intent](vault-events.md#message-out).
-Missing evidence or sender leaves that operation pending without blocking
-another independently eligible operation.
-
-ACKs and rotation notifications are eager standalone Empty messages, independent
-of natural protocol responses. Arrival, dependency completion and handler order
-never merge their tuples.
-
-Derivation, lookup and `Vault.commit` form one locked operation with already
-committed dependencies. Reject a conflicting local intent before append;
-retain imported conflicts and suppress their work. Only eligible live input
-may automatically create an initial intent. Historical unfinished work requires
-explicit manual completion with the same tuples under
-[the live action](../../packages/agent-core/src/action.ts).
+An intent is looked up by its tuple before anything is frozen, and an
+existing non-conflicted one is reused as it is after submission, source
+erasure, another observation or a changed clock; the exact source and any
+rotation decision are retained directly in the
+[intent](vault-events.md#message-out). Missing evidence or sender leaves that
+operation pending without blocking another independently eligible operation.
+ACKs and rotation notifications are standalone Empty messages, independent of
+natural protocol responses; arrival, dependency completion and handler order
+never merge their tuples. Only eligible live input creates an initial intent
+on its own; historical unfinished work is completed by hand with the same
+tuples under [the live action](../../packages/agent-core/src/action.ts). How each operation is decided,
+committed and dispatched is [`packages/agent-core/src/effects.ts`](../../packages/agent-core/src/effects.ts).
 
 Other external effects MUST commit their protocol-defined portable intent
 before execution and use that protocol's idempotency or explicit at-least-once
@@ -821,22 +754,15 @@ Pure ACK and rotation notification both use DIDComm type
 `https://didcomm.org/empty/1.0/empty`. Their distinct effect types keep both
 operations independent for one execution.
 
-Before selecting addresses for a built-in ACK or Ping reply, reuse an existing
-intent for its tuple. For a new intent, use the carrier's actual channel when
-its local DID remains eligible for sending there, including no replacement
-of that local sender in this context. Otherwise use the unique
-non-conflicted verified local-only successor head that retains the carrier's
-canonical peer DID, if eligible; otherwise create no automatic intent.
-`recipientDid` is the source's canonical `did`, never its `presentedDid` spelling.
-Temporary network unavailability or pending recipient registration delays
-dispatch without changing the selected channel. This is a producer selection
-rule; import validates the saved intent's evidence, not the producer's then-visible
-lifecycle state. A later rotation or retirement never reselects a committed intent;
-it can prohibit dispatch. Every dispatch rechecks current endpoint restrictions.
-If a local rotation commits before response selection, choose the eligible
-local successor; if it commits after an old-channel intent was selected,
-retain that intent but do not dispatch it or create a second tuple to bypass
-the restriction. Handler order never grants an old-endpoint exception.
+A built-in ACK or Ping reply goes by the carrier's own channel while its
+local DID may still send there, else by the unique verified successor that
+keeps the carrier's canonical peer, else not at all:
+[the response policy](../../packages/vault/src/response-policy.ts). `recipientDid` is the source's
+canonical `did`, never its `presentedDid` spelling. This is a producer
+selection rule; import validates the saved intent's evidence, not the
+producer's then-visible lifecycle state. A later rotation or retirement never
+reselects a committed intent; it can prohibit dispatch, and no second tuple
+bypasses the restriction.
 
 A Ping reply requires `response_requested != false` and current protocol/policy
 eligibility. It uses type `https://didcomm.org/trust-ping/2.0/ping-response`,
@@ -851,23 +777,19 @@ body/attachments/headers are empty, `ack == []`, `pleaseAck == [""]`, expiry is
 null, and source `pthid`, nullable creation time and `thid ?? wireMessageId` are
 retained. Its sender is the decision's successor DID and recipient is the
 decision's fixed `peerDid`. Its source, when present, belongs to the decision's
-`fromDidId`/`peerDid` channel. Packaging carries that decision's
-frozen proof until exact-successor confirmation. Notification submission alone
-is not confirmation; other successor messages still carry the proof until confirmed.
+`fromDidId`/`peerDid` channel. Every successor message, the notification
+included, carries the decision's frozen proof until exact-successor
+confirmation; notification submission alone is not confirmation.
 
 A manual rotation with no trigger source uses a locally initiated UUIDv7
 notification intent, null thread/parent-thread/creation time, and the same
-Empty/ACK-request/expiry rules. Under the operation lock, reuse an existing
-notification for that rotation decision before allocating its message ID.
-Different selected notification IDs for one rotation decision conflict for
-notification work; neither new triggers nor retries may create another selection.
-Its source/effect fields are null, while `rotationEventCid` remains present.
-In either case, notification recovery reuses the rotation; it never allocates
-another successor. A missing notification is manual work only while its source,
-when present, remains eligible under [the rotation procedure](../../packages/agent-core/src/rotate.ts).
-Supersession of that source's peer prevents creating the intent. An existing
-intent remains a saved fact; a replaced fixed sender or recipient prohibits its
-preparation and dispatch, and recovery itself grants no automatic replay.
+Empty/ACK-request/expiry rules; its source/effect fields are null, while
+`rotationEventCid` remains present. One decision has one notification:
+several intents naming it conflict for notification work, and no trigger,
+retry or completion creates another. How a decision reuses its notification,
+when a missing one may still be completed by hand and that recovery never
+allocates another successor are
+[the rotation procedure](../../packages/agent-core/src/rotate.ts).
 
 <a id="required-vault-observations"></a>
 
@@ -895,22 +817,12 @@ them are owned by the modules those documents link.
 ## 13. Failure rules
 
 - Before intent commit, no message exists. A failed/uncertain commit grants no send.
-- After intent commit but before preparation, reopen requires manual action;
-  an incomplete snapshot cannot prove nondelivery.
-- After preparation commit, a crash before transport and a crash after transport
-  acceptance but before submission commit leave the same portable prepared state.
-  Recovery requires manual action and preserves the package. Retry may deliver
-  duplicate bytes; channel-local dedup applies.
+- A crash between any two later commits leaves the portable state of the last
+  one: recovery shows manual work, preserves the package and replays nothing,
+  so a retry may deliver duplicate bytes, which channel-local dedup absorbs.
 - After submission or termination commits, no retry is allowed.
 - After rotation, old intents/packages remain in their fixed channels. If that
   channel becomes unusable, a deliberate new send has a new wire ID.
-- After receipt but before pickup ACK, redelivery is another same-channel
-  observation. Receipt commit still permits pickup ACK independently of policy.
-- After receipt but before admission, no application effect is authorized.
-  Recovery first folds the full graph, then may admit an eligible source now;
-  an unadmitted superseded source stays ignored, even if received earlier.
-- Before a reply, recovery preserves local state and pending work without
-  automatically sending ACKs, replies or notifications.
 - After erasure, no new content-derived effect is reconstructed.
 - Mediator expiry/outage may lose an already submitted message. This best-effort
   profile does not automatically compensate through another replica or channel.
@@ -918,7 +830,13 @@ them are owned by the modules those documents link.
 No failure window changes a message's channel or proves nondelivery merely by
 lacking a success record. Manual new sending may produce another visible or
 business operation if the first one arrived; protocol-level idempotency is
-independent of this transport profile.
+independent of this transport profile. Crash and recovery scenarios are
+exercised in
+[`packages/agent-core/test/e2e/crash.test.ts`](../../packages/agent-core/test/e2e/crash.test.ts),
+with the admission of an observation a crash left unadmitted in
+[`test/after.test.ts`](../../packages/agent-core/test/after.test.ts) and
+what an open lists of the work a crash left unfollowed in
+[`test/agent.test.ts`](../../packages/agent-core/test/agent.test.ts).
 
 <a id="privacy"></a>
 

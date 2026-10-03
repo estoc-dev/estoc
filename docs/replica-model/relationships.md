@@ -233,27 +233,28 @@ authenticated carrier or starting a network lookup.
 
 #### Recipient resolution
 
-Resolve the recipient locally from its validated long form or a retained
-long form matching its canonical short form. Before preparation, commit or
-reuse exact `peer.resolved` evidence matching the selected peer key, presented
-DID and local key context. A missing long form leaves preparation pending;
-it is not evidence of a key change and starts no network lookup. Each new
-package retains its own exact evidence reference. Initial dispatch and manual
-retry use the committed package unchanged.
+A recipient resolves locally, from its validated long form or a retained
+long form matching its canonical short form; a missing long form leaves
+preparation pending, is not evidence of a key change and starts no network
+lookup. Each package retains its own exact `peer.resolved` evidence, committed
+or reused before `message.prepared`:
+[`packages/agent-core/src/prepare.ts`](../../packages/agent-core/src/prepare.ts) and
+[`evidence.ts`](../../packages/agent-core/src/evidence.ts).
 
 <a id="sender-authentication-freshness"></a>
 
 #### Sender authentication
 
 Every new network delivery, including a duplicate, authenticates its sender
-against the validated immutable numalgo-4 document, supplied with the long-form
-disclosure or retained locally. Commit or reuse matching exact evidence before
-`message.in`. An unknown sender short form without its long form cannot
-authenticate and is terminal under
-[the receiver](../../packages/agent-core/src/receive/receiver.ts), which instead holds a delivery
-waiting on a known local key, document or arrangement of this runtime's that
-may still be recovered. Recovery of an already committed observation uses its
-saved authentication evidence without authenticating a new delivery.
+against the validated immutable numalgo-4 document the vault holds, supplied
+with the long-form disclosure or retained locally, never fetched; matching
+exact evidence is committed or reused before `message.in`. An unknown sender
+short form without its long form cannot authenticate and is terminal under
+[the receive gate](../../packages/agent-core/src/receive/gate.ts); [the receiver](../../packages/agent-core/src/receive/receiver.ts)
+instead holds a delivery waiting on a known local key, document or
+arrangement of this runtime's that may still be recovered. An already
+committed observation is recovered from its saved authentication evidence
+without authenticating a new delivery.
 
 <a id="mediator-resolution"></a>
 

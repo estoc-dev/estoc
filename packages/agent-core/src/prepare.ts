@@ -229,13 +229,9 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
 }
 
 /**
- * The pass over what the vault owes, run by every preparation of an
- * open message whatever it came to: an admission whose proof waited
- * for the document a preparation resolved, and what follows one,
- * recorded before the lock is released and dispatched by nothing.
- * What was decided stands whether the pass ran through or stopped;
- * one that stopped is noted, and left to the next pass, which the
- * next preparation, dispatch, receipt or open runs.
+ * The pass over what the vault owes, under the preparation's lock.
+ * What it decided stands whether it ran through or stopped; one that
+ * stopped is noted, and left to the next pass.
  */
 async function owedRecorded(held: Held, keys: Keys, messageId: MessageId): Promise<Note[]> {
   try {

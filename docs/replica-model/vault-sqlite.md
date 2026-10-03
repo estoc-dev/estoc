@@ -475,12 +475,11 @@ wrapper and preserving every event CID, canonical envelope and its author,
 and every held object. Rebuilding copies validated logical values without copying source free
 pages or adopting source SQL. Assign fresh replica/generation IDs and local
 positions. Keep it unready until integrity/completeness checks pass; publish readiness in one transaction.
-Open reconstructs retention and pending state before enabling workers. Domain
-recovery grants no dispatch action: restored messages and historical automatic
-effects require explicit manual action under
-[the live action](../../packages/agent-core/src/action.ts). Pickup and local
-projection recovery may proceed normally.
 A failed construction is not an empty vault and cannot silently mint another seed.
+What the open then does over the restored runtime, and that it mints no
+dispatch action for restored messages or historical automatic effects, is
+[the open](../../packages/agent-core/src/agent.ts) under
+[vault restore](vault-events.md#restore).
 
 Recovery from a damaged runtime restores only the snapshot's history. Salvaging
 history absent from that snapshot is outside the phase-1 contract.
@@ -496,15 +495,9 @@ recipient addition and local projection recovery need not wait for this
 explanation to be presented or acknowledged.
 
 Recovery may require importing a newer complete snapshot or establishing an
-independent channel from a fresh local DID. Waiting or contacting an old address
-is not a guaranteed repair: old-address input, including queued traffic, can
-trigger a rotation that competes with a successor the peer already verified.
-Phase 1 retains the resulting visible fork without a branch-selection or
-conflict-resolution operation. Its affected context has no default send head
-and grants no authority through conflicted continuity. Establishing another
-channel leaves that fork intact. Recovering sender material alone does not
-restore missing continuity history or discarded messages under
-[vault restore](vault-events.md#restore).
+independent channel from a fresh local DID. What traffic at a snapshot-era
+address can still do, the fork it can leave and why phase 1 keeps that fork
+visible are [vault restore](vault-events.md#restore).
 
 <a id="import"></a>
 
