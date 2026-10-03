@@ -175,11 +175,11 @@ export async function reconcileNow(link: MediatorLink, fold: VaultFold, mediatio
   toward(link, mediation);
   ordinary(mediation);
   if (mediation.status !== "usable") throw new Unusable("mediation", mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
-  const desired = fold.routes.desiredRecipients.filter((recipient) => recipient.mediationId === mediationId).map((recipient) => recipient.did);
+  const desired = fold.dids.desiredRecipients.filter((recipient) => recipient.mediationId === mediationId).map((recipient) => recipient.did);
   const held = await queryRecipients(link);
   const added = desired.filter((did) => !held.includes(did));
   const removed = held.filter((did) => !desired.includes(did));
-  const created = new Set([...fold.routes.dids.values()].map((entity) => entity.created?.did));
+  const created = new Set([...fold.dids.entities.values()].map((entity) => entity.created?.did));
   const unknown = held.filter((did) => !created.has(did));
   if (unknown.length > 0) unknownWatchers.get(link)?.(unknown);
   const refused: Did[] = [];

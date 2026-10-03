@@ -48,7 +48,7 @@ describe("an invitation", () => {
       { oobId: first.data.oobId, localDid: a1.did, status: twice },
       { oobId: apart.data.oobId, localDid: a0.did, status: { status: "available" } },
     ]);
-    expect(vault.routes.dids.get(a0.didId)!.live).toBe(true);
+    expect(vault.dids.entities.get(a0.didId)!.live).toBe(true);
     for (const source of [fromB0, fromB1]) expect(vault.channels.sources.get(source.cid)).toMatchObject({ localDidId: a0.didId, standing: { status: "complete" } });
     expectSameOverEveryOrder(scene, vault.checks);
   });

@@ -157,11 +157,11 @@ function unrecordable(observed: Observed, authenticated: boolean): string | null
 
 async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticated, observed: Observed, objects: Objects): Promise<ReceiptOutcome> {
   const fold = await scanVault(held, keys);
-  switch (fold.routes.receipt(recipient.didId)) {
+  switch (fold.dids.receipt(recipient.didId)) {
     case "terminal":
       return terminal(`${recipient.did} may no longer receive`);
     case "pending":
-      return { outcome: "deferred", reason: `${recipient.did} may not receive yet: ${fold.routes.dids.get(recipient.didId)?.faults.join("; ")}`, watch: recipientWatch([recipient.didId]) };
+      return { outcome: "deferred", reason: `${recipient.did} may not receive yet: ${fold.dids.entities.get(recipient.didId)?.faults.join("; ")}`, watch: recipientWatch([recipient.didId]) };
   }
   const first = !fold.set.of("message.in").some((event) => event.data.messageId === observed.messageId);
   const resolved = sender === null ? null : await commitResolution(held, { resolution: sender.resolution, localKeyName: recipient.localKeyName, peerPublicKey: sender.peerPublicKey });

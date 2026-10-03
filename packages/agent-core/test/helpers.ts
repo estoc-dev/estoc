@@ -270,7 +270,7 @@ const PROOF_IAT = 1_757_700_000;
 
 /** A proof that `peer`'s DID succeeds `priorDidId`, a DID the peer creates for it on the same route and signs with: the issuer's document is the peer's to hand out, and nobody else holds it. */
 export async function proofOfSuccession(peer: Addressed, priorDidId: DidId): Promise<{ prior: MintedDid; proof: string }> {
-  const route = routeOf((await scanVault(peer.runtime.vault, peer.keys)).routes.dids.get(peer.didId)!)!;
+  const route = routeOf((await scanVault(peer.runtime.vault, peer.keys)).dids.entities.get(peer.didId)!)!;
   const { minted: prior } = await createDid(peer.runtime, peer.keys, route, priorDidId);
   const signing = await peer.keys.signing(didKeyName(priorDidId, "authentication"));
   const proof = await new SignJWT({ iss: prior.did, sub: peer.longFormDid, iat: PROOF_IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));

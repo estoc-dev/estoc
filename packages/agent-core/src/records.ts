@@ -349,7 +349,7 @@ function placeOf(fold: VaultFold, outbound: Outbound): { channel: Channel | null
   const candidates = new Map<string, Channel>();
   let every = true;
   for (const { data } of outbound.intents) {
-    const sender = fold.routes.dids.get(data.senderDidId);
+    const sender = fold.dids.entities.get(data.senderDidId);
     const local = sender === undefined || sender.conflict ? null : (sender.created?.did ?? null);
     const peer = canonicalOrNull(data.recipientDid);
     if (local === null || peer === null || local === peer) every = false;

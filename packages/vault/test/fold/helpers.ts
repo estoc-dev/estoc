@@ -6,7 +6,7 @@ import {
   Keys,
   VaultEventSet,
   foldMediations,
-  foldRoutes,
+  foldDids,
   mintDid,
   rawCidOfBytes,
   vaultDraft,
@@ -16,7 +16,7 @@ import {
   type MediationId,
   type KeyCheck,
   type MediationFold,
-  type RouteFold,
+  type DidFold,
   type RouteTarget,
   type VaultData,
   type VaultEvent,
@@ -141,12 +141,12 @@ export type KeyChecks = { mediations: Map<MediationId, KeyCheck>; dids: Map<DidI
 export async function checksOf(events: readonly Event[], keys: Keys): Promise<KeyChecks> {
   const set = VaultEventSet.of(events);
   const mediations = await verifyMediationKeys(keys, foldMediations(set));
-  const dids = await verifyDidKeys(keys, foldRoutes(set, foldMediations(set, { keyChecks: mediations })));
+  const dids = await verifyDidKeys(keys, foldDids(set, foldMediations(set, { keyChecks: mediations })));
   return { mediations, dids };
 }
 
 /** The mediation and route folds over a set, with the verdicts given. */
-export function foldChecked(set: VaultEventSet, checks: KeyChecks): { mediations: MediationFold; routes: RouteFold } {
+export function foldChecked(set: VaultEventSet, checks: KeyChecks): { mediations: MediationFold; dids: DidFold } {
   const mediations = foldMediations(set, { keyChecks: checks.mediations });
-  return { mediations, routes: foldRoutes(set, mediations, { keyChecks: checks.dids }) };
+  return { mediations, dids: foldDids(set, mediations, { keyChecks: checks.dids }) };
 }

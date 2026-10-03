@@ -127,7 +127,7 @@ describe("adding recipients", () => {
     const longFormDid = encodeLongForm(input);
     const unsigned = longToShort(longFormDid) as Did;
     await p.runtime.vault.commit([], [vaultDraft("did.created", { didId, did: unsigned, longFormDid: longFormDid as Did })]);
-    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.get(didId)).toMatchObject({ identity: "verified" });
+    expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(didId)).toMatchObject({ identity: "verified" });
 
     const recipients = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
     expect(recipients.wanted).toEqual([sound.minted.did, unsigned].sort());
@@ -192,7 +192,7 @@ describe("an address of a replica-mediation arrangement", () => {
     await expect(disclose(p.link, p.runtime, p.keys, didId, { as: "oob" })).rejects.toBeInstanceOf(Unusable);
     mediator.refuseShared.add(minted.did);
     await expect(disclose(p.link, p.runtime, p.keys, didId, { as: "oob" }, p.confirmations)).rejects.toBeInstanceOf(Unregistered);
-    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.get(didId)?.disclosures).toEqual([]);
+    expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(didId)?.disclosures).toEqual([]);
     mediator.refuseShared.clear();
     const disclosed = await disclose(p.link, p.runtime, p.keys, didId, { as: "oob" }, p.confirmations);
     expect(disclosed.invitation?.from).toBe(minted.longFormDid);

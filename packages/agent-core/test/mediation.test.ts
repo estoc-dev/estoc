@@ -233,13 +233,13 @@ describe("reconciling recipients", () => {
     await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     await retireDid(p.runtime, p.keys, retired.minted.didId, "user");
     mediator.recipients.set("did:peer:2.Ez6unknown", p.created.data.me.did);
-    const before = (await scanVault(p.runtime.vault, p.keys)).routes.dids.size;
+    const before = (await scanVault(p.runtime.vault, p.keys)).dids.entities.size;
 
     const found = await reconcile(p.link, p.runtime, p.keys, p.mediationId);
     expect(found.removed.sort()).toEqual([retired.minted.did, "did:peer:2.Ez6unknown"].sort());
     expect(found.unknown).toEqual(["did:peer:2.Ez6unknown"]);
     expect([...mediator.recipients.keys()]).toEqual([kept.minted.did]);
-    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.size).toBe(before);
+    expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.size).toBe(before);
 
     expect((await reconcile(p.link, p.runtime, p.keys, p.mediationId)).unknown).toEqual([]);
     await p.runtime.close();

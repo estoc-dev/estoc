@@ -5,7 +5,7 @@ import {
   Keys,
   VaultEventSet,
   foldMediations,
-  foldRoutes,
+  foldDids,
   foldWithSeed,
   inputDocumentOf,
   mintDid,
@@ -15,7 +15,7 @@ import {
   type Did,
   type DidId,
   type KeyName,
-  type RouteFold,
+  type DidFold,
   type VaultData,
 } from "../../src/index.js";
 import {
@@ -49,9 +49,9 @@ beforeAll(async () => {
   me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
 });
 
-const unchecked = (set: VaultEventSet): RouteFold => foldRoutes(set, foldMediations(set));
+const unchecked = (set: VaultEventSet): DidFold => foldDids(set, foldMediations(set));
 /** The route fold with the seed's verdicts on every entity of the scene. */
-const checked = async (scene: Scene): Promise<RouteFold> => (await foldWithSeed(scene.set(), keys)).routes;
+const checked = async (scene: Scene): Promise<DidFold> => (await foldWithSeed(scene.set(), keys)).dids;
 const both = (set: VaultEventSet, checks: KeyChecks) => foldChecked(set, checks);
 
 /** A DID entity whose document is the seed's, edited before the long form is computed. */
@@ -76,8 +76,8 @@ describe("the DID fold", () => {
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
     const direct = await createdDid(scene, keys, DID_ID2, DIRECT);
     const disclosure = scene.add("did.disclosed", { didId: DID_ID, as: "oob", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null });
-    const routes = await checked(scene);
-    const did = routes.dids.get(DID_ID)!;
+    const dids = await checked(scene);
+    const did = dids.entities.get(DID_ID)!;
     expect(did).toMatchObject({
       created,
       live: true,
@@ -92,17 +92,17 @@ describe("the DID fold", () => {
     });
     expect(did.disclosures).toEqual([disclosure]);
     expect(did.resolution?.did).toBe(created.did);
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ live: true, routeTarget: DIRECT, mediations: [], disclosures: [] });
-    expect(routes.desiredRecipients).toEqual([{ did: created.did, didId: DID_ID, mediationId: MEDIATION }]);
-    expect(routes.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
-    expect(routes.entityOfKey(`did/${DID_ID2}/authentication` as KeyName)).toBe(DID_ID2);
-    expect(routes.entityOfKey(`did/${DID_ID3}/authentication` as KeyName)).toBeNull();
-    expect(routes.entityOfDid(created.did)).toBe(DID_ID);
-    expect(routes.entityOfDid(created.longFormDid)).toBe(DID_ID);
-    expect(routes.entityOfDid(direct.did)).toBe(DID_ID2);
-    expect(routes.entityOfDid("did:web:bob.example")).toBeNull();
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ live: true, routeTarget: DIRECT, mediations: [], disclosures: [] });
+    expect(dids.desiredRecipients).toEqual([{ did: created.did, didId: DID_ID, mediationId: MEDIATION }]);
+    expect(dids.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
+    expect(dids.entityOfKey(`did/${DID_ID2}/authentication` as KeyName)).toBe(DID_ID2);
+    expect(dids.entityOfKey(`did/${DID_ID3}/authentication` as KeyName)).toBeNull();
+    expect(dids.entityOfDid(created.did)).toBe(DID_ID);
+    expect(dids.entityOfDid(created.longFormDid)).toBe(DID_ID);
+    expect(dids.entityOfDid(direct.did)).toBe(DID_ID2);
+    expect(dids.entityOfDid("did:web:bob.example")).toBeNull();
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 
   it("grants nothing to an entity the seed has not confirmed: no verdict map, a map without the ID, or a document another seed made", async () => {
@@ -111,39 +111,39 @@ describe("the DID fold", () => {
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
     await createdDid(scene, await openKeys(OTHER_SEED), DID_ID2, MEDIATED);
     const mediations = foldMediations(scene.set(), { keyChecks: new Map([[MEDIATION, "verified"]]) });
-    for (const routes of [foldRoutes(scene.set(), mediations), foldRoutes(scene.set(), mediations, { keyChecks: new Map() }), foldRoutes(scene.set(), mediations, { keyChecks: new Map([[DID_ID2, "verified"]]) })]) {
-      expect(routes.dids.get(DID_ID)).toMatchObject({ live: false, conflict: false, identity: "unchecked", faults: ["the keys are not yet checked against the seed"] });
-      expect(routes.desiredRecipients.map((recipient) => recipient.didId)).not.toContain(DID_ID);
-      expect(routes.receipt(DID_ID)).toBe("pending");
-      expect(routes.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
-      expect(routes.entityOfDid(created.did)).toBe(DID_ID);
+    for (const dids of [foldDids(scene.set(), mediations), foldDids(scene.set(), mediations, { keyChecks: new Map() }), foldDids(scene.set(), mediations, { keyChecks: new Map([[DID_ID2, "verified"]]) })]) {
+      expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, identity: "unchecked", faults: ["the keys are not yet checked against the seed"] });
+      expect(dids.desiredRecipients.map((recipient) => recipient.didId)).not.toContain(DID_ID);
+      expect(dids.receipt(DID_ID)).toBe("pending");
+      expect(dids.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
+      expect(dids.entityOfDid(created.did)).toBe(DID_ID);
     }
-    expect(foldRoutes(scene.set(), mediations).dids.get(DID_ID2)?.live).toBe(false);
-    const keyChecks = await verifyDidKeys(keys, foldRoutes(scene.set(), mediations));
+    expect(foldDids(scene.set(), mediations).entities.get(DID_ID2)?.live).toBe(false);
+    const keyChecks = await verifyDidKeys(keys, foldDids(scene.set(), mediations));
     expect(keyChecks).toEqual(new Map([[DID_ID, "verified"], [DID_ID2, "mismatch"]]));
-    const routes = foldRoutes(scene.set(), mediations, { keyChecks });
-    expect(routes.dids.get(DID_ID)).toMatchObject({ live: true, identity: "verified", faults: [] });
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ live: false, conflict: true, identity: "mismatch", faults: ["the seed does not derive the entity's keys"] });
-    expect(routes.entityOfKey(`did/${DID_ID2}/key-agreement` as KeyName)).toBe(DID_ID2);
-    expect(routes.entityOfDid(routes.dids.get(DID_ID2)!.created!.did)).toBeNull();
-    expect(routes.receipt(DID_ID2)).toBe("terminal");
-    expect(routes.desiredRecipients.map((recipient) => recipient.didId)).toEqual([DID_ID]);
-    expect(foldRoutes(scene.set(), foldMediations(scene.set()), { keyChecks }).dids.get(DID_ID)).toMatchObject({ live: false, mediations: [], faults: [`mediation ${MEDIATION} is pending`] });
+    const dids = foldDids(scene.set(), mediations, { keyChecks });
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, identity: "verified", faults: [] });
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ live: false, conflict: true, identity: "mismatch", faults: ["the seed does not derive the entity's keys"] });
+    expect(dids.entityOfKey(`did/${DID_ID2}/key-agreement` as KeyName)).toBe(DID_ID2);
+    expect(dids.entityOfDid(dids.entities.get(DID_ID2)!.created!.did)).toBeNull();
+    expect(dids.receipt(DID_ID2)).toBe("terminal");
+    expect(dids.desiredRecipients.map((recipient) => recipient.didId)).toEqual([DID_ID]);
+    expect(foldDids(scene.set(), foldMediations(scene.set()), { keyChecks }).entities.get(DID_ID)).toMatchObject({ live: false, mediations: [], faults: [`mediation ${MEDIATION} is pending`] });
   });
 
   it("keeps an entity from being live while no arrangement routes through its DID, while that arrangement is not usable, and once it is retired", async () => {
     const scene = new Scene();
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
-    expect((await checked(scene)).dids.get(DID_ID)).toMatchObject({ live: false, conflict: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`], routeTarget: MEDIATED, mediations: [] });
+    expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`], routeTarget: MEDIATED, mediations: [] });
     scene.add("mediation.created", { mediationId: MEDIATION, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION}/me` as KeyName, did: me } });
-    expect((await checked(scene)).dids.get(DID_ID)).toMatchObject({ live: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`] });
+    expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: false, faults: [`no mediation arrangement routes through ${ROUTING_DID}`] });
     scene.add("mediation.granted", { mediationId: MEDIATION, routingDid: ROUTING_DID });
-    expect((await checked(scene)).dids.get(DID_ID)).toMatchObject({ live: true, faults: [], mediations: [MEDIATION] });
+    expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: true, faults: [], mediations: [MEDIATION] });
     scene.add("mediation.retired", { mediationId: MEDIATION, because: "moved" });
-    expect((await checked(scene)).dids.get(DID_ID)).toMatchObject({ live: false, faults: [`mediation ${MEDIATION} is retired`], routeTarget: MEDIATED, mediations: [], created });
+    expect((await checked(scene)).entities.get(DID_ID)).toMatchObject({ live: false, faults: [`mediation ${MEDIATION} is retired`], routeTarget: MEDIATED, mediations: [], created });
     expect((await checked(scene)).desiredRecipients).toEqual([]);
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 
   it("holds an entity pending, with every arrangement required, while several usable arrangements route through its DID", async () => {
@@ -151,19 +151,19 @@ describe("the DID fold", () => {
     mediatedRoute(scene, { me });
     secondArrangement(scene);
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
-    const { mediations, routes } = await foldWithSeed(scene.set(), keys);
+    const { mediations, dids } = await foldWithSeed(scene.set(), keys);
     expect(mediations.through(ROUTING_DID).map((mediation) => mediation.mediationId)).toEqual([MEDIATION, MEDIATION2]);
     expect(mediations.through(ROUTING_DID2)).toEqual([]);
-    expect(routes.dids.get(DID_ID)).toMatchObject({ live: false, conflict: false, created, mediations: [MEDIATION, MEDIATION2], faults: [`several arrangements route through ${ROUTING_DID}: ${MEDIATION}, ${MEDIATION2}`] });
-    expect(routes.receipt(DID_ID)).toBe("pending");
-    expect(routes.desiredRecipients).toEqual([]);
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, created, mediations: [MEDIATION, MEDIATION2], faults: [`several arrangements route through ${ROUTING_DID}: ${MEDIATION}, ${MEDIATION2}`] });
+    expect(dids.receipt(DID_ID)).toBe("pending");
+    expect(dids.desiredRecipients).toEqual([]);
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     scene.add("mediation.retired", { mediationId: MEDIATION2, because: "replaced" });
     const settled = await foldWithSeed(scene.set(), keys);
-    expect(settled.routes.dids.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION] });
-    expect(requiredReceivingSet(settled.mediations, settled.routes)).toEqual(new Set([MEDIATION]));
+    expect(settled.dids.entities.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION] });
+    expect(requiredReceivingSet(settled.mediations, settled.dids)).toEqual(new Set([MEDIATION]));
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 
   it("makes a document that names no one route a conflict: no DIDComm service, or an endpoint that is neither a DID nor an HTTPS or WSS URL", async () => {
@@ -172,13 +172,13 @@ describe("the DID fold", () => {
     await editedDid(scene, DID_ID, () => {}, null);
     await editedDid(scene, DID_ID2, () => {}, "http://ingress.example/didcomm");
     await createdDid(scene, keys, DID_ID3, { kind: "direct", endpoint: "wss://ingress.example/ws" });
-    const routes = await checked(scene);
-    expect(routes.dids.get(DID_ID)).toMatchObject({ live: false, conflict: true, identity: "verified", routeTarget: null, faults: ["the document does not send to exactly one endpoint"] });
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ live: false, conflict: true, routeTarget: null, faults: ["the document sends to http://ingress.example/didcomm, neither a DID nor an HTTPS or WSS URL"] });
-    expect(routes.dids.get(DID_ID3)).toMatchObject({ live: true, routeTarget: { kind: "direct", endpoint: "wss://ingress.example/ws" } });
-    expect(routes.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
-    expect(routes.receipt(DID_ID)).toBe("terminal");
-    expect(routes.receipt(DID_ID2)).toBe("terminal");
+    const dids = await checked(scene);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: true, identity: "verified", routeTarget: null, faults: ["the document does not send to exactly one endpoint"] });
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ live: false, conflict: true, routeTarget: null, faults: ["the document sends to http://ingress.example/didcomm, neither a DID nor an HTTPS or WSS URL"] });
+    expect(dids.entities.get(DID_ID3)).toMatchObject({ live: true, routeTarget: { kind: "direct", endpoint: "wss://ingress.example/ws" } });
+    expect(dids.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
+    expect(dids.receipt(DID_ID)).toBe("terminal");
+    expect(dids.receipt(DID_ID2)).toBe("terminal");
   });
 
   it("records a document whose service or key does not read as that entity's conflict and folds and verifies every other entity", async () => {
@@ -192,16 +192,16 @@ describe("the DID fold", () => {
     });
     const good = await createdDid(scene, keys, DID_ID3, MEDIATED);
     const before = unchecked(scene.set());
-    expect(before.dids.get(DID_ID)).toMatchObject({ conflict: true, created: noEndpoint, resolution: null });
-    expect(before.dids.get(DID_ID)?.faults[0]).toMatch(/serviceEndpoint|service/i);
-    expect(before.dids.get(DID_ID2)).toMatchObject({ conflict: false, created: badKey });
+    expect(before.entities.get(DID_ID)).toMatchObject({ conflict: true, created: noEndpoint, resolution: null });
+    expect(before.entities.get(DID_ID)?.faults[0]).toMatch(/serviceEndpoint|service/i);
+    expect(before.entities.get(DID_ID2)).toMatchObject({ conflict: false, created: badKey });
     const keyChecks = await verifyDidKeys(keys, before);
     expect(keyChecks).toEqual(new Map([[DID_ID2, "mismatch"], [DID_ID3, "verified"]]));
-    const routes = await checked(scene);
-    expect(routes.dids.get(DID_ID)).toMatchObject({ conflict: true, live: false });
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ conflict: true, live: false, identity: "mismatch" });
-    expect(routes.dids.get(DID_ID3)).toMatchObject({ conflict: false, live: true, created: good, identity: "verified" });
-    expect(routes.desiredRecipients.map((recipient) => recipient.didId)).toEqual([DID_ID3]);
+    const dids = await checked(scene);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ conflict: true, live: false });
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ conflict: true, live: false, identity: "mismatch" });
+    expect(dids.entities.get(DID_ID3)).toMatchObject({ conflict: false, live: true, created: good, identity: "verified" });
+    expect(dids.desiredRecipients.map((recipient) => recipient.didId)).toEqual([DID_ID3]);
   });
 
   it("makes disagreeing creations, an unreadable record or a shared spelling a conflict that leaves the spelling map but still answers to its key names", async () => {
@@ -214,16 +214,16 @@ describe("the DID fold", () => {
     scene.add("did.created", { didId: DID_ID2, did: minted.did, longFormDid: `${minted.did}:z2Broken` as Did });
     const third = await createdDid(scene, keys, DID_ID3, MEDIATED);
     scene.add("did.created", { ...third, didId: "019b6a10-12c0-7410-89ab-38e54b097c22" as DidId });
-    const routes = await checked(scene);
-    expect(routes.dids.get(DID_ID)).toMatchObject({ conflict: true, live: false, created: null, resolution: null, faults: ["creations disagree"], methodIds: { authentication: [], keyAgreement: [] } });
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ conflict: true, live: false, resolution: null });
-    expect(routes.dids.get(DID_ID2)?.faults[0]).toMatch(/long form|resolve|multibase|hash/i);
-    expect(routes.dids.get(DID_ID3)).toMatchObject({ conflict: true, live: false, faults: [`${third.did} is also entity 019b6a10-12c0-7410-89ab-38e54b097c22`, `${third.longFormDid} is also entity 019b6a10-12c0-7410-89ab-38e54b097c22`] });
-    for (const didId of [DID_ID, DID_ID2, DID_ID3]) expect(routes.entityOfKey(`did/${didId}/key-agreement` as KeyName)).toBe(didId);
-    expect(routes.entityOfDid(third.did)).toBeNull();
-    expect(routes.desiredRecipients).toEqual([]);
+    const dids = await checked(scene);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ conflict: true, live: false, created: null, resolution: null, faults: ["creations disagree"], methodIds: { authentication: [], keyAgreement: [] } });
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ conflict: true, live: false, resolution: null });
+    expect(dids.entities.get(DID_ID2)?.faults[0]).toMatch(/long form|resolve|multibase|hash/i);
+    expect(dids.entities.get(DID_ID3)).toMatchObject({ conflict: true, live: false, faults: [`${third.did} is also entity 019b6a10-12c0-7410-89ab-38e54b097c22`, `${third.longFormDid} is also entity 019b6a10-12c0-7410-89ab-38e54b097c22`] });
+    for (const didId of [DID_ID, DID_ID2, DID_ID3]) expect(dids.entityOfKey(`did/${didId}/key-agreement` as KeyName)).toBe(didId);
+    expect(dids.entityOfDid(third.did)).toBeNull();
+    expect(dids.desiredRecipients).toEqual([]);
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 
   it("counts a spelling claimed by any creation of a conflicted entity against the entity that also records it, in either canonical order", async () => {
@@ -237,14 +237,14 @@ describe("the DID fold", () => {
         { ...other, didId: DID_ID },
       ];
       for (const claim of ownFirst ? claims : claims.reverse()) scene.add("did.created", claim);
-      const routes = await checked(scene);
-      expect(routes.dids.get(DID_ID)).toMatchObject({ conflict: true, live: false });
-      expect(routes.dids.get(DID_ID)?.faults).toContain("creations disagree");
-      expect(routes.dids.get(DID_ID2)).toMatchObject({ conflict: true, live: false, faults: [`${other.did} is also entity ${DID_ID}`, `${other.longFormDid} is also entity ${DID_ID}`] });
-      expect(routes.entityOfDid(other.did)).toBeNull();
-      expect(routes.entityOfKey(`did/${DID_ID2}/key-agreement` as KeyName)).toBe(DID_ID2);
+      const dids = await checked(scene);
+      expect(dids.entities.get(DID_ID)).toMatchObject({ conflict: true, live: false });
+      expect(dids.entities.get(DID_ID)?.faults).toContain("creations disagree");
+      expect(dids.entities.get(DID_ID2)).toMatchObject({ conflict: true, live: false, faults: [`${other.did} is also entity ${DID_ID}`, `${other.longFormDid} is also entity ${DID_ID}`] });
+      expect(dids.entityOfDid(other.did)).toBeNull();
+      expect(dids.entityOfKey(`did/${DID_ID2}/key-agreement` as KeyName)).toBe(DID_ID2);
       const checks = await checksOf(scene.events, keys);
-      expectOrderFree(scene.events, (set) => both(set, checks).routes);
+      expectOrderFree(scene.events, (set) => both(set, checks).dids);
     }
   });
 
@@ -254,14 +254,14 @@ describe("the DID fold", () => {
     const created = await createdDid(scene, keys, DID_ID, MEDIATED);
     scene.add("did.retired", { didId: DID_ID, because: "contact-deleted" });
     scene.add("did.retired", { didId: DID_ID2, because: "never created" });
-    const routes = await checked(scene);
-    expect(routes.dids.get(DID_ID)).toMatchObject({ live: false, conflict: false, retired: "contact-deleted", faults: [] });
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ live: false, created: null, faults: ["no creation"], retired: "never created" });
-    expect(routes.desiredRecipients).toEqual([]);
-    expect(routes.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
-    expect(routes.entityOfDid(created.did)).toBe(DID_ID);
+    const dids = await checked(scene);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, retired: "contact-deleted", faults: [] });
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ live: false, created: null, faults: ["no creation"], retired: "never created" });
+    expect(dids.desiredRecipients).toEqual([]);
+    expect(dids.entityOfKey(`did/${DID_ID}/key-agreement` as KeyName)).toBe(DID_ID);
+    expect(dids.entityOfDid(created.did)).toBe(DID_ID);
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 
   it("lists disclosures in canonical order and desired recipients by short form", async () => {
@@ -271,11 +271,11 @@ describe("the DID fold", () => {
     const b = await createdDid(scene, keys, DID_ID2, MEDIATED);
     const later = scene.add("did.disclosed", { didId: DID_ID, as: "oob", oobId: "019b2a57-a947-7502-8fee-4d80d949dbcb", goal: null }, { at: "2026-09-14T00:00:00.000Z" });
     const earlier = scene.add("did.disclosed", { didId: DID_ID, as: "direct", oobId: null, goal: "hi" }, { at: "2026-09-12T00:00:00.000Z" });
-    const routes = await checked(scene);
-    expect(routes.dids.get(DID_ID)?.disclosures).toEqual([earlier, later]);
-    expect(routes.desiredRecipients.map((recipient) => recipient.did)).toEqual([a.did, b.did].sort());
+    const dids = await checked(scene);
+    expect(dids.entities.get(DID_ID)?.disclosures).toEqual([earlier, later]);
+    expect(dids.desiredRecipients.map((recipient) => recipient.did)).toEqual([a.did, b.did].sort());
     const checks = await checksOf(scene.events, keys);
-    expectOrderFree(scene.events, (set) => both(set, checks).routes);
+    expectOrderFree(scene.events, (set) => both(set, checks).dids);
   });
 });
 
@@ -293,11 +293,11 @@ describe("receipt eligibility and the required receiving set", () => {
 
   it("lets a live entity and a retired entity receive alike, until the arrangement under it is terminal", async () => {
     const { scene: s } = await scene();
-    const routes = await checked(s);
-    expect(routes.receipt(DID_ID)).toBe("eligible");
-    expect(routes.receipt(DID_ID2)).toBe("eligible");
-    expect(routes.receipt(DID_ID3)).toBe("terminal");
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ live: false, retired: "rotated" });
+    const dids = await checked(s);
+    expect(dids.receipt(DID_ID)).toBe("eligible");
+    expect(dids.receipt(DID_ID2)).toBe("eligible");
+    expect(dids.receipt(DID_ID3)).toBe("terminal");
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ live: false, retired: "rotated" });
     s.add("mediation.retired", { mediationId: MEDIATION2, because: "moved" });
     expect((await checked(s)).receipt(DID_ID2)).toBe("terminal");
   });
@@ -306,13 +306,13 @@ describe("receipt eligibility and the required receiving set", () => {
     const s = new Scene();
     const retiredDid = await createdDid(s, keys, DID_ID, MEDIATED);
     s.add("did.retired", { didId: DID_ID, because: "rotated" });
-    expect((await checked(s)).dids.get(DID_ID)).toMatchObject({ created: retiredDid, faults: [`no mediation arrangement routes through ${ROUTING_DID}`] });
+    expect((await checked(s)).entities.get(DID_ID)).toMatchObject({ created: retiredDid, faults: [`no mediation arrangement routes through ${ROUTING_DID}`] });
     expect((await checked(s)).receipt(DID_ID)).toBe("pending");
     const elsewhere = new Scene();
     await createdDid(elsewhere, await openKeys(OTHER_SEED), DID_ID2, MEDIATED);
-    const routes = await checked(elsewhere);
-    expect(routes.dids.get(DID_ID2)).toMatchObject({ identity: "mismatch", conflict: true });
-    expect(routes.receipt(DID_ID2)).toBe("terminal");
+    const dids = await checked(elsewhere);
+    expect(dids.entities.get(DID_ID2)).toMatchObject({ identity: "mismatch", conflict: true });
+    expect(dids.receipt(DID_ID2)).toBe("terminal");
   });
 
   it("defers while a recoverable prerequisite is missing and rejects a conflicted entity for good", async () => {
@@ -325,7 +325,7 @@ describe("receipt eligibility and the required receiving set", () => {
     expect(unchecked(s.set()).receipt(DID_ID)).toBe("pending");
     expect((await checked(s)).receipt(DID_ID)).toBe("eligible");
     const mediations = (await foldWithSeed(s.set(), keys)).mediations;
-    expect(foldRoutes(s.set(), mediations, { keyChecks: new Map([[DID_ID, "mismatch"]]) }).receipt(DID_ID)).toBe("terminal");
+    expect(foldDids(s.set(), mediations, { keyChecks: new Map([[DID_ID, "mismatch"]]) }).receipt(DID_ID)).toBe("terminal");
     s.add("mediation.retired", { mediationId: MEDIATION, because: "gone" });
     expect((await checked(s)).receipt(DID_ID)).toBe("terminal");
   });
@@ -333,22 +333,22 @@ describe("receipt eligibility and the required receiving set", () => {
   it("requires the preferred mediation and every mediation a live or retired DID is routed by", async () => {
     const { scene: s } = await scene();
     const bare = both(s.set(), { mediations: new Map(), dids: new Map() });
-    expect(requiredReceivingSet(bare.mediations, bare.routes)).toEqual(new Set());
-    let { mediations, routes } = await foldWithSeed(s.set(), keys);
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    expect(requiredReceivingSet(bare.mediations, bare.dids)).toEqual(new Set());
+    let { mediations, dids } = await foldWithSeed(s.set(), keys);
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     s.add("did.retired", { didId: DID_ID, because: "done" });
-    ({ mediations, routes } = await foldWithSeed(s.set(), keys));
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    ({ mediations, dids } = await foldWithSeed(s.set(), keys));
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     s.add("mediation.selected", { mediationId: MEDIATION2 });
-    ({ mediations, routes } = await foldWithSeed(s.set(), keys));
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    ({ mediations, dids } = await foldWithSeed(s.set(), keys));
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     s.add("mediation.retired", { mediationId: MEDIATION, because: "moved" });
-    ({ mediations, routes } = await foldWithSeed(s.set(), keys));
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION2]));
+    ({ mediations, dids } = await foldWithSeed(s.set(), keys));
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION2]));
     const checks = await checksOf(s.events, keys);
     expectOrderFree(s.events, (set) => {
       const folded = both(set, checks);
-      return [...requiredReceivingSet(folded.mediations, folded.routes)];
+      return [...requiredReceivingSet(folded.mediations, folded.dids)];
     });
   });
 
@@ -356,27 +356,27 @@ describe("receipt eligibility and the required receiving set", () => {
     const { scene: s } = await scene();
     const { mediations } = await checksOf(s.events, keys);
     const waiting = both(s.set(), { mediations, dids: new Map() });
-    expect(waiting.routes.receipt(DID_ID2)).toBe("pending");
-    expect(waiting.routes.desiredRecipients).toEqual([]);
-    expect(requiredReceivingSet(waiting.mediations, waiting.routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    expect(waiting.dids.receipt(DID_ID2)).toBe("pending");
+    expect(waiting.dids.desiredRecipients).toEqual([]);
+    expect(requiredReceivingSet(waiting.mediations, waiting.dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     const verified = both(s.set(), { mediations, dids: new Map([[DID_ID2, "verified"]]) });
-    expect(verified.routes.receipt(DID_ID2)).toBe("eligible");
-    expect(requiredReceivingSet(verified.mediations, verified.routes)).toEqual(new Set([MEDIATION, MEDIATION2]));
+    expect(verified.dids.receipt(DID_ID2)).toBe("eligible");
+    expect(requiredReceivingSet(verified.mediations, verified.dids)).toEqual(new Set([MEDIATION, MEDIATION2]));
     const mismatch = both(s.set(), { mediations, dids: new Map([[DID_ID2, "mismatch"]]) });
-    expect(mismatch.routes.receipt(DID_ID2)).toBe("terminal");
-    expect(requiredReceivingSet(mismatch.mediations, mismatch.routes)).toEqual(new Set([MEDIATION]));
+    expect(mismatch.dids.receipt(DID_ID2)).toBe("terminal");
+    expect(requiredReceivingSet(mismatch.mediations, mismatch.dids)).toEqual(new Set([MEDIATION]));
     s.add("mediation.retired", { mediationId: MEDIATION2, because: "moved" });
     const retired = both(s.set(), { mediations: (await checksOf(s.events, keys)).mediations, dids: new Map() });
-    expect(retired.routes.receipt(DID_ID2)).toBe("terminal");
-    expect(requiredReceivingSet(retired.mediations, retired.routes)).toEqual(new Set([MEDIATION]));
+    expect(retired.dids.receipt(DID_ID2)).toBe("terminal");
+    expect(requiredReceivingSet(retired.mediations, retired.dids)).toEqual(new Set([MEDIATION]));
   });
 
   it("drops a mediation from the required set once it is unusable, whatever depends on it", async () => {
     const { scene: s } = await scene();
     s.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
-    const { mediations, routes } = await foldWithSeed(s.set(), keys);
-    expect(requiredReceivingSet(mediations, routes)).toEqual(new Set([MEDIATION]));
-    expect(routes.receipt(DID_ID2)).toBe("terminal");
-    expect(routes.dids.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION] });
+    const { mediations, dids } = await foldWithSeed(s.set(), keys);
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION]));
+    expect(dids.receipt(DID_ID2)).toBe("terminal");
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION] });
   });
 });

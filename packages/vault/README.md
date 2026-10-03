@@ -87,7 +87,7 @@ one grant, retirement and conflicts, its `profile` and the preferred one;
 `foldReplicas`, each replica's one binding and whether it is a member of
 its replica-mediation arrangement, read from the arrangement's creation
 (`mediationCreations`) whatever its routing grants say;
-`foldRoutes`, each local
+`foldDids`, each local
 DID entity's consistent record, own document, the route its document names and the arrangement that routes it, disclosures,
 retirement, faults and liveness, the key-name and spelling reverse maps,
 the desired mediator recipients and each entity's receipt eligibility;

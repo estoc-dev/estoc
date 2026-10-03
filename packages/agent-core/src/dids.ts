@@ -44,7 +44,7 @@ import { addRecipientsNow, holds } from "./replica-recipients.js";
 export type RouteSpec = { kind: "mediated"; mediationId: MediationId } | { kind: "direct"; endpoint: string };
 
 export function didOf(fold: VaultFold, didId: DidId): LocalDidEntity {
-  const entity = fold.routes.dids.get(didId);
+  const entity = fold.dids.entities.get(didId);
   if (entity === undefined) throw new UnknownEntity("DID", didId);
   return entity;
 }
@@ -102,7 +102,7 @@ export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteS
   let minted!: MintedDid;
   const { fold, events } = await decide(runtime, keys, async (fold) => {
     minted = await mintDid(keys, didId, routeTargetOf(fold, route));
-    const existing = fold.routes.dids.get(didId);
+    const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
       if (!sameDocument(existing, minted)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");
       return [];

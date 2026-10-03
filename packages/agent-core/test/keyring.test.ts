@@ -37,7 +37,7 @@ describe("the keyring", () => {
     // Bob's record in Alice's vault: a document the seed of this vault does not derive
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid })]);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
-    expect(fold.routes.dids.get(minted.didId)?.identity).toBe("mismatch");
+    expect(fold.dids.entities.get(minted.didId)?.identity).toBe("mismatch");
     const ring = await Keyring.load(alice.keys, fold);
     expect(ring.didKeys(minted.didId)).toBeNull();
     expect(ring.secrets()).toEqual([]);
@@ -59,9 +59,9 @@ describe("the keyring", () => {
     const elsewhere = await mintDid(p.keys, rewritten.minted.didId, { kind: "direct", endpoint: "https://elsewhere.example/" });
     await p.runtime.vault.commit([], [vaultDraft("did.created", { ...rewritten.created.data, did: elsewhere.did, longFormDid: elsewhere.longFormDid })]);
     const fold = await scanVault(p.runtime.vault, p.keys);
-    expect(fold.routes.dids.get(retiring.minted.didId)).toMatchObject({ live: false, conflict: false });
-    expect(fold.routes.dids.get(claimed.minted.didId)).toMatchObject({ identity: "verified", conflict: true });
-    expect(fold.routes.dids.get(rewritten.minted.didId)?.conflict).toBe(true);
+    expect(fold.dids.entities.get(retiring.minted.didId)).toMatchObject({ live: false, conflict: false });
+    expect(fold.dids.entities.get(claimed.minted.didId)).toMatchObject({ identity: "verified", conflict: true });
+    expect(fold.dids.entities.get(rewritten.minted.didId)?.conflict).toBe(true);
 
     await ring.reload(fold);
     const fresh = await Keyring.load(p.keys, fold);

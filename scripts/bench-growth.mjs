@@ -31,7 +31,7 @@ const { countingDriver, noReads } = await import("../packages/event-store/test/c
 const { SqliteVault } = await import("../packages/event-store/dist/index.js");
 const { openNodeSqlite } = await import("../packages/event-store/dist/node.js");
 const { deriveIdentity, importSeed } = await import("../packages/keystore/dist/index.js");
-const { VaultEventSet, foldMediations, foldRoutes, foldVault, objectReader, verifyDidKeys, verifyMediationKeys, verifyProofs, verifyResolutions } = await import("../packages/vault/dist/index.js");
+const { VaultEventSet, foldMediations, foldDids, foldVault, objectReader, verifyDidKeys, verifyMediationKeys, verifyProofs, verifyResolutions } = await import("../packages/vault/dist/index.js");
 const { BUILT_IN_HANDLERS, MAX_CONTENT_BYTES, effectTypesOf, openVault, recorder } = await import("../packages/agent-core/dist/index.js");
 const { schemas } = await import("../packages/daemon-api/dist/contract/index.js");
 const { connect } = await import("../packages/daemon-api/dist/client/index.js");
@@ -444,7 +444,7 @@ async function readApart(folder) {
       const set = events.result;
       const mediationKeys = await timed(() => verifyMediationKeys(keys, foldMediations(set)));
       const mediations = foldMediations(set, { keyChecks: mediationKeys.result });
-      const didKeys = await timed(() => verifyDidKeys(keys, foldRoutes(set, mediations)));
+      const didKeys = await timed(() => verifyDidKeys(keys, foldDids(set, mediations)));
       const resolutions = await timed(() => verifyResolutions(set, readObject));
       const proofs = await timed(() => verifyProofs(set, resolutions.result, readObject));
       const checks = { mediationKeys: mediationKeys.result, didKeys: didKeys.result, resolutionChecks: resolutions.result, proofChecks: proofs.result };
@@ -456,7 +456,7 @@ async function readApart(folder) {
           label: fold.label ?? "",
           restoreUnexplained: false,
           mediations: mediationRecords(fold.mediations),
-          dids: localDidRecords(fold.routes),
+          dids: localDidRecords(fold.dids),
         })
       );
       const snapshot = projected.result;

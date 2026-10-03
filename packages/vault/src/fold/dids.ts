@@ -55,8 +55,8 @@ export interface LocalDidEntity {
 /** One pair the mediator is asked to deliver for: a live DID by its short form and the arrangement that routes it. */
 export type DesiredRecipient = { did: Did; didId: DidId; mediationId: MediationId };
 
-export interface RouteFold {
-  readonly dids: ReadonlyMap<DidId, LocalDidEntity>;
+export interface DidFold {
+  readonly entities: ReadonlyMap<DidId, LocalDidEntity>;
   /** the live mediated DIDs, by short form */
   readonly desiredRecipients: readonly DesiredRecipient[];
   /** the entity a key name derives from, whatever its state, since one entity ID names each key; null for a name no entity here records */
@@ -78,9 +78,9 @@ export interface RouteFold {
 
 export type ReceiptEligibility = "eligible" | "pending" | "terminal";
 
-export type RouteFoldOptions = { keyChecks?: ReadonlyMap<DidId, KeyCheck> };
+export type DidFoldOptions = { keyChecks?: ReadonlyMap<DidId, KeyCheck> };
 
-export function foldRoutes(set: VaultEventSet, mediations: MediationFold, options: RouteFoldOptions = {}): RouteFold {
+export function foldDids(set: VaultEventSet, mediations: MediationFold, options: DidFoldOptions = {}): DidFold {
   const { dids, terminal } = foldDidTable(set, mediations, options.keyChecks);
 
   const byKey = new Map<KeyName, DidId>();
@@ -102,7 +102,7 @@ export function foldRoutes(set: VaultEventSet, mediations: MediationFold, option
   desiredRecipients.sort((a, b) => (a.did < b.did ? -1 : a.did > b.did ? 1 : 0));
 
   return {
-    dids,
+    entities: dids,
     desiredRecipients,
     entityOfKey: (name) => byKey.get(name) ?? null,
     entityOfDid: (did) => byDid.get(did) ?? null,
@@ -217,9 +217,9 @@ function isDocumentFault(err: unknown): err is Error {
 }
 
 /** Each consistent, readable entity checked against the seed: does its document carry the two keys its ID derives? */
-export async function verifyDidKeys(keys: Keys, fold: RouteFold): Promise<Map<DidId, KeyCheck>> {
+export async function verifyDidKeys(keys: Keys, fold: DidFold): Promise<Map<DidId, KeyCheck>> {
   const checks = new Map<DidId, KeyCheck>();
-  for (const did of fold.dids.values()) {
+  for (const did of fold.entities.values()) {
     if (did.resolution === null) continue;
     try {
       await checkDidKeys(keys, did.didId, did.resolution);
@@ -233,10 +233,10 @@ export async function verifyDidKeys(keys: Keys, fold: RouteFold): Promise<Map<Di
 }
 
 /** The mediation and DID folds with every key check done: the seed consulted once per entity, the verdicts folded back in. */
-export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ mediations: MediationFold; routes: RouteFold }> {
+export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ mediations: MediationFold; dids: DidFold }> {
   const mediations = foldMediations(set, { keyChecks: await verifyMediationKeys(keys, foldMediations(set)) });
-  const routes = foldRoutes(set, mediations, { keyChecks: await verifyDidKeys(keys, foldRoutes(set, mediations)) });
-  return { mediations, routes };
+  const dids = foldDids(set, mediations, { keyChecks: await verifyDidKeys(keys, foldDids(set, mediations)) });
+  return { mediations, dids };
 }
 
 /**
@@ -249,11 +249,11 @@ export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ me
  * releases it; while several usable arrangements route one DID, each
  * is kept. Disclosure policy plays no part.
  */
-export function requiredReceivingSet(mediations: MediationFold, routes: RouteFold): Set<MediationId> {
+export function requiredReceivingSet(mediations: MediationFold, dids: DidFold): Set<MediationId> {
   const required = new Set<MediationId>();
   if (mediations.preferred !== null) required.add(mediations.preferred);
-  for (const did of routes.dids.values()) {
-    if (did.created === null || routes.receipt(did.didId) === "terminal") continue;
+  for (const did of dids.entities.values()) {
+    if (did.created === null || dids.receipt(did.didId) === "terminal") continue;
     for (const mediationId of did.mediations) if (mediations.usable(mediationId)) required.add(mediationId);
   }
   return required;

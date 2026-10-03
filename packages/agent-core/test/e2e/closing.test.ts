@@ -23,7 +23,7 @@ const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
 
-const didOf = (fold: VaultFold, didId: DidId): Did => fold.routes.dids.get(didId)!.created!.did;
+const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 const held = (fold: VaultFold): Set<Cid> => new Set(fold.retained.map(({ root }) => root));
 

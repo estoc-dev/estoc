@@ -16,10 +16,10 @@ import type { Contact, ContactFold } from "./contacts.js";
 import type { Continuity } from "./continuity.js";
 import type { Execution, InboundFold } from "./inbound.js";
 import type { Outbound, OutboundFold } from "./outbound.js";
-import type { RouteFold } from "./routes.js";
+import type { DidFold } from "./dids.js";
 
 export type ViewInputs = {
-  readonly routes: RouteFold;
+  readonly dids: DidFold;
   readonly continuity: Continuity;
   readonly inbound: InboundFold;
   readonly outbound: OutboundFold;
@@ -39,9 +39,9 @@ export type ViewInputs = {
  */
 export type SendGate = { status: "open" } | { status: "closed"; because: string };
 
-export function senderGate(fold: Pick<ViewInputs, "routes" | "continuity">, channel: Channel): SendGate {
-  const didId = fold.routes.entityOfDid(channel.localDid);
-  const entity = didId === null ? undefined : fold.routes.dids.get(didId);
+export function senderGate(fold: Pick<ViewInputs, "dids" | "continuity">, channel: Channel): SendGate {
+  const didId = fold.dids.entityOfDid(channel.localDid);
+  const entity = didId === null ? undefined : fold.dids.entities.get(didId);
   if (entity === undefined) return { status: "closed", because: "the local DID is not one of ours" };
   if (!entity.live) return { status: "closed", because: `the local DID cannot send: ${entity.faults[0] ?? `retired: ${entity.retired}`}` };
   const denied = channelPolicy(fold, channel);
@@ -259,7 +259,7 @@ function preferenceOf(fold: ViewInputs, contacts: readonly Contact[], heads: Rea
   for (const contact of contacts) if (!contact.deleted && contact.useDid !== null) preferred.add(contact.useDid.didId);
   if (preferred.size !== 1) return null;
   const didId = [...preferred][0]!;
-  const did = fold.routes.dids.get(didId)?.created?.did ?? null;
+  const did = fold.dids.entities.get(didId)?.created?.did ?? null;
   const matches = did === null ? [] : writeTo.filter((head) => heads.get(channelKey(head))!.localDids.has(did));
   return { didId, matches };
 }

@@ -28,7 +28,7 @@ import type { Continuity } from "./continuity.js";
 import type { EvidenceCheck } from "./evidence.js";
 import type { Erasures } from "./held.js";
 import { EMPTY_CONTENT_CID, EMPTY_MESSAGE_TYPE, PING_RESPONSE_TYPE, kindOf, type Execution, type InboundFold } from "./inbound.js";
-import type { LocalDidEntity, RouteFold } from "./routes.js";
+import type { LocalDidEntity, DidFold } from "./dids.js";
 import { groupBy, samePayload, type VaultEventSet } from "./set.js";
 import { senderGate } from "./views.js";
 
@@ -174,7 +174,7 @@ export type OutboundFoldOptions = {
 
 export function foldOutbound(
   set: VaultEventSet,
-  routes: RouteFold,
+  dids: DidFold,
   evidence: ChannelEvidence,
   continuity: Continuity,
   inbound: InboundFold,
@@ -206,7 +206,7 @@ export function foldOutbound(
       acknowledgements: acknowledgements.get(messageId) ?? [],
       witnesses: witnesses.get(messageId) ?? [],
       set,
-      routes,
+      dids,
       evidence,
       continuity,
       inbound,
@@ -288,7 +288,7 @@ type Inputs = {
   acknowledgements: readonly VaultEvent<"delivery.acknowledged">[];
   witnesses: readonly Source[];
   set: VaultEventSet;
-  routes: RouteFold;
+  dids: DidFold;
   evidence: ChannelEvidence;
   continuity: Continuity;
   inbound: InboundFold;
@@ -302,7 +302,7 @@ type Inputs = {
 function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.out">[], inputs: Inputs): Outbound {
   const intent = intentOf(events);
   const data = intent.status === "consistent" ? intent.data : null;
-  const sender = data === null ? null : (inputs.routes.dids.get(data.senderDidId) ?? null);
+  const sender = data === null ? null : (inputs.dids.entities.get(data.senderDidId) ?? null);
   const erased = inputs.erasures.has(messageId);
 
   let channel: Channel | null = null;
@@ -352,7 +352,7 @@ function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.o
             : { status: "queued" };
   const released = data !== null && (submitted || terminal !== null);
 
-  const work = workOf({ outcome, waiting, channel, erased, effect, package: one, unresolved, routes: inputs.routes, continuity: inputs.continuity });
+  const work = workOf({ outcome, waiting, channel, erased, effect, package: one, unresolved, dids: inputs.dids, continuity: inputs.continuity });
   return { messageId, intents: events, intent, sender, channel, packages, package: one, submissions, submitted, terminations, terminal, effect, ackWitnesses, acknowledgements, acknowledged, late, erased, outcome, work, released };
 }
 
@@ -629,7 +629,7 @@ function notificationOf(data: MessageOut, source: Source | null, channel: Channe
   return null;
 }
 
-type WorkInputs = { outcome: Outcome; waiting: string | null; channel: Channel | null; erased: boolean; effect: EffectStatus; package: Package | null; unresolved: boolean; routes: RouteFold; continuity: Continuity };
+type WorkInputs = { outcome: Outcome; waiting: string | null; channel: Channel | null; erased: boolean; effect: EffectStatus; package: Package | null; unresolved: boolean; dids: DidFold; continuity: Continuity };
 
 /**
  * A submission naming a preparation not here is no absence of a
@@ -645,7 +645,7 @@ function workOf(w: WorkInputs): Work {
   if (w.outcome.status === "terminal") return none(`terminated: ${w.outcome.code}`);
   if (w.erased) return none("erased");
   if (w.waiting !== null || w.channel === null) return none(w.waiting ?? "the sender's channel is not known");
-  const gate = senderGate({ routes: w.routes, continuity: w.continuity }, w.channel);
+  const gate = senderGate({ dids: w.dids, continuity: w.continuity }, w.channel);
   if (gate.status === "closed") return none(gate.because);
   if (w.effect.status !== "complete") return none(w.effect.because);
   if (w.unresolved) return none("a submission names a package that is not here");

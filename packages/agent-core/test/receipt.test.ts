@@ -207,7 +207,7 @@ describe("the receipt", () => {
   test("a carried proof is kept as the string it came as, one that verifies and one that is no JWT alike: the fold judges it, the receipt does not", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     expect((await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT })).outcome).toBe("received");
@@ -231,7 +231,7 @@ describe("the receipt", () => {
   test("a proof whose hash-valid issuer the vault could never retain a document for is received, recorded and judged by the fold like any other, and stops neither the scan nor the next message", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const service = (serviceEndpoint: string) => ({ id: "#same", type: "DIDCommMessaging", serviceEndpoint });
@@ -269,7 +269,7 @@ describe("the receipt", () => {
   test("the receipt admits the observation before the lock is released, judged among every other in canonical event order: a message from the address the peer has since left is recorded and ignored, and deliveries recorded at once each have their admission decided before the next is recorded", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const carried = await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT });

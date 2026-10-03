@@ -66,14 +66,14 @@ async function fold(scene: Scene, keys: Keys, readObject: ReadObject = noObjects
   const checks = await checksOf(scene.events, keys);
   const evidence = proofs ?? (await evidenceChecks(scene.events, readObject));
   const set = scene.set();
-  return { evidence: foldChannelEvidence(set, foldChecked(set, checks).routes, evidence), checks, proofs: evidence };
+  return { evidence: foldChannelEvidence(set, foldChecked(set, checks).dids, evidence), checks, proofs: evidence };
 }
 
 /** The evidence as comparable JSON, the positive sources listed since `positive` is a function. */
 const readable = (evidence: ChannelEvidence) => ({ ...evidence, positives: [...evidence.sources.keys()].filter(evidence.positive).sort() });
 
 function expectSameOverEveryOrder(events: readonly Event[], checks: KeyChecks, proofs: Required<ChannelChecks>): void {
-  expectOrderFree(events, (set) => readable(foldChannelEvidence(set, foldChecked(set, checks).routes, proofs)));
+  expectOrderFree(events, (set) => readable(foldChannelEvidence(set, foldChecked(set, checks).dids, proofs)));
 }
 
 describe("foldSources", () => {
@@ -166,7 +166,7 @@ describe("foldSources", () => {
       expect(withoutSeed.sources.get(event.cid)).toMatchObject({ channel: channel({ did: event.data.localKeyName === ours.data.localKeyName ? a0.did : foreign.did }, b0), standing: { status: "incomplete", because: "the local entity's keys are not yet checked against the seed" } });
       expect(withoutSeed.positive(event.cid)).toBe(false);
     }
-    const partly = foldChannelEvidence(scene.set(), foldChecked(scene.set(), { ...withSeed.checks, dids: new Map([[a1.didId, "verified"]]) }).routes, withSeed.proofs);
+    const partly = foldChannelEvidence(scene.set(), foldChecked(scene.set(), { ...withSeed.checks, dids: new Map([[a1.didId, "verified"]]) }).dids, withSeed.proofs);
     expect(partly.sources.get(ours.cid)!.standing).toEqual({ status: "incomplete", because: "the local entity's keys are not yet checked against the seed" });
     expect(partly.positive(ours.cid)).toBe(false);
   });
@@ -343,7 +343,7 @@ describe("foldCarriers", () => {
       expect(evidence.decisions.get(decision.cid)!.status).toEqual({ status: "conflict", because: `the source's authentication is in conflict: ${because}` });
       const withoutSeed = (await foldVaultChecked(scene.set(), null, noObjects)).channels;
       expect(withoutSeed.sources.get(carrier.cid)!.standing).toEqual({ status: "conflict", because });
-      const unchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), checks).routes, { resolutionChecks: new Map(), proofChecks: proofs.proofChecks });
+      const unchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), checks).dids, { resolutionChecks: new Map(), proofChecks: proofs.proofChecks });
       expect(unchecked.sources.get(carrier.cid)!.standing).toEqual({ status: "conflict", because });
       expectSameOverEveryOrder(scene.events, checks, proofs);
     }
@@ -391,7 +391,7 @@ describe("foldDecisions", () => {
     expect(evidence.decisions.get(noPredecessor.cid)!.channel).toBeNull();
     expect(status(noSource)).toEqual({ status: "pending", because: "the source it names is not here" });
     expect(status(unverifiedSource)).toEqual({ status: "pending", because: "the source's authentication is incomplete: the resolution's document is not here" });
-    const unchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), checks).routes, { resolutionChecks: proofs.resolutionChecks });
+    const unchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), checks).dids, { resolutionChecks: proofs.resolutionChecks });
     expect(unchecked.decisions.get(unverifiedSource.cid)!.status).toEqual({ status: "pending", because: "the proof is not yet checked" });
     const withDocument = await fold(scene, keys, readerOf(new Map([[b0.resolution.cid, b0.resolution.bytes]])));
     expect(withDocument.evidence.decisions.get(unverifiedSource.cid)!.status).toMatchObject({ status: "candidate", fact: { source: `receipt:${unverified.cid}:observation` } });
@@ -426,7 +426,7 @@ describe("foldDecisions", () => {
     expect(withoutSeed.decisions.get(sourced.cid)!.status).toEqual({ status: "pending", because: "the predecessor entity's keys are not yet checked against the seed" });
     expect(withoutSeed.decisions.get(manual.cid)!.status).toEqual({ status: "pending", because: "the predecessor entity's keys are not yet checked against the seed" });
     const { checks, proofs } = await fold(scene, keys);
-    const successorUnchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), { ...checks, dids: new Map([[a0.didId, "verified"], [a2.didId, "verified"]]) }).routes, proofs);
+    const successorUnchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), { ...checks, dids: new Map([[a0.didId, "verified"], [a2.didId, "verified"]]) }).dids, proofs);
     expect(successorUnchecked.decisions.get(sourced.cid)!.status).toEqual({ status: "pending", because: "the successor entity's keys are not yet checked against the seed" });
     expect(successorUnchecked.decisions.get(manual.cid)!.status).toEqual({ status: "pending", because: "the successor entity's keys are not yet checked against the seed" });
     const withSeed = await fold(scene, keys);
@@ -553,7 +553,7 @@ describe("foldDecisions", () => {
     const sound = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: fromB0 });
 
     const partial = await foldVaultChecked(VaultEventSet.of(without(scene.events, created)), keys, noObjects);
-    expect(partial.routes.dids.get(a0.didId)).toMatchObject({ created: null, conflict: false });
+    expect(partial.dids.entities.get(a0.didId)).toMatchObject({ created: null, conflict: false });
     expect(partial.checks.didKeys.get(a1.didId)).toBe("verified");
     expect(partial.checks.proofChecks.get(sound.cid)).toMatchObject({ status: "verified" });
     const status = (folded: typeof partial, event: VaultEvent<"did.rotationSelected">) => folded.channels.decisions.get(event.cid)!.status;

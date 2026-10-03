@@ -23,7 +23,7 @@ import { agreementKey, decodePublicKey, type DecodedPublicKey, type KeyType } fr
 import type { VaultEvent } from "../schema.js";
 import type { Channel, Did, DidId, EventCid, VaultData } from "../types.js";
 import type { EvidenceCheck, ReadObject } from "./evidence.js";
-import type { LocalDidEntity, RouteFold } from "./routes.js";
+import type { LocalDidEntity, DidFold } from "./dids.js";
 import type { VaultEventSet } from "./set.js";
 
 /**
@@ -104,15 +104,15 @@ export type ChannelChecks = {
 const noResolutionChecks = new Map<EventCid, EvidenceCheck>();
 const noProofChecks = new Map<EventCid, ProofCheck>();
 
-export function foldChannelEvidence(set: VaultEventSet, routes: RouteFold, checks: ChannelChecks = {}): ChannelEvidence {
-  const sources = foldSources(set, routes, checks.resolutionChecks ?? noResolutionChecks);
+export function foldChannelEvidence(set: VaultEventSet, dids: DidFold, checks: ChannelChecks = {}): ChannelEvidence {
+  const sources = foldSources(set, dids, checks.resolutionChecks ?? noResolutionChecks);
   const carriers = foldCarriers(sources, checks.proofChecks ?? noProofChecks);
   const positive = (id: EventCid) => {
     const source = sources.get(id);
     if (source === undefined || source.channel === null || source.standing.status !== "complete") return false;
     return source.event.data.fromPrior === null || (carriers.get(id)?.facts.length ?? 0) > 0;
   };
-  return { sources, carriers, decisions: foldDecisions(set, routes, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
+  return { sources, carriers, decisions: foldDecisions(set, dids, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
 }
 
 /**
@@ -121,11 +121,11 @@ export function foldChannelEvidence(set: VaultEventSet, routes: RouteFold, check
  * as what it needs is here, and every one is reported before any
  * absence.
  */
-export function foldSources(set: VaultEventSet, routes: RouteFold, resolutionChecks: ReadonlyMap<EventCid, EvidenceCheck>): Map<EventCid, Source> {
+export function foldSources(set: VaultEventSet, dids: DidFold, resolutionChecks: ReadonlyMap<EventCid, EvidenceCheck>): Map<EventCid, Source> {
   const sources = new Map<EventCid, Source>();
   for (const event of set.of("message.in")) {
-    const localDidId = routes.entityOfKey(event.data.localKeyName);
-    const local = localDidId === null ? null : routes.dids.get(localDidId)!;
+    const localDidId = dids.entityOfKey(event.data.localKeyName);
+    const local = localDidId === null ? null : dids.entities.get(localDidId)!;
     sources.set(event.cid, sourceOf(event, localDidId, local, set, resolutionChecks));
   }
   return sources;
@@ -242,7 +242,7 @@ const shortFormOf = (did: string): string => (isLongForm(did) ? longToShort(did)
  */
 export function foldDecisions(
   set: VaultEventSet,
-  routes: RouteFold,
+  dids: DidFold,
   sources: ReadonlyMap<EventCid, Source>,
   carriers: ReadonlyMap<EventCid, Carrier>,
   proofChecks: ReadonlyMap<EventCid, ProofCheck>
@@ -250,8 +250,8 @@ export function foldDecisions(
   const decisions = new Map<EventCid, Decision>();
   for (const event of set.of("did.rotationSelected")) {
     const { data } = event;
-    const from = routes.dids.get(data.fromDidId);
-    const to = routes.dids.get(data.toDidId);
+    const from = dids.entities.get(data.fromDidId);
+    const to = dids.entities.get(data.toDidId);
     const channel = from?.created == null || from.conflict || from.created.did === data.peerDid ? null : channelOf(from.created.did, data.peerDid);
     const status = decisionStatus(event, from, to, channel, set, sources, carriers, proofChecks.get(event.cid));
     decisions.set(event.cid, { event, channel, status });

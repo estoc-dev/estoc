@@ -56,8 +56,8 @@ export function classifyRecipients(fold: VaultFold, kids: readonly string[], rep
   let toReplica = false;
   for (const kid of new Set(kids)) {
     const [did, reference] = splitDidUrl(kid);
-    const didId = fold.routes.entityOfDid(did);
-    const entity = didId === null ? undefined : fold.routes.dids.get(didId);
+    const didId = fold.dids.entityOfDid(did);
+    const entity = didId === null ? undefined : fold.dids.entities.get(didId);
     if (didId === null || entity === undefined || entity.created === null) {
       if (replica !== null && sameDid(did, replica.did) && replica.keyAgreement.includes(reference)) toReplica = true;
       continue;
@@ -68,7 +68,7 @@ export function classifyRecipients(fold: VaultFold, kids: readonly string[], rep
       refused.push(named(entity.methodIds.authentication) ? `${kid} is an authentication method, not a key-agreement one` : `${kid} names no method of ${did}`);
       continue;
     }
-    switch (fold.routes.receipt(didId)) {
+    switch (fold.dids.receipt(didId)) {
       case "eligible":
         return { verdict: "eligible", kid: kid as DidUrl, didId, did: entity.created.did, localKeyName: entity.keyNames.keyAgreement };
       case "pending":

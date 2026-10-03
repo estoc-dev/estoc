@@ -26,14 +26,14 @@ describe("routes", () => {
     await establish(p.link, p.runtime, p.keys, p.mediationId);
     expect(routeTargetOf(await scanVault(p.runtime.vault, p.keys), route)).toEqual({ kind: "mediated", routingDid: p.mediator.did });
     const { minted } = await createDid(p.runtime, p.keys, route, DID);
-    expect(routeOf((await scanVault(p.runtime.vault, p.keys)).routes.dids.get(DID)!)).toEqual(route);
+    expect(routeOf((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(DID)!)).toEqual(route);
 
     const me = (await mintMediationDid(p.keys, OTHER_MEDIATION)).longFormDid;
     await p.runtime.vault.commit([], [vaultDraft("mediation.created", { mediationId: OTHER_MEDIATION, mediatorDid: p.mediator.did as Did, me: { keyName: `mediation/${OTHER_MEDIATION}/me` as KeyName, did: me } }), vaultDraft("mediation.granted", { mediationId: OTHER_MEDIATION, routingDid: p.mediator.did as Did })]);
     const fold = await scanVault(p.runtime.vault, p.keys);
     expect(() => routeTargetOf(fold, route)).toThrow(/several arrangements route through/);
-    expect(fold.routes.dids.get(DID)).toMatchObject({ live: false, created: { did: minted.did }, faults: [`several arrangements route through ${p.mediator.did}: ${[p.mediationId, OTHER_MEDIATION].sort().join(", ")}`] });
-    expect(routeOf(fold.routes.dids.get(DID)!)).toBeNull();
+    expect(fold.dids.entities.get(DID)).toMatchObject({ live: false, created: { did: minted.did }, faults: [`several arrangements route through ${p.mediator.did}: ${[p.mediationId, OTHER_MEDIATION].sort().join(", ")}`] });
+    expect(routeOf(fold.dids.entities.get(DID)!)).toBeNull();
     await expect(createDid(p.runtime, p.keys, route)).rejects.toBeInstanceOf(Unusable);
     await expect(disclose(p.link, p.runtime, p.keys, DID, { as: "oob" })).rejects.toBeInstanceOf(Unusable);
     await p.runtime.close();
@@ -56,8 +56,8 @@ describe("communication DIDs", () => {
     expect(again.minted.did).toBe(first.minted.did);
     const fold = await scanVault(runtime.vault, keys);
     expect(fold.set.of("did.created")).toHaveLength(1);
-    expect(fold.routes.dids.get(DID)).toMatchObject({ live: true, routeTarget: DIRECT, mediations: [] });
-    expect(routeOf(fold.routes.dids.get(DID)!)).toEqual(DIRECT);
+    expect(fold.dids.entities.get(DID)).toMatchObject({ live: true, routeTarget: DIRECT, mediations: [] });
+    expect(routeOf(fold.dids.entities.get(DID)!)).toEqual(DIRECT);
     await runtime.close();
   });
 
@@ -66,7 +66,7 @@ describe("communication DIDs", () => {
     await expect(createDid(runtime, keys, DIRECT, "019b0000-0000-5000-8000-00000000000c" as DidId)).rejects.toBeInstanceOf(InvalidIdentifier);
     const fold = await scanVault(runtime.vault, keys);
     expect(fold.set.of("did.created")).toEqual([]);
-    expect(fold.routes.dids.size).toBe(0);
+    expect(fold.dids.entities.size).toBe(0);
     await runtime.close();
   });
 
@@ -90,7 +90,7 @@ describe("communication DIDs", () => {
     expect(retired.data).toEqual({ didId: DID, because: "user" });
     expect((await retireDid(runtime, keys, DID, "again")).cid).toBe(retired.cid);
     const fold = await scanVault(runtime.vault, keys);
-    expect(fold.routes.dids.get(DID)).toMatchObject({ live: false, retired: "user" });
+    expect(fold.dids.entities.get(DID)).toMatchObject({ live: false, retired: "user" });
     await expect(disclose(null, runtime, keys, DID, { as: "direct" })).rejects.toBeInstanceOf(Unusable);
     await runtime.close();
   });
@@ -108,7 +108,7 @@ describe("disclosure", () => {
     expect(direct.disclosed.data).toEqual({ didId: DID, as: "direct", oobId: null, goal: null });
     expect(direct.invitation).toBeNull();
     const fold = await scanVault(runtime.vault, keys);
-    expect(fold.routes.dids.get(DID)?.disclosures).toHaveLength(2);
+    expect(fold.dids.entities.get(DID)?.disclosures).toHaveLength(2);
     await runtime.close();
   });
 
@@ -138,7 +138,7 @@ describe("disclosure", () => {
     await expect(disclose(null, p.runtime, p.keys, DID, { as: "oob" })).rejects.toBeInstanceOf(WrongMediator);
     mediator.refuse.add(minted.did);
     await expect(disclose(p.link, p.runtime, p.keys, DID, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
-    expect((await scanVault(p.runtime.vault, p.keys)).routes.dids.get(DID)?.disclosures).toEqual([]);
+    expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(DID)?.disclosures).toEqual([]);
     mediator.refuse.delete(minted.did);
     const disclosed = await disclose(p.link, p.runtime, p.keys, DID, { as: "oob", oobId: "invite-1" });
     expect(disclosed.invitation?.id).toBe("invite-1");

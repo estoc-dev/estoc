@@ -74,7 +74,7 @@ async function opened(alice: DirectParty, bob: DirectParty, packed: string): Pro
 /** Alice continues `ALICE` as `ALICE_NEXT` toward `peer`, under the proof her seed signs, once the peer has written to `ALICE`: a verified local replacement. */
 async function rotated(alice: DirectParty, peer: DirectParty): Promise<{ next: Did; longFormDid: Did; fromPrior: string; decision: EventCid }> {
   await received(alice, peer, `confirm-${ALICE}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } });
-  const route = routeOf((await fold(alice)).routes.dids.get(ALICE)!)!;
+  const route = routeOf((await fold(alice)).dids.entities.get(ALICE)!)!;
   const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
   const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, IAT);
   const [decision] = await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
@@ -307,7 +307,7 @@ describe("prepare", () => {
 
   test("a rotation to the sender that is still waiting for its evidence stops the package rather than sending it proof-free", async () => {
     const { alice, bob } = await parties();
-    const route = routeOf((await fold(alice)).routes.dids.get(ALICE)!)!;
+    const route = routeOf((await fold(alice)).dids.entities.get(ALICE)!)!;
     const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
     const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, IAT);
     const missing = rawCidOfBytes(new Uint8Array(32).fill(0xee)) as unknown as EventReference<"message.in">;

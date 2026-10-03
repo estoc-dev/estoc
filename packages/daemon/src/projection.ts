@@ -57,8 +57,8 @@ export function mediationRecords(mediations: VaultFold["mediations"]): Mediation
   }));
 }
 
-export function localDidRecords(routes: VaultFold["routes"]): LocalDidRecord[] {
-  return [...routes.dids.values()].map((entity) => ({
+export function localDidRecords(dids: VaultFold["dids"]): LocalDidRecord[] {
+  return [...dids.entities.values()].map((entity) => ({
     didId: apiId(entity.didId),
     did: entity.created?.did ?? null,
     longFormDid: entity.created?.longFormDid ?? null,

@@ -27,7 +27,7 @@ const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filt
 
 const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
 
-const didOf = (fold: VaultFold, didId: DidId): Did => fold.routes.dids.get(didId)!.created!.did;
+const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 const eventIds = (fold: VaultFold): string[] => [...fold.set.all()].map((event) => event.cid);
 
@@ -118,7 +118,7 @@ describe("a vault restored from a snapshot", () => {
     ).toEqual([expect.stringContaining("local recipient material is unavailable"), expect.stringContaining(`sender material is unavailable for ${b1}`)]);
     const fold = await foldOf(restored);
     expect(fold.set.of("message.in")).toHaveLength(1);
-    expect(fold.routes.dids.has(ALICE_LATER)).toBe(false);
+    expect(fold.dids.entities.has(ALICE_LATER)).toBe(false);
     expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed")).toEqual([]);
   });
 

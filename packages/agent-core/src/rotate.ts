@@ -209,7 +209,7 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
  */
 async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEntity, selected: boolean, options: Pick<RotateOptions, "route" | "didId">): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
   const didId = options.didId ?? (uuidv7() as DidId);
-  const existing = fold.routes.dids.get(didId);
+  const existing = fold.dids.entities.get(didId);
   const successor = await mintDid(keys, didId, successorTarget(fold, predecessor, existing, options.route));
   if (existing === undefined) return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid })], successor };
   if (!sameDocument(existing, successor)) throw new EntityConflict("DID", didId, existing.conflict ? existing.faults.join("; ") : "another document or route");

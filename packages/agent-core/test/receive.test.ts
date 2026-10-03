@@ -173,7 +173,7 @@ describe("the gate before the vault", () => {
     expect(seen).toHaveLength(1);
     expect(await trace.read({ type: "envelope.open" })).toHaveLength(1);
 
-    const route = routeOf((await scanVault(bob.runtime.vault, bob.keys)).routes.dids.get(BOB)!)!;
+    const route = routeOf((await scanVault(bob.runtime.vault, bob.keys)).dids.entities.get(BOB)!)!;
     const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, 1_757_700_000);
     const withProof = await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof });
@@ -205,7 +205,7 @@ describe("the gate before the vault", () => {
     const receiver = await receiverOver(alice, { receipt });
     const packed = await sealed(await peerSealer(bob), alice.longFormDid);
     const [, agreement] = splitDidUrl(kidOf(packed));
-    const entity = (await scanVault(alice.runtime.vault, alice.keys)).routes.dids.get(DID)!;
+    const entity = (await scanVault(alice.runtime.vault, alice.keys)).dids.entities.get(DID)!;
     const [, authentication] = splitDidUrl(entity.methodIds.authentication[0]!);
     const refused = async (text: string): Promise<string> => terminalReason(await receiver.receive({ packed: text, source: DIRECT }));
 
@@ -398,7 +398,7 @@ describe("the gate before the vault", () => {
         calls.push(recipient.didId);
         if (failing) throw new Error("the disk is full");
         if (recipient.didId !== DID) return { outcome: "received", cid: RECORDED, first: true, live: true };
-        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.routes.dids.get(DID)?.disclosures.length ?? 0) };
+        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.dids.entities.get(DID)?.disclosures.length ?? 0) };
       },
     });
     const sealer = await peerSealer(bob);
@@ -455,7 +455,7 @@ describe("the gate before the vault", () => {
           deciding();
           await resumed;
         }
-        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.routes.dids.get(DID)?.disclosures.length ?? 0) };
+        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.dids.entities.get(DID)?.disclosures.length ?? 0) };
       },
     });
     const delivery: Delivery = { packed: await sealed(await peerSealer(bob), alice.longFormDid), source: PICKUP };
@@ -538,7 +538,7 @@ describe("the gate before the vault", () => {
           deciding();
           await resumed;
         }
-        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.routes.dids.get(DID)?.disclosures.length ?? 0) };
+        return { outcome: "deferred", reason: "the receipt waits for the recipient's disclosure", watch: (fold) => String(fold.dids.entities.get(DID)?.disclosures.length ?? 0) };
       },
     });
     const events = copy.runtime.vault.events;

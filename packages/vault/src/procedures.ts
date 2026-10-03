@@ -330,7 +330,7 @@ export function notificationChannel(fold: VaultFold, decision: Decision): Notifi
   if (decision.channel === null) return none("the decision's predecessor is not known here");
   const continuity = fold.continuity.status(decision.event.cid);
   if (continuity.status !== "verified") return none(`the rotation is not verified: ${continuity.status}${"because" in continuity ? `, ${continuity.because}` : ""}`);
-  const successor = fold.routes.dids.get(decision.event.data.toDidId)?.created?.did;
+  const successor = fold.dids.entities.get(decision.event.data.toDidId)?.created?.did;
   if (successor === undefined) return none("the successor has no consistent creation here");
   const channel = channelOf(successor, decision.channel.peerDid);
   const gate = senderGate(fold, channel);

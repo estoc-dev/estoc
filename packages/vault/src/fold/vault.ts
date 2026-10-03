@@ -26,7 +26,7 @@ import { foldInvitations, type InvitationFold } from "./invitations.js";
 import { foldMediations, verifyMediationKeys, type KeyCheck, type MediationFold } from "./mediation.js";
 import { foldOutbound, type OutboundFold, type OutboundFoldOptions } from "./outbound.js";
 import { foldReplicas, verifyReplicaGrants, type ReplicaFold } from "./replicas.js";
-import { foldRoutes, verifyDidKeys, type RouteFold } from "./routes.js";
+import { foldDids, verifyDidKeys, type DidFold } from "./dids.js";
 import { VaultEventSet } from "./set.js";
 import { foldViews, type Views } from "./views.js";
 
@@ -46,7 +46,7 @@ export interface VaultFold {
   readonly authors: readonly AuthorActivity[];
   readonly mediations: MediationFold;
   readonly replicas: ReplicaFold;
-  readonly routes: RouteFold;
+  readonly dids: DidFold;
   readonly channels: ChannelEvidence;
   readonly continuity: Continuity;
   readonly admissions: AdmissionFold;
@@ -76,14 +76,14 @@ export function foldVault(set: VaultEventSet, checks: VaultChecks = {}, options:
     proofChecks: checks.proofChecks ?? new Map(),
   };
   const mediations = foldMediations(set, { keyChecks: all.mediationKeys });
-  const routes = foldRoutes(set, mediations, { keyChecks: all.didKeys });
-  const channels = foldChannelEvidence(set, routes, all);
+  const dids = foldDids(set, mediations, { keyChecks: all.didKeys });
+  const channels = foldChannelEvidence(set, dids, all);
   const admissions = foldAdmissions(set, channels);
   const continuity = foldContinuity(set, channels, admissions);
   const erasures = foldErasures(set);
   const inbound = foldInbound(channels, continuity, admissions, erasures);
   const dispositions = foldDispositions(channels, continuity, admissions, inbound);
-  const outbound = foldOutbound(set, routes, channels, continuity, inbound, erasures, all.resolutionChecks, options);
+  const outbound = foldOutbound(set, dids, channels, continuity, inbound, erasures, all.resolutionChecks, options);
   const contacts = foldContacts(set);
   return {
     set,
@@ -92,17 +92,17 @@ export function foldVault(set: VaultEventSet, checks: VaultChecks = {}, options:
     authors: foldAuthors(set),
     mediations,
     replicas: foldReplicas(set, { grantChecks: all.replicaGrants }),
-    routes,
+    dids,
     channels,
     continuity,
     admissions,
     inbound,
     dispositions,
-    invitations: foldInvitations(set, routes),
+    invitations: foldInvitations(set, dids),
     contacts,
     outbound,
     erasures,
-    views: foldViews({ routes, continuity, inbound, outbound, contacts }),
+    views: foldViews({ dids, continuity, inbound, outbound, contacts }),
     retained: retainedRoots(set, erasures, outbound.released),
     held: heldRoots(set, erasures, outbound.released),
   };
@@ -139,7 +139,7 @@ export async function checkVault(set: VaultEventSet, keys: Keys | null, readObje
   const mediationKeys = keys === null ? new Map<MediationId, KeyCheck>() : await verifyMediationKeys(keys, foldMediations(set));
   const mediations = foldMediations(set, { keyChecks: mediationKeys });
   const replicaGrants = keys === null ? new Map<ReplicaId, KeyCheck>() : await verifyReplicaGrants(keys, set);
-  const didKeys = keys === null ? new Map<DidId, KeyCheck>() : await verifyDidKeys(keys, foldRoutes(set, mediations));
+  const didKeys = keys === null ? new Map<DidId, KeyCheck>() : await verifyDidKeys(keys, foldDids(set, mediations));
   const resolutionChecks = await verifyResolutions(set, readObject);
   return { mediationKeys, replicaGrants, didKeys, resolutionChecks, proofChecks: await verifyProofs(set, resolutionChecks, readObject) };
 }

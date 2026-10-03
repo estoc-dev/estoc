@@ -33,7 +33,7 @@ describe("the whole fold", () => {
       expect(fold.label).toBe("me");
       expect(fold.authors).toHaveLength(1);
       expect(fold.mediations.preferred).not.toBeNull();
-      expect(fold.routes.dids.get(a0.didId)!.live).toBe(true);
+      expect(fold.dids.entities.get(a0.didId)!.live).toBe(true);
       expect(fold.erasures.get(out.data.messageId)).toEqual(new Set([pkg.data.envelopeCid]));
       expect(fold.held).toEqual(new Set([root.data.documentCid, inbound.data.bodyCid, out.data.bodyCid]));
       expect(fold.retained.filter((edge) => edge.cid === pkg.cid)).toEqual([]);
@@ -48,9 +48,9 @@ describe("the whole fold", () => {
     resolved(scene, a0.didId, b0);
     const vault = await memoryVault(scene.events);
     const seeded = await scanVault(vault.vault, keys);
-    expect(seeded.routes.dids.get(a0.didId)!.live).toBe(true);
+    expect(seeded.dids.entities.get(a0.didId)!.live).toBe(true);
     const unseeded = await scanVault(vault.vault, null);
-    expect(unseeded.routes.dids.get(a0.didId)).toMatchObject({ live: false, identity: "unchecked" });
+    expect(unseeded.dids.entities.get(a0.didId)).toMatchObject({ live: false, identity: "unchecked" });
     expect(unseeded.checks.didKeys.size).toBe(0);
 
     const hello = encoder.encode("hello");

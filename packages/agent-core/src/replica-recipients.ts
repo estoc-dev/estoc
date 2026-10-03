@@ -36,8 +36,8 @@ type SharedAddress = LocalDidEntity & { created: VaultData["did.created"] };
  */
 function sharedAddresses(fold: VaultFold, mediationId: MediationId): SharedAddress[] {
   const addresses: SharedAddress[] = [];
-  for (const entity of fold.routes.dids.values()) {
-    if (entity.created === null || entity.identity !== "verified" || fold.routes.receipt(entity.didId) === "terminal") continue;
+  for (const entity of fold.dids.entities.values()) {
+    if (entity.created === null || entity.identity !== "verified" || fold.dids.receipt(entity.didId) === "terminal") continue;
     if (entity.mediations.includes(mediationId)) addresses.push(entity as SharedAddress);
   }
   return addresses.sort((a, b) => (a.created.did < b.created.did ? -1 : a.created.did > b.created.did ? 1 : 0));

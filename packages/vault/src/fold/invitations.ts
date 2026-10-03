@@ -15,7 +15,7 @@
 
 import type { VaultEvent } from "../schema.js";
 import type { Did, DidId, EventCid } from "../types.js";
-import type { LocalDidEntity, RouteFold } from "./routes.js";
+import type { LocalDidEntity, DidFold } from "./dids.js";
 import type { VaultEventSet } from "./set.js";
 
 export type InvitationStatus = { status: "available" } | { status: "unavailable"; because: string };
@@ -34,30 +34,30 @@ export interface InvitationFold {
   readonly invitations: ReadonlyMap<EventCid, Invitation>;
 }
 
-export function foldInvitations(set: VaultEventSet, routes: RouteFold): InvitationFold {
+export function foldInvitations(set: VaultEventSet, dids: DidFold): InvitationFold {
   const disclosures = set.of("did.disclosed").filter((disclosure) => disclosure.data.as === "oob");
   const disclosedUnder = new Map<string, number>();
   for (const { data } of disclosures) disclosedUnder.set(data.oobId!, (disclosedUnder.get(data.oobId!) ?? 0) + 1);
   const invitations = new Map<EventCid, Invitation>();
   for (const disclosure of disclosures) {
     const oobId = disclosure.data.oobId!;
-    const entity = routes.dids.get(disclosure.data.didId);
+    const entity = dids.entities.get(disclosure.data.didId);
     invitations.set(disclosure.cid, {
       disclosure,
       oobId,
       didId: disclosure.data.didId,
       localDid: entity?.created?.did ?? null,
-      status: disclosedUnder.get(oobId)! > 1 ? { status: "unavailable", because: "the invitation's ID names more than one disclosure" } : statusOf(entity, routes),
+      status: disclosedUnder.get(oobId)! > 1 ? { status: "unavailable", because: "the invitation's ID names more than one disclosure" } : statusOf(entity, dids),
     });
   }
   return { invitations };
 }
 
-function statusOf(entity: LocalDidEntity | undefined, routes: RouteFold): InvitationStatus {
+function statusOf(entity: LocalDidEntity | undefined, dids: DidFold): InvitationStatus {
   const unavailable = (because: string): InvitationStatus => ({ status: "unavailable", because });
   if (entity === undefined || entity.created === null) return unavailable("the disclosed DID has no consistent creation here");
   if (entity.conflict) return unavailable(`the disclosed DID is in conflict: ${entity.faults[0]}`);
   if (entity.retired !== null) return unavailable("the disclosed DID is retired");
-  if (routes.receipt(entity.didId) === "terminal") return unavailable("the disclosed DID's mediation is terminal");
+  if (dids.receipt(entity.didId) === "terminal") return unavailable("the disclosed DID's mediation is terminal");
   return entity.live ? { status: "available" } : unavailable(entity.faults[0]!);
 }

@@ -259,7 +259,7 @@ export class Agent {
    */
   async connect(): Promise<Connection[]> {
     const fold = await scanVault(this.runtime.vault, this.keys);
-    const required = [...requiredReceivingSet(fold.mediations, fold.routes)].sort();
+    const required = [...requiredReceivingSet(fold.mediations, fold.dids)].sort();
     return Promise.all(required.map((mediationId) => this.connectTo(mediationId)));
   }
 
@@ -552,7 +552,7 @@ export class Agent {
     try {
       const fold = await scanVault(this.runtime.vault, this.keys);
       if (!stands()) return;
-      if (!requiredReceivingSet(fold.mediations, fold.routes).has(mediationId)) return;
+      if (!requiredReceivingSet(fold.mediations, fold.dids).has(mediationId)) return;
     } catch (err) {
       if (!stands()) return;
       this.log(`the connection of ${mediationId} was not tried again: ${messageOf(err)}`);
