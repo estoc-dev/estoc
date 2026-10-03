@@ -11,7 +11,7 @@ storage, no agent, no protocol. What is here is the identifier
 vocabulary (`types.ts`: one nominal type per kind of value a payload
 names, over the validated string it serializes as, and the channel, an
 ordered pair of a local and a peer DID), the deterministic
-identifiers (`ids.ts`: the three UUIDv5 namespaces derived from the URL
+identifiers (`ids.ts`: the UUIDv5 namespaces derived from the URL
 namespace, an inbound observation by its canonical sender, recipient and
 wire ID or, anonymous, by the decrypting local key, an execution from
 the same three, an effect key over the tagged execution and effect type
@@ -264,30 +264,35 @@ heads of the selected channels that take a new send now, a `useDid`
 preference matched to the heads at that DID or at a verified local
 successor of it on the way there, and `defaultWriteTo` only when one
 head is left, never a predecessor in place of an unusable head) and
-the procedures (`procedures.ts`: `vaultRetention` / `vaultHeldRoots`
-hand the event store the fold's retention for collection, export,
-validation and import, and `collectGarbage` is one pass;
+the procedures, one module per question (`retention.ts`:
+`vaultRetention` / `vaultHeldRoots` hand the event store the fold's
+retention for collection, export, validation and import, and
+`collectGarbage` is one pass; `commit.ts`: how a decision over the fold
+commits, one scan under the writer lock, one batch, and a collection
+under the same lock when the batch may release a root; `erasure.ts`:
 `eraseMessage` erases a message over every root its events and
 packages still name, in one commit, and `closeErasures` appends the
 equivalent erases a later observation or package made an erased
 message owed, `eraseDrafts` / `erasureClosure` being the decisions;
-`unfinishedWork`
-lists what an open finds and dispatches nothing of — the outbounds
-still to prepare or dispatch, the pure ACKs and Ping replies
-established inputs may still be given, each a candidate the manual
-completion still holds to current policy and to what the body says,
-under `responseChannel`, the carrier's own channel while its local DID
-sends there and otherwise the unique verified local successor head
-keeping the peer, the notifications verified decisions permit while
-their source, an application input, stays eligible, the decisions
-whose notification intents disagree, and the proofs waiting for
-issuer material; `automaticIntent` names an
-operation's tuple over an input, its message ID and the intent already
-under it; `decisionFor` is the decision a rotation away from a pair
-reuses, defers on or refuses over, from its verified peer-only
-context; `blockChannels` denies pairs once each, `deleteContact`
-appends the tombstone with the denials and erasures the product chose
-alongside, `blockDrafts` / `deleteContactDrafts` being the decisions).
+`response-policy.ts`: `responseChannel`, where a built-in reply goes,
+the carrier's own channel while its local DID sends there and
+otherwise the unique verified local successor head keeping the peer,
+`notificationChannel`, where a verified decision's notification goes
+while its source, an application input, stays eligible, and
+`automaticIntent`, an operation's tuple over an input, its message ID
+and the intent already under it; `rotation-policy.ts`: `decisionFor`
+is the decision a rotation away from a pair reuses, defers on or
+refuses over, from its verified peer-only context; `pending-work.ts`:
+`unfinishedWork` lists what an open finds and dispatches nothing of —
+the outbounds still to prepare or dispatch, the pure ACKs and Ping
+replies established inputs may still be given, each a candidate the
+manual completion still holds to current policy and to what the body
+says, the notifications verified decisions permit, the decisions whose
+notification intents disagree, and the proofs waiting for issuer
+material; `contact-commands.ts`: `blockChannels` denies pairs once
+each, `deleteContact` appends the tombstone with the denials and
+erasures the product chose alongside, `blockDrafts` /
+`deleteContactDrafts` being the decisions).
 Every published
 identifier and public-key vector of those documents is a test in
 `test/`, and the DIDs and signature a fixed seed derives are pinned

@@ -19,6 +19,7 @@ import {
   channelOf,
   didKeyName,
   effectKey,
+  foldVaultChecked,
   inboundMessageId,
   inputDocumentOf,
   methodPublicKey,
@@ -304,3 +305,11 @@ export function packageOf(scene: Scene, out: VaultEvent<"message.out">, input: P
     options
   );
 }
+
+export const foldScene = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
+
+export const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer, overrides: Receipt["overrides"] = {}) =>
+  receipt(scene, { local, peer, resolution: resolved(scene, local.didId, peer), overrides });
+
+export const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer) =>
+  receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), fromPrior: await proof(peerKeys, predecessor, successor) });

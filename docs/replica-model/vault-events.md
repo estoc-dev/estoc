@@ -42,10 +42,10 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 | Identity and naming | [Identity, keys and identifier types](#identity-seed-and-key-names); [Identity label](#identity-label) | [Runtime author](#runtime-author-fold) | [Open runtime](../../packages/agent-core/src/identity.ts) |
 | Mediation and DIDs | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation and DID events](#mediation-communication-dids-and-routes) | [Mediation](../../packages/vault/src/fold/mediation.ts); [Replicas](../../packages/vault/src/fold/replicas.ts); [DIDs and keys](../../packages/vault/src/fold/dids.ts) | [Establish mediation](../../packages/agent-core/src/mediation.ts); [Enroll a replica](../../packages/agent-core/src/replica-enrollment.ts); [Create and disclose a DID](../../packages/agent-core/src/dids.ts) |
 | Channels and continuity | [Source evidence and directed links](#relationships-and-address-changes) | [Channel and continuity projections](#relationship-fold-and-address-index) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](../../packages/agent-core/src/privacy.ts); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
-| Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](../../packages/vault/src/fold/contacts.ts); [Contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/procedures.ts) |
+| Contacts and application views | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Application views](#application-message-views); [Contacts](../../packages/vault/src/fold/contacts.ts); [Contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/contact-commands.ts) |
 | Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events and witnesses](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
 | Invitations | [Disclosure](#disclosure) | [Invitation availability](../../packages/vault/src/fold/invitations.ts) | [Discovery](relationships.md#out-of-band-discovery); [Receipt](../../packages/agent-core/src/receive/receipt.ts) |
-| Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held-root rules](#held-roots) | [Erase message](../../packages/vault/src/procedures.ts) |
+| Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held-root rules](#held-roots) | [Erase message](../../packages/vault/src/erasure.ts) |
 
 <details>
 <summary>Contents</summary>
@@ -914,7 +914,7 @@ the document, so the long form fixes it; nothing beside the document
 records it and no event changes it. A transport or mediation change
 creates successor DID entities, allowing old and new DIDs to overlap
 during cutover. Each affected channel context uses its own
-[section-6.5](#relationship-localtransitioned) local decision for new
+[section 6.4](#relationship-localtransitioned) local decision for new
 intents; mediation selection does not migrate existing DIDs.
 
 A direct endpoint routes to a full vault runtime or an ingress service.
@@ -2195,20 +2195,33 @@ The folds over these events, and the procedures that decide what to
 append, are specified by their code and its tests, not by this document.
 Each fold is a module of
 [`packages/vault/src/fold/`](../../packages/vault/src/fold/) whose leading
-comment states the rule it implements. A fold is deterministic over the
+comment states the rule it implements; the admission fold is
+[`packages/vault/src/admission/model.ts`](../../packages/vault/src/admission/model.ts),
+beside the pass that records admissions. A fold is deterministic over the
 same event set, the verdicts handed to it and its interpretation options,
 in whatever order the events arrived: what needs the seed or the retained
 objects is checked once beside the fold, in
 [`packages/vault/src/fold/vault.ts`](../../packages/vault/src/fold/vault.ts),
 and the verdicts are passed in, so the event frontier alone is not the
 whole input and a repaired or lost object changes the projection without
-a new event. `packages/vault/test/fold/` checks each fold by shuffling.
-The procedures that write the vault are
-[`packages/vault/src/procedures.ts`](../../packages/vault/src/procedures.ts)
-and the modules of
+a new event. `packages/vault/test/fold/` and
+`packages/vault/test/admission/` check each fold by shuffling.
+The procedures that write the vault are modules of
+[`packages/vault/src/`](../../packages/vault/src/), one per question —
+[`retention.ts`](../../packages/vault/src/retention.ts) hands the event
+store what the fold holds, [`erasure.ts`](../../packages/vault/src/erasure.ts)
+releases a message's roots and keeps the erasure complete,
+[`contact-commands.ts`](../../packages/vault/src/contact-commands.ts)
+denies channels and deletes a contact,
+[`admission/record.ts`](../../packages/vault/src/admission/record.ts)
+records admissions, [`response-policy.ts`](../../packages/vault/src/response-policy.ts)
+and [`rotation-policy.ts`](../../packages/vault/src/rotation-policy.ts)
+are the decisions a reply, a notification and a rotation take before
+they commit, and [`pending-work.ts`](../../packages/vault/src/pending-work.ts)
+lists what an open finds unfinished — and the modules of
 [`packages/agent-core/src/`](../../packages/agent-core/src/); each reads
 the fold under the writer lock, decides over it and commits each decision
-in one batch. Where one procedure commits twice, such as a rotation and
+in one batch, as [`commit.ts`](../../packages/vault/src/commit.ts) states. Where one procedure commits twice, such as a rotation and
 its notification, its module states what a crash between the commits
 leaves. Their tests sit beside them. This document keeps the event schemas
 and the retention contract that the folds obey; where a section above

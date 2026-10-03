@@ -307,7 +307,7 @@ Source events are durable portable evidence, never a clearable diagnostic
 cache. The host revision used for authorization covers objects and validation
 dependencies as well as the event frontier: evidence repair or discovered damage
 can change a projection without adding an event. Invalidate and recheck affected
-operations under [the procedures' one-fold rule](../../packages/vault/src/procedures.ts).
+operations under [the procedures' one-fold rule](../../packages/vault/src/commit.ts).
 
 <a id="ownership-and-lifecycle"></a>
 

@@ -224,32 +224,11 @@ export { type Erasures, type Released, type ReadState, foldErasures, erased, ret
 export { type SendGate, senderGate, channelPolicy } from "./channel-policy.js";
 export { type ViewInputs, type RemoteError, type ChannelView, type ContactChannel, type Preference, type ContactView, type Views, foldViews, messageIdsOf } from "./fold/views.js";
 export { type VaultChecks, type VaultFold, type FoldOptions, type ScanOptions, MAX_READ_BYTES, foldVault, objectReader, checkVault, foldVaultChecked, scanVault } from "./fold/vault.js";
-export {
-  type Committed,
-  type AutomaticIntent,
-  type ResponseChannel,
-  type MissingResponse,
-  type MissingNotification,
-  type NotificationChannel,
-  type NotificationConflict,
-  type PendingWork,
-  type ExistingDecision,
-  type DeleteContactOptions,
-  vaultRetention,
-  vaultHeldRoots,
-  collectGarbage,
-  eraseDrafts,
-  erasureClosure,
-  eraseMessage,
-  closeErasures,
-  automaticIntent,
-  responseChannel,
-  notificationChannel,
-  unfinishedWork,
-  decisionFor,
-  blockDrafts,
-  blockChannels,
-  deleteContactDrafts,
-  deleteContact,
-} from "./procedures.js";
+export { vaultRetention, vaultHeldRoots, collectGarbage } from "./retention.js";
+export { type Committed } from "./commit.js";
+export { eraseDrafts, erasureClosure, eraseMessage, closeErasures } from "./erasure.js";
+export { type AutomaticIntent, type ResponseChannel, type NotificationChannel, automaticIntent, responseChannel, notificationChannel } from "./response-policy.js";
+export { type ExistingDecision, decisionFor } from "./rotation-policy.js";
+export { type DeleteContactOptions, blockDrafts, blockChannels, deleteContactDrafts, deleteContact } from "./contact-commands.js";
+export { type MissingResponse, type MissingNotification, type NotificationConflict, type PendingWork, unfinishedWork } from "./pending-work.js";
 export { type Admitted, admissionDrafts, admitReceipts, reconcileAdmissions } from "./admission/record.js";
