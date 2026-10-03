@@ -1,43 +1,26 @@
 /**
- * The routes and the vault's own communication DIDs. A route is a
- * reusable transport; a DID entity binds exactly one and is live while
- * its record is consistent, its document reads and sends to that
- * route, the route and any mediation behind it are usable, and the seed
- * has been found to derive its keys. The fold keeps every entity, live
- * or not, so a key name met later still finds the entity it belongs
- * to, in conflict or not, and a consistent DID spelling its one
- * entity; liveness governs sending and recipient registration, not
- * history. The key check needs the seed and runs
- * beside the fold; an entity the seed has not confirmed is pending,
- * never live.
+ * The vault's own communication DIDs. Where an entity sends is its
+ * document's own word: the one DIDComm service of the long form names
+ * a mediator's routing DID or a direct endpoint, and a mediated entity
+ * is routed by the one usable arrangement whose grant names that DID.
+ * An entity is live while its record is consistent, its document reads
+ * and sends somewhere, that arrangement stands, and the seed has been
+ * found to derive its keys. The fold keeps every entity, live or not,
+ * so a key name met later still finds the entity it belongs to, in
+ * conflict or not, and a consistent DID spelling its one entity;
+ * liveness governs sending and recipient registration, not history.
+ * The key check needs the seed and runs beside the fold; an entity the
+ * seed has not confirmed is pending, never live.
  */
 
 import { IdentityMismatch, InvalidDidDocument, InvalidPublicKey } from "../errors.js";
-import { checkDidKeys, didDocumentOf, routeServiceUri, type Keys, type RouteTarget } from "../identity.js";
+import { checkDidKeys, didDocumentOf, serviceTargetOf, type Keys, type RouteTarget } from "../identity.js";
 import { didKeyName } from "../ids.js";
 import { authorizedMethodIds, didcommServiceUris, type PeerResolution } from "../peer-document.js";
 import type { VaultEvent } from "../schema.js";
-import type { Did, DidId, DidUrl, KeyName, MediationId, RouteId, VaultData } from "../types.js";
-import { foldMediations, verifyMediationKeys, type IdentityCheck, type KeyCheck, type MediationFold } from "./mediation.js";
+import type { Did, DidId, DidUrl, KeyName, MediationId, VaultData } from "../types.js";
+import { foldMediations, verifyMediationKeys, type IdentityCheck, type KeyCheck, type Mediation, type MediationFold } from "./mediation.js";
 import { groupBy, samePayload, type VaultEventSet } from "./set.js";
-
-export interface Route {
-  readonly routeId: RouteId;
-  /** the consistent configuration, null while there is none or configurations disagree */
-  readonly configured: VaultData["route.configured"] | null;
-  /** the reason of the first retirement in canonical order, null while not retired */
-  readonly retired: string | null;
-  /** disagreeing configurations under this ID */
-  readonly conflict: boolean;
-  /** configured, not retired, no conflict: what a bound DID needs of it */
-  readonly usable: boolean;
-  /**
-   * The route or its mediation is retired or in conflict: input to a
-   * DID bound here is rejected for good. A missing grant or an endpoint
-   * that does not answer is not terminal.
-   */
-  readonly terminal: boolean;
-}
 
 export interface LocalDidEntity {
   readonly didId: DidId;
@@ -48,8 +31,10 @@ export interface LocalDidEntity {
   readonly keyNames: { authentication: KeyName; keyAgreement: KeyName };
   /** the document's methods for each use, for the exact `kid` a recipient or signer names */
   readonly methodIds: { authentication: readonly DidUrl[]; keyAgreement: readonly DidUrl[] };
-  /** where the bound route sends, when the route and any grant behind it are known */
+  /** where the document sends, null while it does not read or names no one route */
   readonly routeTarget: RouteTarget | null;
+  /** the usable arrangements routed through the document's routing DID, in ID order: one for a live mediated entity, none for a direct one */
+  readonly mediations: readonly MediationId[];
   readonly disclosures: readonly VaultEvent<"did.disclosed">[];
   /** the reason of the first retirement in canonical order, null while not retired */
   readonly retired: string | null;
@@ -57,23 +42,22 @@ export interface LocalDidEntity {
   readonly faults: readonly string[];
   /**
    * Disagreeing creations, an unreadable record, a spelling another
-   * entity also claims, a document that sends elsewhere than the bound
-   * route or keys the seed does not derive: the entity cannot be used
-   * for cryptography, however its route stands.
+   * entity also claims, a document that names no one route or keys the
+   * seed does not derive: the entity cannot be used for cryptography,
+   * however its arrangement stands.
    */
   readonly conflict: boolean;
   readonly identity: IdentityCheck;
-  /** consistent, verified, not retired, document and route in order: may send, disclose, bind and register */
+  /** consistent, verified, not retired, document and arrangement in order: may send, disclose and register */
   readonly live: boolean;
 }
 
-/** One pair the mediator is asked to deliver for: a live DID by its short form and its mediated route. */
-export type DesiredRecipient = { did: Did; didId: DidId; routeId: RouteId; mediationId: MediationId };
+/** One pair the mediator is asked to deliver for: a live DID by its short form and the arrangement that routes it. */
+export type DesiredRecipient = { did: Did; didId: DidId; mediationId: MediationId };
 
 export interface RouteFold {
-  readonly routes: ReadonlyMap<RouteId, Route>;
   readonly dids: ReadonlyMap<DidId, LocalDidEntity>;
-  /** the live DIDs on mediated routes, by short form */
+  /** the live mediated DIDs, by short form */
   readonly desiredRecipients: readonly DesiredRecipient[];
   /** the entity a key name derives from, whatever its state, since one entity ID names each key; null for a name no entity here records */
   entityOfKey(name: KeyName): DidId | null;
@@ -81,12 +65,13 @@ export interface RouteFold {
   entityOfDid(did: string): DidId | null;
   /**
    * May this entity's key-agreement key still receive? `terminal` for
-   * an unknown or conflicted entity or a terminal route, whatever else
-   * is missing; `eligible` while the entity is live, or retired with
-   * its route intact, since retirement ends new sending and disclosure
-   * but not the draining of what was addressed here; `pending` while
-   * only a recoverable prerequisite is missing: the route's
-   * configuration, the mediation's grant, the key check.
+   * an unknown or conflicted entity, or one whose every arrangement is
+   * retired or in conflict, whatever else is missing; `eligible` while
+   * the entity is live, or retired with its arrangement intact, since
+   * retirement ends new sending and disclosure but not the draining of
+   * what was addressed here; `pending` while only a recoverable
+   * prerequisite is missing: an arrangement through the routing DID,
+   * its grant, the key check.
    */
   receipt(didId: DidId): ReceiptEligibility;
 }
@@ -96,8 +81,7 @@ export type ReceiptEligibility = "eligible" | "pending" | "terminal";
 export type RouteFoldOptions = { keyChecks?: ReadonlyMap<DidId, KeyCheck> };
 
 export function foldRoutes(set: VaultEventSet, mediations: MediationFold, options: RouteFoldOptions = {}): RouteFold {
-  const routes = foldRouteTable(set, mediations);
-  const dids = foldDidTable(set, routes, mediations, options.keyChecks);
+  const { dids, terminal } = foldDidTable(set, mediations, options.keyChecks);
 
   const byKey = new Map<KeyName, DidId>();
   const byDid = new Map<string, DidId>();
@@ -111,53 +95,44 @@ export function foldRoutes(set: VaultEventSet, mediations: MediationFold, option
 
   const desiredRecipients: DesiredRecipient[] = [];
   for (const did of dids.values()) {
-    if (!did.live || did.created === null) continue;
-    const route = routes.get(did.created.boundRouteId)?.configured;
-    if (route === undefined || route === null || route.kind !== "mediated") continue;
-    desiredRecipients.push({ did: did.created.did, didId: did.didId, routeId: route.routeId, mediationId: route.mediationId });
+    const mediationId = did.mediations[0];
+    if (!did.live || did.created === null || mediationId === undefined) continue;
+    desiredRecipients.push({ did: did.created.did, didId: did.didId, mediationId });
   }
   desiredRecipients.sort((a, b) => (a.did < b.did ? -1 : a.did > b.did ? 1 : 0));
 
   return {
-    routes,
     dids,
     desiredRecipients,
     entityOfKey: (name) => byKey.get(name) ?? null,
     entityOfDid: (did) => byDid.get(did) ?? null,
     receipt(didId) {
       const did = dids.get(didId);
-      if (did === undefined || did.conflict || did.created === null) return "terminal";
-      if (routes.get(did.created.boundRouteId)?.terminal === true) return "terminal";
+      if (did === undefined || did.conflict || did.created === null || terminal.has(didId)) return "terminal";
       return did.faults.length === 0 ? "eligible" : "pending";
     },
   };
 }
 
-function foldRouteTable(set: VaultEventSet, mediations: MediationFold): Map<RouteId, Route> {
-  const configured = groupBy(set.of("route.configured"), (event) => event.data.routeId);
-  const retired = groupBy(set.of("route.retired"), (event) => event.data.routeId);
-  const routes = new Map<RouteId, Route>();
-  for (const routeId of [...new Set([...configured.keys(), ...retired.keys()])].sort()) {
-    const configurations = configured.get(routeId) ?? [];
-    const first = configurations[0]?.data ?? null;
-    const conflict = first !== null && configurations.some((event) => !samePayload(event.data, first));
-    const configuration = conflict ? null : first;
-    const retirement = retired.get(routeId)?.[0]?.data.because ?? null;
-    const mediation = configuration?.kind === "mediated" ? mediations.mediations.get(configuration.mediationId) : undefined;
-    const mediationTerminal = mediation !== undefined && (mediation.status === "retired" || mediation.status === "conflict");
-    routes.set(routeId, {
-      routeId,
-      configured: configuration,
-      retired: retirement,
-      conflict,
-      usable: configuration !== null && retirement === null,
-      terminal: retirement !== null || conflict || mediationTerminal,
-    });
-  }
-  return routes;
+const isTerminal = (mediation: Mediation): boolean => mediation.status === "retired" || mediation.status === "conflict";
+
+/**
+ * The arrangements a mediated document is routed by: those whose
+ * grant names its routing DID. None yet, or one not yet usable, may
+ * recover; several usable ones leave undecidable which account holds
+ * the address, until one is retired; every one retired or in conflict
+ * is the end of receiving here.
+ */
+function routedBy(mediations: MediationFold, routingDid: Did): { usable: MediationId[]; faults: string[]; terminal: boolean } {
+  const through = mediations.through(routingDid);
+  const usable = through.filter((mediation) => mediation.status === "usable").map((mediation) => mediation.mediationId);
+  if (through.length === 0) return { usable, faults: [`no mediation arrangement routes through ${routingDid}`], terminal: false };
+  if (usable.length > 1) return { usable, faults: [`several arrangements route through ${routingDid}: ${usable.join(", ")}`], terminal: false };
+  if (usable.length === 1) return { usable, faults: [], terminal: false };
+  return { usable, faults: through.map((mediation) => `mediation ${mediation.mediationId} is ${mediation.status}`), terminal: through.every(isTerminal) };
 }
 
-function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, mediations: MediationFold, keyChecks: ReadonlyMap<DidId, KeyCheck> | undefined): Map<DidId, LocalDidEntity> {
+function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: ReadonlyMap<DidId, KeyCheck> | undefined): { dids: Map<DidId, LocalDidEntity>; terminal: Set<DidId> } {
   const created = groupBy(set.of("did.created"), (event) => event.data.didId);
   const disclosed = groupBy(set.of("did.disclosed"), (event) => event.data.didId);
   const retired = groupBy(set.of("did.retired"), (event) => event.data.didId);
@@ -175,6 +150,7 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
   }
 
   const dids = new Map<DidId, LocalDidEntity>();
+  const terminal = new Set<DidId>();
   for (const didId of ids) {
     const conflicts: string[] = [];
     const faults: string[] = [];
@@ -185,7 +161,7 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
     const creation = conflicts.length === 0 ? first : null;
 
     let resolution: PeerResolution | null = null;
-    let serviceUris: string[] = [];
+    let routeTarget: RouteTarget | null = null;
     let methodIds: LocalDidEntity["methodIds"] = { authentication: [], keyAgreement: [] };
     if (creation !== null) {
       for (const spelling of [creation.did, creation.longFormDid]) {
@@ -193,9 +169,11 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
       }
       try {
         const read = didDocumentOf(creation);
-        serviceUris = didcommServiceUris(read.document);
+        const uris = didcommServiceUris(read.document);
         methodIds = { authentication: authorizedMethodIds(read.document, "authentication"), keyAgreement: authorizedMethodIds(read.document, "keyAgreement") };
         resolution = read;
+        routeTarget = uris.length === 1 ? serviceTargetOf(uris[0]!) : null;
+        if (routeTarget === null) conflicts.push(uris.length === 1 ? `the document sends to ${uris[0]}, neither a DID nor an HTTPS or WSS URL` : "the document does not send to exactly one endpoint");
       } catch (err) {
         if (!isDocumentFault(err)) throw err;
         conflicts.push(err.message);
@@ -204,20 +182,12 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
     const identity: IdentityCheck = keyChecks?.get(didId) ?? "unchecked";
     if (identity === "mismatch") conflicts.push("the seed does not derive the entity's keys");
 
-    let routeTarget: RouteTarget | null = null;
-    if (creation !== null) {
-      const route = routes.get(creation.boundRouteId);
-      if (route === undefined || route.configured === null) faults.push(route?.conflict === true ? "the bound route's configurations disagree" : "the bound route is not configured");
-      else if (route.retired !== null) faults.push("the bound route is retired");
-      if (route?.configured?.kind === "direct") routeTarget = { kind: "direct", endpoint: route.configured.endpoint };
-      if (route?.configured?.kind === "mediated") {
-        const mediation = mediations.mediations.get(route.configured.mediationId);
-        if (mediation?.routingDid != null) routeTarget = { kind: "mediated", routingDid: mediation.routingDid };
-        if (mediation?.status !== "usable") faults.push(`mediation ${route.configured.mediationId} is ${mediation?.status ?? "unknown"}`);
-      }
-      if (resolution !== null && routeTarget !== null && (serviceUris.length !== 1 || serviceUris[0] !== routeServiceUri(routeTarget))) {
-        conflicts.push("the document does not send to the bound route");
-      }
+    let usableMediations: MediationId[] = [];
+    if (routeTarget?.kind === "mediated") {
+      const routed = routedBy(mediations, routeTarget.routingDid);
+      usableMediations = routed.usable;
+      faults.push(...routed.faults);
+      if (routed.terminal) terminal.add(didId);
     }
     if (identity === "unchecked" && resolution !== null) faults.push("the keys are not yet checked against the seed");
 
@@ -229,6 +199,7 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
       keyNames: { authentication: didKeyName(didId, "authentication"), keyAgreement: didKeyName(didId, "key-agreement") },
       methodIds,
       routeTarget,
+      mediations: usableMediations,
       disclosures: disclosed.get(didId) ?? [],
       retired: retirement,
       faults: [...conflicts, ...faults],
@@ -237,7 +208,7 @@ function foldDidTable(set: VaultEventSet, routes: ReadonlyMap<RouteId, Route>, m
       live: conflicts.length === 0 && faults.length === 0 && retirement === null,
     });
   }
-  return dids;
+  return { dids, terminal };
 }
 
 /** A fault the document itself carries, as opposed to a programming error: recorded against the entity, never thrown out of a fold. */
@@ -261,7 +232,7 @@ export async function verifyDidKeys(keys: Keys, fold: RouteFold): Promise<Map<Di
   return checks;
 }
 
-/** The mediation and route folds with every key check done: the seed consulted once per entity, the verdicts folded back in. */
+/** The mediation and DID folds with every key check done: the seed consulted once per entity, the verdicts folded back in. */
 export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ mediations: MediationFold; routes: RouteFold }> {
   const mediations = foldMediations(set, { keyChecks: await verifyMediationKeys(keys, foldMediations(set)) });
   const routes = foldRoutes(set, mediations, { keyChecks: await verifyDidKeys(keys, foldRoutes(set, mediations)) });
@@ -270,21 +241,20 @@ export async function foldWithSeed(set: VaultEventSet, keys: Keys): Promise<{ me
 
 /**
  * The mediations the runtime must keep receiving on: every usable one
- * that is preferred, or that a usable route depends on while some DID
- * bound to that route may still receive, retired or not. A DID whose
- * receipt only waits — for the seed's verdict on its keys — keeps the
- * dependency: what is not yet decidable is not decided against, and
- * what was addressed to it must not be left at the mediator meanwhile.
- * Only a terminal entity releases it. Disclosure policy plays no part.
+ * that is preferred, or that routes some DID that may still receive,
+ * retired or not. A DID whose receipt only waits — for the seed's
+ * verdict on its keys — keeps the dependency: what is not yet
+ * decidable is not decided against, and what was addressed to it must
+ * not be left at the mediator meanwhile. Only a terminal entity
+ * releases it; while several usable arrangements route one DID, each
+ * is kept. Disclosure policy plays no part.
  */
 export function requiredReceivingSet(mediations: MediationFold, routes: RouteFold): Set<MediationId> {
   const required = new Set<MediationId>();
   if (mediations.preferred !== null) required.add(mediations.preferred);
   for (const did of routes.dids.values()) {
     if (did.created === null || routes.receipt(did.didId) === "terminal") continue;
-    const route = routes.routes.get(did.created.boundRouteId);
-    if (route?.configured?.kind !== "mediated" || !route.usable || !mediations.usable(route.configured.mediationId)) continue;
-    required.add(route.configured.mediationId);
+    for (const mediationId of did.mediations) if (mediations.usable(mediationId)) required.add(mediationId);
   }
   return required;
 }

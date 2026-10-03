@@ -1,8 +1,8 @@
 import type { Event } from "@estoc/event-store";
 import { describe, expect, it } from "vitest";
 
-import { VaultEventSet, foldVault, foldVaultChecked, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
-import { ENDPOINT, MEDIATION, ROUTE, expectOrderFree, type Scene } from "./helpers.js";
+import { VaultEventSet, foldVault, foldVaultChecked, mintMediationDid, type Did, type KeyName, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
+import { MEDIATION, MEDIATION2, ROUTING_DID, expectOrderFree, type Scene } from "./helpers.js";
 import { invitation, noObjects, receipt, resolved, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys | null, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
@@ -65,22 +65,22 @@ describe("an invitation", () => {
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
-  it("is unavailable once its DID's route is retired, misconfigured or on a retired mediation, and while the mediation's grant is missing", async () => {
+  it("is unavailable once its DID's mediation is retired, while a second arrangement routes through the same DID, and while the grant is missing", async () => {
     const { scene, keys, a0 } = await vaults();
     const disclosure = invitation(scene, a0);
-    const vault = await fold(scene, keys);
-    const over = (events: readonly Event[]) => foldVault(VaultEventSet.of(events), vault.checks).invitations.invitations.get(disclosure.cid)!.status;
+    const over = async (events: readonly Event[]) => (await foldVaultChecked(VaultEventSet.of(events), keys, noObjects)).invitations.invitations.get(disclosure.cid)!.status;
+    const settled = [...scene.events];
 
-    const retired = scene.add("route.retired", { routeId: ROUTE, because: "moved" });
-    expect(over(scene.events)).toEqual({ status: "unavailable", because: "the bound route is retired" });
-    const settled = scene.events.filter((event) => event !== retired);
+    expect(await over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: "the disclosed DID's mediation is terminal" });
 
-    expect(over([...settled, scene.add("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: ENDPOINT })])).toEqual({ status: "unavailable", because: "the bound route's configurations disagree" });
-    expect(over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: "the bound route's mediation is terminal" });
+    const me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
+    const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];
+    expect(await over(second)).toEqual({ status: "unavailable", because: `several arrangements route through ${ROUTING_DID}: ${MEDIATION}, ${MEDIATION2}` });
 
     const ungranted = settled.filter((event) => event.type !== "mediation.granted");
-    expect(over(ungranted)).toEqual({ status: "unavailable", because: `mediation ${MEDIATION} is pending` });
-    expect(over(settled)).toEqual({ status: "available" });
+    expect(await over(ungranted)).toEqual({ status: "unavailable", because: `no mediation arrangement routes through ${ROUTING_DID}` });
+    expect(await over(settled)).toEqual({ status: "available" });
+    const vault = await fold(scene, keys);
     expectOrderFree(ungranted, (set) => picture(foldVault(set, vault.checks)));
   });
 });

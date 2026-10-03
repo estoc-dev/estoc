@@ -5,9 +5,9 @@
  * it writes to the disclosed DID in a pair of their own, and no
  * receipt under it takes anything from the next one. The fold records
  * nothing of who used it; that is the channels' business. It is
- * available while the disclosed DID is live on a route that may
- * deliver, and unavailable once the DID or its route ended or while
- * one of them waits on something that may recover. An ID that two
+ * available while the disclosed DID is live through an arrangement
+ * that may deliver, and unavailable once the DID or its arrangement
+ * ended or while one of them waits on something that may recover. An ID that two
  * merged histories each disclosed names no one invitation to hand out
  * again: every disclosure under it is unavailable, none wins by order,
  * and the DIDs and whatever was received at them are as they were.
@@ -58,11 +58,6 @@ function statusOf(entity: LocalDidEntity | undefined, routes: RouteFold): Invita
   if (entity === undefined || entity.created === null) return unavailable("the disclosed DID has no consistent creation here");
   if (entity.conflict) return unavailable(`the disclosed DID is in conflict: ${entity.faults[0]}`);
   if (entity.retired !== null) return unavailable("the disclosed DID is retired");
-  const route = routes.routes.get(entity.created.boundRouteId);
-  if (route?.terminal === true) {
-    if (route.retired !== null) return unavailable("the bound route is retired");
-    if (route.conflict) return unavailable("the bound route's configurations disagree");
-    return unavailable("the bound route's mediation is terminal");
-  }
+  if (routes.receipt(entity.didId) === "terminal") return unavailable("the disclosed DID's mediation is terminal");
   return entity.live ? { status: "available" } : unavailable(entity.faults[0]!);
 }

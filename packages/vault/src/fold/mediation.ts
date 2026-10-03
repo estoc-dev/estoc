@@ -52,9 +52,11 @@ export interface MediationFold {
   readonly mediations: ReadonlyMap<MediationId, Mediation>;
   /** the latest selection, whatever its state */
   readonly selected: MediationId | null;
-  /** the latest selection when it is usable; null tells policy to select another before configuring a mediated route */
+  /** the latest selection when it is usable; null tells policy to select another before minting a mediated DID */
   readonly preferred: MediationId | null;
   usable(mediationId: MediationId): boolean;
+  /** the arrangements any grant of which names `routingDid`, whatever their state, in ID order: those a document sending to that DID may be routed by */
+  through(routingDid: Did): readonly Mediation[];
 }
 
 export type MediationFoldOptions = { keyChecks?: ReadonlyMap<MediationId, KeyCheck> };
@@ -78,6 +80,7 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
   for (const event of set.of("mediation.selected")) ids.add(event.data.mediationId);
 
   const mediations = new Map<MediationId, Mediation>();
+  const byRoutingDid = new Map<Did, Mediation[]>();
   for (const mediationId of [...ids].sort()) {
     const faults: string[] = [];
     const creation = created.get(mediationId) ?? null;
@@ -91,7 +94,7 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
     const conflict = faults.length > 0;
     const retirement = retired.get(mediationId)?.[0]?.data.because ?? null;
     const routingDid = routingDids.size === 1 && !conflict ? [...routingDids][0]! : null;
-    mediations.set(mediationId, {
+    const mediation: Mediation = {
       mediationId,
       mediatorDid: creation !== null && !conflict ? creation.mediatorDid : null,
       me: creation !== null && !conflict ? creation.me : null,
@@ -101,12 +104,18 @@ export function foldMediations(set: VaultEventSet, options: MediationFoldOptions
       faults,
       identity,
       status: conflict ? "conflict" : retirement !== null ? "retired" : creation === null || routingDid === null || identity === "unchecked" ? "pending" : "usable",
-    });
+    };
+    mediations.set(mediationId, mediation);
+    for (const granted of routingDids) {
+      const through = byRoutingDid.get(granted);
+      if (through === undefined) byRoutingDid.set(granted, [mediation]);
+      else through.push(mediation);
+    }
   }
 
   const usable = (mediationId: MediationId) => mediations.get(mediationId)?.status === "usable";
   const selected = latest(set.of("mediation.selected"))?.data.mediationId ?? null;
-  return { mediations, selected, preferred: selected !== null && usable(selected) ? selected : null, usable };
+  return { mediations, selected, preferred: selected !== null && usable(selected) ? selected : null, usable, through: (routingDid) => byRoutingDid.get(routingDid) ?? [] };
 }
 
 /** Each arrangement with a consistent creation checked against the seed: does `me.did` carry the keys its name derives? */

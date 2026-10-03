@@ -23,7 +23,7 @@ import {
   type VaultFold,
   type WireMessageId,
 } from "../../src/index.js";
-import { MEDIATED, ROUTE, createdDid, expectOrderFree, fakeEventCid, type Scene } from "./helpers.js";
+import { MEDIATED, createdDid, expectOrderFree, fakeEventCid, type Scene } from "./helpers.js";
 import { IAT, asPeer, blocked, channel, factsOf, noObjects, peerDid, proof, receipt, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
@@ -507,7 +507,7 @@ describe("authority behind a conflict", () => {
 
   it("derives no join through a conflicted channel: what a masked intermediate would transport reaches no descendant, while an independent decision still supports the same descendant", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b2, b3 } = await vaults();
-    const a3 = await createdDid(scene, keys, "019b6a10-12c0-7410-89ab-38e54b097c22" as Local["didId"], ROUTE, MEDIATED);
+    const a3 = await createdDid(scene, keys, "019b6a10-12c0-7410-89ab-38e54b097c22" as Local["didId"], MEDIATED);
     const b4 = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b04" as Peer["didId"]);
     const localSource = proofFreeReceipt(scene, a2, b2);
     const forkSource = proofFreeReceipt(scene, a3, b3);
@@ -545,7 +545,7 @@ describe("authority behind a conflict", () => {
     expectSameOverEveryOrder(scene, vault.checks, [channel(a1, b4)]);
 
     const control = await vaults();
-    const a3Again = await createdDid(control.scene, control.keys, a3.didId, ROUTE, MEDIATED);
+    const a3Again = await createdDid(control.scene, control.keys, a3.didId, MEDIATED);
     const controlSource = proofFreeReceipt(control.scene, a3Again, b3);
     await rotation(control.scene, control.keys, { from: a3Again, peer: b3, to: a1, source: controlSource });
     await rotation(control.scene, control.keys, { from: a3Again, peer: b3, to: a0, source: controlSource });

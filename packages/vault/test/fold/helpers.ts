@@ -14,7 +14,6 @@ import {
   type DidId,
   type KeyName,
   type MediationId,
-  type RouteId,
   type KeyCheck,
   type MediationFold,
   type RouteFold,
@@ -32,8 +31,6 @@ export const AUTHOR = "019b2a40-0000-7000-8000-000000000001" as AuthorId;
 export const AUTHOR2 = "019b2a40-0000-7000-8000-000000000002" as AuthorId;
 export const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c" as MediationId;
 export const MEDIATION2 = "019b2a52-3c11-7a08-9d55-0f40b1a3e2d7" as MediationId;
-export const ROUTE = "019b2a58-fef5-7d59-ae1c-46e4f0a13c73" as RouteId;
-export const ROUTE2 = "019b2a59-0a21-7b3e-8c1d-5e6f7a8b9c0d" as RouteId;
 export const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 export const DID_ID2 = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715" as DidId;
 export const DID_ID3 = "019b6a10-12c0-7410-89ab-38e54b097c21" as DidId;
@@ -123,18 +120,17 @@ export function expectOrderFree(events: readonly Event[], fold: (set: VaultEvent
   }
 }
 
-/** A mediation created, granted and selected, and a mediated route over it. */
-export function mediatedRoute(scene: Scene, keys: { me: Did }, mediationId = MEDIATION, routeId = ROUTE, routingDid = ROUTING_DID): void {
+/** A mediation created, granted and selected. */
+export function mediatedRoute(scene: Scene, keys: { me: Did }, mediationId = MEDIATION, routingDid = ROUTING_DID): void {
   scene.add("mediation.created", { mediationId, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${mediationId}/me` as KeyName, did: keys.me } });
   scene.add("mediation.granted", { mediationId, routingDid });
   scene.add("mediation.selected", { mediationId });
-  scene.add("route.configured", { routeId, kind: "mediated", mediationId, endpoint: null });
 }
 
-/** A communication DID minted from the seed on a route, recorded as `did.created`. */
-export async function createdDid(scene: Scene, keys: Keys, didId: DidId, routeId: RouteId, target: RouteTarget): Promise<VaultData["did.created"]> {
+/** A communication DID minted from the seed for a route, recorded as `did.created`. */
+export async function createdDid(scene: Scene, keys: Keys, didId: DidId, target: RouteTarget): Promise<VaultData["did.created"]> {
   const minted = await mintDid(keys, didId, target);
-  const data = { didId, did: minted.did, longFormDid: minted.longFormDid, boundRouteId: routeId };
+  const data = { didId, did: minted.did, longFormDid: minted.longFormDid };
   scene.add("did.created", data);
   return data;
 }

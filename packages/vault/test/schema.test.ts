@@ -33,7 +33,6 @@ const ENVELOPE = cidOf("envelope");
 
 const AUTHOR = "019b2a40-0000-7000-8000-000000000001";
 const MEDIATION = "019b2a51-118f-7e46-b31b-c63cd090c92c";
-const ROUTE = "019b2a58-fef5-7d59-ae1c-46e4f0a13c73";
 const DID_ID = "019b2a60-c68e-75bf-b6fb-ae1a41f8d715";
 const DID_ID2 = "019b6a10-12c0-7410-89ab-38e54b097c21";
 const UUID_V5_DID_ID = "019b0000-0000-5000-8000-00000000000c";
@@ -119,9 +118,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   "mediation.selected": [{ mediationId: MEDIATION } as Data<"mediation.selected">, []],
   "mediation.retired": [{ mediationId: MEDIATION, because: "replaced" } as Data<"mediation.retired">, []],
   "replica.created": [{ replicaId: REPLICA, mediationId: MEDIATION, grant: grantOf() } as Data<"replica.created">, []],
-  "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG, boundRouteId: ROUTE } as Data<"did.created">, []],
-  "route.configured": [{ routeId: ROUTE, kind: "mediated", mediationId: MEDIATION, endpoint: null } as Data<"route.configured">, []],
-  "route.retired": [{ routeId: ROUTE, because: "replaced" } as Data<"route.retired">, []],
+  "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG } as Data<"did.created">, []],
   "did.disclosed": [{ didId: DID_ID, as: "oob", oobId: OOB, goal: "Write to Alice" } as Data<"did.disclosed">, []],
   "did.retired": [{ didId: DID_ID, because: "contact-deleted" } as Data<"did.retired">, []],
   "did.rotationSelected": [{ fromDidId: DID_ID, peerDid: PEER, toDidId: DID_ID2, sourceEventCid: null, fromPrior: JWT } as Data<"did.rotationSelected">, []],
@@ -214,7 +211,7 @@ const IN_DATA = ALL["message.in"][0] as MessageIn;
 describe("readVaultEvent", () => {
   it("knows exactly the version-4 types", () => {
     expect([...VAULT_EVENT_TYPES].sort()).toEqual(Object.keys(ALL).sort());
-    expect(VAULT_EVENT_TYPES).toHaveLength(29);
+    expect(VAULT_EVENT_TYPES).toHaveLength(27);
     expect(isVaultEventType("message.out")).toBe(true);
     expect(isVaultEventType("relationship.bound")).toBe(false);
     expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-4 event type/);
@@ -367,18 +364,6 @@ describe("rules between members", () => {
     rejects("did.created", { ...data, did: "did:web:alice.example", longFormDid: "did:web:alice.example:z1" }, [], /short form/);
     rejects("did.created", { ...data, longFormDid: SHORT }, [], /long form/);
     rejects("did.created", { ...data, longFormDid: "did:peer:4zQmOther:z2NpDocument" }, [], /long form of did/);
-  });
-
-  test("route.configured is mediated or direct, never both", () => {
-    accepts("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: "https://ingress.example/didcomm" });
-    accepts("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: "wss://ingress.example/ws" });
-    rejects("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: "http://ingress.example" }, [], /HTTPS or WSS/);
-    rejects("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: "/didcomm" }, [], /absolute URL/);
-    rejects("route.configured", { routeId: ROUTE, kind: "direct", mediationId: MEDIATION, endpoint: "https://ingress.example" }, [], /direct route/);
-    rejects("route.configured", { routeId: ROUTE, kind: "direct", mediationId: null, endpoint: null }, [], /direct route/);
-    rejects("route.configured", { routeId: ROUTE, kind: "mediated", mediationId: MEDIATION, endpoint: "https://x.example" }, [], /mediated route/);
-    rejects("route.configured", { routeId: ROUTE, kind: "mediated", mediationId: null, endpoint: null }, [], /mediated route/);
-    rejects("route.configured", { routeId: ROUTE, kind: "relay", mediationId: MEDIATION, endpoint: null }, [], /one of "mediated", "direct"/);
   });
 
   test("did.disclosed carries an oobId exactly for an oob disclosure", () => {

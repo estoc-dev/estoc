@@ -36,8 +36,6 @@ export type {
   PublicKey,
   ReceivedVia,
   ReplicaId,
-  RouteId,
-  RouteKind,
   SyncId,
   VaultData,
   VaultEventType,
@@ -122,6 +120,7 @@ export {
   didDocumentOf,
   documentSendsTo,
   routeServiceUri,
+  serviceTargetOf,
   checkDidKeys,
   checkMediationKeys,
   checkReplicaKeys,
@@ -159,7 +158,6 @@ export {
 } from "./fold/mediation.js";
 export { type ReplicaStatus, type Replica, type ReplicaFold, type ReplicaFoldOptions, foldReplicas, verifyReplicaGrants } from "./fold/replicas.js";
 export {
-  type Route,
   type LocalDidEntity,
   type DesiredRecipient,
   type ReceiptEligibility,
