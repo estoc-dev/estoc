@@ -50,7 +50,6 @@ beforeAll(async () => {
 });
 
 const unchecked = (set: VaultEventSet): DidFold => foldDids(set, foldMediations(set));
-/** The route fold with the seed's verdicts on every entity of the scene. */
 const checked = async (scene: Scene): Promise<DidFold> => (await foldWithSeed(scene.set(), keys)).dids;
 const both = (set: VaultEventSet, checks: KeyChecks) => foldChecked(set, checks);
 
@@ -181,6 +180,20 @@ describe("the DID fold", () => {
     expect(dids.receipt(DID_ID2)).toBe("terminal");
   });
 
+  it("takes a service for a routing DID only when it is a DID: a bare `did:` or a DID URL, which no grant could name, is a conflict and never a wait", async () => {
+    const scene = new Scene();
+    mediatedRoute(scene, { me });
+    await editedDid(scene, DID_ID, () => {}, "did:");
+    await editedDid(scene, DID_ID2, () => {}, `${ROUTING_DID}#key-1`);
+    await editedDid(scene, DID_ID3, () => {}, `${ROUTING_DID}/inbox?v=1`);
+    const dids = await checked(scene);
+    for (const [didId, uri] of [[DID_ID, "did:"], [DID_ID2, `${ROUTING_DID}#key-1`], [DID_ID3, `${ROUTING_DID}/inbox?v=1`]] as const) {
+      expect(dids.entities.get(didId)).toMatchObject({ live: false, conflict: true, identity: "verified", routeTarget: null, mediations: [], faults: [`the document sends to ${uri}, neither a DID nor an HTTPS or WSS URL`] });
+      expect(dids.receipt(didId)).toBe("terminal");
+    }
+    expect(dids.desiredRecipients).toEqual([]);
+  });
+
   it("records a document whose service or key does not read as that entity's conflict and folds and verifies every other entity", async () => {
     const scene = new Scene();
     mediatedRoute(scene, { me });
@@ -291,7 +304,7 @@ describe("receipt eligibility and the required receiving set", () => {
     return { scene: s, created, retiredDid };
   }
 
-  it("lets a live entity and a retired entity receive alike, until the arrangement under it is terminal", async () => {
+  it("lets a live entity and a retired entity receive alike, and holds the retired one waiting, not ended, once the arrangement under it is retired", async () => {
     const { scene: s } = await scene();
     const dids = await checked(s);
     expect(dids.receipt(DID_ID)).toBe("eligible");
@@ -299,7 +312,28 @@ describe("receipt eligibility and the required receiving set", () => {
     expect(dids.receipt(DID_ID3)).toBe("terminal");
     expect(dids.entities.get(DID_ID2)).toMatchObject({ live: false, retired: "rotated" });
     s.add("mediation.retired", { mediationId: MEDIATION2, because: "moved" });
-    expect((await checked(s)).receipt(DID_ID2)).toBe("terminal");
+    expect((await checked(s)).receipt(DID_ID2)).toBe("pending");
+    expect((await checked(s)).entities.get(DID_ID2)).toMatchObject({ mediations: [], faults: [`mediation ${MEDIATION2} is retired`] });
+  });
+
+  it("waits, rather than ends, when every arrangement known to name its routing DID is retired or ungranted: the grant that routes it may not have arrived, and routes it once it does", async () => {
+    const s = new Scene();
+    mediatedRoute(s, { me });
+    s.add("mediation.retired", { mediationId: MEDIATION, because: "replaced" });
+    s.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:m.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } });
+    const created = await createdDid(s, keys, DID_ID, MEDIATED);
+    let { mediations, dids } = await foldWithSeed(s.set(), keys);
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: false, conflict: false, created, mediations: [], faults: [`mediation ${MEDIATION} is retired`] });
+    expect(dids.receipt(DID_ID)).toBe("pending");
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set());
+    const grant = s.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
+    ({ mediations, dids } = await foldWithSeed(s.set(), keys));
+    expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION2], faults: [] });
+    expect(dids.receipt(DID_ID)).toBe("eligible");
+    expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION2]));
+    expect((await foldWithSeed(VaultEventSet.of(s.events.filter((event) => event !== grant)), keys)).dids.receipt(DID_ID)).toBe("pending");
+    const checks = await checksOf(s.events, keys);
+    expectOrderFree(s.events, (set) => both(set, checks).dids);
   });
 
   it("settles what is terminal before what is missing: keys the seed does not derive are terminal without any arrangement, a retired entity without one only waits", async () => {
@@ -327,7 +361,7 @@ describe("receipt eligibility and the required receiving set", () => {
     const mediations = (await foldWithSeed(s.set(), keys)).mediations;
     expect(foldDids(s.set(), mediations, { keyChecks: new Map([[DID_ID, "mismatch"]]) }).receipt(DID_ID)).toBe("terminal");
     s.add("mediation.retired", { mediationId: MEDIATION, because: "gone" });
-    expect((await checked(s)).receipt(DID_ID)).toBe("terminal");
+    expect((await checked(s)).receipt(DID_ID)).toBe("pending");
   });
 
   it("requires the preferred mediation and every mediation a live or retired DID is routed by", async () => {
@@ -367,7 +401,7 @@ describe("receipt eligibility and the required receiving set", () => {
     expect(requiredReceivingSet(mismatch.mediations, mismatch.dids)).toEqual(new Set([MEDIATION]));
     s.add("mediation.retired", { mediationId: MEDIATION2, because: "moved" });
     const retired = both(s.set(), { mediations: (await checksOf(s.events, keys)).mediations, dids: new Map() });
-    expect(retired.dids.receipt(DID_ID2)).toBe("terminal");
+    expect(retired.dids.receipt(DID_ID2)).toBe("pending");
     expect(requiredReceivingSet(retired.mediations, retired.dids)).toEqual(new Set([MEDIATION]));
   });
 
@@ -376,7 +410,7 @@ describe("receipt eligibility and the required receiving set", () => {
     s.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID });
     const { mediations, dids } = await foldWithSeed(s.set(), keys);
     expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION]));
-    expect(dids.receipt(DID_ID2)).toBe("terminal");
+    expect(dids.receipt(DID_ID2)).toBe("pending");
     expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, mediations: [MEDIATION] });
   });
 });

@@ -20,6 +20,7 @@ import { IdentityMismatch, InvalidPublicKey, Locked } from "./errors.js";
 import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName, replicaKeyName } from "./ids.js";
 import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl, type PeerResolution } from "./peer-document.js";
 import { canonicalPublicKey } from "./public-key.js";
+import { isDid } from "./syntax.js";
 import type { Did, DidId, KeyName, MediationId, PublicKey, ReplicaId, VaultData } from "./types.js";
 
 /** An OKP private key as RFC 8037 spells it. */
@@ -181,11 +182,12 @@ export function routeServiceUri(route: RouteTarget): string {
 /**
  * The route a document's one DIDComm service URI names: a DID is a
  * mediator's routing DID, an absolute HTTPS or WSS URL a direct
- * endpoint. Null for a URI that is neither, which no local DID sends
- * to.
+ * endpoint. Null for a URI that is neither — a DID URL and a malformed
+ * `did:` string included, which no grant could ever name — so no local
+ * DID sends to it.
  */
 export function serviceTargetOf(uri: string): RouteTarget | null {
-  if (uri.startsWith("did:")) return { kind: "mediated", routingDid: uri as Did };
+  if (isDid(uri)) return { kind: "mediated", routingDid: uri as Did };
   let url: URL;
   try {
     url = new URL(uri);

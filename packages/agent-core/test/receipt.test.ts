@@ -310,7 +310,7 @@ describe("the receipt", () => {
     await closeAll(alice, bob);
   });
 
-  test("the receipt checks the recipient again under the lock: one still recovering defers the record with a watch that says something else once it can receive, and a mediation retired since the gate refuses it", async () => {
+  test("the receipt checks the recipient again under the lock: one still recovering defers the record with a watch that says something else once it can receive, and a mediation retired since the gate defers it too", async () => {
     const alice = await mediatedParty(await newMediator(), 1, DID);
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const plain = await authenticated(alice, bob);
@@ -326,7 +326,7 @@ describe("the receipt", () => {
     expect(await eventsOf(copy, "message.in")).toHaveLength(1);
 
     await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
-    expect(await recordReceipt(alice.runtime, alice.keys, plain)).toEqual({ outcome: "terminal", reason: `${alice.did} may no longer receive` });
+    expect(await recordReceipt(alice.runtime, alice.keys, plain)).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: mediation ${alice.mediationId} is retired` });
     expect(await eventsOf(alice, "message.in")).toEqual([]);
     await closeAll(alice, bob, copy);
   });

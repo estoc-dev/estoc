@@ -11,9 +11,10 @@
   entity; `usableTarget` and `sameDocument` are the checks `createDid`
   and `rotate` share. `configureRoute`, `ensureRoute`, `mediatedRouteOf`
   and `routeOf(fold, routeId)` are gone. A mediated DID whose
-  arrangement has not arrived is refused at the gate as pending with
-  the reason the fold gives, and one whose every arrangement is retired
-  or in conflict as terminal.
+  arrangement has not arrived, or whose arrangement is retired, is held
+  at the gate as pending with the reason the fold gives, since the
+  arrangement that routes it may be one this vault has not seen granted
+  yet; only an entity in conflict is terminal there.
 - **Replica-mediation enrollment**: `createMediation` takes a `profile`,
   and an arrangement created with `"replica-mediation/1.0"` is enrolled
   in with `enroll` (`Agent.enroll`) where an ordinary one is

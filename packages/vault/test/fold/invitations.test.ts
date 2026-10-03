@@ -71,7 +71,7 @@ describe("an invitation", () => {
     const over = async (events: readonly Event[]) => (await foldVaultChecked(VaultEventSet.of(events), keys, noObjects)).invitations.invitations.get(disclosure.cid)!.status;
     const settled = [...scene.events];
 
-    expect(await over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: "the disclosed DID's mediation is terminal" });
+    expect(await over([...settled, scene.add("mediation.retired", { mediationId: MEDIATION, because: "gone" })])).toEqual({ status: "unavailable", because: `mediation ${MEDIATION} is retired` });
 
     const me2 = (await mintMediationDid(keys, MEDIATION2)).longFormDid;
     const second = [...settled, scene.add("mediation.created", { mediationId: MEDIATION2, mediatorDid: "did:web:mediator.example" as Did, me: { keyName: `mediation/${MEDIATION2}/me` as KeyName, did: me2 } }), scene.add("mediation.granted", { mediationId: MEDIATION2, routingDid: ROUTING_DID })];

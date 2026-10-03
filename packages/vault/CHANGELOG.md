@@ -8,9 +8,11 @@
   (`LocalDidEntity.routeTarget`, via `serviceTargetOf`). A mediated DID
   is routed by the usable arrangement whose grant names its routing DID
   (`LocalDidEntity.mediations`, `MediationFold.through`); it waits while
-  no arrangement does or several usable ones do, and is terminal for
-  receipt once every arrangement naming that DID is retired or in
-  conflict. `route.configured`, `route.retired`, `RouteId`, `RouteKind`,
+  no arrangement does, none usable does or several usable ones do, and
+  is terminal for receipt only on its own conflict, never on the
+  arrangements' account, since the one that routes it may not have
+  arrived here yet. `serviceTargetOf` takes a DID, not a DID URL or a
+  bare `did:`, which no grant could name. `route.configured`, `route.retired`, `RouteId`, `RouteKind`,
   `Route` and `DesiredRecipient.routeId` are gone, and the fold is the
   DID fold: `foldDids` and `DidFold` at `VaultFold.dids`, its entities
   under `entities`, in place of `foldRoutes`, `RouteFold` and

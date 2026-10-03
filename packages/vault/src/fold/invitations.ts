@@ -47,17 +47,16 @@ export function foldInvitations(set: VaultEventSet, dids: DidFold): InvitationFo
       oobId,
       didId: disclosure.data.didId,
       localDid: entity?.created?.did ?? null,
-      status: disclosedUnder.get(oobId)! > 1 ? { status: "unavailable", because: "the invitation's ID names more than one disclosure" } : statusOf(entity, dids),
+      status: disclosedUnder.get(oobId)! > 1 ? { status: "unavailable", because: "the invitation's ID names more than one disclosure" } : statusOf(entity),
     });
   }
   return { invitations };
 }
 
-function statusOf(entity: LocalDidEntity | undefined, dids: DidFold): InvitationStatus {
+function statusOf(entity: LocalDidEntity | undefined): InvitationStatus {
   const unavailable = (because: string): InvitationStatus => ({ status: "unavailable", because });
   if (entity === undefined || entity.created === null) return unavailable("the disclosed DID has no consistent creation here");
   if (entity.conflict) return unavailable(`the disclosed DID is in conflict: ${entity.faults[0]}`);
   if (entity.retired !== null) return unavailable("the disclosed DID is retired");
-  if (dids.receipt(entity.didId) === "terminal") return unavailable("the disclosed DID's mediation is terminal");
   return entity.live ? { status: "available" } : unavailable(entity.faults[0]!);
 }

@@ -695,10 +695,10 @@ that routes a retained DID remains required.
 ```
 
 Retirement is terminal for the arrangement ID. A procedure SHOULD give
-every DID routed through it a successor first. A DID whose document still
-sends through a retired arrangement is terminal for receipt under
-[section 5.7](#route-did-and-key-fold); the fold never changes a DID's
-document.
+every DID routed through it a successor first. A DID whose document sends
+to the retired arrangement's routing DID waits under
+[section 5.7](#route-did-and-key-fold) until another usable arrangement
+names that DID; the fold never changes a DID's document.
 
 <a id="replica-created"></a>
 
@@ -836,10 +836,12 @@ A mediated DID is routed by the one usable arrangement whose grant names
 its routing DID. While no arrangement does, the DID waits. While several
 usable arrangements do, which account holds the address is undecidable,
 and the DID waits until one of them is retired; a procedure MUST NOT mint
-a DID for a routing DID in that state. When every arrangement naming the
-routing DID is retired or in conflict, the DID is terminal for receipt,
-and restoring communication requires a successor DID, not a change to
-the old entity.
+a DID for a routing DID in that state. Once the arrangement routing a DID
+is retired, the DID waits again: the arrangements that may name a routing
+DID are an open set, a grant not yet replicated here among them, so the
+fold MUST NOT end a mediated DID's receipt on their account. Restoring
+communication takes a successor DID or a usable arrangement naming the
+same routing DID, never a change to the old entity.
 
 <a id="disclosure"></a>
 
@@ -901,8 +903,8 @@ Retirement is terminal for new sending and disclosure using this DID. Its mediat
 It does not erase keys, documents, received messages or continuity evidence.
 
 A retained exact local key remains eligible for authenticated channel
-receipt while its mediation has no terminal dependency, including after DID
-retirement. This rule applies equally to publicly disclosed and privately
+receipt while a usable arrangement routes it, including after DID
+retirement, and waits while none does. This rule applies equally to publicly disclosed and privately
 allocated addresses. No renewed registration is required to drain retained
 deliveries. An invitation on a retired local DID is unavailable.
 [relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;
@@ -942,8 +944,10 @@ policy has no effect on this set. An unpreferred mediation leaves only when no
 such dependency remains or it becomes unusable.
 
 This is independent of the desired recipient registration set: draining
-retained messages does not re-register a retired DID. Terminal mediations
-stop receipt; temporary unavailability does not erase dependencies.
+retained messages does not re-register a retired DID. A retired mediation
+routes nothing and is never required; receipt under a DID it routed waits
+for another usable arrangement naming the routing DID. Temporary
+unavailability does not erase dependencies.
 
 The active runtime reconciles recipients and drains account-scoped pickup on
 every reachable mediation in this set. A hosted runtime receives no special
@@ -1002,11 +1006,13 @@ The fold verifies all of the following:
 - a mediated document's routing DID is named by the grant of exactly one
   usable arrangement, which routes the DID.
 
-A mediated DID has a **terminal dependency** when every arrangement whose
-grant names its routing DID is retired or has conflicting creation/grant
-evidence. No such arrangement yet, one not yet usable, several usable ones
-or a temporarily unavailable endpoint is not terminal. A direct DID has no
-such dependency.
+A DID is **terminal for receipt** only on its own account: no consistent
+creation, or a conflict above. A mediated DID whose routing DID no one
+usable arrangement names — none yet, none granted, every one known retired
+or in conflict, or several usable — is **pending**: the arrangements that
+may name a routing DID are an open set, and a grant that has not arrived
+MUST NOT be mistaken for one that never will. A temporarily unavailable
+endpoint is not a fold state. A direct DID waits only for its key check.
 
 For recipient reconciliation, a live DID is a non-retired, conflict-free
 entity satisfying those local identity and route checks. Current recipient
@@ -1051,7 +1057,8 @@ Fold each OOB disclosure into one invitation: its `oobId`, its local DID and
 whether that DID still takes a first message under it. An invitation is
 available while the disclosed DID is live and routed where it may deliver, and
 unavailable once the DID is retired or in conflict, its creation is missing,
-its mediation is terminal, or while the DID waits to be live. An `oobId` that distinct disclosure events carry, as
+or while the DID waits to be live, its arrangement retired or ungranted
+included. An `oobId` that distinct disclosure events carry, as
 two merged histories may each have disclosed it, names no one invitation to
 hand out again: every disclosure under it is unavailable with a reason that
 says so, none is chosen by event order, and the conflict changes nothing of

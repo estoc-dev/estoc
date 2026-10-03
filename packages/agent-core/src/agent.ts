@@ -315,8 +315,8 @@ export class Agent {
 
   /**
    * The vault's local state changed outside this agent — a DID
-   * created, a route configured, an arrangement granted, evidence
-   * imported or a document resolved. What the vault owes over it is
+   * created, an arrangement granted, evidence imported or a document
+   * resolved. What the vault owes over it is
    * recorded first, an admission a proof waited for included, and
    * dispatched by nothing; then each waiting delivery whose wait ended
    * is retried, and followed like any other.

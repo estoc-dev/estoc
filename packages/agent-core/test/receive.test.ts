@@ -2,7 +2,7 @@ import { describe, expect, it, test, vi } from "vitest";
 
 import { encodeLongForm, longToShort, resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc } from "@estoc/did-peer";
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
-import { didKeyName, inputDocumentOf, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type MediationId, type PublicKey } from "@estoc/vault";
+import { didKeyName, inputDocumentOf, mintMediationDid, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type KeyName, type MediationId, type PublicKey } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, type IMessage, type Unpacked } from "../src/protocol/didcomm.js";
@@ -249,7 +249,7 @@ describe("the gate before the vault", () => {
     await closeAll(alice, bob);
   });
 
-  test("a retired DID still receives while its arrangement stands and is terminal once the mediation retired; a sender that is the recipient itself is terminal; the host's limits refuse a delivery before the receipt sees it", async () => {
+  test("a retired DID still receives while its arrangement stands and waits once the mediation retired; a sender that is the recipient itself is terminal; the host's limits refuse a delivery before the receipt sees it", async () => {
     const { alice, bob } = await mediatedParties();
     await retireDid(alice.runtime, alice.keys, DID, "rotated");
     const { receipt, seen } = recording();
@@ -273,9 +273,38 @@ describe("the gate before the vault", () => {
 
     await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "moved" })]);
     const toRetiredRoute = await sealed(sealer, alice.longFormDid);
-    expect(terminalReason(await receiver.receive({ packed: toRetiredRoute, source: DIRECT }))).toBe(`${kidOf(toRetiredRoute)}: its mediation is retired or in conflict`);
+    expect(await receiver.receive({ packed: toRetiredRoute, source: DIRECT })).toMatchObject({ outcome: "deferred", reason: `${kidOf(toRetiredRoute)}: mediation ${alice.mediationId} is retired` });
     expect(seen).toHaveLength(1);
     await closeAll(alice, bob);
+  });
+
+  test("a DID whose arrangement is retired, with the grant of the arrangement that replaced it not yet arrived, holds the delivery without acknowledgement; once that grant arrives it is received from the held bytes and acknowledged once", async () => {
+    const { alice, bob } = await mediatedParties();
+    const copy = await copyOf(alice, "did.created", "mediation.created", "mediation.granted");
+    const replacement = "019b0000-0000-7000-8000-000000000202" as MediationId;
+    const me = (await mintMediationDid(copy.keys, replacement)).longFormDid;
+    await copy.runtime.vault.commit([], [
+      vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "replaced" }),
+      vaultDraft("mediation.created", { mediationId: replacement, mediatorDid: alice.mediator.did as Did, me: { keyName: `mediation/${replacement}/me` as KeyName, did: me } }),
+    ]);
+    const { receipt, seen } = recording();
+    const { acknowledge, acknowledged } = acknowledging();
+    const receiver = await receiverOver(copy, { receipt, acknowledge });
+    const packed = await sealed(await peerSealer(bob), alice.longFormDid);
+    const source: Source = { kind: "pickup", mediationId: replacement, deliveryId: "d1" };
+
+    expect(await receiver.receive({ packed, source })).toMatchObject({ outcome: "deferred", reason: `${kidOf(packed)}: mediation ${alice.mediationId} is retired` });
+    expect(await receiver.receive({ packed, source })).toMatchObject({ outcome: "deferred" });
+    expect(receiver.waiting()).toEqual([expect.objectContaining({ source, held: true })]);
+    expect([seen, acknowledged, await eventsOf(copy.runtime, "message.in")]).toEqual([[], [], []]);
+
+    await copy.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: replacement, routingDid: alice.mediator.did as Did })]);
+    expect(await receiver.localStateChanged()).toMatchObject([{ outcome: "received" }]);
+    expect(seen).toHaveLength(1);
+    expect(acknowledged).toEqual([source]);
+    expect(receiver.waiting()).toEqual([]);
+    expect(await receiver.localStateChanged()).toEqual([]);
+    await closeAll(alice, bob, copy);
   });
 
   test("a DID whose arrangement has not arrived yet holds the delivery without acknowledgement and opens nothing, not on redelivery either; once the arrangement arrives it is received from the held bytes and acknowledged", async () => {

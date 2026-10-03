@@ -171,8 +171,8 @@ disclosure as an address handed out, which whoever holds it writes to
 in a pair of their own, no receipt under it taking anything from the
 next; it is `available` while the disclosed DID is live and routed
 where it may deliver, and `unavailable` while the DID is retired, in
-conflict, not yet created here or waiting to be live, or its mediation
-is terminal), the
+conflict, not yet created here or waiting to be live, its arrangement
+retired or ungranted included), the
 contacts (`fold/contacts.ts`: `foldContacts` is a table of latest-wins
 decisions under each contact ID — tombstone, petname, flags, local-DID
 preference, the whole channel selection replaced or cleared, merge

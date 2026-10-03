@@ -29,10 +29,10 @@ export type Recipients =
  * of what was addressed here. A method is named by whatever follows
  * the DID in the document's own `id`, a fragment or a query with one.
  * Short of an eligible recipient, one whose entity lacks only something
- * recoverable — the arrangement its document routes through, its
- * grant, the key check — keeps the delivery pending. Everything else is
- * terminal: a method the document does not have or authorizes only for
- * authentication, a mediation retired or in conflict, and an envelope naming no
+ * not its own — a usable arrangement through its routing DID, the key
+ * check — keeps the delivery pending. Everything else is terminal: a
+ * method the document does not have or authorizes only for
+ * authentication, an entity in conflict, and an envelope naming no
  * key of this vault at all, which is told apart so that a vault
  * restored to before one of its DIDs was created shows what it lacks
  * without claiming why.
@@ -76,7 +76,7 @@ export function classifyRecipients(fold: VaultFold, kids: readonly string[], rep
         waitingOn.add(didId);
         break;
       case "terminal":
-        refused.push(`${kid}: its mediation is retired or in conflict`);
+        refused.push(`${kid}: ${entity.faults.join("; ")}`);
         break;
     }
   }
