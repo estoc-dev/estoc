@@ -15,12 +15,12 @@
   `Connection.recipients`) and its mail picked up as this runtime's
   replica. The account asks to hold an address only while its receipt
   is eligible and this arrangement alone routes it: while several
-  usable arrangements name its routing DID, no account holds it, so the
-  one left standing can. A mediated address is disclosed, and held before a package
-  first discloses it as a sender, with the runtime's `Confirmations`
-  alone. Nothing is ever taken off a mediator: an address the vault no
-  longer knows stays held by the account, and its mail is discarded on
-  arrival as before.
+  usable arrangements name its routing DID, no account requests a new
+  binding while the route is undecided. A mediated address is
+  disclosed, and held before a package first discloses it as a sender,
+  with the runtime's `Confirmations` alone. Nothing is ever taken off a
+  mediator: an address the vault no longer knows stays held by the
+  account, and its mail is discarded on arrival as before.
 - **DIDs are minted for a route, not bound to a route entity**:
   `createDid(runtime, keys, route, didId?)` and `RotateOptions.route`
   take a `RouteSpec`, a mediation arrangement by ID or a direct HTTPS or
