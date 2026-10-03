@@ -246,8 +246,9 @@ peers sent beside the outbound each one's thread names when the carrier
 may answer it, and its send gate — the local DID live and not
 replaced here by a decision, made or still waiting, the pair not
 denied, its continuity not in conflict and its peer not moved on,
-which `senderGate` / `channelPolicy` decide for every path to the
-wire, a user send, a reply, a package and a call alike; and a
+which `senderGate` / `channelPolicy` in `channel-policy.ts` decide for
+every path to the wire, a user send, a reply, a package and a call
+alike; and a
 contact, or several shown as one, as the channels it selected followed
 by the related history verified continuity connects to them, each
 message once and each in its own channel, with `writeTo` the distinct

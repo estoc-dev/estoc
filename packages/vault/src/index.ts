@@ -221,7 +221,8 @@ export {
   foldOutbound,
 } from "./fold/outbound.js";
 export { type Erasures, type Released, type ReadState, foldErasures, erased, retainedRoots, heldRoots, readState } from "./fold/held.js";
-export { type ViewInputs, type SendGate, type RemoteError, type ChannelView, type ContactChannel, type Preference, type ContactView, type Views, senderGate, channelPolicy, foldViews, messageIdsOf } from "./fold/views.js";
+export { type SendGate, senderGate, channelPolicy } from "./channel-policy.js";
+export { type ViewInputs, type RemoteError, type ChannelView, type ContactChannel, type Preference, type ContactView, type Views, foldViews, messageIdsOf } from "./fold/views.js";
 export { type VaultChecks, type VaultFold, type FoldOptions, type ScanOptions, MAX_READ_BYTES, foldVault, objectReader, checkVault, foldVaultChecked, scanVault } from "./fold/vault.js";
 export {
   type Committed,

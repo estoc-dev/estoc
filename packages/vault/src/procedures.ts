@@ -14,12 +14,13 @@
 
 import { heldRootsOf, type Collected, type Event, type Held, type HeldRoots, type RetainedRoots, type VaultRuntime } from "@estoc/event-store";
 
+import { channelPolicy, senderGate } from "./channel-policy.js";
 import type { Carrier, Decision, Source } from "./fold/channels.js";
 import { erased } from "./fold/held.js";
 import { kindOf, type Execution } from "./fold/inbound.js";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, type Notification, type Outbound } from "./fold/outbound.js";
 import { foldVault, scanVault, type FoldOptions, type ScanOptions, type VaultFold } from "./fold/vault.js";
-import { channelPolicy, messageIdsOf, senderGate } from "./fold/views.js";
+import { messageIdsOf } from "./fold/views.js";
 import type { Keys } from "./identity.js";
 import { automaticMessageId, channelKey, channelOf, compareChannels, effectKey, sameChannel } from "./ids.js";
 import { readVaultEvent, vaultDraft, type VaultDraft, type VaultEvent } from "./schema.js";

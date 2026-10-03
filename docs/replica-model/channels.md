@@ -350,6 +350,8 @@ its tests sit beside it. This document describes none of them a second time.
   agreement: [`fold/inbound.ts`](../../packages/vault/src/fold/inbound.ts).
 - Rotation decisions and their notification: [`rotate.ts`](../../packages/agent-core/src/rotate.ts).
   The early private-address policy: [`privacy.ts`](../../packages/agent-core/src/privacy.ts).
+- Which channels take new work, for every path to the wire:
+  [`channel-policy.ts`](../../packages/vault/src/channel-policy.ts).
 - Send heads for a contact, channel views and the errors peers reported:
   [`fold/views.ts`](../../packages/vault/src/fold/views.ts).
 - Dispatch authority: [`action.ts`](../../packages/agent-core/src/action.ts) mints the one transport
