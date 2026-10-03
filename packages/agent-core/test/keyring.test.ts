@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { longToShort } from "@estoc/did-peer";
-import { mintDid, scanVault, vaultDraft, type DidId, type RouteId } from "@estoc/vault";
+import { mintDid, scanVault, vaultDraft, type DidId } from "@estoc/vault";
 
-import { Keyring, configureRoute, createDid, retireDid } from "../src/index.js";
+import { Keyring, createDid, retireDid } from "../src/index.js";
 import { freshVault, newMediator, party, reloaded } from "./helpers.js";
 
 const ENDPOINT = "https://ingress.example/didcomm";
+const DIRECT = { kind: "direct", endpoint: ENDPOINT } as const;
 
 describe("the keyring", () => {
   it("holds the mediation's identity under both spellings, and each communication DID once the fold has it", async () => {
@@ -15,8 +16,7 @@ describe("the keyring", () => {
     expect(p.ring.mediationKeys(p.mediationId)?.authentication.name).toBe(p.created.data.me.keyName);
     expect(p.ring.secrets().map((secret) => secret.id).sort()).toEqual([`${me}#key-1`, `${me}#key-2`, `${longToShort(me)}#key-1`, `${longToShort(me)}#key-2`].sort());
 
-    const route = await configureRoute(p.runtime, p.keys, { kind: "direct", endpoint: ENDPOINT });
-    const { minted } = await createDid(p.runtime, p.keys, route.data.routeId);
+    const { minted } = await createDid(p.runtime, p.keys, DIRECT);
     expect(p.ring.didKeys(minted.didId)).toBeNull();
     await reloaded(p);
     const keys = p.ring.didKeys(minted.didId);
@@ -33,11 +33,9 @@ describe("the keyring", () => {
   it("leaves out an entity whose keys the seed does not derive", async () => {
     const alice = await freshVault(1);
     const bob = await freshVault(2);
-    const route = await configureRoute(alice.runtime, alice.keys, { kind: "direct", endpoint: ENDPOINT });
-    const bobsRoute = await configureRoute(bob.runtime, bob.keys, { kind: "direct", endpoint: ENDPOINT });
-    const { minted } = await createDid(bob.runtime, bob.keys, bobsRoute.data.routeId);
-    // Bob's record under Alice's route: a document the seed of this vault does not derive
-    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid, boundRouteId: route.data.routeId as RouteId })]);
+    const { minted } = await createDid(bob.runtime, bob.keys, DIRECT);
+    // Bob's record in Alice's vault: a document the seed of this vault does not derive
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid })]);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
     expect(fold.routes.dids.get(minted.didId)?.identity).toBe("mismatch");
     const ring = await Keyring.load(alice.keys, fold);
@@ -49,10 +47,9 @@ describe("the keyring", () => {
 
   it("keeps a retired entity's keys, and drops an entity that fell into conflict, fresh or reloaded alike", async () => {
     const p = await freshVault();
-    const route = await configureRoute(p.runtime, p.keys, { kind: "direct", endpoint: ENDPOINT });
-    const retiring = await createDid(p.runtime, p.keys, route.data.routeId);
-    const claimed = await createDid(p.runtime, p.keys, route.data.routeId);
-    const rewritten = await createDid(p.runtime, p.keys, route.data.routeId);
+    const retiring = await createDid(p.runtime, p.keys, DIRECT);
+    const claimed = await createDid(p.runtime, p.keys, DIRECT);
+    const rewritten = await createDid(p.runtime, p.keys, DIRECT);
     const ring = await Keyring.load(p.keys, await scanVault(p.runtime.vault, p.keys));
     expect(ring.secrets()).toHaveLength(12);
 

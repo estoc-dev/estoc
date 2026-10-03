@@ -28,7 +28,7 @@ import {
 } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, automaticDraft, createDid, retireDid, send, type Content } from "../src/index.js";
+import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, automaticDraft, createDid, retireDid, send, type Content, routeOf } from "../src/index.js";
 import { directParty, received, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -62,8 +62,8 @@ async function contact(party: DirectParty, contactId: ContactId, channels: Chann
 /** Alice continues `ALICE` as `ALICE_NEXT` toward `peer`, under the proof her seed signs, once the peer has written to `ALICE`: a verified local replacement. */
 async function rotated(alice: DirectParty, peer: DirectParty): Promise<{ next: Did; longFormDid: Did }> {
   await received(alice, peer, `confirm-${ALICE}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } });
-  const routeId = (await fold(alice)).routes.dids.get(ALICE)!.created!.boundRouteId;
-  const { minted } = await createDid(alice.runtime, alice.keys, routeId, ALICE_NEXT);
+  const route = routeOf((await fold(alice)).routes.dids.get(ALICE)!)!;
+  const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
   const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, 1_757_700_000);
   await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
   return { next: minted.did, longFormDid: minted.longFormDid };

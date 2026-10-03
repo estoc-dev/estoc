@@ -44,6 +44,7 @@ import {
   type Handler,
   type MessageRecord,
   type Source,
+  routeOf,
 } from "../src/index.js";
 import { didcomm, directParty, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
@@ -159,8 +160,8 @@ describe("records", () => {
     const { alice, bob } = await parties();
     let answer = refused;
     const { manual, receive, channel } = await hosting(alice, () => answer());
-    const routeId = (await scanVault(alice.runtime.vault, alice.keys)).routes.dids.get(ALICE)!.created!.boundRouteId;
-    const { minted: other } = await createDid(alice.runtime, alice.keys, routeId, ALICE_OTHER);
+    const route = routeOf((await scanVault(alice.runtime.vault, alice.keys)).routes.dids.get(ALICE)!)!;
+    const { minted: other } = await createDid(alice.runtime, alice.keys, route, ALICE_OTHER);
     const pair = { localDid: alice.did, peerDid: bob.did };
     const elsewhere = { localDid: other.did, peerDid: bob.did };
 

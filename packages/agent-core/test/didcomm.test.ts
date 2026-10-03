@@ -5,23 +5,21 @@ import { Message as UpstreamMessage } from "didcomm-node";
 import { FlattenedEncrypt, importJWK } from "jose";
 
 import { resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
-import { scanVault, type Did, type DidId, type RouteId } from "@estoc/vault";
+import { scanVault, type Did, type DidId } from "@estoc/vault";
 
 import { EnvelopeRefused, secretsResolverFor, unpack, type DidcommApi, type IMessage, type SecretsResolver } from "../src/protocol/didcomm.js";
-import { Keyring, configureRoute, createDid } from "../src/index.js";
+import { Keyring, createDid } from "../src/index.js";
 import { didcomm, freshVault, newMediator, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
 
 const BOB = "did:web:bob.example";
 const MALLORY = "did:web:mallory.example";
 const CHARLIE = "did:web:charlie.example";
-const ROUTE = "019b0000-0000-7000-8000-00000000000a" as RouteId;
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
 
 /** Alice: a vault with one communication DID on a direct route, and her keys in hand. */
 async function alice(): Promise<Fresh & { longFormDid: Did; ring: Keyring; secrets: SecretsResolver }> {
   const fresh = await freshVault();
-  await configureRoute(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, ROUTE);
-  const { minted } = await createDid(fresh.runtime, fresh.keys, ROUTE, DID);
+  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
   const ring = await Keyring.load(fresh.keys, await scanVault(fresh.runtime.vault, fresh.keys));
   return { ...fresh, longFormDid: minted.longFormDid, ring, secrets: secretsResolverFor(ring.secrets()) };
 }

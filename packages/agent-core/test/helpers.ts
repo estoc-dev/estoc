@@ -35,18 +35,18 @@ import {
   Receiver,
   authorizedKeys,
   commitResolution,
-  configureRoute,
   createDid,
   createMediation,
   createVault,
-  ensureRoute,
   establish,
   pinnedResolver,
   receiptOf,
   resolve,
+  routeOf,
   type LinkOptions,
   type OpenedVault,
   type Timers,
+  type RouteSpec,
 } from "../src/index.js";
 import { FakeMediator, MEDIATOR_HTTP } from "./fake-mediator.js";
 
@@ -188,8 +188,7 @@ export interface DirectParty extends Fresh {
 /** A vault created in `driver` with one communication DID, `didId`, on a direct route to `endpoint`. */
 export async function directParty(fill: number, endpoint: string, didId: DidId, driver = memoryDriver()): Promise<DirectParty> {
   const fresh = await freshVault(fill, `party ${fill}`, driver);
-  const route = await configureRoute(fresh.runtime, fresh.keys, { kind: "direct", endpoint });
-  const { minted } = await createDid(fresh.runtime, fresh.keys, route.data.routeId, didId);
+  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint }, didId);
   return { ...fresh, didId, did: minted.did, longFormDid: minted.longFormDid };
 }
 
@@ -264,12 +263,15 @@ export async function received(party: DirectParty, peer: DirectParty, wire: stri
 /** Someone with one communication DID, whichever route it is on. */
 export type Addressed = Pick<DirectParty, "runtime" | "keys" | "didId" | "did" | "longFormDid">;
 
+/** The route over a mediation arrangement, as `createDid` and `rotate` take it. */
+export const mediatedRoute = (mediationId: MediationId): RouteSpec => ({ kind: "mediated", mediationId });
+
 const PROOF_IAT = 1_757_700_000;
 
 /** A proof that `peer`'s DID succeeds `priorDidId`, a DID the peer creates for it on the same route and signs with: the issuer's document is the peer's to hand out, and nobody else holds it. */
 export async function proofOfSuccession(peer: Addressed, priorDidId: DidId): Promise<{ prior: MintedDid; proof: string }> {
-  const routeId = (await scanVault(peer.runtime.vault, peer.keys)).routes.dids.get(peer.didId)!.created!.boundRouteId;
-  const { minted: prior } = await createDid(peer.runtime, peer.keys, routeId, priorDidId);
+  const route = routeOf((await scanVault(peer.runtime.vault, peer.keys)).routes.dids.get(peer.didId)!)!;
+  const { minted: prior } = await createDid(peer.runtime, peer.keys, route, priorDidId);
   const signing = await peer.keys.signing(didKeyName(priorDidId, "authentication"));
   const proof = await new SignJWT({ iss: prior.did, sub: peer.longFormDid, iat: PROOF_IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));
   return { prior, proof };
@@ -313,12 +315,12 @@ export interface MediatedParty extends Party {
   longFormDid: Did;
 }
 
-/** A party with its arrangement granted and one communication DID, `didId`, on a route over the mediator: the DID's document sends to the mediator. */
+/** A party with its arrangement granted and one communication DID, `didId`, routed through the mediator: the DID's document sends to the mediator. */
 export async function mediatedParty(mediator: FakeMediator, fill: number, didId: DidId, driver = memoryDriver()): Promise<MediatedParty> {
   const p = await party(mediator, fill, {}, driver);
   await establish(p.link, p.runtime, p.keys, p.mediationId);
-  const routeId = await ensureRoute(p.runtime, p.keys, p.mediationId);
-  const { minted } = await createDid(p.runtime, p.keys, routeId, didId);
+  const route = mediatedRoute(p.mediationId);
+  const { minted } = await createDid(p.runtime, p.keys, route, didId);
   return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid };
 }
 

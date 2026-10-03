@@ -6,7 +6,7 @@ import { InvalidDidDocument, anonymousMessageId, canonicalDidOf, didKeyName, inb
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, reconcile, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source } from "../src/index.js";
+import { AgentTrace, Keyring, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, reconcile, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source, routeOf } from "../src/index.js";
 import { didcomm, directParty, freshVault, mediatedParty, newMediator, peerSealer, refuseCommits, reloaded, sealed, type DirectParty, type Fresh } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -207,8 +207,8 @@ describe("the receipt", () => {
   test("a carried proof is kept as the string it came as, one that verifies and one that is no JWT alike: the fold judges it, the receipt does not", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     expect((await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT })).outcome).toBe("received");
     receiver.close();
@@ -231,8 +231,8 @@ describe("the receipt", () => {
   test("a proof whose hash-valid issuer the vault could never retain a document for is received, recorded and judged by the fold like any other, and stops neither the scan nor the next message", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const service = (serviceEndpoint: string) => ({ id: "#same", type: "DIDCommMessaging", serviceEndpoint });
     const twoServices = encodeLongForm({ ...prior.inputDocument, service: [service("https://one.example"), service("https://two.example")] });
@@ -269,8 +269,8 @@ describe("the receipt", () => {
   test("the receipt admits the observation before the lock is released, judged among every other in canonical event order: a message from the address the peer has since left is recorded and ignored, and deliveries recorded at once each have their admission decided before the next is recorded", async () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
-    const routeId = (await foldOf(bob)).routes.dids.get(BOB)!.created!.boundRouteId;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, routeId, BOB_PRIOR);
+    const route = routeOf((await foldOf(bob)).routes.dids.get(BOB)!)!;
+    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const carried = await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT });
     const fromOld = await receiver.receive({ packed: await sealed(await peerSealer(bob, prior.longFormDid), alice.longFormDid), source: DIRECT });
@@ -310,22 +310,22 @@ describe("the receipt", () => {
     await closeAll(alice, bob);
   });
 
-  test("the receipt checks the recipient again under the lock: one still recovering defers the record with a watch that says something else once it can receive, and a route retired since the gate refuses it", async () => {
-    const { alice, bob } = await parties();
+  test("the receipt checks the recipient again under the lock: one still recovering defers the record with a watch that says something else once it can receive, and a mediation retired since the gate refuses it", async () => {
+    const alice = await mediatedParty(await newMediator(), 1, DID);
+    const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const plain = await authenticated(alice, bob);
     const copy = await freshVault(1, "copy");
     await copy.runtime.ingest(await rawEventsOf(alice, "did.created"));
     const deferred = await recordReceipt(copy.runtime, copy.keys, plain);
-    expect(deferred).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: the bound route is not configured` });
+    expect(deferred).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: no mediation arrangement routes through ${alice.mediator.did}` });
     const watch = (deferred as { watch: (fold: VaultFold) => string }).watch;
     const before = watch(await foldOf(copy));
-    await copy.runtime.ingest(await rawEventsOf(alice, "route.configured"));
+    await copy.runtime.ingest(await rawEventsOf(alice, "mediation.created", "mediation.granted"));
     expect(watch(await foldOf(copy))).not.toBe(before);
     expect((await recordReceipt(copy.runtime, copy.keys, plain)).outcome).toBe("received");
     expect(await eventsOf(copy, "message.in")).toHaveLength(1);
 
-    const routeId = (await foldOf(alice)).routes.dids.get(DID)!.created!.boundRouteId;
-    await alice.runtime.vault.commit([], [vaultDraft("route.retired", { routeId, because: "gone" })]);
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
     expect(await recordReceipt(alice.runtime, alice.keys, plain)).toEqual({ outcome: "terminal", reason: `${alice.did} may no longer receive` });
     expect(await eventsOf(alice, "message.in")).toEqual([]);
     await closeAll(alice, bob, copy);

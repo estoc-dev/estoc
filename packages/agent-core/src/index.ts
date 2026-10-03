@@ -73,16 +73,15 @@ export { createMediation, establish, mediationOf, reconcile, reconcileNow, regis
 export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
 export {
-  configureRoute,
   createDid,
   didOf,
   disclose,
-  ensureRoute,
   invitationOf,
-  mediatedRouteOf,
   retireDid,
   routeOf,
   routeTargetOf,
+  sameDocument,
+  usableTarget,
   type CreatedDid,
   type Disclosed,
   type Disclosure,

@@ -289,12 +289,11 @@ export class Agent {
     return enrolled;
   }
 
-  /** `disclose` over the line of the arrangement the DID's route is on. */
+  /** `disclose` over the line of the arrangement that routes the DID. */
   async disclose(didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
     const fold = await scanVault(this.runtime.vault, this.keys);
-    const created = didOf(fold, didId).created;
-    const configured = created === null ? null : (routeOf(fold, created.boundRouteId).configured ?? null);
-    const link = configured?.kind === "mediated" ? (await this.lineOf(configured.mediationId)).link : null;
+    const route = routeOf(didOf(fold, didId));
+    const link = route?.kind === "mediated" ? (await this.lineOf(route.mediationId)).link : null;
     return disclose(link, this.runtime, this.keys, didId, disclosure, this.confirmations);
   }
 

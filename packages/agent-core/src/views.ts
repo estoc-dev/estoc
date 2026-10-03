@@ -57,7 +57,7 @@ export interface Manual extends Record<ManualEntry, unknown> {
   retry(messageId: MessageId): Promise<Dispatched>;
   completeResponse(executionId: ExecutionId, effectType: string): Promise<EffectOutcome>;
   completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<EffectOutcome>;
-  rotate(target: Omit<RotationTarget, "sourceEventCid">, successor?: Pick<RotateOptions, "routeId" | "didId">): Promise<Rotated>;
+  rotate(target: Omit<RotationTarget, "sourceEventCid">, successor?: Pick<RotateOptions, "route" | "didId">): Promise<Rotated>;
 }
 
 export function manualProcedures(runtime: VaultRuntime, keys: Keys, dispatcher: Dispatcher, options: ManualOptions = {}): Manual {
