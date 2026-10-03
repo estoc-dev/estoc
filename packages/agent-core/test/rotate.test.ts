@@ -61,7 +61,7 @@ import {
   routeOf,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { didcomm, directParty, freshVault, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
+import { after, didcomm, directParty, freshVault, merged, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -183,6 +183,34 @@ describe("a local rotation", () => {
     expect(again).toMatchObject({ existed: true, decision: { cid: rotation.decision.cid }, successor: rotation.successor, notification: { outcome: "existing", messageId: notification.messageId, action: null, dispatched: null } });
     fold = await foldOf(alice);
     expect([fold.dids.entities.size, fold.set.of("did.rotationSelected").length, wire.posts.length]).toEqual([2, 1, 1]);
+    await closeAll(alice, bob);
+  });
+
+  test("a record of the same rotation another replica decided under its own proof joins the intent: asked again, the rotation reuses it under the first candidate record, lists both records and mints nothing; the second record's notification is its own, made by a completion, and carries the first record's proof", async () => {
+    const { alice, bob } = await parties();
+    const { wire, options, receive } = await rotating(alice);
+    await receive(bob, { type: BASIC_MESSAGE });
+    const rotation = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
+    const successor = await successorOf(alice, rotation);
+    expect(rotation.records).toEqual([rotation.decision]);
+    const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, successor.longFormDid, IAT + 1);
+    const other = await merged(alice.runtime, "did.rotationSelected", { fromDidId: ALICE, peerDid: bob.did, toDidId: rotation.successor, sourceEventCid: null, fromPrior }, after(rotation.decision.at, 1));
+    let fold = await foldOf(alice);
+    expect([fold.continuity.status(other.cid), fold.continuity.conflicts]).toEqual([{ status: "verified" }, []]);
+
+    const again = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.longFormDid }, options);
+    expect(again).toMatchObject({ existed: true, decision: { cid: rotation.decision.cid }, records: [{ cid: rotation.decision.cid }, { cid: other.cid }], successor: rotation.successor, notification: { outcome: "existing", messageId: created(rotation.notification).messageId } });
+    fold = await foldOf(alice);
+    expect([fold.dids.entities.size, fold.set.of("did.rotationSelected").length, wire.posts.length]).toEqual([2, 2, 1]);
+    expect(unfinishedWork(fold).notifications.map((missing) => missing.decision.event.cid)).toEqual([other.cid]);
+
+    const completed = created(await completeNotification(alice.runtime, alice.keys, other.cid as EventReference<"did.rotationSelected">, options));
+    expect([completed.action.kind, completed.dispatched.outcome, wire.posts.length]).toEqual(["manual", "submitted", 2]);
+    expect(completed.intent.data).toMatchObject({ senderDidId: rotation.successor, recipientDid: bob.did, rotationEventCid: other.cid });
+    expect(await openedByBob(bob, alice, completed.messageId)).toMatchObject({ from: successor.longFormDid, from_prior: rotation.decision.data.fromPrior });
+    fold = await foldOf(alice);
+    expect(fold.outbound.notificationFor(other.cid)).toEqual({ status: "selected", messageId: completed.messageId });
+    expect(unfinishedWork(fold)).toMatchObject({ notifications: [], notificationConflicts: [] });
     await closeAll(alice, bob);
   });
 

@@ -770,23 +770,30 @@ eligibility. It uses type `https://didcomm.org/trust-ping/2.0/ping-response`,
 empty body/attachments/headers, `ack == []` and `pleaseAck == null`. An expired
 Ping cannot start a new reply. It is independent of an ACK requested by that Ping.
 
-A rotation notification names the exact `rotationEventCid` in its intent. It
-uses the decision's trigger source for its execution, not a later input that
-discovers unfinished notification work. Its type is `https://didcomm.org/empty/1.0/empty`,
-body/attachments/headers are empty, `ack == []`, `pleaseAck == [""]`, expiry is
-null, and source `pthid`, nullable creation time and `thid ?? wireMessageId` are
-retained. Its sender is the decision's successor DID and recipient is the
-decision's fixed `peerDid`. Its source, when present, belongs to the decision's
-`fromDidId`/`peerDid` channel. Every successor message, the notification
-included, carries the decision's frozen proof until exact-successor
-confirmation; notification submission alone is not confirmation.
+A rotation notification names the exact `rotationEventCid` of one rotation
+record in its intent. It uses that record's trigger source for its execution,
+not a later input that discovers unfinished notification work. Its type is
+`https://didcomm.org/empty/1.0/empty`, body/attachments/headers are empty,
+`ack == []`, `pleaseAck == [""]`, expiry is null, and source `pthid`, nullable
+creation time and `thid ?? wireMessageId` are retained. Its sender is the
+record's successor DID and recipient is the record's fixed `peerDid`. Its
+source, when present, belongs to the record's `fromDidId`/`peerDid` channel.
+Until exact-successor confirmation, every successor message, the notification
+included, carries a proof selected at preparation time from the first
+candidate record in canonical event order within the same rotation intent; it
+need not be the proof of the record the notification names. The selected proof
+is frozen in each prepared package; notification submission alone is not
+confirmation.
 
 A manual rotation with no trigger source uses a locally initiated UUIDv7
 notification intent, null thread/parent-thread/creation time, and the same
 Empty/ACK-request/expiry rules; its source/effect fields are null, while
-`rotationEventCid` remains present. One decision has one notification:
-several intents naming it conflict for notification work, and no trigger,
-retry or completion creates another. How a decision reuses its notification,
+`rotationEventCid` remains present. One record has one notification: several
+intents naming it conflict for notification work, and no trigger, retry or
+completion creates another. Several records of one rotation intent each track
+their own notification. Two records over one input derive the same automatic
+message ID, so their notification intents collide; a record's notification is
+not guaranteed to complete in that case. How a record reuses its notification,
 when a missing one may still be completed by hand and that recovery never
 allocates another successor are
 [the rotation procedure](../../packages/agent-core/src/rotate.ts).

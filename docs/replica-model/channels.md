@@ -172,12 +172,18 @@ each outgoing package retains its own peer resolution.
 `sourceEventCid` is null for manual rotation; otherwise it names the complete
 source witness in `C(A0,B)` that selected the rotation under
 [the private-address policy](../../packages/agent-core/src/privacy.ts). The decision is committed
-before any dependent intent or disclosure. What a producer checks before
-committing one, that a pair rotates once in its context and how the
-notification follows are [the rotation procedure](../../packages/agent-core/src/rotate.ts); what a
+before any dependent intent or disclosure. A pair has one rotation intent in
+its context, which several records may support: two replicas deciding the same
+predecessor and successor apart, or one deciding it again over a restored
+snapshot, each record under its own author, time, source and proof. Which
+records are one intent, and that two successors in one context compete while
+the same successor from two predecessors is not one intent, is
+[the rotation policy](../../packages/vault/src/rotation-policy.ts). What a producer checks before
+committing one, that it reuses the intent already recorded in its context and
+how the notification follows are [the rotation procedure](../../packages/agent-core/src/rotate.ts); what a
 saved decision needs before it is projected, and that a decision still waiting
 for its evidence already forbids another successor, is the continuity fold.
-A prepared message carrying this proof must match the selected decision.
+A prepared message carries the proof of one of that intent's records.
 
 <a id="admission"></a>
 <a id="channel-accepted"></a>

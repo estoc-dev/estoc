@@ -1,10 +1,11 @@
 import { Message } from "@estoc/didcomm-node";
 import { SignJWT, importJWK } from "jose";
+import { v7 as uuidv7 } from "uuid";
 import { vi } from "vitest";
 
 import { resolveDIDCommDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
 import { openNodeSqlite } from "@estoc/event-store/node";
-import type { Cid, Held, JsonObject, SqliteDriver, VaultRuntime } from "@estoc/event-store";
+import { eventCidOf, type AuthorId, type Cid, type EventEnvelope, type Held, type JsonObject, type SqliteDriver, type VaultRuntime } from "@estoc/event-store";
 import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type SeedKeystoreDocument } from "@estoc/keystore";
 import {
   AUTHENTICATION_METHOD,
@@ -23,6 +24,7 @@ import {
   type MintedDid,
   type PublicKey,
   type Replica,
+  type VaultData,
   type VaultEvent,
   type VaultEventType,
   type WireMessageId,
@@ -282,6 +284,19 @@ export async function received(party: DirectParty, peer: DirectParty, wire: stri
   await party.runtime.vault.commit([], [vaultDraft("message.admitted", { sourceEventCid: cid })]);
   return cid;
 }
+
+/** An event another replica appended, as a merge brings it: under an author of its own, at the time given, ingested whole. */
+export async function merged<T extends VaultEventType>(runtime: VaultRuntime, type: T, data: VaultData[T], at: string): Promise<VaultEvent<T>> {
+  const draft = vaultDraft(type, data);
+  const envelope: EventEnvelope = { at, author: uuidv7() as AuthorId, type, roots: draft.roots ?? [], data: draft.data };
+  const event = { ...envelope, cid: eventCidOf(envelope) } as VaultEvent<T>;
+  const { rejected } = await runtime.ingest([event]);
+  if (rejected.length > 0) throw new Error(`not merged: ${JSON.stringify(rejected)}`);
+  return event;
+}
+
+/** `seconds` after an event's stamp, as another stamp. */
+export const after = (at: string, seconds: number): string => new Date(Date.parse(at) + seconds * 1000).toISOString();
 
 /** Someone with one communication DID, whichever route it is on. */
 export type Addressed = Pick<DirectParty, "runtime" | "keys" | "didId" | "did" | "longFormDid">;

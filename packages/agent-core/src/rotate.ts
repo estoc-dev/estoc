@@ -5,10 +5,13 @@
  * selected it or none, and the proof the predecessor's authentication
  * key signs — committed atomically with the successor's creation, so
  * that a crash leaves both or neither and never a DID allocated for
- * nothing. A pair rotates once: the decision already recorded from
- * the predecessor anywhere in its verified peer-only context is
- * reused, and no second successor is minted while one waits for
- * evidence or two contradict each other. An admitted receipt must
+ * nothing. A pair has one rotation intent in its context, which
+ * several records may support when two replicas decide the same
+ * rotation apart or one decides it again over a restored snapshot: the
+ * intent already recorded from the predecessor anywhere in its
+ * verified peer-only context is reused under its first candidate
+ * record, and no second successor is minted while a record waits for
+ * evidence or two intents contradict each other. An admitted receipt must
  * show the peer writing to exactly the predecessor address, since a
  * link from an address the peer never used confirms nothing, and an
  * observation the runtime has not accepted for application use
@@ -96,11 +99,14 @@ export interface RotateOptions {
 }
 
 export interface Rotated {
+  /** the first candidate record of the intent, in canonical event order */
   decision: VaultEvent<"did.rotationSelected">;
+  /** every record supporting the intent, in canonical event order, `decision` among them */
+  records: readonly VaultEvent<"did.rotationSelected">[];
   /** the pair rotated away from, canonical */
   channel: Channel;
   successor: DidId;
-  /** the decision was recorded already: reused as it is, no successor minted, and its notification left to a completion */
+  /** the intent was recorded already: reused as it is, no successor minted, and its notification left to a completion */
   existed: boolean;
   notification: EffectOutcome;
 }
@@ -114,6 +120,7 @@ export async function rotate(runtime: VaultRuntime, keys: Keys, target: Rotation
 export interface RotationDecided {
   channel: Channel;
   decision: VaultEvent<"did.rotationSelected">;
+  records: readonly VaultEvent<"did.rotationSelected">[];
   existed: boolean;
   drafted: Drafted;
   executionId: ExecutionId | null;
@@ -133,7 +140,10 @@ export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: 
     const denied = channelPolicy(fold, channel);
     if (denied !== null) throw new Unusable("channel", key, [denied]);
     const existing = decisionFor(fold, channel.localDid, channel.peerDid);
-    if (existing.status === "reuse") return { channel, decision: existing.decision.event, existed: true, drafted: recorded(fold, existing.decision.event.cid), executionId: null };
+    if (existing.status === "candidate") {
+      const decision = existing.candidate.event;
+      return { channel, decision, records: existing.group.records.map((record) => record.event), existed: true, drafted: recorded(fold, decision.cid), executionId: null };
+    }
     if (existing.status !== "none") throw new Unusable("channel", key, [existing.because]);
     if (sourceEventCid !== null) assertSelectingSource(fold, channel, sourceEventCid);
     if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) === null) throw new Unusable("channel", key, ["no admitted receipt shows the peer writing to exactly this address"]);
@@ -149,14 +159,14 @@ export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: 
     fold = await scanVault(held, keys);
     const settled = await settleNotification(held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
     const drafted: Drafted = settled.drafted.outcome === "created" ? { ...settled.drafted, action: initialAction(settled.drafted.messageId) } : settled.drafted;
-    return { channel, decision, existed: false, drafted, executionId: settled.executionId };
+    return { channel, decision, records: [decision], existed: false, drafted, executionId: settled.executionId };
   });
 }
 
 /** The call of `rotate`: the notification decided, dispatched under the action minted for it. */
 export async function callRotation(decided: RotationDecided, options: Pick<RotateOptions, "dispatch" | "trace">): Promise<Rotated> {
   const notification = await dispatched(decided.drafted, decided.executionId, options);
-  return { decision: decided.decision, channel: decided.channel, successor: decided.decision.data.toDidId, existed: decided.existed, notification };
+  return { decision: decided.decision, records: decided.records, channel: decided.channel, successor: decided.decision.data.toDidId, existed: decided.existed, notification };
 }
 
 /**
@@ -261,13 +271,13 @@ function conflictedChannels(conflicts: readonly ScopedConflict[]): Map<string, S
   return reached;
 }
 
-/** The state of a recorded decision's notification, for a rotation that reuses the decision: nothing is made or called for it here. */
+/** The state of a record's notification, for a rotation that reuses the intent it supports: nothing is made or called for it here. */
 function recorded(fold: VaultFold, rotationEventCid: EventCid): Drafted {
   const effectType = ROTATION_NOTIFICATION_EFFECT;
   const notification = fold.outbound.notificationFor(rotationEventCid);
   if (notification.status === "selected") return { effectType, outcome: "existing", messageId: notification.messageId };
   if (notification.status === "conflict") return { effectType, outcome: "none", because: `${notification.messageIds.length} notification intents name the rotation` };
-  return { effectType, outcome: "none", because: "the decision was recorded already: its missing notification is made by an explicit completion" };
+  return { effectType, outcome: "none", because: "the rotation was recorded already: its missing notification is made by an explicit completion" };
 }
 
 /** The decision's one notification, reused as recorded or made now over the input that selected the decision, or over none under a fresh message ID. */
