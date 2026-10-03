@@ -488,9 +488,9 @@ Use the shared package's proof profile and canonical DID binding, including
 equivalent issuer/`kid` DID spellings and subject/sender spellings. Preserve
 document-independent rejection separately from missing material:
 `precheckFromPrior(token, { authenticatedSender })` refuses malformed
-claims, unsupported profile headers and time claims, non-canonical or
-mismatched DIDs and a `sub` that is not the authenticated sender, all
-without an issuer document. Keep that precheck in the package, without a
+claims, unsupported profile headers and time claims, invalid DID
+spellings or canonically mismatched DIDs and a `sub` that is not the
+authenticated sender, all without an issuer document. Keep that precheck in the package, without a
 second parser in the runtime. Decoding supplies no signature or channel
 authority.
 
