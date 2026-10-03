@@ -1077,7 +1077,7 @@ describe("two daemons over a mediator", () => {
       await expect(first.daemon.acceptInvitation(invitation, "nobody")).rejects.toThrow(closed);
       expect(first.heard.snapshot().messages.filter((message) => message.direction === "out" && message.headers?.type === BASIC_MESSAGE)).toHaveLength(1);
 
-      // Receiving, reconciling and what the vault owes on its own wait for no explanation.
+      // Receiving, holding its addresses and what the vault owes on its own wait for no explanation.
       await until("the restored vault's line is live", () => first.heard.lines()?.connections[0]?.live === true);
       const reply = await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content: "still there?" }, pleaseAck: [""] });
       expect(reply.outcome).toBe("submitted");

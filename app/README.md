@@ -160,8 +160,8 @@ at the top of the script; an optional first argument sets the app URL.
 
 ## How it hangs together
 
-- **The agent is [@estoc/agent-core]**: mediation
-  (coordinate-mediation 3.0), pickup and live delivery (messagepickup 3.0
+- **The agent is [@estoc/agent-core]**: mediation (a replica-mediation
+  account per mediator), pickup and live delivery (messagepickup 3.0
   over HTTP and WebSocket), routing 2.0 forwards, trust-ping, receipts,
   rotation by `from_prior`, user-profile/1.0 introductions, over the
   SQLite vault (`@estoc/event-store`, `@estoc/vault`).

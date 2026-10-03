@@ -301,7 +301,7 @@ not its mediator, in either direction:
   `sender: null` and belongs to nobody.
 - What is logged: everything between contacts — messages, pings,
   requests, unknown types, anonymous mail. What is not: traffic with the
-  mediator (coordinate-mediation, pickup) and the `forward` wrapping.
+  mediator (replica-mediation, pickup) and the `forward` wrapping.
   Whether a record is *shown* is the application's projection.
 - Dedup keys for merge: `mid`, and `(direction, sender, msg.id)`.
 
@@ -376,7 +376,7 @@ fact, and it is bulky and perishable. One directory per stream:
 | `envelope`   | every `unpack` and `pack`                     | kind (authcrypt / anoncrypt / signed / plain / forward), key ids, algorithm — **no bytes** |
 | `wire`       | every frame, request and response             | via (http / ws), endpoint, status, size, time — **headers only** |
 | `wire.bytes` | the same, as bytes                            | the ciphertext, for peeling an envelope open on screen        |
-| `mediation`  | the mediation rituals (status, delivery, grant, recipient-update) | their plaintext — the one place it exists |
+| `mediation`  | the mediation rituals (status, delivery, account registration, recipient-add) | their plaintext — the one place it exists |
 | `diag`       | a diagnostic                                  | one line of text                                             |
 
 ```jsonc

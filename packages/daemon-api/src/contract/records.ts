@@ -18,7 +18,7 @@ export interface Snapshot {
    * The vault was restored from a backup and the person has not yet
    * been told what a restore cannot bring back. Until `explainedRestore`
    * commits, the daemon refuses user sends and manual dispatch;
-   * receiving, reconciliation and what the runtime owes on its own go on.
+   * receiving, holding its addresses and what the runtime owes on its own go on.
    */
   restoreUnexplained: boolean;
   mediations: MediationRecord[];

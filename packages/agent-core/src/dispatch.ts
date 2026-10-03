@@ -186,7 +186,7 @@ function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, chan
   return { mediationId: route.mediationId, did: created.did };
 }
 
-/** Reconciling registers what the vault wants held; why the sender is not held after that, or null once it is. */
+/** Has the account hold what the vault wants held; why the sender is not held after that, or null once it is. */
 async function confirmRegistration(runtime: VaultRuntime, keys: Keys, { mediationId, did }: NonNullable<Ready["registerWith"]>, options: DispatchOptions): Promise<string | null> {
   const link = options.links?.(mediationId) ?? null;
   if (link === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before a package discloses it`;

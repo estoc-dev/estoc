@@ -151,14 +151,13 @@ function requireLive(entity: LocalDidEntity): void {
 
 /**
  * `did.disclosed` for a live entity, and the invitation when it is an
- * `oob` one. A mediated address is reconciled with the mediator of the
- * one arrangement that routes it, over `link`, and refused unless the
- * mediator holds it; one of a replica-mediation arrangement is added to
- * its account instead, which needs the runtime's `confirmations`. A
- * direct address needs neither.
- * The reconciliation and the commit run as the
- * account's one procedure at a time, the reconciliation outside the
- * writer lock and the entity's liveness read again under it. An
+ * `oob` one. A mediated address is added, over `link`, to the account
+ * of the one arrangement that routes it, which needs the runtime's
+ * `confirmations`, and refused unless the mediator holds it. A direct
+ * address needs neither.
+ * The addition and the commit run as the account's one procedure at a
+ * time, the addition outside the writer lock and the entity's liveness
+ * read again under it. An
  * invitation already recorded under the same `oobId` is republished:
  * its disclosure is returned and nothing written, so that a retry
  * after a lost result cannot record the one invitation twice.

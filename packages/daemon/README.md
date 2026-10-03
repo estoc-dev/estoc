@@ -100,7 +100,7 @@ read of the vault.
 Nothing is sent on open: what an earlier run left unfinished is in
 `snapshot.pending`, each entry naming the call that takes it up. A vault
 restored from a snapshot opens with `restoreUnexplained`: it receives,
-reconciles and answers from the first moment, and refuses the user's
+holds its addresses and answers from the first moment, and refuses the user's
 sends and every manual dispatch until the view has shown what a restore
 cannot bring back — local DIDs made after the snapshot, peers known only
 by a short form, continuity the snapshot predates, forks a competing
