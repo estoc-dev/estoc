@@ -28,7 +28,6 @@ import {
   createVault,
   decide,
   effectTypesOf,
-  ensureRoute,
   inspectRuntime,
   isTraceLevel,
   openVault,
@@ -39,6 +38,7 @@ import {
   type Called,
   type EffectOutcome,
   type InspectedRuntime,
+  type RouteSpec,
 } from "@estoc/agent-core";
 
 import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
@@ -545,10 +545,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Unmet(`no contact ${contactId}`);
   }
 
-  async function preferredRoute({ runtime, keys }: Open) {
+  async function preferredRoute({ runtime, keys }: Open): Promise<RouteSpec> {
     const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
     if (preferred === null) throw new Unmet("no mediator is set");
-    return ensureRoute(runtime, keys, preferred);
+    return { kind: "mediated", mediationId: preferred };
   }
 
   /** `presented` as a peer's DID: canonical, and none of this vault's own. */
@@ -864,7 +864,6 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         if (profile === null) await agent.establish(mediationId);
         else await agent.enroll(mediationId);
         await selectMediation(runtime, keys, mediationId);
-        await ensureRoute(runtime, keys, mediationId);
         return mediationId;
       }),
 

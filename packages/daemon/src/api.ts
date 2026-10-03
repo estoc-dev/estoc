@@ -79,20 +79,19 @@ export interface Daemon {
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
 
   /**
-   * An arrangement with `mediatorDid` selected and a route over it
-   * configured: the one that stands with that mediator under `profile`,
-   * or one created under it. An ordinary arrangement, of the null
+   * An arrangement with `mediatorDid` selected: the one that stands
+   * with that mediator under `profile`, or one created under it. An ordinary arrangement, of the null
    * profile and what is made when none is named, is granted; a
    * replica-mediation one is enrolled in.
    */
   setMediator(mediatorDid: string, profile?: MediationProfile | null): Promise<MediationId>;
-  /** A fresh DID on the selected arrangement's route, disclosed as an out-of-band invitation. */
+  /** A fresh DID routed through the selected arrangement, disclosed as an out-of-band invitation. */
   createInvitation(goal?: string): Promise<CreatedInvitation>;
   /** A fresh DID of ours toward the inviter, a contact that selects the pair, and a Ping under the invitation's ID. */
   acceptInvitation(invitation: Invitation, petname: string): Promise<SendResult & { contactId: ContactId }>;
   /** The same toward a DID handed over on its own, the Ping naming no invitation; a DID of this vault's is refused. */
   addContactByDid(did: string, petname: string): Promise<SendResult & { contactId: ContactId }>;
-  /** The DID this vault hands out to anyone, in its long form: the live one disclosed directly, minted on the selected arrangement's route and disclosed when there is none. */
+  /** The DID this vault hands out to anyone, in its long form: the live one disclosed directly, minted through the selected arrangement and disclosed when there is none. */
   publicDid(): Promise<{ didId: DidId; did: Did }>;
   createContact(petname: string, channels: Channel[]): Promise<ContactId>;
   renameContact(contactId: ContactId, petname: string): Promise<void>;
