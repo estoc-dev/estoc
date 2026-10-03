@@ -779,6 +779,34 @@ describe("a mediator set", () => {
     expect([mediator.replicaAccounts.size, mediator.replicas.size]).toEqual([1, 1]);
   });
 
+  it("is one arrangement when set twice at once: both calls return it, and a public DID is minted through it", async () => {
+    const mediator = await newMediator();
+    const alice = daemonOver(await folder(), mediator);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+
+    const [first, second] = await Promise.all([alice.daemon.setMediator(mediator.did), alice.daemon.setMediator(mediator.did)]);
+    expect(second).toBe(first);
+    expect(alice.heard.snapshot().mediations.map(({ mediationId, selected, usable }) => ({ mediationId, selected, usable }))).toEqual([{ mediationId: first, selected: true, usable: true }]);
+    expect([mediator.replicaAccounts.size, mediator.replicas.size]).toEqual([1, 1]);
+    await expect(alice.daemon.publicDid()).resolves.toMatchObject({ did: expect.stringMatching(/^did:peer:4/) });
+  });
+
+  it("is kept once this runtime is enrolled: another mediator is refused before anything is written", async () => {
+    const mediator = await newMediator();
+    const other = await newMediator(201);
+    const alice = daemonOver(await folder(), mediator);
+    await alice.daemon.boot();
+    await alice.daemon.createIdentity("Alice", PASSPHRASE);
+    const enrolled = await alice.daemon.setMediator(mediator.did);
+    const commits = () => alice.heard.events.filter(([kind]) => kind === "changed").length;
+    const before = commits();
+
+    await expect(alice.daemon.setMediator(other.did)).rejects.toThrow(/moving it to another mediator is not provided/);
+    expect(alice.heard.snapshot().mediations.map(({ mediationId, selected }) => ({ mediationId, selected }))).toEqual([{ mediationId: enrolled, selected: true }]);
+    expect(commits()).toBe(before);
+  });
+
   it("is free to be another one after the first refused to register the account, and is so still once reopened", async () => {
     const refusing = await newMediator();
     const mediator = await newMediator();

@@ -169,7 +169,7 @@ changing mediator while keeping keys.
 { "myKey": "mediation/0198…/me",  "peerKey": "q4w8…" }   this device's mediator
 ```
 
-Mediation traffic — account registration, recipient-add, pickup — carries
+Mediation traffic — mediate-request, keylist updates, pickup — carries
 a pair like everything else, under the mediation's `me` key. Those
 channels are the mediator's, not any contact's: the fold joins them to
 `mediation.created.mediatorDid` (§7.3) and keeps them out of the

@@ -21,7 +21,9 @@
   arrangement can each replace a private address and leave the peer no
   channel to write to: until one runtime alone is made to answer, the
   profile is for one live runtime at a time. Once its replica intent is
-  recorded, a runtime enrolls only in that arrangement.
+  recorded, a runtime enrolls only in that arrangement: asked for another
+  mediator, `setMediator` refuses before writing anything. Two calls at
+  once for one mediator make one arrangement.
 - What the mediator confirmed is kept in the runtime's local options, so
   a reopened vault asks for none of it again. Nothing is taken off a
   mediator any more: a vault restored from before an address was made

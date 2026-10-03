@@ -289,8 +289,10 @@ wrong-recipient input: a mediated delivery MUST be pickup-ACKed and MUST create
 no `message.in`, contact or response effect.
 
 Input to an eligible retired local key MUST pass through ordinary
-decryption, authentication and durable receipt. It does not require renewed
-recipient registration. Channel denials and
+decryption, authentication and durable receipt. It does not wait for a
+`recipient-add`: the DID stays in the desired recipient set under
+[vault-events.md section 5.7](vault-events.md#route-did-and-key-fold), and an addition the
+mediator has not confirmed to this runtime is asked for on connection as any is. Channel denials and
 the availability of a usable local sender under [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target) still govern subsequent work. Its mediation stays in the required
 receiving set under [vault-events.md section 5.6](vault-events.md#mediation-fold) while the
 arrangement that routes it is usable.

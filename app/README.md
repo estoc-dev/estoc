@@ -23,9 +23,9 @@ your data never touches the place the app was served from.
   gear, forgets it and asks again.
 - **A mediator, chosen after.** An identity exists before it can be
   reached. The list says *no mediator* until you pick one, there or on
-  the You screen. Choosing another later changes where the DIDs you mint from then
-  on are reached; the ones you have stay where they are until you rotate
-  them, a conversation at a time.
+  the You screen. This version keeps one mediator per vault: once this
+  browser is enrolled with it, picking another is refused. Moving to
+  another mediator is a procedure a later version provides.
 - **Invitation links, and no public DID.** There is no address of yours
   for strangers to write to. The **+** button opens the new-conversation
   sheet: *Show my QR code* and *Copy an invitation link* mint a DID for
@@ -102,8 +102,10 @@ or `pnpm dev` in this directory once the libraries have been built.
 
 The mediator picker defaults to `mediator.estoc.dev`
 ([didcomm-mediator] on Cloudflare Workers) and also offers a local one
-(`pnpm run dev:node` in [`mediator/`][didcomm-mediator], minted with
-`MEDIATOR_PUBLIC_URL=http://localhost:8080`), or paste any mediator's
+(`pnpm run dev:node` in [`mediator/`][didcomm-mediator], run with
+`MEDIATOR_PUBLIC_URL=http://localhost:8080 MEDIATOR_REPLICA_MEDIATION=true`:
+the app enrolls as a replica-mediation account, which that mediator offers
+only when told to), or paste any mediator's
 out-of-band invitation URL, its URL, or its DID. Opening the app through a
 mediator's invitation link (`?_oob=` with `goal_code: request-mediate`)
 pre-fills that field.

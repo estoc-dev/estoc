@@ -34,6 +34,7 @@ import {
   recorder,
   sameDid,
   selectMediation,
+  serially,
   type AgentLines,
   type Called,
   type EffectOutcome,
@@ -840,7 +841,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           await look();
           throw failed;
         }
-        // No agent runs until the merge is over: one over the history as it stood would take off the mediator the addresses the backup brings, and discard what waits there for them.
+        // No agent runs until the merge is over: one over the history as it stood would receive against keys the backup is still bringing, and acknowledge as discarded what was for them.
         try {
           return counted(await merge(renewed), true);
         } finally {
@@ -852,14 +853,21 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }),
 
     setMediator: (mediatorDid) =>
-      act(async (agent, { runtime, keys }) => {
-        const fold = await scanVault(runtime.vault, keys, SCAN);
-        const existing = [...fold.mediations.mediations.values()].find((mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && sameDid(mediation.mediatorDid, mediatorDid));
-        const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did)).data.mediationId;
-        await agent.enroll(mediationId);
-        await selectMediation(runtime, keys, mediationId);
-        return mediationId;
-      }),
+      act((agent, { runtime, keys }) =>
+        // Two calls at once would each make an arrangement with the mediator: the later one looks only once the earlier has made, enrolled in and selected its own.
+        serially(runtime, "set-mediator", async () => {
+          const fold = await scanVault(runtime.vault, keys, SCAN);
+          const existing = [...fold.mediations.mediations.values()].find((mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && sameDid(mediation.mediatorDid, mediatorDid));
+          const own = fold.replicas.replicas.get(runtime.author);
+          if (own !== undefined && own.mediationId !== null && own.mediationId !== existing?.mediationId) {
+            throw new Unmet(`this runtime is a replica of the arrangement with ${fold.mediations.mediations.get(own.mediationId)?.mediatorDid ?? "another mediator"}; moving it to another mediator is not provided`);
+          }
+          const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did)).data.mediationId;
+          await agent.enroll(mediationId);
+          await selectMediation(runtime, keys, mediationId);
+          return mediationId;
+        })
+      ),
 
     createInvitation: (goal) =>
       act(async (agent, running) => {

@@ -897,14 +897,18 @@ First disclosure exposes the validated `did:peer:4` long form.
 }
 ```
 
-Retirement is terminal for new sending and disclosure using this DID. Its mediated recipient registration leaves the desired set.
-It does not erase keys, documents, received messages or continuity evidence.
+Retirement is terminal for new sending and disclosure using this DID.
+It does not erase keys, documents, received messages or continuity evidence,
+and it takes the DID off no mediator: the DID stays in the desired recipient
+set of [section 5.7](#route-did-and-key-fold), held by its account.
 
 A retained exact local key remains eligible for authenticated channel
 receipt, including after DID retirement; a mediated DID's key waits while
 no usable arrangement routes it. This rule applies equally to publicly disclosed and privately
-allocated addresses. No renewed registration is required to drain retained
-deliveries. An invitation on a retired local DID is unavailable.
+allocated addresses. Receipt does not wait for a `recipient-add`: an
+addition the mediator has not confirmed to this runtime is asked for on
+connection as any is, and that asks nothing new of sending or disclosure.
+An invitation on a retired local DID is unavailable.
 [relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;
 [distributed-delivery.md section 4.3](distributed-delivery.md#receive-a-message) owns the receive procedure.
 
@@ -941,11 +945,11 @@ instead of removing it. Allocation/disclosure
 policy has no effect on this set. An unpreferred mediation leaves only when no
 such dependency remains or it becomes unusable.
 
-This is independent of the desired recipient registration set: draining
-retained messages does not re-register a retired DID. A retired mediation
-routes nothing and is never required; receipt under a DID it routed waits
-for another usable arrangement naming the routing DID. Temporary
-unavailability does not erase dependencies.
+This set and the desired recipient set of [section 5.7](#route-did-and-key-fold)
+both serve receipt: a retired DID stays in both while an arrangement routes it.
+A retired mediation routes nothing and is never required; receipt under a DID
+it routed waits for another usable arrangement naming the routing DID.
+Temporary unavailability does not erase dependencies.
 
 The active runtime has the account hold its recipients and, as a replica,
 drains its own pickup on every reachable mediation in this set. A hosted
@@ -1011,22 +1015,29 @@ may name a routing DID are an open set, and a grant that has not arrived
 MUST NOT be mistaken for one that never will. A temporarily unavailable
 endpoint is not a fold state. A direct DID waits only for its key check.
 
-For recipient addition, a live DID is a non-retired, conflict-free entity
-satisfying those local identity and route checks. Current recipient
-registration is not a prerequisite for entering the desired set; the addition
-establishes it. Many DIDs may send through one arrangement or endpoint. This
-is transport reuse, not DID or contact equivalence.
+The **desired mediator recipient set** contains exactly each
+`(canonical DID short form, mediation ID)` pair for a mediated DID that is not
+terminal for receipt and the one usable arrangement that routes it. The DID's
+identity must be verified by the seed; a DID whose route is pending enters no
+pair until one usable arrangement routes it. Retirement does not take a DID
+out of the set: it ends sending and disclosure, not the delivery of what is
+still addressed there. Whether the mediator holds the DID yet is not a
+condition of entering; the addition establishes that. Many DIDs may send
+through one arrangement or endpoint. This is transport reuse, not DID or
+contact equivalence.
 
-The desired mediator recipient set contains exactly each
-`(canonical DID short form, mediation ID)` pair for a live mediated DID and
-the arrangement that routes it. On every connection the phase-1 runtime asks
-the mediator, with `recipient-add` under a proof the DID signed, to hold each
-DID of that set the mediator has not confirmed holding for this runtime; what
-it confirmed is kept in the runtime's local options, not in the vault, and is
-asked for no more. Nothing is taken off the mediator: a DID retired, or lost
-to a restore, stays held by the account, and its mail is discarded on arrival
-under [relationships.md](relationships.md#hard-pre-vault-gate). Registration
-diagnostics MAY be kept in local trace.
+On every connection, once its own replica is confirmed added, the phase-1
+runtime asks the mediator, with `recipient-add` under a proof the DID signed,
+to hold each DID of that set the mediator has not confirmed holding for this
+runtime; what it confirmed is kept in the runtime's local options, not in the
+vault, and is asked for no more, and a confirmation lost costs one request
+more, which the mediator answers as it did the first. Nothing is taken off the
+mediator: a retired DID stays held and keeps receiving under
+[section 5.5](#did-retired); a DID a restored vault does not know stays held
+too, and its mail is discarded on arrival only as the terminal wrong-recipient
+input of [relationships.md](relationships.md#hard-pre-vault-gate), a
+recoverable prerequisite leaving it waiting instead. Registration diagnostics
+MAY be kept in local trace.
 
 Direct DIDs do not enter that set. They lead to a full vault runtime
 or ingress service without naming a replica as the application recipient.
@@ -1035,8 +1046,8 @@ The fold also maintains a reverse map from every local communication key name
 to exactly one DID entity. Both validated Peer spellings map to that entity,
 but a recipient fragment must still identify its exact key-agreement method.
 The map retains retired DIDs and DIDs whose arrangements retired for historical
-input and proof joins. Present liveness controls sending and desired
-registration; new receipt uses [section 5.5](#did-retired) and [relationships.md section 9.2](relationships.md#hard-pre-vault-gate)'s
+input and proof joins. Present liveness controls sending and disclosure;
+receipt, and with it the desired recipient set, uses [section 5.5](#did-retired) and [relationships.md section 9.2](relationships.md#hard-pre-vault-gate)'s
 eligibility rule for live and retained historical addresses.
 Ambiguous or inconsistent mapping is an integrity conflict and prevents
 cryptographic use.
@@ -2877,7 +2888,7 @@ derivation requires a new vault version.
 
 ### Lifecycle, erasure and restore (VE-50–VE-55)
 
-- <a id="ve-50"></a> **VE-50.** Desired registration includes each live mediated DID with the arrangement that routes it. Retained eligible old DIDs can drain receipt without requiring continuity history.
+- <a id="ve-50"></a> **VE-50.** Desired registration includes each mediated DID that may still receive, retired included, with the arrangement that routes it. Retained eligible old DIDs can drain receipt without requiring continuity history.
 
 - <a id="ve-51"></a> **VE-51.** Each local DID derives fixed authentication and key-agreement keys and
     sends where its document says. Rotation creates another entity; the local
