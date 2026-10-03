@@ -795,7 +795,7 @@ roll back; explicit new communication is a new channel and new message.
 
 - <a id="rz-36"></a> **RZ-36.** A retired local DID permits no new sending or disclosure, but retained keys may receive through eligible arrangements without continuity history.
 
-- <a id="rz-37"></a> **RZ-37.** Only an unknown or conflicted local recipient rejects input; a missing, ungranted or retired arrangement, like any temporary key/recovery prerequisite, defers without pickup ACK.
+- <a id="rz-37"></a> **RZ-37.** At the DID-entity eligibility layer, only an unknown or conflicted entity is terminal; a missing, ungranted or retired arrangement, like any temporary key/recovery prerequisite, defers without pickup ACK.
 - <a id="rz-38"></a> **RZ-38.** Wrong recipient DID or method fragment, authentication-purpose kid and unknown Peer short form are terminal before application state.
 
 <a id="resolution-freshness-and-budgets-rz-39-rz-45"></a>

@@ -833,10 +833,12 @@ arrangement or endpoint, which is how they reuse a mediator or direct
 ingress without sharing an application identity.
 
 A mediated DID is routed by the one usable arrangement whose grant names
-its routing DID. While no arrangement does, the DID waits. While several
-usable arrangements do, which account holds the address is undecidable,
-and the DID waits until one of them is retired; a procedure MUST NOT mint
-a DID for a routing DID in that state. Once the arrangement routing a DID
+its routing DID. While no arrangement does, the DID waits. A vault holds
+one arrangement per mediator, so one arrangement at most names a routing
+DID; until arrangement IDs are derived from the mediator's DID, two
+replicas may still each create one before their histories merge, and
+while several usable arrangements name one routing DID the DID waits and
+a procedure MUST NOT mint a DID for that routing DID. Once the arrangement routing a DID
 is retired, the DID waits again: the arrangements that may name a routing
 DID are an open set, a grant not yet replicated here among them, so the
 fold MUST NOT end a mediated DID's receipt on their account. Restoring
@@ -903,8 +905,8 @@ Retirement is terminal for new sending and disclosure using this DID. Its mediat
 It does not erase keys, documents, received messages or continuity evidence.
 
 A retained exact local key remains eligible for authenticated channel
-receipt while a usable arrangement routes it, including after DID
-retirement, and waits while none does. This rule applies equally to publicly disclosed and privately
+receipt, including after DID retirement; a mediated DID's key waits while
+no usable arrangement routes it. This rule applies equally to publicly disclosed and privately
 allocated addresses. No renewed registration is required to drain retained
 deliveries. An invitation on a retired local DID is unavailable.
 [relationships.md section 9](relationships.md#uniform-receipt) owns the receipt gates;

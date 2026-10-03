@@ -73,7 +73,7 @@ export interface DidFold {
    * usable arrangement through its routing DID, the key check. The
    * arrangements that may name a routing DID are an open set — the one
    * that routes this entity may not have arrived here yet — so none of
-   * them retiring ends receipt; only a successor DID does.
+   * them retiring ends receipt.
    */
   receipt(didId: DidId): ReceiptEligibility;
 }
