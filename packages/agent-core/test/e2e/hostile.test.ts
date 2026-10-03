@@ -25,7 +25,7 @@ const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
 
-const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
+const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.replica.did)?.length ?? 0;
 
 const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 

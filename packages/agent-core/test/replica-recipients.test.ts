@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
-import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MediationProfile, type MessageId, type MintedDid } from "@estoc/vault";
+import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MessageId, type MintedDid } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
@@ -23,24 +23,21 @@ import {
   selectMediation,
   send,
   transientConfirmations,
-  type Confirmations,
 } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, directParty, newMediator, party, posting, type Party, mediatedRoute } from "./helpers.js";
 
-const PROFILE: MediationProfile = "replica-mediation/1.0";
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const BOB_ENDPOINT = "https://bob.example/didcomm";
 const MESSAGE = "019b0000-0000-7000-8000-000000000101" as MessageId;
 
 const sent = (mediator: FakeMediator, type: string): number => mediator.seenTypes.filter((seen) => seen === type).length;
 
-/** A replica-mediation account with this runtime enrolled, its confirmations in the runtime's local options. */
-async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party & { confirmations: Confirmations; account: string }> {
-  const p = await party(mediator, fill, {}, undefined, PROFILE);
-  const confirmations = p.runtime.local.options;
-  await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId);
-  return { ...p, confirmations, account: canonicalDid(p.created.data.me.did) };
+/** An account with this runtime enrolled, its confirmations in the runtime's local options. */
+async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party & { account: string }> {
+  const p = await party(mediator, fill);
+  await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+  return { ...p, account: canonicalDid(p.created.data.me.did) };
 }
 
 async function address(p: Party): Promise<MintedDid> {
@@ -79,12 +76,10 @@ describe("adding recipients", () => {
     const p = await enrolled(mediator);
     await address(p);
     await expect(addRecipients(p.link, p.runtime, p.keys, transientConfirmations(), p.mediationId)).rejects.toBeInstanceOf(Unusable);
-    const unregistered = await party(mediator, 2, {}, undefined, PROFILE);
+    const unregistered = await party(mediator, 2);
     await expect(addRecipients(unregistered.link, unregistered.runtime, unregistered.keys, unregistered.runtime.local.options, unregistered.mediationId)).rejects.toBeInstanceOf(Unusable);
-    const ordinary = await party(mediator, 3);
-    await expect(addRecipients(ordinary.link, ordinary.runtime, ordinary.keys, ordinary.runtime.local.options, ordinary.mediationId)).rejects.toBeInstanceOf(Unusable);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
-    for (const each of [p, unregistered, ordinary]) await each.runtime.close();
+    for (const each of [p, unregistered]) await each.runtime.close();
   });
 
   it("holds a retired address still, and no address of another arrangement or of a direct route", async () => {
@@ -93,7 +88,7 @@ describe("adding recipients", () => {
     const retired = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
     await retireDid(p.runtime, p.keys, retired.created.data.didId, "no longer given out");
     await createDid(p.runtime, p.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" });
-    const other = await createMediation(p.runtime, p.keys, mediator.did as Did, undefined, PROFILE);
+    const other = await createMediation(p.runtime, p.keys, mediator.did as Did);
     const recipients = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
     expect(recipients.wanted).toEqual([retired.minted.did]);
     expect([...mediator.sharedRecipients.keys()]).toEqual([retired.minted.did]);
@@ -183,7 +178,7 @@ describe("adding recipients", () => {
   });
 });
 
-describe("an address of a replica-mediation arrangement", () => {
+describe("a mediated address", () => {
   it("is disclosed only once its account holds it, which needs the runtime's confirmations", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
@@ -202,7 +197,7 @@ describe("an address of a replica-mediation arrangement", () => {
 
   it("is added by the agent's connection after the enrollment, and by a disclosure through the agent", async () => {
     const mediator = await newMediator();
-    const p = await party(mediator, 1, {}, undefined, PROFILE);
+    const p = await party(mediator, 1);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
     const agent = await Agent.open(p, options);
     await agent.enroll(p.mediationId);

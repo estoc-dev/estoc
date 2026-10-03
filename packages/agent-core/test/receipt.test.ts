@@ -7,7 +7,7 @@ import { InvalidDidDocument, anonymousMessageId, canonicalDidOf, didKeyName, inb
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import { AgentTrace, Keyring, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, reconcile, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source, routeOf } from "../src/index.js";
-import { didcomm, directParty, freshVault, mediatedParty, newMediator, peerSealer, refuseCommits, reloaded, sealed, type DirectParty, type Fresh } from "./helpers.js";
+import { didcomm, directParty, freshVault, mediatedParty, newMediator, peerSealer, refuseCommits, reloaded, sealed, type DirectParty, type Fresh, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -335,11 +335,11 @@ describe("the receipt", () => {
     const mediator = await newMediator();
     const p = await mediatedParty(mediator, 1, DID);
     await reloaded(p);
-    await reconcile(p.link, p.runtime, p.keys, p.mediationId);
+    await holdAddresses(p);
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt: receiptOf(p.runtime, p.keys) });
-    const drain = new Pickup(p.link, receiver.pickupHandle(p.mediationId));
-    const account = p.created.data.me.did;
+    const drain = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
+    const account = p.replica.did;
     mediator.queues.set(account, [{ id: "q1", packed: await sealed(await peerSealer(bob), p.longFormDid) }]);
 
     refuseCommits(p.runtime, "message.in", 1);

@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type MediationProfile, type VaultFold } from "@estoc/vault";
+import { readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type VaultFold } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
@@ -18,8 +18,6 @@ import {
   createMediation,
   createReplica,
   enroll,
-  establish,
-  reconcile,
   selectMediation,
   transientConfirmations,
   type Confirmations,
@@ -28,9 +26,7 @@ import { decide } from "../src/procedure.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, freshVault, newMediator, party, type Party } from "./helpers.js";
 
-const PROFILE: MediationProfile = "replica-mediation/1.0";
-
-const account = (mediator: FakeMediator, fill = 1): Promise<Party> => party(mediator, fill, {}, undefined, PROFILE);
+const account = (mediator: FakeMediator, fill = 1): Promise<Party> => party(mediator, fill);
 const fold = (p: Pick<Party, "runtime" | "keys">): Promise<VaultFold> => scanVault(p.runtime.vault, p.keys);
 const sent = (mediator: FakeMediator, type: string): number => mediator.seenTypes.filter((seen) => seen === type).length;
 
@@ -53,13 +49,11 @@ describe("creating a replica", () => {
     await p.runtime.close();
   });
 
-  it("refuses an ordinary arrangement, and a second arrangement for the same replica ID", async () => {
+  it("refuses a second arrangement for the same replica ID", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const ordinary = await createMediation(p.runtime, p.keys, mediator.did as Did);
-    await expect(createReplica(p.runtime, p.keys, ordinary.data.mediationId)).rejects.toBeInstanceOf(Unusable);
     await createReplica(p.runtime, p.keys, p.mediationId);
-    const second = await createMediation(p.runtime, p.keys, mediator.did as Did, undefined, PROFILE);
+    const second = await createMediation(p.runtime, p.keys, mediator.did as Did);
     await expect(createReplica(p.runtime, p.keys, second.data.mediationId)).rejects.toBeInstanceOf(EntityConflict);
     await p.runtime.close();
   });
@@ -78,12 +72,6 @@ describe("creating a replica", () => {
     await p.runtime.close();
   });
 
-  test("the same arrangement ID under another profile is a conflict", async () => {
-    const mediator = await newMediator();
-    const p = await account(mediator);
-    await expect(createMediation(p.runtime, p.keys, mediator.did as Did, p.mediationId)).rejects.toBeInstanceOf(EntityConflict);
-    await p.runtime.close();
-  });
 });
 
 describe("enrolling", () => {
@@ -187,33 +175,20 @@ describe("enrolling", () => {
     await p.runtime.close();
   });
 
-  it("refuses an ordinary arrangement, an unknown one, and a link speaking as another account, asking nothing", async () => {
+  it("refuses an unknown arrangement, and a link speaking as another account, asking nothing", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const ordinary = await party(mediator, 2);
-    await expect(enroll(ordinary.link, ordinary.runtime, ordinary.keys, transientConfirmations(), ordinary.mediationId)).rejects.toBeInstanceOf(Unusable);
     await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), "019b0000-0000-7000-8000-000000000000" as MediationId)).rejects.toThrow(/no mediation/);
-    const other = await createMediation(p.runtime, p.keys, mediator.did as Did, undefined, PROFILE);
+    const other = await createMediation(p.runtime, p.keys, mediator.did as Did);
     await expect(enroll(p.link, p.runtime, p.keys, transientConfirmations(), other.data.mediationId)).rejects.toBeInstanceOf(WrongAccount);
     expect((await fold(p)).replicas.replicas.size).toBe(0);
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();
-    await ordinary.runtime.close();
   });
 });
 
-describe("a replica-mediation arrangement", () => {
-  it("takes no coordinate-mediation request", async () => {
-    const mediator = await newMediator();
-    const p = await account(mediator);
-    await expect(establish(p.link, p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
-    await enroll(p.link, p.runtime, p.keys, transientConfirmations(), p.mediationId);
-    await expect(reconcile(p.link, p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
-    await p.runtime.close();
-  });
-
-  it("is enrolled in by the agent's connection, which reconciles nothing, and by a later agent only where no confirmation was kept", async () => {
+describe("an arrangement", () => {
+  it("is enrolled in by the agent's connection, and by a later agent only where no confirmation was kept", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
@@ -221,7 +196,7 @@ describe("a replica-mediation arrangement", () => {
     expect((await agent.enroll(p.mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     await selectMediation(p.runtime, p.keys, p.mediationId);
     const [connection] = await agent.connect();
-    expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, reconciled: null, drained: { acked: 0, ended: "empty" }, live: false });
+    expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, recipients: { wanted: [], added: [], refused: [] }, drained: { acked: 0, ended: "empty" }, live: false });
     expect(connection?.enrolled?.steps).toEqual([]);
     agent.close();
 

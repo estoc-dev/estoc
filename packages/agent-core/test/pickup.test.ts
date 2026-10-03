@@ -3,9 +3,12 @@ import { Message } from "@estoc/didcomm-node";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
 
-import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, Pickup, STATUS, createDid, establish, plainMessage, reconcile, secretsResolverFor, type Delivered, type IMessage, type MediatorLink, type Opened } from "../src/index.js";
-import { newMediator, party, reloaded, until, mediatedRoute } from "./helpers.js";
+import type { DidId } from "@estoc/vault";
 
+import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, Pickup, STATUS, plainMessage, secretsResolverFor, type Delivered, type IMessage, type MediatorLink, type Opened } from "../src/index.js";
+import { holdAddresses, mediatedParty, newMediator, until } from "./helpers.js";
+
+const DID = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const resolver = { resolve: resolveDIDCommDoc };
 
 /** An envelope sealed anonymously to `to`, as a stranger would send a first message. */
@@ -15,24 +18,20 @@ async function sealedTo(to: string, content: string): Promise<string> {
   return packed;
 }
 
-describe("pickup over the ring", () => {
-  it("drains what the mediator holds for the account, hands each attachment over unopened and acknowledges what was taken", async () => {
+describe("pickup as the replica", () => {
+  it("drains what the mediator holds for the replica, hands each attachment over unopened and acknowledges what was taken", async () => {
     const mediator = await newMediator();
-    const p = await party(mediator);
-    await establish(p.link, p.runtime, p.keys, p.mediationId);
-    const route = mediatedRoute(p.mediationId);
-    const { minted } = await createDid(p.runtime, p.keys, route);
-    await reloaded(p);
-    await reconcile(p.link, p.runtime, p.keys, p.mediationId);
-    const account = p.created.data.me.did;
-    const hello = await sealedTo(minted.longFormDid, "hello");
-    const skipped = await sealedTo(minted.longFormDid, "skip me");
-    mediator.queues.set(account, [
+    const p = await mediatedParty(mediator, 1, DID);
+    await holdAddresses(p);
+    const inbox = p.replica.did;
+    const hello = await sealedTo(p.longFormDid, "hello");
+    const skipped = await sealedTo(p.longFormDid, "skip me");
+    mediator.queues.set(inbox, [
       { id: "q1", packed: hello },
       { id: "q2", packed: skipped },
     ]);
     const taken: Delivered[] = [];
-    const pickup = new Pickup(p.link, (delivered) => {
+    const pickup = new Pickup(p.inbox, (delivered) => {
       taken.push(delivered);
       return delivered.attachmentId === "q1" ? "acked" : "skip";
     });
@@ -44,20 +43,19 @@ describe("pickup over the ring", () => {
       [JSON.parse(skipped), "q2"],
       [JSON.parse(skipped), "q2"],
     ]);
-    expect(mediator.queues.get(account)?.map((item) => item.id)).toEqual(["q2"]);
+    expect(mediator.queues.get(inbox)?.map((item) => item.id)).toEqual(["q2"]);
     await p.runtime.close();
   });
 
   test("a frame down the socket is the mediator's with its sender protected, and dropped when another sealed it", async () => {
     const mediator = await newMediator();
     mediator.protectSender = true;
-    const p = await party(mediator);
-    await establish(p.link, p.runtime, p.keys, p.mediationId);
+    const p = await mediatedParty(mediator, 1, DID);
     const frames: Opened[] = [];
     let arrived = (): void => undefined;
     const next = (): Promise<void> => new Promise((resolve) => (arrived = resolve));
     const status = next();
-    p.link.openSocket((opened) => {
+    p.inbox.openSocket((opened) => {
       frames.push(opened);
       arrived();
     });
@@ -65,13 +63,13 @@ describe("pickup over the ring", () => {
     expect(frames.map((opened) => [opened.msg.type, opened.sender, opened.metadata.anonymous_sender])).toEqual([[STATUS, mediator.did, true]]);
 
     const impostor = await newMediator(201, "http://impostor/");
-    const stray = plainMessage(STATUS, impostor.did, p.link.me, { live_delivery: true });
-    const [packed] = await new Message(stray).pack_encrypted(p.link.me, impostor.did, null, resolver, secretsResolverFor(impostor.secrets), { forward: false });
-    mediator.socketOf(p.link.me)?.deliver(packed);
+    const stray = plainMessage(STATUS, impostor.did, p.inbox.me, { live_delivery: true });
+    const [packed] = await new Message(stray).pack_encrypted(p.inbox.me, impostor.did, null, resolver, secretsResolverFor(impostor.secrets), { forward: false });
+    mediator.socketOf(p.replica.did)?.deliver(packed);
     await until("the stray frame's drop", () => p.log.length > 0);
     expect(frames).toHaveLength(1);
     expect(p.log).toEqual([`a socket frame was dropped: the reply was not sealed by the mediator to this account: sealed by ${impostor.did}`]);
-    p.link.closeSocket();
+    p.inbox.closeSocket();
     await p.runtime.close();
   });
 

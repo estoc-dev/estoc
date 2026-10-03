@@ -15,16 +15,10 @@ import {
   DELIVERY_REQUEST,
   FORWARD,
   LIVE_DELIVERY_CHANGE,
-  MEDIATE_GRANT,
-  MEDIATE_REQUEST,
   MESSAGES_RECEIVED,
   PLAIN_TYP,
-  RECIPIENT,
   RECIPIENT_ADD,
   RECIPIENT_ADDED,
-  RECIPIENT_QUERY,
-  RECIPIENT_UPDATE,
-  RECIPIENT_UPDATE_RESPONSE,
   REPLICA_ADD,
   REPLICA_ADDED,
   STATUS,
@@ -35,11 +29,11 @@ import { didOf } from "../src/protocol/didcomm.js";
 import { canonicalDid, sameDid } from "../src/same-did.js";
 
 /**
- * A mediator that lives inside the test: coordinate-mediation 3.0,
- * messagepickup 3.0 (HTTP and a fake WebSocket), routing 2.0 forward,
- * and of replica-mediation the account-register, replica-add and
- * recipient-add controls, the fan-out of a shared address's mail to the
- * account's replicas and each replica's own pickup.
+ * A mediator that lives inside the test: messagepickup 3.0 (HTTP and a
+ * fake WebSocket), routing 2.0 forward, and of replica-mediation the
+ * account-register, replica-add and recipient-add controls, the fan-out
+ * of a shared address's mail to the account's replicas and each
+ * replica's own pickup.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -140,12 +134,6 @@ async function provesRecipient(proof: string, recipientDid: string, longForm: st
 export class FakeMediator {
   readonly did: string;
   readonly secrets: Secret[];
-  /** recipient DID → account (mediator-facing) DID */
-  readonly recipients = new Map<string, string>();
-  /** the accounts granted mediation: what recipient-query answers for */
-  readonly granted = new Set<string>();
-  /** recipient DIDs every update of which is answered `server_error`: a mediator that will not hold them */
-  readonly refuse = new Set<string>();
   /** seal every reply and frame with the sender hidden under an anonymous outer layer, as DIDComm's sender protection does */
   protectSender = false;
   /** seal every reply and frame as the mediator's short form, the other spelling of the same DID */
@@ -246,7 +234,7 @@ export class FakeMediator {
     return this.reply(PROBLEM_REPORT, to, { code: `e.estoc.replica-mediation.${code}` }, thid);
   }
 
-  /** The queue a pickup sender reads: a replica's own under its short form, whichever spelling it sealed with; an ordinary account's under the DID it sealed as. */
+  /** The queue a pickup sender reads: a replica's own under its short form, whichever spelling it sealed with; any other sender's under the DID it sealed as. */
   private inboxOf(from: string): string {
     const canonical = canonicalDid(from);
     return this.replicas.has(canonical) ? canonical : from;
@@ -273,10 +261,8 @@ export class FakeMediator {
     return q;
   }
 
-  /** Where mail forwarded to `next` waits: an ordinary recipient's account, a replica's own queue, or one copy under an ID of its own for every replica the shared address's account has now. */
+  /** Where mail forwarded to `next` waits: a replica's own queue, or one copy under an ID of its own for every replica the shared address's account has now. */
   private inboxesFor(next: string): string[] {
-    const ordinary = this.recipients.get(next);
-    if (ordinary !== undefined) return [ordinary];
     const canonical = canonicalDid(next);
     if (this.replicas.has(canonical)) return [canonical];
     const account = this.sharedRecipients.get(canonical);
@@ -312,32 +298,6 @@ export class FakeMediator {
           await this.push(inbox, this.deliveryFor(inbox, items));
         }
         return null;
-      }
-      case MEDIATE_REQUEST:
-        this.granted.add(from as string);
-        return this.reply(MEDIATE_GRANT, from as string, { routing_did: [this.did] }, msg.id);
-      case RECIPIENT_QUERY: {
-        if (!this.granted.has(from as string)) {
-          return this.reply(PROBLEM_REPORT, from as string, { code: "e.p.not-mediated", comment: "mediation was not granted" }, msg.id);
-        }
-        const dids = [...this.recipients].filter(([, account]) => account === from).map(([recipient_did]) => ({ recipient_did }));
-        return this.reply(RECIPIENT, from as string, { dids, pagination: { count: dids.length, offset: 0, remaining: 0 } }, msg.id);
-      }
-      case RECIPIENT_UPDATE: {
-        const updates = (msg.body as { updates: { recipient_did: string; action: string }[] }).updates;
-        const updated = updates.map((u) => {
-          if (this.refuse.has(u.recipient_did)) {
-            return { ...u, result: "server_error" };
-          }
-          if (u.action === "add") {
-            const had = this.recipients.get(u.recipient_did);
-            this.recipients.set(u.recipient_did, from as string);
-            return { ...u, result: had === from ? "no_change" : "success" };
-          }
-          this.recipients.delete(u.recipient_did);
-          return { ...u, result: "success" };
-        });
-        return this.reply(RECIPIENT_UPDATE_RESPONSE, from as string, { updated }, msg.id);
       }
       case ACCOUNT_REGISTER: {
         const account = canonicalDid(from as string);

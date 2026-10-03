@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DidId, MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { RECIPIENT_QUERY } from "../../src/protocol/mediation.js";
+import { STATUS_REQUEST } from "../../src/protocol/mediation.js";
+import { canonicalDid } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import { newMediator } from "../helpers.js";
 import { LONG, channelOf, dieAt, restart, run, stopAll } from "./running.js";
@@ -28,11 +29,11 @@ describe("the death of a running party", () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { liveDelivery: false });
     const bob = await run(mediator, 2, BOB, { liveDelivery: false });
-    const account = bob.party.created.data.me.did;
+    const inbox = bob.party.replica.did;
     const querying = gate();
     const answered = gate();
     mediator.intercept = async (message, from) => {
-      if (message.type !== RECIPIENT_QUERY || from !== account) return undefined;
+      if (message.type !== STATUS_REQUEST || from === null || canonicalDid(from) !== inbox) return undefined;
       querying.open();
       await answered.opened;
       return undefined;
@@ -42,14 +43,14 @@ describe("the death of a running party", () => {
     await querying.opened;
     const sent = await alice.agent.send({ channel: channelOf(alice.party.did, bob.party.did), recipientDid: bob.party.longFormDid }, hello("only alice is sending"), { messageId: FROM_ALICE });
     expect(sent.dispatched).toMatchObject({ outcome: "submitted" });
-    expect(mediator.queues.get(account)).toHaveLength(1);
+    expect(mediator.queues.get(inbox)).toHaveLength(1);
     answered.open();
     await connecting;
     expect([bob.dead, bob.inbounds.length]).toEqual([false, 1]);
 
     await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did) }, hello("and now bob"), { messageId: FROM_BOB });
     expect(bob.dead).toBe(true);
-    expect(mediator.queues.get(alice.party.created.data.me.did) ?? []).toEqual([]);
+    expect(mediator.queues.get(alice.party.replica.did) ?? []).toEqual([]);
   });
 
   it("frees its file only once the work its runtime had admitted is done: a restart waits for that", { timeout: LONG }, async () => {

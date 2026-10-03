@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Did, DidId, MessageId, VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { MESSAGES_RECEIVED } from "../../src/protocol/mediation.js";
-import { FORWARD, PROBLEM_REPORT } from "../../src/protocol/spec.js";
-import { Unusable, createDid } from "../../src/index.js";
+import type { IMessage } from "../../src/protocol/didcomm.js";
+import { FORWARD } from "../../src/protocol/spec.js";
+import { Unusable, canonicalDid, createDid } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, mediatedRoute } from "../helpers.js";
 import { LONG, channelOf, foldOf, imported, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
@@ -25,7 +25,7 @@ const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
 
-const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
+const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.replica.did)?.length ?? 0;
 
 const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
@@ -34,6 +34,9 @@ const eventIds = (fold: VaultFold): string[] => [...fold.set.all()].map((event) 
 const outcomes = (fold: VaultFold): [MessageId, string][] => [...fold.outbound.outbounds.values()].map((output) => [output.messageId, output.outcome.status]);
 
 const authorsOf = (fold: VaultFold): Set<string> => new Set([...fold.set.all()].map((event) => event.author));
+
+/** The replica DID the process now running picks its mail up under: a restored vault's is not the one the snapshot was taken from. */
+const replicaOf = async (running: Running): Promise<Did> => (await foldOf(running)).replicas.replicas.get(running.runtime.author)!.did!;
 
 async function pair(): Promise<{ mediator: FakeMediator; alice: Running; bob: Running }> {
   const mediator = await newMediator();
@@ -57,7 +60,7 @@ describe("a vault restored from a snapshot", () => {
     const sent = forwardsSeen(mediator);
     const restored = await restoredFrom(bob, snapshot, { privateAddresses: false });
     expect(restored.runtime.author).not.toBe(bob.runtime.author);
-    expect(restored.agent.connections()).toMatchObject([{ unreachable: null, reconciled: { added: [], removed: [] } }]);
+    expect(restored.agent.connections()).toMatchObject([{ unreachable: null, enrolled: { steps: ["replica-created", "replica-added"] }, recipients: { wanted: [bob.party.did], refused: [] } }]);
     expect(forwardsSeen(mediator)).toBe(sent);
     expect(outcomes(await foldOf(restored))).toEqual([
       [FIRST, "submitted"],
@@ -74,7 +77,7 @@ describe("a vault restored from a snapshot", () => {
     expect(authorsOf(await foldOf(restored))).toEqual(new Set([bob.runtime.author, restored.runtime.author]));
   });
 
-  it("knows no local DID made after it and no successor its peer took after it: a delivery for the one and a delivery from the other are each taken off the mediator, recorded as nothing and shown as discarded, and the lost DID is no longer registered", { timeout: LONG }, async () => {
+  it("knows no local DID made after it and no successor its peer took after it: a delivery for the one and a delivery from the other are each taken off the mediator, recorded as nothing and shown as discarded, while the account keeps holding the lost DID", { timeout: LONG }, async () => {
     const { mediator, alice, bob } = await pair();
     const carol = await run(mediator, 3, CAROL, { privateAddresses: false });
     const a0 = alice.party.did;
@@ -94,18 +97,16 @@ describe("a vault restored from a snapshot", () => {
     expect((await foldOf(bob)).continuity.confirmedBy(b1, a0)).not.toBeNull();
     await stop(alice);
 
+    const restored = await restoredFrom(alice, snapshot, { privateAddresses: false });
+    expect(restored.agent.connections()).toMatchObject([{ unreachable: null, recipients: { wanted: [a0], refused: [] } }]);
+    expect(mediator.sharedRecipients.has(later.minted.did)).toBe(true);
     const toLater = await carol.agent.send({ channel: channelOf(carol.party.did, later.minted.did), recipientDid: invitation!.from as Did }, hello("to the address made later"), { messageId: THIRD });
     expect(toLater.dispatched).toMatchObject({ outcome: "submitted" });
     const fromSuccessor = await bob.agent.send({ channel: channelOf(b1, a0) }, hello("from my successor"), { messageId: FOURTH });
     expect(fromSuccessor.dispatched).toMatchObject({ outcome: "submitted" });
     expect((await foldOf(bob)).outbound.outbounds.get(FOURTH)!.package!.event.data.fromPrior).toBeNull();
-    expect(queuedFor(mediator, alice)).toBe(2);
-
-    const restored = await restoredFrom(alice, snapshot, { privateAddresses: false });
-    expect(restored.agent.connections()).toMatchObject([{ unreachable: null, reconciled: { desired: [a0], removed: [later.minted.did] } }]);
-    expect(mediator.recipients.has(later.minted.did)).toBe(false);
     await until("both deliveries ended", () => restored.inbounds.length === 2);
-    expect(queuedFor(mediator, alice)).toBe(0);
+    expect(mediator.queues.get(await replicaOf(restored))).toEqual([]);
     expect(restored.inbounds.map(({ received, after }) => [received.outcome, after])).toEqual([
       ["terminal", null],
       ["terminal", null],
@@ -122,7 +123,7 @@ describe("a vault restored from a snapshot", () => {
     expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed")).toEqual([]);
   });
 
-  it("predating a rotation the peer has verified selects another successor when the message that prompted the first is still with the mediator: the peer keeps both proofs and shows the fork, with no head there and nothing sent on its authority, while what it recorded before stands", { timeout: LONG }, async () => {
+  it("predating a rotation the peer has verified selects another successor when the message that prompted the first is delivered to it again: the peer keeps both proofs and shows the fork, with no head there and nothing sent on its authority, while what it recorded before stands", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE);
     const bob = await run(mediator, 2, BOB);
@@ -130,8 +131,11 @@ describe("a vault restored from a snapshot", () => {
     const b0 = bob.party.did;
     const { invitation } = await alice.agent.disclose(ALICE, { as: "oob" });
     const snapshot = await snapshotOf(alice);
-    let unheard = true;
-    mediator.intercept = (msg, from) => (unheard && msg.type === MESSAGES_RECEIVED && from === alice.party.created.data.me.did ? mediator.reply(PROBLEM_REPORT, from, { code: "e.p.busy" }, msg.id) : undefined);
+    const forwards: IMessage[] = [];
+    mediator.intercept = (msg) => {
+      if (msg.type === FORWARD) forwards.push(msg);
+      return undefined;
+    };
 
     await bob.agent.send({ channel: channelOf(b0, a0), recipientDid: invitation!.from as Did }, { ...hello("hello"), pthid: invitation!.id }, { messageId: FIRST });
     await until("alice has selected a private address", () => alice.inbounds.length === 1);
@@ -140,14 +144,17 @@ describe("a vault restored from a snapshot", () => {
     const a1 = didOf(await foldOf(alice), first.rotation.successor);
     await until("alice has bob's acknowledgement", () => alice.inbounds.length === 2);
     expect((await foldOf(bob)).continuity.head(channelOf(b0, a0))).toEqual(channelOf(b0, a1));
-    expect(queuedFor(mediator, alice)).toBe(2);
-    await stop(alice);
-    unheard = false;
-
-    const restored = await restoredFrom(alice, snapshot);
-    await until("the restored alice has taken both deliveries off the mediator", () => restored.inbounds.length === 2);
     expect(queuedFor(mediator, alice)).toBe(0);
-    expect(restored.inbounds.map(({ received }) => received.outcome)).toEqual(["received", "terminal"]);
+    await stop(alice);
+    const prompting = forwards.find((forward) => canonicalDid((forward.body as { next: string }).next) === a0)!;
+    const packed = JSON.stringify((prompting.attachments as unknown as { data: { json: unknown } }[])[0]!.data.json);
+
+    const restored = await restoredFrom(alice, snapshot, { liveDelivery: false });
+    mediator.queues.set(await replicaOf(restored), [{ id: "again", packed }]);
+    await restored.agent.connect();
+    await until("the restored alice has taken the delivery off the mediator", () => restored.inbounds.length === 1);
+    expect(mediator.queues.get(await replicaOf(restored))).toEqual([]);
+    expect(restored.inbounds.map(({ received }) => received.outcome)).toEqual(["received"]);
     const second = restored.inbounds[0]!.address!;
     if (second.outcome !== "rotated") throw new Error(`the restored alice did not rotate: ${JSON.stringify(second)}`);
     const other = didOf(await foldOf(restored), second.rotation.successor);
@@ -180,7 +187,7 @@ describe("two machines of one vault", () => {
     expect(outcomes(await foldOf(bob))).toEqual([[FIRST, "terminal"]]);
     await until("alice has the message", () => alice.inbounds.length === 1);
 
-    expect(await imported(bob, await snapshotOf(other))).toMatchObject({ added: 1 });
+    expect(await imported(bob, await snapshotOf(other))).toMatchObject({ added: 2 });
     expect(await imported(other, await snapshotOf(bob))).toMatchObject({ added: 1 });
     const forwards = forwardsSeen(mediator);
     for (const machine of [bob, other]) {

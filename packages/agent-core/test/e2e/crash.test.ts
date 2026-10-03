@@ -20,7 +20,7 @@ const hello = (content: string) => ({ type: BASIC_MESSAGE, body: { content } });
 
 const forwardsSeen = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === FORWARD).length;
 
-const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.created.data.me.did)?.length ?? 0;
+const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.queues.get(party.party.replica.did)?.length ?? 0;
 
 async function pair(): Promise<{ mediator: FakeMediator; alice: Running; bob: Running }> {
   const mediator = await newMediator();
@@ -72,7 +72,7 @@ describe("a process that dies", () => {
     expect(open.map(({ outbound, waiting }) => [outbound.messageId, outbound.outcome.status, outbound.package!.event.data.envelopeCid, waiting])).toEqual([[HELLO, "prepared", recorded[0]!.cid, null]]);
 
     expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", packageId: open[0]!.outbound.package!.event.data.packageId });
-    const [queued] = mediator.queues.get(alice.party.created.data.me.did)!;
+    const [queued] = mediator.queues.get(alice.party.replica.did)!;
     expect(Buffer.from(canonicalize(parseStrict(queued!.packed))).equals(recorded[0]!.source as Uint8Array)).toBe(true);
     expect(await bob.agent.outbounds()).toEqual([]);
   });

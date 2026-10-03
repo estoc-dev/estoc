@@ -69,7 +69,7 @@ export { MediatorLink, bounded, ritual, sealData, sealerOf, senderOf, type LinkO
 export { Pickup, type Delivered, type Drained, type Fate, type Handle, type PickupOptions } from "./pickup.js";
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "./same-did.js";
-export { createMediation, establish, mediationOf, reconcile, reconcileNow, registered, selectMediation, watchUnknownRegistrations, type EstablishStep, type Established, type Reconciled } from "./mediation.js";
+export { createMediation, mediationOf, selectMediation } from "./mediation.js";
 export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
 export {
@@ -159,4 +159,4 @@ export {
   type ViewOptions,
 } from "./records.js";
 export { manualProcedures, readRecords, type Manual, type ManualOptions } from "./views.js";
-export { Agent, UNKNOWN_REGISTRATIONS_KEPT, UPKEEP, type Upkeep, type AgentLines, type AgentOptions, type Connection, type Inbound, type Submitted } from "./agent.js";
+export { Agent, UPKEEP, type Upkeep, type AgentLines, type AgentOptions, type Connection, type Inbound, type Submitted } from "./agent.js";

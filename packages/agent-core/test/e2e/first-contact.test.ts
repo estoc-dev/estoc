@@ -67,7 +67,7 @@ describe("first contact over a mediator", () => {
 
     const envelope = (forwards[0]!.attachments as unknown as { data: { json: unknown } }[])[0]!.data.json;
     const sentBefore = forwards.length;
-    mediator.queues.get(alice.party.created.data.me.did)!.push({ id: "again", packed: JSON.stringify(envelope) });
+    mediator.queues.get(alice.party.replica.did)!.push({ id: "again", packed: JSON.stringify(envelope) });
     expect(await alice.agent.connect()).toMatchObject([{ drained: { acked: 1, ended: "empty" } }]);
     await alice.agent.settled();
     expect(alice.inbounds).toHaveLength(2);

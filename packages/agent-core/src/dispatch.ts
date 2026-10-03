@@ -51,7 +51,6 @@ import { routeOf } from "./dids.js";
 import { UnknownEntity } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { bounded, sealData, type MediatorLink } from "./link.js";
-import { mediationOf, reconcile, registered } from "./mediation.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipients, holds } from "./replica-recipients.js";
 import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
@@ -199,8 +198,7 @@ async function confirmRegistration(runtime: VaultRuntime, keys: Keys, { mediatio
 }
 
 async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId, did: Did, confirmations: Confirmations | undefined): Promise<boolean> {
-  if (mediationOf(await scanVault(runtime.vault, keys), mediationId).profile === null) return registered(await reconcile(link, runtime, keys, mediationId), did);
-  if (confirmations === undefined) throw new Error("a replica-mediation account's confirmations are not given");
+  if (confirmations === undefined) throw new Error("the account's confirmations are not given");
   return holds(await addRecipients(link, runtime, keys, confirmations, mediationId), did);
 }
 
