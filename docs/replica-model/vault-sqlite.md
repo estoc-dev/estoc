@@ -307,7 +307,7 @@ Source events are durable portable evidence, never a clearable diagnostic
 cache. The host revision used for authorization covers objects and validation
 dependencies as well as the event frontier: evidence repair or discovered damage
 can change a projection without adding an event. Invalidate and recheck affected
-operations under [the adapter's revision rule](channels.md#continuity-integration).
+operations under [the procedures' one-fold rule](../../packages/vault/src/procedures.ts).
 
 <a id="ownership-and-lifecycle"></a>
 
@@ -478,7 +478,7 @@ positions. Keep it unready until integrity/completeness checks pass; publish rea
 Open reconstructs retention and pending state before enabling workers. Domain
 recovery grants no dispatch action: restored messages and historical automatic
 effects require explicit manual action under
-[the dispatch contract](channels.md#fixed-outbound-channel). Pickup and local
+[the live action](../../packages/agent-core/src/action.ts). Pickup and local
 projection recovery may proceed normally.
 A failed construction is not an empty vault and cannot silently mint another seed.
 
@@ -490,7 +490,7 @@ MUST explain that local DIDs, peer addresses and continuity learned after the
 snapshot may be missing. The seed alone cannot recover those missing local
 addresses. Messages for unknown local recipients or from
 unknown short-form senders can therefore be discarded under
-[the receive gate](relationships.md#hard-pre-vault-gate), even if those addresses
+[the receiver](../../packages/agent-core/src/receive/receiver.ts), even if those addresses
 were previously confirmed. Expose that gate's bounded visible diagnostics. Pickup,
 recipient addition and local projection recovery need not wait for this
 explanation to be presented or acknowledged.

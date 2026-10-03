@@ -269,7 +269,7 @@ Keep per-message dispatch serialized across this procedure, without holding
 the vault lock across network I/O. Resolve an uncertain preparation commit
 before dispatch or another preparation. A crash loses the live action, whether
 or not transport was called; reopen cannot replay it. Further calls follow
-[manual dispatch rules](channels.md#fixed-outbound-channel).
+[the live action](../../packages/agent-core/src/action.ts).
 
 <a id="receive-a-message"></a>
 
@@ -290,8 +290,8 @@ Sending the pickup ACK need not hold the operation lock or wait for application
 effects, and its network completion does not delay the next local step.
 
 1. Resolve exact local recipient/key/route eligibility and authenticate the
-   current sender under [the gate](relationships.md#hard-pre-vault-gate).
-   The [phase-1 adapter](channels.md#carried-proof-and-library-boundary) preserves
+   current sender under [the gate](../../packages/agent-core/src/receive/gate.ts).
+   The [phase-1 adapter](../../packages/agent-core/README.md#didcomm-api) preserves
    any string-valued `from_prior` without verifying it. Missing local receive
    material may require unopened wait; missing predecessor material cannot.
 2. Validate normalized wire fields, supported content and resource limits.
@@ -299,7 +299,7 @@ effects, and its network completion does not delay the next local step.
    and `message.in` with fixed channel.
 4. Pickup-ACK process-durable receipt independently of channel policy/history.
 5. If `from_prior` is present, derive its immutable issuer document and verify
-   this carrier's original JWT under [predecessor resolution](relationships.md#predecessor-resolution).
+   this carrier's original JWT under [the vault's proof adapter](../../packages/vault/src/from-prior.ts).
    Fold proof status and continuity without appending an event,
    showing missing evidence as pending.
 6. Under the lock, fold all available evidence and reconcile
@@ -332,18 +332,18 @@ recursive privacy notifications.
 Rebuild receipt-derived state from retained evidence without current-sender
 re-resolution or another receipt event. Recover missing bytes/references and
 recompute proofs from retained JWTs and immutable issuer material under
-[predecessor resolution](relationships.md#predecessor-resolution).
+[the channel evidence fold](../../packages/vault/src/fold/channels.ts).
 The active runtime reconciles missing
 [admissions](channels.md#application-admission). This pass
 also runs on relevant evidence changes during normal operation; it does not wait
 for a restart.
 
 Expose pending/unconfirmed messages for manual action under
-[dispatch authority](channels.md#fixed-outbound-channel), preserving message,
+[the live action](../../packages/agent-core/src/action.ts), preserving message,
 execution, package and submission identities. The same uninterrupted initial
 receive operation may continue after a local receive prerequisite wait.
 Post-receipt missing predecessor material instead ends automatic eligibility
-for that carrier under [the proof rule](relationships.md#predecessor-resolution).
+for that carrier under [the receipt](../../packages/agent-core/src/receive/receipt.ts).
 Reopen, import and separate evidence recovery have no such action. Erased input
 starts no new content-derived effects. Fresh unrelated live input remains independent.
 
@@ -521,7 +521,7 @@ Valid expiry or cancellation terminates the entire intent without depending
 on preparation evidence. Complete submission still takes precedence.
 Erasure, security denial, key/route retirement and missing exact bytes separately
 govern manual retry. Known endpoint replacement also prohibits preparation
-or transport on the old channel under [dispatch policy](channels.md#fixed-outbound-channel),
+or transport on the old channel under [the continuity fold](../../packages/vault/src/fold/continuity.ts),
 including queued work and manual retries; it never rewrites their packages.
 
 Prepared-envelope retention is owned solely by
@@ -552,7 +552,7 @@ choosing timing. Reuse its fixed intent without sending it on
 duplicate/recovery. Eligible live input and current ACK policy may create that
 intent immediately, independently of any natural reply or rotation notification.
 Explicit manual completion of pending ACK work follows the same checks under
-[the dispatch contract](channels.md#fixed-outbound-channel).
+[the live action](../../packages/agent-core/src/action.ts).
 
 Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
 A carrier that does not request its own receipt under
@@ -625,7 +625,7 @@ Same-channel attribution compares the two canonical endpoints directly and
 does not query a zero-step continuity path. An aggregate graph conflict alone
 does not erase that observation; source/proof, admitted-intent and
 target/package integrity still apply. Cross-channel attribution requires the
-package's usable directed path under [channel authorization](channels.md#continuity-integration).
+package's usable directed path under [channel authorization](../../packages/vault/src/fold/continuity.ts).
 An ignored old-peer carrier cannot acknowledge an outbound or change ACK timing.
 An admission recorded before supersession remains historical ACK evidence. Missing
 path/authentication/package references defer the acknowledgment. The carrier's
@@ -689,8 +689,8 @@ These are identifier fixtures, not authentication/proof fixtures.
 
 ### Execution prerequisites
 
-Automatic work requires [operation eligibility](channels.md#operation-eligibility)
-and [dispatch authority](channels.md#fixed-outbound-channel), independently of
+Automatic work requires [an admitted witness](../../packages/vault/src/fold/admission.ts)
+and [a live action](../../packages/agent-core/src/action.ts), independently of
 ID derivation. Source/endpoint/proof dependencies must already be committed.
 Anonymous and mediator-control input have no application execution.
 
@@ -699,7 +699,7 @@ Anonymous and mediator-control input have no application execution.
 ### Source observations
 
 Validate each source with its own recipient/key mapping and immutable
-authentication document under [operation eligibility](channels.md#operation-eligibility).
+authentication document under [the channel evidence fold](../../packages/vault/src/fold/channels.ts).
 Equal intent within one sender/recipient/wire-ID input shares one execution;
 disagreement follows [the conflict rules](vault-events.md#duplicate-transition-and-conflict-rules).
 Continuity links never merge inputs from different channels.
@@ -799,7 +799,7 @@ committed dependencies. Reject a conflicting local intent before append;
 retain imported conflicts and suppress their work. Only eligible live input
 may automatically create an initial intent. Historical unfinished work requires
 explicit manual completion with the same tuples under
-[dispatch authority](channels.md#fixed-outbound-channel).
+[the live action](../../packages/agent-core/src/action.ts).
 
 Other external effects MUST commit their protocol-defined portable intent
 before execution and use that protocol's idempotency or explicit at-least-once
@@ -864,7 +864,7 @@ notification work; neither new triggers nor retries may create another selection
 Its source/effect fields are null, while `rotationEventCid` remains present.
 In either case, notification recovery reuses the rotation; it never allocates
 another successor. A missing notification is manual work only while its source,
-when present, remains eligible under [channels.md](channels.md#operation-eligibility).
+when present, remains eligible under [the rotation procedure](../../packages/agent-core/src/rotate.ts).
 Supersession of that source's peer prevents creating the intent. An existing
 intent remains a saved fact; a replaced fixed sender or recipient prohibits its
 preparation and dispatch, and recovery itself grants no automatic replay.

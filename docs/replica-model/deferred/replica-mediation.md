@@ -711,7 +711,7 @@ envelope, request filter and plaintext `to` do not establish this identity.
 Inspecting recipient key identifiers may select keys before unpacking but
 does not replace envelope validation. For nested envelopes, an anonymous
 wrapper's recipient cannot substitute for the authcrypt layer's recipient,
-as required by the [adapter boundary](../channels.md#carried-proof-and-library-boundary).
+as required by the [adapter boundary](../../../packages/agent-core/README.md#didcomm-api).
 
 `messages-received.message_id_list` affects only this authenticated replica's
 deliveries. Repeating an ACK is harmless; unknown, already acknowledged and
