@@ -10,16 +10,14 @@ const MEDIATION = "019b0000-0000-7000-8000-00000000000a" as MediationId;
 const dids = (...names: string[]) => names.map((name) => `did:example:${name}` as Did);
 
 describe("the lines a view is shown", () => {
-  it("are the agent's three lists, each connection's reconciliation without the arrangement said again, and pass the schema", () => {
+  it("are the agent's three lists, each connection's recipients without the arrangement said again, and pass the schema", () => {
     const lines: AgentLines = {
       connections: [
         {
           mediationId: MEDIATION,
           unreachable: "socket closed",
-          reconciled: { mediationId: MEDIATION, desired: dids("a"), held: dids("a", "b"), added: [], removed: dids("b"), refused: [], unknown: dids("b") },
           enrolled: null,
-          recipients: null,
-          unknownRegistrations: dids("b"),
+          recipients: { mediationId: MEDIATION, wanted: dids("a", "b"), added: dids("a"), refused: [{ did: dids("b")[0]!, because: "quota" }] },
           drained: { acked: 2, ended: "empty" },
           live: false,
         },
@@ -34,8 +32,7 @@ describe("the lines a view is shown", () => {
         {
           mediationId: MEDIATION,
           unreachable: "socket closed",
-          reconciled: { desired: ["did:example:a"], held: ["did:example:a", "did:example:b"], added: [], removed: ["did:example:b"], refused: [], unknown: ["did:example:b"] },
-          unknownRegistrations: ["did:example:b"],
+          recipients: { wanted: ["did:example:a", "did:example:b"], added: ["did:example:a"], refused: [{ did: "did:example:b", because: "quota" }] },
           drained: { acked: 2, ended: "empty" },
           live: false,
         },

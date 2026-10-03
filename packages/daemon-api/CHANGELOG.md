@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-- `setMediator` takes an optional `profile`: `"replica-mediation/1.0"`
-  asks for the arrangement to be made as a replica-mediation account;
-  `null`, or none, asks for an ordinary arrangement, as before. A
-  profile the daemon does not know is `InvalidArgument`.
-- A `MediationRecord` may carry `profile`: the profile its arrangement
-  was created under, null for an ordinary one, absent from a daemon that
-  does not say.
+- `ConnectionRecord.recipients` (`RecipientsRecord`: the DIDs the
+  account is to hold, those the connection had confirmed, those refused
+  and why) replaces `reconciled` and `unknownRegistrations`: every
+  arrangement is a replica-mediation account, whose addresses are added
+  and never taken off, so there is no reconciliation to report.
+- `setMediator` takes the mediator's DID alone: the one arrangement with
+  that mediator is made and enrolled in when none stands.
 
 ## 0.1.0 — 2026-09-29
 

@@ -99,18 +99,15 @@ const SCAN = { effectTypes: effectTypesOf(BUILT_IN_HANDLERS) };
 /**
  * One agent as the daemon holds it. Closing an agent does not end a
  * flow of its own already under way, and such a flow goes on from what
- * it read before: a reconciliation would take away the addresses
- * whoever has the vault next has registered since. So once `ended`
- * the agent starts no request, and `work` is waited for before the
- * vault is closed or handed to another agent: every call made over
- * the agent, and every request the agent has out, whoever began it —
- * a call, a retry on its timer, a delivery pushed down its socket. A
- * request already out is left to be answered: giving it up here would
- * not undo it there, and whoever came next would register addresses
- * under a removal still to land. One that outlasts the deadline its
- * caller set is past waiting for; it may still take effect at the
- * other end later, and a reconciliation after it sees and mends only
- * what stands there at the time.
+ * it read before. So once `ended` the agent starts no request, and
+ * `work` is waited for before the vault is closed or handed to another
+ * agent: every call made over the agent, and every request the agent
+ * has out, whoever began it — a call, a retry on its timer, a delivery
+ * pushed down its socket. A request already out is left to be
+ * answered: giving it up here would not undo it there, and what the
+ * answer settles — a grant, a confirmation — is whoever comes next
+ * to find recorded. One that outlasts the deadline its caller set is
+ * past waiting for; it may still take effect at the other end later.
  */
 interface Attached {
   agent: Promise<Agent>;
@@ -854,15 +851,12 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         }
       }),
 
-    setMediator: (mediatorDid, profile = null) =>
+    setMediator: (mediatorDid) =>
       act(async (agent, { runtime, keys }) => {
         const fold = await scanVault(runtime.vault, keys, SCAN);
-        const existing = [...fold.mediations.mediations.values()].find(
-          (mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && mediation.profile === profile && sameDid(mediation.mediatorDid, mediatorDid)
-        );
-        const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did, undefined, profile ?? undefined)).data.mediationId;
-        if (profile === null) await agent.establish(mediationId);
-        else await agent.enroll(mediationId);
+        const existing = [...fold.mediations.mediations.values()].find((mediation) => mediation.mediatorDid !== null && mediation.retired === null && mediation.faults.length === 0 && sameDid(mediation.mediatorDid, mediatorDid));
+        const mediationId = existing?.mediationId ?? (await createMediation(runtime, keys, mediatorDid as Did)).data.mediationId;
+        await agent.enroll(mediationId);
         await selectMediation(runtime, keys, mediationId);
         return mediationId;
       }),

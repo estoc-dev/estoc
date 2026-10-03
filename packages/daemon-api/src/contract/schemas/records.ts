@@ -41,7 +41,6 @@ const strings = z.array(z.string());
 export const mediationRecord: z.ZodType<MediationRecord> = z.object({
   mediationId,
   mediatorDid: z.string().nullable(),
-  profile: z.string().nullable().optional(),
   selected: z.boolean(),
   usable: z.boolean(),
   retired: z.string().nullable(),

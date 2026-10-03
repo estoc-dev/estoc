@@ -1,4 +1,4 @@
-import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MediationProfile, MessageId } from "@estoc/vault";
+import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, TraceLevel } from "@estoc/agent-core";
 import type { Hold } from "@estoc/daemon-api/contract";
 
@@ -78,13 +78,8 @@ export interface Daemon {
   exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
 
-  /**
-   * An arrangement with `mediatorDid` selected: the one that stands
-   * with that mediator under `profile`, or one created under it. An ordinary arrangement, of the null
-   * profile and what is made when none is named, is granted; a
-   * replica-mediation one is enrolled in.
-   */
-  setMediator(mediatorDid: string, profile?: MediationProfile | null): Promise<MediationId>;
+  /** An arrangement with `mediatorDid` selected: the one that stands with that mediator, or one created and enrolled in. */
+  setMediator(mediatorDid: string): Promise<MediationId>;
   /** A fresh DID routed through the selected arrangement, disclosed as an out-of-band invitation. */
   createInvitation(goal?: string): Promise<CreatedInvitation>;
   /** A fresh DID of ours toward the inviter, a contact that selects the pair, and a Ping under the invitation's ID. */
@@ -110,7 +105,7 @@ export interface Daemon {
 
   /** Where a snapshot covering every change committed so far stands: published already, or once the read under way or the next one is. Reads and publishes only. */
   refresh(): Promise<{ epoch: string; revision: number }>;
-  /** Every arrangement connected again: reconciled, picked up, live. */
+  /** Every arrangement connected again: enrolled, its addresses held, picked up, live. */
   reconnect(): Promise<void>;
 
   traceLevel(): Promise<TraceLevel>;

@@ -1,7 +1,7 @@
 /**
  * The agent's lines as a view is shown them: the same three lists,
- * each connection's reconciliation without the arrangement it names
- * again, and no envelope bytes.
+ * each connection's recipients without the arrangement it names again,
+ * and no envelope bytes.
  */
 
 import type { AgentLines, Connection } from "@estoc/agent-core";
@@ -12,12 +12,11 @@ const mediationIdOf = (mediationId: Connection["mediationId"]): MediationId => m
 
 const sourceOf = (source: Source): DeliverySource => (source.kind === "direct" ? { kind: "direct" } : { kind: "pickup", mediationId: mediationIdOf(source.mediationId), deliveryId: source.deliveryId });
 
-function connectionRecord({ mediationId, unreachable, reconciled, unknownRegistrations, drained, live }: Connection): ConnectionRecord {
+function connectionRecord({ mediationId, unreachable, recipients, drained, live }: Connection): ConnectionRecord {
   return {
     mediationId: mediationIdOf(mediationId),
     unreachable,
-    reconciled: reconciled === null ? null : { desired: reconciled.desired, held: reconciled.held, added: reconciled.added, removed: reconciled.removed, refused: reconciled.refused, unknown: reconciled.unknown },
-    unknownRegistrations,
+    recipients: recipients === null ? null : { wanted: recipients.wanted, added: recipients.added, refused: recipients.refused.map(({ did, because }) => ({ did, because })) },
     drained,
     live,
   };

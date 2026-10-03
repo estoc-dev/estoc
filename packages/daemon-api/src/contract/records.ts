@@ -36,8 +36,6 @@ export interface Snapshot {
 export interface MediationRecord {
   mediationId: MediationId;
   mediatorDid: string | null;
-  /** the mediation profile the arrangement was created under; null for an ordinary one */
-  profile?: string | null;
   selected: boolean;
   usable: boolean;
   /** why it was retired; null while it stands */

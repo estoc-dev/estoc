@@ -162,7 +162,7 @@ export const snapshot: Snapshot = {
 export const openState: State = { epoch: as("epoch-1"), revision: 3, value: { phase: "open", hold: as("hold-1"), snapshot } };
 
 export const lines: Lines = {
-  connections: [{ mediationId: as("med-1"), unreachable: null, reconciled: { desired: [LOCAL], held: [LOCAL], added: [], removed: [], refused: [], unknown: [] }, unknownRegistrations: [], drained: { acked: 2, ended: "empty" }, live: true }],
+  connections: [{ mediationId: as("med-1"), unreachable: null, recipients: { wanted: [LOCAL], added: [], refused: [] }, drained: { acked: 2, ended: "empty" }, live: true }],
   waiting: [{ key: "k-1", source: { kind: "pickup", mediationId: as("med-1"), deliveryId: "d-1" }, reason: "the sender's document is not resolved yet", held: true }],
   discarded: [{ source: { kind: "direct" }, reason: "not addressed to a DID of this vault" }],
 };
