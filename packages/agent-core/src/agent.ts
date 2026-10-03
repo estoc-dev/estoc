@@ -596,13 +596,7 @@ export class Agent {
     return (await this.decide(received))();
   }
 
-  /**
-   * A delivery's local work: what the vault owes recorded and, for a
-   * live input, the private-address policy and then its automatic
-   * effects decided under the lock, each intent committed with the
-   * action the input minted for it. What is returned makes the calls,
-   * in that order, and tells the host.
-   */
+  /** The calls come back as a closure so that a pickup can finish its local work without waiting on transport. */
   private async decide(received: Received): Promise<Finish> {
     const inbound: Inbound = { received, after: null, reacted: null, address: null };
     if (received.outcome !== "received") return async () => this.tell(inbound);

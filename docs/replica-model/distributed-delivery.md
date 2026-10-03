@@ -266,11 +266,11 @@ and has the admissions the vault owes reconciled under
 [application admission](channels.md#application-admission) before the
 receipt's lock is released, so that the writer lock is the one runtime-wide
 receipt and admission sequence whichever way the delivery came, and a
-replacement known by then is known to the decision. A pickup ACK follows
-the durable receipt alone, independently of channel policy and history,
-and waits for no application effect; a hard terminal rejection may
-pickup-ACK without `message.in`, and a failed durable receipt withholds
-it. Automatic work is earned only by the call that recorded the first
+replacement known by then is known to the decision. A pickup ACK is
+authorized by the durable receipt, independently of channel policy and
+history, and does not wait for the transport calls of automatic outputs;
+a hard terminal rejection may pickup-ACK without `message.in`, and a
+failed durable receipt withholds it. Automatic work is earned only by the call that recorded the first
 observation the vault holds of an input and had it admitted under that
 lock as the witness its input speaks through; a retained duplicate, an
 observation admitted later by evidence, an open, an import or a restore
@@ -830,9 +830,13 @@ them are owned by the modules those documents link.
 No failure window changes a message's channel or proves nondelivery merely by
 lacking a success record. Manual new sending may produce another visible or
 business operation if the first one arrived; protocol-level idempotency is
-independent of this transport profile. Each window a process can die in is a
-test in
-[`packages/agent-core/test/e2e/crash.test.ts`](../../packages/agent-core/test/e2e/crash.test.ts).
+independent of this transport profile. Crash and recovery scenarios are
+exercised in
+[`packages/agent-core/test/e2e/crash.test.ts`](../../packages/agent-core/test/e2e/crash.test.ts),
+with the admission of an observation a crash left unadmitted in
+[`test/after.test.ts`](../../packages/agent-core/test/after.test.ts) and
+what an open lists of the work a crash left unfollowed in
+[`test/agent.test.ts`](../../packages/agent-core/test/agent.test.ts).
 
 <a id="privacy"></a>
 
