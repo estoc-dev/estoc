@@ -5,10 +5,9 @@ import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@est
 import { EMPTY_MESSAGE_TYPE, PURE_ACK_EFFECT, channelOf, scanVault, vaultDraft, type DidId, type MessageId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { ENCRYPTED_MIME, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
+import { ENCRYPTED_MIME, secretsResolverFor } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import { RECIPIENT, RECIPIENT_QUERY } from "../src/protocol/mediation.js";
-import { AgentTrace, Keyring, LiveAction, UnknownEntity, automaticDraft, cancel, completeResponse, createVault, dispatch, pinnedResolver, prepare, reconcile, send, unpack, type Content, type DispatchOptions, type Dispatched } from "../src/index.js";
+import { AgentTrace, Keyring, LiveAction, UnknownEntity, automaticDraft, cancel, completeResponse, createVault, dispatch, pinnedResolver, prepare, send, unpack, type Content, type DispatchOptions, type Dispatched } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { carrierWaitingForIssuer, delivered, didcomm, directParty, issuerRecovered, mediatedParty, memoryDriver, newMediator, observed, posting, proofOfSuccession, received, refuseSubmissions, ticking, type DirectParty, type MediatedParty, holdAddresses } from "./helpers.js";
 

@@ -1,7 +1,7 @@
 import type { Event } from "@estoc/event-store";
 import { describe, expect, it } from "vitest";
 
-import { VaultEventSet, foldVault, foldVaultChecked, mintMediationDid, type Did, type KeyName, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
+import { VaultEventSet, foldVault, foldVaultChecked, mintMediationDid, type KeyName, type Keys, type ReadObject, type VaultChecks, type VaultFold } from "../../src/index.js";
 import { MEDIATION, MEDIATION2, ROUTING_DID, expectOrderFree, type Scene } from "./helpers.js";
 import { invitation, noObjects, receipt, resolved, vaults, type Local, type Peer } from "./scene.js";
 
