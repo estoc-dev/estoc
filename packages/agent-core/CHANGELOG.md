@@ -13,7 +13,10 @@
   profile; every arrangement is enrolled in (`enroll`, `Agent.enroll`),
   its addresses held by the account (`addRecipients`,
   `Connection.recipients`) and its mail picked up as this runtime's
-  replica. A mediated address is disclosed, and held before a package
+  replica. The account asks to hold an address only while its receipt
+  is eligible and this arrangement alone routes it: while several
+  usable arrangements name its routing DID, no account holds it, so the
+  one left standing can. A mediated address is disclosed, and held before a package
   first discloses it as a sender, with the runtime's `Confirmations`
   alone. Nothing is ever taken off a mediator: an address the vault no
   longer knows stays held by the account, and its mail is discarded on
