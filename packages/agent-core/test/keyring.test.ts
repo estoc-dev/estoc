@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { longToShort } from "@estoc/did-peer";
-import { mintDid, scanVault, vaultDraft, type DidId } from "@estoc/vault";
+import { mintDid, scanVault, vaultDraft, type Did, type DidId } from "@estoc/vault";
 
 import { Keyring, createDid, retireDid } from "../src/index.js";
 import { freshVault, newMediator, party, reloaded } from "./helpers.js";
@@ -78,7 +78,7 @@ describe("the keyring", () => {
   it("drops a mediation identity whose arrangement fell into conflict", async () => {
     const p = await party(await newMediator());
     expect(p.ring.mediationKeys(p.mediationId)).not.toBeNull();
-    await p.runtime.vault.commit([], [vaultDraft("mediation.created", { ...p.created.data, mediatorDid: "did:web:elsewhere.example" as typeof p.created.data.mediatorDid })]);
+    await p.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: p.mediationId, routingDid: p.mediator.did as Did }), vaultDraft("mediation.granted", { mediationId: p.mediationId, routingDid: "did:web:elsewhere.example" as Did })]);
     const fold = await scanVault(p.runtime.vault, p.keys);
     expect(fold.mediations.mediations.get(p.mediationId)?.status).toBe("conflict");
     await p.ring.reload(fold);

@@ -88,41 +88,11 @@ describe("adding recipients", () => {
     const retired = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
     await retireDid(p.runtime, p.keys, retired.created.data.didId, "no longer given out");
     await createDid(p.runtime, p.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" });
-    const other = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
     const recipients = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
     expect(recipients.wanted).toEqual([retired.minted.did]);
     expect([...mediator.sharedRecipients.keys()]).toEqual([retired.minted.did]);
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.has(other.data.mediationId)).toBe(true);
-    await p.runtime.close();
-  });
-
-  it("holds no address while two usable arrangements route it, and holds it once one of them is retired", async () => {
-    const mediator = await newMediator();
-    const p = await enrolled(mediator);
-    const live = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
-    const retired = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
-    await retireDid(p.runtime, p.keys, retired.created.data.didId, "no longer given out");
-    const didIds = [live.created.data.didId, retired.created.data.didId];
-    const other = await createMediation(p.runtime, p.keys, mediator.did as Did);
-    await p.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: other.data.mediationId, routingDid: mediator.did as Did })]);
-    const undecided = await scanVault(p.runtime.vault, p.keys);
-    expect([undecided.mediations.usable(p.mediationId), undecided.mediations.usable(other.data.mediationId)]).toEqual([true, true]);
-    expect(didIds.map((didId) => undecided.dids.receipt(didId))).toEqual(["pending", "pending"]);
-    expect(await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId)).toMatchObject({ wanted: [], added: [], refused: [] });
-    expect([sent(mediator, RECIPIENT_ADD), mediator.sharedRecipients.size]).toEqual([0, 0]);
-
-    await p.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: other.data.mediationId, because: "the other one stands" })]);
-    const decidable = await scanVault(p.runtime.vault, p.keys);
-    expect(didIds.map((didId) => decidable.dids.receipt(didId))).toEqual(["eligible", "eligible"]);
-    const decided = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
-    expect(decided.added).toEqual([live.minted.did, retired.minted.did].sort());
-    expect(decided).toMatchObject({ wanted: decided.added, refused: [] });
-    expect(mediator.sharedRecipients).toEqual(
-      new Map([
-        [live.minted.did, p.account],
-        [retired.minted.did, p.account],
-      ])
-    );
     await p.runtime.close();
   });
 

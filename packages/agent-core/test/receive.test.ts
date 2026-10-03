@@ -2,7 +2,7 @@ import { describe, expect, it, test, vi } from "vitest";
 
 import { encodeLongForm, longToShort, resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc } from "@estoc/did-peer";
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
-import { didKeyName, inputDocumentOf, mintMediationDid, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type KeyName, type MediationId, type PublicKey } from "@estoc/vault";
+import { didKeyName, inputDocumentOf, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type MediationId, type PublicKey } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, type IMessage, type Unpacked } from "../src/protocol/didcomm.js";
@@ -40,7 +40,7 @@ const BOB_PRIOR = "019b0000-0000-7000-8000-0000000000b1" as DidId;
 const CAROL = "019b0000-0000-7000-8000-0000000000c0" as DidId;
 const QUERIED = "019b0000-0000-7000-8000-0000000000d0" as DidId;
 const OTHER = "019b0000-0000-7000-8000-0000000000e0" as DidId;
-const MEDIATION = "019b0000-0000-7000-8000-000000000201" as MediationId;
+const MEDIATION = "019b0000-0000-5000-8000-000000000201" as MediationId;
 const ALICE_ENDPOINT = "https://alice.example/didcomm";
 const BOB_ENDPOINT = "https://bob.example/didcomm";
 const CAROL_ENDPOINT = "https://carol.example/didcomm";
@@ -273,27 +273,21 @@ describe("the gate before the vault", () => {
     await closeAll(alice, bob);
   });
 
-  test("a DID whose arrangement is retired, with the grant of the arrangement that replaced it not yet arrived, holds the delivery without acknowledgement; once that grant arrives it is received from the held bytes and acknowledged once", async () => {
+  test("a DID whose arrangement is created but not yet granted here holds the delivery without acknowledgement; once the grant arrives it is received from the held bytes and acknowledged once", async () => {
     const { alice, bob } = await mediatedParties();
-    const copy = await copyOf(alice, "did.created", "mediation.created", "mediation.granted");
-    const replacement = "019b0000-0000-7000-8000-000000000202" as MediationId;
-    const me = (await mintMediationDid(copy.keys, replacement)).longFormDid;
-    await copy.runtime.vault.commit([], [
-      vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "replaced" }),
-      vaultDraft("mediation.created", { mediationId: replacement, mediatorDid: alice.mediator.did as Did, me: { keyName: `mediation/${replacement}/me` as KeyName, did: me } }),
-    ]);
+    const copy = await copyOf(alice, "did.created", "mediation.created");
     const { receipt, seen } = recording();
     const { acknowledge, acknowledged } = acknowledging();
     const receiver = await receiverOver(copy, { receipt, acknowledge });
     const packed = await sealed(await peerSealer(bob), alice.longFormDid);
-    const source: Source = { kind: "pickup", mediationId: replacement, deliveryId: "d1" };
+    const source: Source = { kind: "pickup", mediationId: alice.mediationId, deliveryId: "d1" };
 
-    expect(await receiver.receive({ packed, source })).toMatchObject({ outcome: "deferred", reason: `${kidOf(packed)}: mediation ${alice.mediationId} is retired` });
+    expect(await receiver.receive({ packed, source })).toMatchObject({ outcome: "deferred", reason: `${kidOf(packed)}: no mediation arrangement routes through ${alice.mediator.did}` });
     expect(await receiver.receive({ packed, source })).toMatchObject({ outcome: "deferred" });
     expect(receiver.waiting()).toEqual([expect.objectContaining({ source, held: true })]);
     expect([seen, acknowledged, await eventsOf(copy.runtime, "message.in")]).toEqual([[], [], []]);
 
-    await copy.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: replacement, routingDid: alice.mediator.did as Did })]);
+    await copy.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: alice.mediationId, routingDid: alice.mediator.did as Did })]);
     expect(await receiver.localStateChanged()).toMatchObject([{ outcome: "received" }]);
     expect(seen).toHaveLength(1);
     expect(acknowledged).toEqual([source]);

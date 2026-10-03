@@ -49,13 +49,7 @@ export function didOf(fold: VaultFold, didId: DidId): LocalDidEntity {
   return entity;
 }
 
-/**
- * Where a route sends, once it can carry a DID: the routing DID of a
- * usable arrangement that no other usable arrangement shares, since a
- * document names the routing DID alone and two accounts behind it
- * would leave undecidable which one holds the address; or the endpoint
- * itself. `Unusable` otherwise.
- */
+/** Where a route sends, once it can carry a DID: the routing DID of a usable arrangement, or the endpoint itself. `Unusable` otherwise. */
 export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
   if (route.kind === "direct") {
     const target = serviceTargetOf(route.endpoint);
@@ -67,20 +61,18 @@ export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
   return usableTarget(fold, { kind: "mediated", routingDid: mediation.routingDid });
 }
 
-/** A target a DID may be minted for now: a direct endpoint, or a routing DID exactly one usable arrangement routes through. */
+/** A target a DID may be minted for now: a direct endpoint, or a routing DID a usable arrangement routes through. */
 export function usableTarget(fold: VaultFold, target: RouteTarget): RouteTarget {
   if (target.kind === "direct") return target;
-  const usable = fold.mediations.through(target.routingDid).filter((mediation) => mediation.status === "usable");
-  if (usable.length === 1) return target;
-  throw new Unusable("routing DID", target.routingDid, [usable.length === 0 ? "no usable arrangement routes through it" : `several arrangements route through it: ${usable.map((mediation) => mediation.mediationId).join(", ")}`]);
+  if (fold.mediations.through(target.routingDid).some((mediation) => mediation.status === "usable")) return target;
+  throw new Unusable("routing DID", target.routingDid, ["no usable arrangement routes through it"]);
 }
 
-/** The route of a recorded entity, as `RouteSpec` names it: its one arrangement, or its endpoint. Null while the document names no one route or no one usable arrangement carries it. */
+/** The route of a recorded entity, as `RouteSpec` names it: its arrangement, or its endpoint. Null while the document names no one route or no usable arrangement carries it. */
 export function routeOf(entity: LocalDidEntity): RouteSpec | null {
   if (entity.routeTarget === null) return null;
   if (entity.routeTarget.kind === "direct") return { kind: "direct", endpoint: entity.routeTarget.endpoint };
-  const mediationId = entity.mediations[0];
-  return entity.mediations.length === 1 && mediationId !== undefined ? { kind: "mediated", mediationId } : null;
+  return entity.mediation === null ? null : { kind: "mediated", mediationId: entity.mediation };
 }
 
 export interface CreatedDid {
