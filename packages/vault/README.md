@@ -15,14 +15,14 @@ payloads and the retention contract,
 [channels](../../docs/replica-model/channels.md) for channel identity
 and the channel payloads, and
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
-for the hashes and the inbound identities. Every rule a fold or a
-procedure applies is in its module's leading comment and in its tests,
-nowhere else.
+for the hashes and the inbound identities. The code and its tests
+define what the folds and the procedures do; each module's leading
+comment states what it is responsible for.
 
 ## Modules
 
-Each module answers one question. Its leading comment states the rule
-it implements, its exports are the entry points, and `test/` mirrors
+Each module answers one question. Its leading comment states its
+responsibility, its exports are the entry points, and `test/` mirrors
 `src/`. Every published identifier, key and document vector of the
 specifications is a test, and the DIDs and signatures a fixed seed
 derives are pinned there too.
@@ -66,8 +66,8 @@ derives are pinned there too.
 1. `types.ts` and `ids.ts`: the vocabulary, and the identifiers every rule derives.
 2. `schema.ts`: what each event type carries, and the rules between its members.
 3. `fold/set.ts`, then `fold/vault.ts`: how an event set is read, and which fold feeds which.
-4. The folds in the order `fold/vault.ts` runs them: mediation, replicas, dids, channels, continuity, admission, inbound, outbound, held, invitations, contacts, views.
-5. `commit.ts`, then the procedures: each reads the fold under the writer lock and commits one batch.
+4. The folds, following the arguments `fold/vault.ts` passes from one to the next: a fold's inputs are the folds to read before it.
+5. `commit.ts`, which commits one decision over a fold read under the writer lock, then the procedures: each states its own lock and batch boundaries.
 
 ## Example
 

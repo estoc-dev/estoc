@@ -517,7 +517,7 @@ and `ForkedAuthor` checks. Union events by CID without rewriting envelopes.
 Let `targetBeforeImport` be the
 complete accepted target inventory under that lock before any import writes,
 and `union` the prospective event union. Compute `heldRoots` for both sets
-under [VE §12.3](vault-events.md#held-roots). Newly accepted source events are
+under [VE §10.2](vault-events.md#held-roots). Newly accepted source events are
 those whose CIDs are absent from the target.
 
 ```text
