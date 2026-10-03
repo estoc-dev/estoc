@@ -886,8 +886,9 @@ channel.blocked            local channel/successor denial
 ```
 
 Continuity links and verification status are fold results, not events.
-Contact events are not delivery observations. Schemas and folds
-are owned by [vault events](vault-events.md) and [channels](channels.md).
+Contact events are not delivery observations. Schemas are owned by
+[vault events](vault-events.md) and [channels](channels.md); the folds over
+them are owned by the modules those documents link.
 
 <a id="failure-rules"></a>
 

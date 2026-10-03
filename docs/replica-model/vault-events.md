@@ -23,8 +23,9 @@ and after ingest.
 
 This document defines portable vault state. Socket state, pickup cursors,
 retry timers, caches and traces are local state and do not appear here.
-[channels.md](channels.md) owns channel identity, invitations and
-operation eligibility; receipt precedes source-derived decisions and continuity work.
+[channels.md](channels.md) owns channel identity, invitations and the channel
+event payloads; operation eligibility is the linked modules' code. Receipt
+precedes source-derived decisions and continuity work.
 
 <!-- reading-guide:start -->
 <a id="reading-guide"></a>
@@ -613,7 +614,7 @@ This event is durable resolution evidence for one authenticated or selected
 peer key. `localKeyName` identifies the local communication key/context.
 
 - `presentedDid` is the exact numalgo-4 DID string supplied for resolution.
-- `did` is its canonical short form under [relationships.md section 10.2](relationships.md#peer-did-numalgo-4-profile);
+- `did` is its canonical short form under [the peer DID profile](relationships.md#peer-did-numalgo-4-profile);
   first disclosure keeps the long form in `presentedDid`.
 - `documentCid` names the raw DASL object containing exact RFC 8785 canonical
   resolved DID document JSON. Its CID commits to those bytes.
@@ -1614,7 +1615,7 @@ Requirements:
   Its `localKeyName` equals the package's local key and its canonical `did` matches
   `recipientDid`. It is non-null for every phase-1 package, including a
   retained numalgo-4 resolution. Local resolution and evidence reuse follow
-  [relationships.md section 10.1](relationships.md#did-resolution-requirements);
+  [the DID resolution requirements](relationships.md#did-resolution-requirements);
 - `fromPrior` is the exact compact JWT included in the package or null;
 - the envelope object contains `UTF8(RFC8785(parsedEncryptedEnvelope))` under
   a raw DASL CID; duplicate members or invalid I-JSON are rejected before
