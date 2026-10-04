@@ -87,7 +87,6 @@ const acknowledged = (scene: Scene, out: VaultEvent<"message.out">, carrier: Vau
     ...overrides,
   });
 
-/** The input a receipt is, as its execution is named. */
 const inputOf = (source: VaultEvent<"message.in">, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId);
 
 /** A pure ACK of a source received at `received`, in its exact shape: Empty, body `{}`, the carrier's thread and creation time, targets in `ack`. */

@@ -64,6 +64,7 @@ function picture(vault: VaultFold) {
       intentHash: execution.intentHash,
       kind: execution.kind,
       status: execution.status,
+      because: execution.status === "complete" ? null : execution.because,
       erased: execution.erased,
     })),
     anonymous: inbound.anonymous.map(({ event }) => event.cid),
