@@ -81,11 +81,13 @@ export {
   recordedDid,
   retireDid,
   routeOf,
+  routeStanding,
   routeTargetOf,
   type CreatedDid,
   type Disclosed,
   type Disclosure,
   type RouteSpec,
+  type RouteStanding,
 } from "./dids.js";
 export { DEFINITIVE_TRANSPORT_CODES, MAX_DOCUMENT_BYTES, knownLongForms, resolve, webDidUrl, type KnownLongForms, type Resolution, type Resolved, type ResolverOptions, type WebResolverOptions } from "./resolver.js";
 export {
@@ -132,7 +134,7 @@ export { recordOwed, recordOwedUnderLock, type Owed } from "./reconcile.js";
 export { afterReceipt, type AfterReceipt, type AfterReceiptOptions } from "./receive/after.js";
 export { callEffects, completeResponse, decideEffects, reactTo, type Called, type DecidedEffects, type EffectOptions, type EffectOutcome, type Reacted } from "./effects.js";
 export { callRotation, completeNotification, decideRotation, rotate, type RotateOptions, type Rotated, type RotationDecided, type RotationTarget } from "./rotate.js";
-export { ineligibleHere, materializeSuccessor } from "./successor.js";
+export { materializeSuccessor, successorStanding, type SuccessorStanding } from "./successor.js";
 export { callPrivateAddress, decidePrivateAddress, privacyPolicy, privateAddress, type PrivacyPolicy, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 export { BUILT_IN_HANDLERS, basicMessage, claimedName, effectTypesOf, empty, handlerFor, handlersOf, reportProblem, reportedProblem, trustPing, userProfile, type Handler, type Input, type Response } from "./handlers/index.js";
 export {

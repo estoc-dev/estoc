@@ -253,7 +253,7 @@ describe("a local rotation", () => {
     await closeAll(alice, bob, charlie, copy);
   });
 
-  test("an entity recorded already under the successor's ID is reused only as exactly what would be made now, document and generation alike, and live: another document or another generation under the ID is refused with nothing written, and so is a retired successor", async () => {
+  test("an entity recorded already under the successor's ID is reused only as exactly what would be made now, generation, route and document alike, and live: another route or another generation under the ID is refused with nothing written, and so is a retired successor", async () => {
     const { alice, bob } = await parties();
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const dave = await directParty(4, "https://dave.example/didcomm", DAVE);
@@ -265,18 +265,18 @@ describe("a local rotation", () => {
 
     const elsewhere = await mintDid(alice.keys, start(bob).didId, { kind: "direct", endpoint: "https://elsewhere.example/didcomm" });
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: elsewhere.didId, did: elsewhere.did, longFormDid: elsewhere.longFormDid, generation: start(bob).generation })]);
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options)).rejects.toThrow(new EntityConflict("DID", elsewhere.didId, "another document"));
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor's ID ${elsewhere.didId} is held by an entity on another route`]));
 
     const foreign = await mintDid(alice.keys, start(charlie).didId, direct);
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: foreign.didId, did: foreign.did, longFormDid: foreign.longFormDid, generation: { kind: "entry", profile: "v9" } })]);
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options)).rejects.toThrow(new EntityConflict("DID", foreign.didId, "another generation"));
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor's ID ${foreign.didId} is held by an entity of another generation`]));
 
     const exact = await mintDid(alice.keys, start(dave).didId, direct);
     const recorded = await merged(alice.runtime, "did.created", { didId: exact.didId, did: exact.did, longFormDid: exact.longFormDid, generation: start(dave).generation }, "2026-09-14T00:00:00.500Z");
     const retiring = await mintDid(alice.keys, start(eve).didId, direct);
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: retiring.didId, did: retiring.did, longFormDid: retiring.longFormDid, generation: start(eve).generation })]);
     await retireDid(alice.runtime, alice.keys, retiring.didId, "gone");
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: eve.did }, options)).rejects.toThrow(new Unusable("DID", retiring.didId, ["retired: gone"]));
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: eve.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor ${retiring.didId} is recorded already and is not live: retired: gone`]));
     let fold = await foldOf(alice);
     expect([fold.set.of("did.rotationSelected"), fold.set.of("did.created").length, wire.posts.length]).toEqual([[], 5, 0]);
 

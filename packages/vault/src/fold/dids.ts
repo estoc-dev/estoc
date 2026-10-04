@@ -51,7 +51,7 @@ export interface LocalDidEntity {
    */
   readonly conflict: boolean;
   readonly identity: IdentityCheck;
-  /** consistent, verified, not retired, document and arrangement in order: may send, disclose and register */
+  /** consistent, verified, not retired, document and arrangement in order: may send and register; disclosure asks for an entry besides */
   readonly live: boolean;
 }
 

@@ -17,12 +17,21 @@
   `RotateOptions.didId` and the successor options of `manual.rotate` are
   gone; `createDid` makes entries alone, `disclose` discloses entries
   alone, and the private-address policy acts on disclosed entries alone
-  and reuses an existing exact successor. `ineligibleHere` and
-  `materializeSuccessor` are exported.
+  and reuses an existing exact successor. `successorStanding` says, off the
+  fold, whether this runtime can make the recipe's successor now: `ready`
+  with the route it inherits and where that sends, `waiting` while the
+  arrangement routing the predecessor is not recorded, granted or resolved
+  here yet, `blocked` for a runtime that is no member of it, a route that
+  has ended and an entity of another generation or route, or retired,
+  under the successor's ID; `materializeSuccessor` takes the runtime's
+  author and refuses as `Unusable` what the standing does. `routeStanding`
+  is the same reading of a route alone, which `routeTargetOf` throws for.
 - **Rotations to make by hand**: `PendingWork.rotationCandidates` lists the
   rotations the private-address policy would make and no decision records,
-  `ready` with the `rotate` entry, `waiting` or `blocked` with why, this
-  runtime's standing in the arrangement included; `ViewOptions.author` names
+  `ready` with the `rotate` entry only for a successor this runtime can
+  make now, `waiting` or `blocked` with why, the route the successor
+  inherits and this runtime's standing in the arrangement included;
+  `ViewOptions.author` names
   the runtime, which `readRecords` fills in, and
   `ViewOptions.privateAddresses: false` lists none, as the agent passes its
   own setting.

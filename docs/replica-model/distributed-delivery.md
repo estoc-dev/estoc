@@ -102,8 +102,10 @@ successor inherits the predecessor's route, so the runtime committing it
 must be one that picks up there: a mediated predecessor is continued by a
 replica of the arrangement that routes it, and a runtime enrolled nowhere
 or in another arrangement refuses the rotation before anything is written,
-under [the rotation procedure](../../packages/agent-core/src/rotate.ts). A
-replica's membership stands for no other runtime's.
+as does every runtime while that arrangement has ended, under
+[the successor's standing](../../packages/agent-core/src/successor.ts). A
+replica's membership stands for no other runtime's, and what is listed for
+a hand to make is read by the same standing.
 An external recipient's resolved document may offer transport choices; choosing
 among authorized routes does not change the application recipient. A direct
 endpoint MUST NOT expose a replica ID as the peer-visible recipient.

@@ -139,6 +139,21 @@ describe("unfinished work", () => {
     expect(work.notifications).toEqual([[decision.cid, channel(successor, b1), moved.cid]]);
   });
 
+  it("names the pair current policy still rotates whatever the inputs' clocks say: an input at the peer's replaced address stamped after the input that carried the replacement hides neither the rotation nor, once that pair is denied, the denial", async () => {
+    const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
+    invitation(scene, a0);
+    const moved = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const late = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0) }, { at: "2026-10-05T00:00:00.000Z" });
+    let vault = await foldScene(scene, keys);
+    expect([vault.continuity.superseded(channel(a0, b0)), vault.continuity.head(channel(a0, b0))]).toEqual([true, channel(a0, b1)]);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [`receipt:${moved.cid}:transition`] }]]);
+    expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))).rotationCandidates);
+
+    blocked(scene, a0, b1);
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "blocked", because: "the channel is denied" }]]);
+  });
+
   it("lists the notification a verified decision permits while its source stays eligible, reuses one already recorded, and reports several as a conflict", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const source = proofFreeReceipt(scene, a0, b0);

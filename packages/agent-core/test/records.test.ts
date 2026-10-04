@@ -12,11 +12,15 @@ import {
   checkVault,
   compareChannels,
   foldVault,
+  mintDid,
   objectReader,
   scanVault,
+  signReplicaGrant,
+  startDidId,
   vaultDraft,
   type Channel,
   type ContactId,
+  type Did,
   type DidId,
   type EventReference,
   type MessageId,
@@ -29,6 +33,7 @@ import {
   Dispatcher,
   Keyring,
   Receiver,
+  Unusable,
   afterReceipt,
   createDid,
   disclose,
@@ -39,6 +44,7 @@ import {
   receiptOf,
   recorder,
   reportedProblem,
+  retireDid,
   send,
   type ChannelRecord,
   type Handler,
@@ -438,6 +444,41 @@ describe("records", () => {
     const pending = (await readRecords(alice.runtime, alice.keys)).pending();
     expect([pending.rotationCandidates, pending.missingNotifications.map(({ rotationEventCid }) => rotationEventCid)]).toEqual([[], rotated.notification.outcome === "created" ? [] : [rotated.decision.cid]]);
     await closeAll(alice, bob, copy);
+  });
+
+  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted here yet and is ready once the grant arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired", async () => {
+    const mediator = await newMediator();
+    const alice = await mediatedParty(mediator, 1, ALICE);
+    const bob = await directParty(2, "https://bob.example/didcomm", BOB);
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const candidates = async (holder: Holder) => (await readRecords(holder.runtime, holder.keys)).pending().rotationCandidates;
+    const listed = (status: "ready" | "waiting" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
+    const events = async (holder: Holder) => [...(await scanVault(holder.runtime.vault, holder.keys)).set.all()];
+
+    const ungranted = await copyOf(1, alice, (event) => event.type !== "mediation.granted");
+    const grant = await signReplicaGrant(ungranted.keys, alice.created.data, ungranted.runtime.author);
+    await ungranted.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: ungranted.runtime.author, mediationId: alice.mediationId, grant })]);
+    expect(await candidates(ungranted)).toEqual(listed("waiting", `the predecessor's route does not carry: the arrangement ${alice.mediationId} is not granted yet`));
+    await ungranted.runtime.ingest((await events(alice)).filter((event) => event.type === "mediation.granted"));
+    expect(await candidates(ungranted)).toEqual(listed("ready", null));
+
+    const successorId = startDidId(alice.did, bob.did);
+    const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    const held = `the successor ${successorId} is recorded already and is not live: retired: gone`;
+    expect(await candidates(alice)).toEqual(listed("blocked", held));
+    const before = (await events(alice)).length;
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
+
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
+    const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
+    expect(await candidates(alice)).toEqual(listed("blocked", ended));
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [ended]));
+    expect((await events(alice)).length).toBe(before + 1);
+    await closeAll(alice, bob, ungranted);
   });
 
   test("a contact shows its selected channels, then the history verified continuity reaches, with where a send goes; deleting and blocking through the manual entries changes what is shown and nothing a message says", async () => {

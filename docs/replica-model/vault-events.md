@@ -905,11 +905,12 @@ that service is the DID's route: a mediator's routing DID, under which
 the DID is routed by the mediation arrangement whose grant names that
 DID, or an absolute HTTPS or WSS direct endpoint. The route is part of
 the document, so the long form fixes it; nothing beside the document
-records it and no event changes it. A transport or mediation change
-creates successor DID entities, allowing old and new DIDs to overlap
-during cutover. Each affected channel takes its own
-[`did.rotationSelected`](channels.md#did-rotationselected) for new intents;
-mediation selection does not migrate existing DIDs.
+records it and no event changes it. An ordinary rotation derives its
+successor on the predecessor's route; it does not change the transport or
+mediation arrangement. Moving an existing relationship to another route
+requires a migration operation that this version does not provide.
+Selecting another mediation arrangement affects newly created entries only
+and does not restore an existing relationship whose route is unusable.
 
 A direct endpoint routes to a full vault runtime or an ingress service.
 It MUST NOT identify one replica as the DIDComm application recipient.
@@ -921,8 +922,8 @@ ingress without sharing an application identity.
 
 Which arrangement routes a mediated DID now, and whether the DID is live,
 waits or has ended, is [the DID fold](../../packages/vault/src/fold/dids.ts)'s.
-Restoring communication takes a successor DID, never a change to the old
-entity.
+Nothing changes the old entity, and no rotation leads away from a route
+that has ended.
 
 <a id="disclosure"></a>
 

@@ -58,7 +58,7 @@ export interface MissingNotification {
  * live input alone.
  */
 export interface RotationCandidate {
-  /** the pair of the latest input, canonical */
+  /** the pair of the context the rotation would be made from, canonical: the one current policy still rotates */
   readonly channel: Channel;
   /** the established application inputs at the entry in this context, in canonical event order */
   readonly sources: readonly Source[];
@@ -149,7 +149,7 @@ function rotationCandidates(fold: VaultFold): RotationCandidate[] {
   }
   const candidates: RotationCandidate[] = [];
   for (const sources of groups.values()) {
-    const channel = sources[sources.length - 1]!.channel!;
+    const channel = rotatingPair(fold, sources);
     const decision = decisionFor(fold, channel.localDid, channel.peerDid);
     if (decision.status === "candidate") continue;
     const blocked = (because: string): SuccessorChoice => ({ status: "blocked", because });
@@ -158,6 +158,18 @@ function rotationCandidates(fold: VaultFold): RotationCandidate[] {
     candidates.push({ channel, sources, choice });
   }
   return candidates.sort((a, b) => cmp(channelKey(a.channel), channelKey(b.channel)));
+}
+
+/**
+ * The pair of a context a rotation would be made from: the one current
+ * policy holds nothing against, since the peer's verified replacements
+ * leave one address current whatever the clocks of the inputs say;
+ * else the one whose peer is not replaced, so that the reason shown is
+ * the current address's own; else the first in canonical order.
+ */
+function rotatingPair(fold: VaultFold, sources: readonly Source[]): Channel {
+  const pairs = [...new Map(sources.map((source) => [channelKey(source.channel!), source.channel!])).values()].sort((a, b) => cmp(channelKey(a), channelKey(b)));
+  return pairs.find((pair) => channelPolicy(fold, pair) === null) ?? pairs.find((pair) => !fold.continuity.superseded(pair)) ?? pairs[0]!;
 }
 
 /** A verified decision no intent names yet, while its channel still takes the notification; several intents naming one decision are its conflict. */

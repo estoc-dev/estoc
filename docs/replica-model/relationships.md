@@ -147,10 +147,10 @@ address the usable history led back to when the branch was made, and every
 disclosed; an address of a branch is the one peer's and is refused as a
 disclosure, with a new entry to be created instead.
 
-A successor is derived, never chosen: every replica deciding a rotation
-away from one pair arrives at one entity, under one document on the
-predecessor's own route, so that two replicas deciding apart record two
-records of one intent and no fork. The recipe is
+A successor is derived, never chosen: replicas deciding a rotation away
+from one pair that resolve the same recipe arrive at one entity, under one
+document on the predecessor's own route, so that two replicas deciding
+apart record two records of one intent and no fork. The recipe is
 [the succession query](../../packages/vault/src/succession.ts) over the fold:
 
 - From an entry, a start bound to the peer's start, the one address of the

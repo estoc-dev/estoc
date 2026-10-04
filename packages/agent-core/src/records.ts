@@ -65,7 +65,7 @@ import {
 import { PROFILE } from "./protocol/user-profile.js";
 import type { EffectOptions } from "./effects.js";
 import { claimedName, handlerFor, handlersOf, reportedProblem, trustPing, type Handler } from "./handlers/index.js";
-import { ineligibleHere } from "./successor.js";
+import { successorStanding } from "./successor.js";
 
 export type ViewOptions = Pick<EffectOptions, "handlers"> & {
   /** whether the runtime applies the private-address policy, on unless said otherwise: with it off, the rotations it would make are no work of the user's */
@@ -230,10 +230,12 @@ export interface OwedResponse {
 
 /**
  * A rotation the private-address policy would make from a disclosed
- * entry and no decision records yet: the pair of the latest input and
- * every input calling for it. Ready names `rotate` as the step; waiting
- * and blocked name none and say what the rotation waits for or is
- * stopped by, this runtime's standing in the arrangement included.
+ * entry and no decision records yet: the pair current policy still
+ * rotates and every input calling for it. Ready names `rotate` as the
+ * step, for a successor this runtime can make now; waiting and blocked
+ * name none and say what the rotation waits for or is stopped by,
+ * whether in the evidence, in the route the successor inherits or in
+ * this runtime's standing in the arrangement.
  */
 export interface OpenRotation {
   channel: Channel;
@@ -612,8 +614,7 @@ function invitationRecords(fold: VaultFold): InvitationRecord[] {
 
 function openRotation(fold: VaultFold, author: ReplicaId | undefined, { channel, sources, choice }: RotationCandidate): OpenRotation {
   const didId = fold.dids.entityOfDid(channel.localDid);
-  const ineligible = choice.status !== "ready" || author === undefined || didId === null ? null : ineligibleHere(fold, author, fold.dids.entities.get(didId)!);
-  const standing = ineligible !== null ? { status: "blocked" as const, because: ineligible } : choice;
+  const standing = choice.status !== "ready" || author === undefined || didId === null ? choice : successorStanding(fold, author, fold.dids.entities.get(didId)!, choice.recipe);
   return { channel, sourceEventCids: sources.map((source) => source.event.cid), status: standing.status, because: standing.status === "ready" ? null : standing.because, entries: standing.status === "ready" ? ["rotate"] : [] };
 }
 

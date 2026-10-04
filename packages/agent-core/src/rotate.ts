@@ -78,7 +78,7 @@ import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
 import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
-import { ineligibleHere, materializeSuccessor } from "./successor.js";
+import { materializeSuccessor } from "./successor.js";
 import type { AgentTrace } from "./trace.js";
 
 /** The pair to rotate away from: one of our DID entities and the peer, in any spelling; and the live application input that selected the rotation, none for a manual one. */
@@ -148,10 +148,8 @@ export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: 
     if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) === null) throw new Unusable("channel", key, ["no admitted receipt shows the peer writing to exactly this address"]);
     const chosen = successorRecipe(fold, channel);
     if (chosen.status !== "ready") throw new Unusable("channel", key, [`the successor is not decided, ${chosen.status}: ${chosen.because}`]);
-    const ineligible = ineligibleHere(fold, runtime.author, predecessor);
-    if (ineligible !== null) throw new Unusable("DID", predecessor.didId, [ineligible]);
 
-    const { drafts, successor } = await materializeSuccessor(fold, keys, predecessor, chosen.recipe);
+    const { drafts, successor } = await materializeSuccessor(fold, keys, runtime.author, predecessor, chosen.recipe);
     const iat = Math.floor((options.now ?? Date.now)() / 1000);
     const fromPrior = await signFromPrior(keys, { didId: predecessor.didId, longFormDid: predecessor.created.longFormDid }, successor.longFormDid, iat);
     drafts.push(vaultDraft("did.rotationSelected", { fromDidId: predecessor.didId, peerDid: channel.peerDid, toDidId: successor.didId, sourceEventCid, fromPrior }));

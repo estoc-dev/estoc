@@ -23,10 +23,11 @@
   generation it records.
 - **Rotations the policy would make**: `unfinishedWork(fold).rotationCandidates`
   lists, per rotation intent, the established application inputs at a
-  disclosed entry that no decision answers yet, with the latest input's
-  pair and the recipe's `choice`; a candidate decision takes the group over
-  to its notification, a decision waiting or in conflict and a denied or
-  superseded pair are its reason.
+  disclosed entry that no decision answers yet, with the pair current
+  policy still rotates, whatever the inputs' clocks say, and the recipe's
+  `choice`; a candidate decision takes the group over to its notification,
+  a decision waiting or in conflict and a denied or superseded pair are its
+  reason.
 - **The peer's start**: `Continuity.peerRoot(channel)` walks the usable peer
   replacements back from a pair, its local DID fixed, to the one address of
   the peer no replacement leads to: `found` with that DID and the support
