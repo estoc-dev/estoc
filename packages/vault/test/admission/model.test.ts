@@ -143,7 +143,7 @@ describe("a disposition", () => {
     const carrier = observe(scene, { local: a0, peer: b0, fromPrior: await resign(peerKeys, b4, { alg: "EdDSA", typ: "JWT", kid: `${b4.did}${AUTHENTICATION_METHOD}` }, { iss: b4.did, sub: b0.longFormDid, iat: IAT }), admitted: true });
     observe(scene, { local: a0, peer: b1, fromPrior: await proof(peerKeys, b0, b1), admitted: true });
     const before = await fold(scene, keys);
-    expect([before.channels.sources.get(carrier.cid)!.standing.status, before.admissions.of(carrier.cid).map(({ status }) => status), before.continuity.superseded({ localDid: a0.did, peerDid: b0.did })]).toEqual(["complete", [{ status: "pending", because: "the source's proof is not yet verified" }], true]);
+    expect([before.channels.sources.get(carrier.cid)!.status, before.admissions.of(carrier.cid).map(({ status }) => status), before.continuity.superseded({ localDid: a0.did, peerDid: b0.did })]).toEqual(["complete", [{ status: "pending", because: "the source's proof is not yet verified" }], true]);
     expect([before.dispositions.disposition(carrier.cid), before.dispositions.candidate(carrier.cid)]).toEqual([{ status: "ignored-superseded" }, null]);
     expectSameOverEveryOrder(scene, before.checks);
 

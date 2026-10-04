@@ -19,6 +19,7 @@ import {
   type Keys,
   type MessageHash,
   type ReadObject,
+  type Source,
   type VaultChecks,
   type VaultFold,
   type VaultData,
@@ -60,7 +61,7 @@ function picture(vault: VaultFold) {
       messageId: execution.messageId,
       channel: execution.channel,
       members: execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness]),
-      siblings: execution.siblings.map(({ event, standing }) => [event.cid, standing]),
+      siblings: execution.siblings.map(standingOf),
       intentHash: execution.intentHash,
       kind: execution.kind,
       status: execution.status,
@@ -68,9 +69,11 @@ function picture(vault: VaultFold) {
       erased: execution.erased,
     })),
     anonymous: inbound.anonymous.map(({ event }) => event.cid),
-    unplaced: inbound.unplaced.map(({ event, standing }) => [event.cid, standing]),
+    unplaced: inbound.unplaced.map(standingOf),
   };
 }
+
+const standingOf = (source: Source) => [source.event.cid, source.status, "because" in source ? source.because : null];
 
 const expectSameOverEveryOrder = (scene: Scene, checks: Required<VaultChecks>) => expectOrderFree(scene.events, (set) => picture(foldVault(set, checks)));
 
@@ -216,9 +219,9 @@ describe("an inbound input", () => {
     const execution = inbound.ofMessage(complete.data.messageId)!;
     expect(execution.status).toBe("complete");
     expect(execution.members.map(({ source }) => source.event.cid)).toEqual([complete.cid]);
-    expect(execution.siblings.map(({ event, standing }) => [event.cid, standing])).toEqual([
-      [missingResolution.cid, { status: "incomplete", because: "the resolution it names is not here" }],
-      [wrongResolution.cid, { status: "conflict", because: "the resolution it names is not of this sender at this key" }],
+    expect(execution.siblings.map(standingOf)).toEqual([
+      [missingResolution.cid, "incomplete", "the resolution it names is not here"],
+      [wrongResolution.cid, "conflict", "the resolution it names is not of this sender at this key"],
     ]);
     expect(inbound.ofSource(missingResolution.cid)).toBe(execution);
     expect(inbound.ofSource(wrongResolution.cid)).toBe(execution);
@@ -232,7 +235,7 @@ describe("an inbound input", () => {
 
     const unseeded = await fold(scene, null);
     expect(unseeded.inbound.executions.size).toBe(0);
-    expect(unseeded.inbound.unplaced.map(({ event, standing }) => [event.cid, standing.status])).toEqual([
+    expect(unseeded.inbound.unplaced.map(({ event, status }) => [event.cid, status])).toEqual([
       [complete.cid, "incomplete"],
       [missingResolution.cid, "incomplete"],
       [wrongResolution.cid, "conflict"],

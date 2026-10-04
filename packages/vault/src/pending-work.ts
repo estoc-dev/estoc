@@ -13,7 +13,7 @@
 import { canonicalText, compareEvents } from "@estoc/event-store";
 
 import { channelPolicy } from "./channel-policy.js";
-import type { Carrier, Decision, Source } from "./fold/channels.js";
+import type { Carrier, Decision, PlacedSource, Source } from "./fold/channels.js";
 import { kindOf, type Execution } from "./fold/inbound.js";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, type Notification, type Outbound } from "./fold/outbound.js";
 import type { VaultFold } from "./fold/vault.js";
@@ -36,7 +36,7 @@ export interface MissingResponse {
   readonly effectType: string;
   readonly channel: Channel;
   /** the complete witness whose fields the reply is built from */
-  readonly source: Source;
+  readonly source: PlacedSource;
 }
 
 /** A verified rotation record with no notification intent yet, while its source, when it has one, still permits one. Each record has its own notification, whatever intent it shares with others. */
@@ -61,7 +61,7 @@ export interface RotationCandidate {
   /** the pair of the context the rotation would be made from, canonical: the one current policy still rotates */
   readonly channel: Channel;
   /** the established application inputs at the entry in this context, in canonical event order */
-  readonly sources: readonly Source[];
+  readonly sources: readonly PlacedSource[];
   readonly choice: SuccessorChoice;
 }
 
@@ -120,10 +120,9 @@ function missingResponses(fold: VaultFold): MissingResponse[] {
 }
 
 /** An input the policy reads as selecting a rotation: a complete, admitted, established application input at a disclosed entry of ours. */
-function selectingInput(fold: VaultFold, execution: Execution): Source | null {
+function selectingInput(fold: VaultFold, execution: Execution): PlacedSource | null {
   if (execution.status !== "complete") return null;
   const { source } = execution.firstWitness;
-  if (source.channel === null || source.localDidId === null) return null;
   if (!fold.admissions.admitted(source.event.cid) || kindOf(source.event.data) !== "application") return null;
   const entity = fold.dids.entities.get(source.localDidId);
   if (entity === undefined || entity.disclosures.length === 0 || fold.dids.lineage(entity.didId).status !== "entry") return null;
@@ -138,10 +137,10 @@ function selectingInput(fold: VaultFold, execution: Execution): Source | null {
  * stopped by are the group's reason.
  */
 function rotationCandidates(fold: VaultFold): RotationCandidate[] {
-  const groups = new Map<string, Source[]>();
+  const groups = new Map<string, PlacedSource[]>();
   const inputs = [...fold.inbound.executions.values()].flatMap((execution) => selectingInput(fold, execution) ?? []).sort((a, b) => compareEvents(a.event, b.event));
   for (const source of inputs) {
-    const channel = source.channel!;
+    const { channel } = source;
     const key = canonicalText([channel.localDid, channelKey(fold.continuity.peerContext(channel)[0]!)]);
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [source]);
@@ -167,8 +166,8 @@ function rotationCandidates(fold: VaultFold): RotationCandidate[] {
  * else the one whose peer is not replaced, so that the reason shown is
  * the current address's own; else the first in canonical order.
  */
-function rotatingPair(fold: VaultFold, sources: readonly Source[]): Channel {
-  const pairs = [...new Map(sources.map((source) => [channelKey(source.channel!), source.channel!])).values()].sort((a, b) => cmp(channelKey(a), channelKey(b)));
+function rotatingPair(fold: VaultFold, sources: readonly PlacedSource[]): Channel {
+  const pairs = [...new Map(sources.map(({ channel }) => [channelKey(channel), channel])).values()].sort((a, b) => cmp(channelKey(a), channelKey(b)));
   return pairs.find((pair) => channelPolicy(fold, pair) === null) ?? pairs.find((pair) => !fold.continuity.superseded(pair)) ?? pairs[0]!;
 }
 

@@ -118,7 +118,7 @@ describe("the receipt", () => {
     for (const cid of read.stored.roots) expect(await alice.runtime.vault.objects.has(cid)).toBe(true);
     const fold = await foldOf(alice);
     const source = fold.channels.sources.get(event!.cid)!;
-    expect([source.standing.status, source.channel, source.resolution?.cid]).toEqual(["complete", { localDid: alice.did, peerDid: bob.did }, resolved!.cid]);
+    expect([source.status, source.channel, source.resolution?.cid]).toEqual(["complete", { localDid: alice.did, peerDid: bob.did }, resolved!.cid]);
     expect(fold.inbound.ofSource(event!.cid)).toMatchObject({ messageId: event!.data.messageId, status: "complete", members: [{ source: { event: { cid: event!.cid } } }] });
     expect((await trace.read({ type: "diag.receive" })).map((entry) => entry.data)).toEqual([{ via: "direct", outcome: "received", cid: event!.cid }]);
 
@@ -147,7 +147,7 @@ describe("the receipt", () => {
     ]);
     const fold = await foldOf(alice);
     const events = await eventsOf(alice, "message.in");
-    expect(events.map(({ cid, data }) => [data.localKeyName, fold.channels.sources.get(cid)?.standing.status, fold.channels.sources.get(cid)?.channel])).toEqual([
+    expect(events.map(({ cid, data }) => [data.localKeyName, fold.channels.sources.get(cid)?.status, fold.channels.sources.get(cid)?.channel])).toEqual([
       [didKeyName(DID, "key-agreement"), "complete", { localDid: alice.did, peerDid: bob.did }],
       [didKeyName(DID, "key-agreement"), "complete", { localDid: alice.did, peerDid: bob.did }],
     ]);
@@ -224,7 +224,7 @@ describe("the receipt", () => {
       { kind: "address-observed", id: `receipt:${verified!.cid}:observation`, at: { localDid: alice.did, peerDid: bob.did }, carriedTransition: `receipt:${verified!.cid}:transition`, receipt: verified!.cid },
     ]);
     expect(fold.channels.carriers.get(unreadable!.cid)).toMatchObject({ proof: { status: "invalid" }, facts: [] });
-    expect([fold.channels.sources.get(verified!.cid)?.standing.status, fold.channels.sources.get(unreadable!.cid)?.standing.status]).toEqual(["complete", "complete"]);
+    expect([fold.channels.sources.get(verified!.cid)?.status, fold.channels.sources.get(unreadable!.cid)?.status]).toEqual(["complete", "complete"]);
     await closeAll(alice, bob);
   });
 

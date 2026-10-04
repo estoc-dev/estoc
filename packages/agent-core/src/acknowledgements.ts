@@ -30,7 +30,7 @@ export function acknowledgementDrafts(fold: VaultFold): VaultDraft<"delivery.ack
       const data: VaultData["delivery.acknowledged"] = {
         messageId: outbound.messageId,
         localKeyName: source.event.data.localKeyName,
-        peerPublicKey: source.resolution!.data.peerPublicKey,
+        peerPublicKey: source.resolution.data.peerPublicKey,
         ackMessageId: source.event.data.messageId,
         ackWireMessageId: source.event.data.wireMessageId,
       };
