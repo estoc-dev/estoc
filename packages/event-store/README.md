@@ -152,7 +152,7 @@ indexes, `local_*` tables and `ANALYZE` statistics; a view or a
 trigger is refused in either, and a table named like an inherited
 property of an object is an extra table like any other.
 `createRuntime(driver, { metadata, wrapped })` fills the empty database
-a `create` opened — application ID `ESTC`, schema version 1, the
+a `create` opened — application ID `ESTC`, schema version 2, the
 tables, the metadata, the wrapped seed as the UTF-8 of its compact JWE,
 fresh `replica_id` and `store_generation` — in one transaction,
 published ready, and hands the runtime back open. `openRuntime(driver,
@@ -276,10 +276,13 @@ commit lands in — the `publish` callback of
 `SqliteEventStore.appendAll` — which first checks every reused
 object against the damage known by then, refusing the transaction
 with `DamagedObject`, unless the object is staged as well, which
-repairs it. `commit` resolving means that transaction committed, and
-only then is the damage of what it repaired cleared, a rollback
-keeping the old bytes and their damage; however `commit` ends,
-nothing it staged stays staged. `open` streams one chunk a
+repairs it. The preparation publishes once, refusing while a put
+through it is still reading its source, takes no put or `reuse` once
+it has, and refuses every call once `commit` has ended. `commit`
+resolving means that transaction committed, and only then is the
+damage of what it repaired cleared, a rollback keeping the old bytes
+and their damage; however `commit` ends, the puts still reading are
+waited for and nothing staged stays staged. `open` streams one chunk a
 pull, rehashing on the way out, each chunk checked against the
 layout the size gives the object — numbered from zero, the chunk
 size each but the last, which holds what remains — and the read
@@ -486,7 +489,7 @@ to remove; no seed is minted. `importVault(target, source, {
 retainedRoots })` merges a snapshot of the same vault into any open
 runtime — the SQLite vault, or the vault in memory, since it works
 through `VaultRuntime` and `Held` — and returns `{ added, duplicates,
-conflicts, objects, repaired }`. Its fold is a `RetainedRoots`, the
+objects, repaired }`. Its fold is a `RetainedRoots`, the
 retention edge by edge — each event, each root of its own it still
 retains — rather than the `HeldRoots` an export takes, because the
 roots an import requires bytes for are those the *new* events retain

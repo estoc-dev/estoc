@@ -23,6 +23,7 @@ import {
   type Cid,
   type OpenMode,
   type SqliteDriver,
+  type SqlitePreparation,
 } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
 import { type Case, assert, assertBytes, assertEqual, assertRejects, assertThrows, type MemoryHeld } from "./driver-cases.js";
@@ -286,6 +287,85 @@ export const objectCases: ObjectCase[] = [
       await store.preparing(async (prepared) => {
         assertThrows(() => prepared.reuse("nope" as Cid), "InvalidCid", "a reuse of no CID");
       });
+      db.close();
+    },
+  },
+  {
+    name: "a commit that fails while a put through its preparation is still reading waits for that put, then drops what it staged, and the staging bound is free again",
+    run: async (h) => {
+      const db = createRuntime(await h.open(h.fresh(), "create"), { metadata: META, wrapped: WRAPPED });
+      const bytes = bytesOf(10, 43);
+      const cid = cidOf(bytes);
+      const store = new SqliteObjectStore(db, { maxStagedBytes: bytes.length });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      async function* slow(): AsyncIterable<Uint8Array> {
+        await gate;
+        yield bytes;
+      }
+      const failing = store.preparing(async (prepared) => {
+        await Promise.all([prepared.putObject(cid, slow()), prepared.putObject(cid, bytesOf(10, 44))]);
+      });
+      const early = await Promise.race([
+        failing.then(
+          () => "resolved",
+          () => "rejected"
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 50)),
+      ]);
+      assertEqual(early, "waiting", "the failed commit waits for the put still reading");
+      release();
+      await assertRejects(() => failing, "DigestMismatch", "the commit");
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "what the late put staged is dropped");
+      assertEqual(await store.putRaw(bytes), { cid, codec: "raw", size: bytes.length }, "the bound is free for the next put");
+      db.close();
+    },
+  },
+  {
+    name: "a preparation takes nothing more once it has published and nothing at all once its commit has ended; a refusal reads no source and stages nothing",
+    run: async (h) => {
+      const db = createRuntime(await h.open(h.fresh(), "create"), { metadata: META, wrapped: WRAPPED });
+      const store = new SqliteObjectStore(db);
+      const bytes = bytesOf(10, 45);
+      const cid = cidOf(bytes);
+      const other = bytesOf(10, 46);
+      const otherCid = cidOf(other);
+      let pulled = false;
+      async function* source(): AsyncIterable<Uint8Array> {
+        pulled = true;
+        yield other;
+      }
+      const published = await store.preparing(async (prepared) => {
+        await prepared.putObject(cid, bytes);
+        db.driver.transaction("immediate", () => prepared.publish());
+        const late = await assertRejects(() => prepared.putObject(otherCid, source()), "Error", "a put once published");
+        assert(late.message.includes("has published"), `the refusal says why: ${late.message}`);
+        await assertRejects(() => prepared.putRaw(source()), "Error", "a raw put once published");
+        assertThrows(() => prepared.reuse(cid), "Error", "a reuse once published");
+        assertThrows(() => db.driver.transaction("immediate", () => prepared.publish()), "Error", "a second publication");
+        assert(await prepared.has(cid), "a presence check still answers");
+        return prepared;
+      });
+      const unpublished = await store.preparing(async (prepared) => {
+        await prepared.putObject(otherCid, other);
+        return prepared;
+      });
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "the unpublished staging is dropped");
+      const refusedAfter = async (ended: SqlitePreparation, what: string): Promise<void> => {
+        const late = await assertRejects(() => ended.putObject(otherCid, source()), "Error", `a put after the ${what} commit`);
+        assert(late.message.includes("ended with its commit"), `the refusal says why: ${late.message}`);
+        await assertRejects(() => ended.has(otherCid), "Error", `a presence check after the ${what} commit`);
+        assertThrows(() => ended.reuse(cid), "Error", `a reuse after the ${what} commit`);
+        assertThrows(() => db.driver.transaction("immediate", () => ended.publish()), "Error", `a publication after the ${what} commit`);
+      };
+      await refusedAfter(published, "published");
+      await refusedAfter(unpublished, "unpublished");
+      assert(!pulled, "no refused put read its source");
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "nothing staged");
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM objects"), [{ n: 1 }], "only the published object accepted");
+      assertEqual(await store.has(otherCid), false, "not the unpublished one");
       db.close();
     },
   },

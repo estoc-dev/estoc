@@ -99,22 +99,18 @@ export class SqliteObjectStore implements ObjectStore {
   }
 
   async putRaw(source: ByteSource): Promise<ObjectInfo> {
-    this.requireWritable("putRaw");
-    return this.putAlone(undefined, source);
+    return this.putAlone((prepared) => prepared.putRaw(source));
   }
 
   async putObject(cid: Cid, source: ByteSource): Promise<ObjectInfo> {
-    const want = rawCidOf(cid);
-    this.requireWritable("putObject");
-    return this.putAlone(want, source);
+    return this.putAlone((prepared) => prepared.putObject(cid, source));
   }
 
-  private async putAlone(want: DaslCid | undefined, source: ByteSource): Promise<ObjectInfo> {
+  private async putAlone(put: (prepared: SqlitePreparation) => Promise<ObjectInfo>): Promise<ObjectInfo> {
     return this.preparing(async (prepared) => {
-      const staged = await this.stage(want, source);
-      prepared.hold(staged);
+      const object = await put(prepared);
       this.driver.transaction("immediate", () => prepared.publish());
-      return info(staged.cid, staged.size);
+      return object;
     });
   }
 
@@ -124,7 +120,8 @@ export class SqliteObjectStore implements ObjectStore {
    * accepted when `publish` runs inside the transaction `commit` owns.
    * `commit` resolving means that transaction committed, and the
    * objects it repaired are sound from then on; however `commit` ends,
-   * nothing it staged stays staged.
+   * nothing it staged stays staged, a put through it still reading its
+   * source waited for first.
    */
   preparing<T>(commit: (prepared: SqlitePreparation) => Promise<T>): Promise<T> {
     return SqlitePreparation.within(
@@ -414,25 +411,32 @@ export interface PreparationSteps {
   forgive(cid: string): void;
 }
 
+/** Where a preparation is in the one commit it lives for. */
+type Phase = "staging" | "published" | "ended";
+
 /**
  * The objects of one commit between verification and publication,
  * staged in the connection's temporary database where no read of the
  * store sees them, and accepted by `publish` inside the transaction
  * the commit lands in, which checks every object declared reused
  * against the damage known by then and moves every staged object
- * under its CID. A preparation lives for one call of `within`: once
- * the commit has resolved, the damage of the objects it repaired is
- * cleared — inside the transaction that would be too soon, since a
- * rollback keeps the old bytes and their damage — and what was staged
- * and never published is dropped, as is everything staged once the
- * commit has failed. Two in flight are two, each publishing only what
- * it verified.
+ * under its CID. A preparation lives for one call of `within`: it
+ * takes puts and reuses until it publishes, publishes once and only
+ * when no put through it is still reading its source, and admits
+ * nothing once the commit has ended. Then, every put still reading
+ * having finished, a commit that resolved after publishing has the
+ * damage of the objects it repaired cleared — inside the transaction
+ * that would be too soon, since a rollback keeps the old bytes and
+ * their damage — and any other has everything it staged dropped. Two
+ * in flight are two, each publishing only what it verified.
  */
 export class SqlitePreparation implements Preparation {
   private readonly staged = new Map<string, Staged>();
   private readonly reused = new Set<string>();
   private readonly repaired: string[] = [];
-  private published = false;
+  /** The puts still reading their sources: what each stages is known only once it has finished. */
+  private readonly reading = new Set<Promise<Staged>>();
+  private phase: Phase = "staging";
 
   private constructor(private readonly steps: PreparationSteps) {}
 
@@ -443,43 +447,45 @@ export class SqlitePreparation implements Preparation {
     try {
       outcome = await commit(prepared);
     } catch (err) {
-      // A stopped connection would refuse the drops; the error to report is the commit's.
-      if (!steps.stopped()) prepared.discard();
+      await prepared.end(false);
       throw err;
     }
-    if (prepared.published) prepared.settle();
-    else prepared.discard();
+    await prepared.end(true);
     return outcome;
   }
 
   async putObject(cid: Cid, source: ByteSource): Promise<ObjectInfo> {
+    this.admit("putObject", "staging");
     const want = rawCidOf(cid);
     this.steps.writable("putObject");
-    const staged = await this.steps.stage(want, source);
-    this.hold(staged);
-    return info(staged.cid, staged.size);
+    return this.put(want, source);
   }
 
-  /** Holds `staged` for `publish`; a second staging of one CID replaces the first, whose chunks are dropped. */
-  hold(staged: Staged): void {
-    const before = this.staged.get(staged.cid.text);
-    if (before !== undefined) this.steps.drop(before.token);
-    this.staged.set(staged.cid.text, staged);
+  /** Verifies `source` under `putRaw`'s rules, its CID the one the bytes hash to, and holds the bytes here, unpublished. */
+  async putRaw(source: ByteSource): Promise<ObjectInfo> {
+    this.admit("putRaw", "staging");
+    this.steps.writable("putRaw");
+    return this.put(undefined, source);
   }
 
   async has(cid: Cid): Promise<boolean> {
+    this.admit("has", "published");
     rawCidOf(cid);
     return this.staged.has(cid) || this.steps.has(cid);
   }
 
   reuse(cid: Cid): void {
+    this.admit("reuse", "staging");
     rawCidOf(cid);
     this.reused.add(cid);
   }
 
   /** Checks every object declared reused, then accepts every staged object, inside the caller's transaction; a repair among them is noted for once it has committed. Returns how many landed — new or repaired — as opposed to being dropped for an object already held sound. */
   publish(): number {
+    this.admit("publish", "staging");
     if (!this.steps.inTransaction()) throw new Error("a preparation publishes inside the transaction its commit lands in");
+    if (this.reading.size > 0) throw new Error("a preparation publishes once every put through it has finished");
+    this.phase = "published";
     for (const cid of this.reused) if (!this.staged.has(cid)) this.steps.check(cid as Cid);
     let landed = 0;
     for (const staged of this.staged.values()) {
@@ -487,18 +493,47 @@ export class SqlitePreparation implements Preparation {
       if (accepted === "repaired") this.repaired.push(staged.cid.text);
       if (accepted !== "kept") landed += 1;
     }
-    this.published = true;
     return landed;
   }
 
-  /** After the transaction committed, which took everything staged: the repaired objects are sound again. */
-  private settle(): void {
-    for (const cid of this.repaired) this.steps.forgive(cid);
+  private admit(what: string, through: "staging" | "published"): void {
+    if (this.phase === "ended") throw new Error(`${what}: the preparation ended with its commit`);
+    if (this.phase === "published" && through === "staging") throw new Error(`${what}: the preparation has published`);
   }
 
-  /** Drops whatever is still staged. */
-  private discard(): void {
-    for (const staged of this.staged.values()) this.steps.drop(staged.token);
+  /** Stages `source`, the put counted as reading until what it staged is held here, where the end of the commit finds it. */
+  private async put(want: DaslCid | undefined, source: ByteSource): Promise<ObjectInfo> {
+    const reading = this.steps.stage(want, source).then((staged) => this.hold(staged));
+    this.reading.add(reading);
+    try {
+      const staged = await reading;
+      return info(staged.cid, staged.size);
+    } finally {
+      this.reading.delete(reading);
+    }
+  }
+
+  /** Holds `staged` for `publish`; a second staging of one CID replaces the first, whose chunks are dropped. */
+  private hold(staged: Staged): Staged {
+    const before = this.staged.get(staged.cid.text);
+    if (before !== undefined) this.steps.drop(before.token);
+    this.staged.set(staged.cid.text, staged);
+    return staged;
+  }
+
+  private async end(resolved: boolean): Promise<void> {
+    const published = this.phase === "published";
+    this.phase = "ended";
+    await Promise.allSettled(this.reading);
+    if (resolved && published) {
+      for (const cid of this.repaired) this.steps.forgive(cid);
+    } else if (!this.steps.stopped()) {
+      // A stopped connection would refuse the drops, over the commit's own error, and takes the staging with it when it closes.
+      for (const staged of this.staged.values()) this.steps.drop(staged.token);
+    }
+    this.staged.clear();
+    this.reused.clear();
+    this.repaired.length = 0;
   }
 }
 
