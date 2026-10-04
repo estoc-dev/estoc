@@ -277,8 +277,9 @@ commit lands in — the `publish` callback of
 object against the damage known by then, refusing the transaction
 with `DamagedObject`, unless the object is staged as well, which
 repairs it. The preparation publishes once, refusing while a put
-through it is still reading its source, takes no put or `reuse` once
-it has, and refuses every call once `commit` has ended. `commit`
+through it is still reading its source, that source calling back
+included, takes no put or `reuse` once it has, and refuses every call
+once `commit` has ended. `commit`
 resolving means that transaction committed, and only then is the
 damage of what it repaired cleared, a rollback keeping the old bytes
 and their damage; however `commit` ends, the puts still reading are

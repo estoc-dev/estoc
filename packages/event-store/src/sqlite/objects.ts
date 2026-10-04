@@ -411,7 +411,6 @@ export interface PreparationSteps {
   forgive(cid: string): void;
 }
 
-/** Where a preparation is in the one commit it lives for. */
 type Phase = "staging" | "published" | "ended";
 
 /**
@@ -501,9 +500,11 @@ export class SqlitePreparation implements Preparation {
     if (this.phase === "published" && through === "staging") throw new Error(`${what}: the preparation has published`);
   }
 
-  /** Stages `source`, the put counted as reading until what it staged is held here, where the end of the commit finds it. */
   private async put(want: DaslCid | undefined, source: ByteSource): Promise<ObjectInfo> {
-    const reading = this.steps.stage(want, source).then((staged) => this.hold(staged));
+    // A source runs as it is first read and can call back into this preparation, so the put counts as reading before the stage reads it.
+    const reading = Promise.resolve()
+      .then(() => this.steps.stage(want, source))
+      .then((staged) => this.hold(staged));
     this.reading.add(reading);
     try {
       const staged = await reading;

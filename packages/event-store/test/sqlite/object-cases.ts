@@ -370,6 +370,35 @@ export const objectCases: ObjectCase[] = [
     },
   },
   {
+    name: "a source that publishes its preparation as it is read is refused, and what its put staged publishes after the put or goes with the commit, the staging bound free again",
+    run: async (h) => {
+      const db = createRuntime(await h.open(h.fresh(), "create"), { metadata: META, wrapped: WRAPPED });
+      const named = bytesOf(10, 47);
+      const raw = bytesOf(10, 48);
+      const store = new SqliteObjectStore(db, { maxStagedBytes: named.length });
+      const puts: [string, Uint8Array, (prepared: SqlitePreparation, source: AsyncIterable<Uint8Array>) => Promise<unknown>][] = [
+        ["putObject", named, (prepared, source) => prepared.putObject(cidOf(named), source)],
+        ["putRaw", raw, (prepared, source) => prepared.putRaw(source)],
+      ];
+      for (const [what, bytes, put] of puts) {
+        for (const publishing of [false, true]) {
+          await store.preparing(async (prepared) => {
+            async function* source(): AsyncIterable<Uint8Array> {
+              const early = assertThrows(() => db.driver.transaction("immediate", () => prepared.publish()), "Error", `${what}: a publication from its source`);
+              assert(early.message.includes("every put through it has finished"), `${what}: the refusal says why: ${early.message}`);
+              yield bytes;
+            }
+            await put(prepared, source());
+            if (publishing) assertEqual(db.driver.transaction("immediate", () => prepared.publish()), 1, `${what}: the publication once the put has finished`);
+          });
+          assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], `${what}: nothing left staged`);
+          assertEqual(await store.has(cidOf(bytes)), publishing, `${what}: accepted only once published`);
+        }
+      }
+      db.close();
+    },
+  },
+  {
     name: "an object whose chunks are not the layout — one missing, one short, one surplus, a chunk under an empty object, a size that is no count — is damage, and a verified put replaces the whole set",
     run: async (h) => {
       const db = createRuntime(await h.open(h.fresh(), "create"), { metadata: META, wrapped: WRAPPED });

@@ -9,7 +9,8 @@
   the puts still reading their sources are waited for and nothing
   staged stays staged, including what a commit that resolves without
   publishing staged. The preparation publishes once, refusing while a
-  put is still reading; takes no put or `reuse` once published; and
+  put is still reading, from inside its source as well; takes no put
+  or `reuse` once published; and
   refuses every call once `commit` has ended. It gains `putRaw`;
   `hold()`, `settle()` and `discard()` are no longer public. After a
   commit of unknown outcome nothing is dropped, so the error the
