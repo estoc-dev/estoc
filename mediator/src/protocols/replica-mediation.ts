@@ -21,8 +21,6 @@ import { verifyRecipientProof } from "./recipient-proof.js";
 import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js";
 
 /**
- * replica-mediation/1.0 — https://estoc.dev/replica-mediation/1.0
- *
  * An account here is a vault's standalone mediation arrangement: the account
  * DID registers and manages it and never picks up mail, and each replica it
  * adds is a DID of its own that will. The communication DIDs it receives mail for are

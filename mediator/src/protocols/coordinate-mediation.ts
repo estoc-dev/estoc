@@ -4,8 +4,6 @@ import type { Unpacked } from "../didcomm/didcomm.js";
 import type { HandlerContext, Reply } from "./types.js";
 
 /**
- * coordinate-mediation/3.0 — https://didcomm.org/coordinate-mediation/3.0
- *
  * The account model is the DID itself: whoever proves a DID (authcrypt) and is
  * granted mediation *is* the account, and every recipient DID they bind routes
  * to it. Bindings are exclusive and first-come; the squat-resistance rules

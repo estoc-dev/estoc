@@ -1,8 +1,6 @@
 import type { Unpacked } from "../didcomm/didcomm.js";
 import type { HandlerContext, Reply } from "./types.js";
 
-/** discover-features/2.0 — https://didcomm.org/discover-features/2.0 */
-
 export const QUERIES = "https://didcomm.org/discover-features/2.0/queries";
 export const DISCLOSE = "https://didcomm.org/discover-features/2.0/disclose";
 

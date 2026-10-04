@@ -9,8 +9,6 @@ import { canonicalDid } from "./replica-grant.js";
 import { replicaProblem } from "./replica-mediation.js";
 
 /**
- * messagepickup/3.0 — https://didcomm.org/messagepickup/3.0
- *
  * Pickup always reads the sender's own queue, and which queue that is follows
  * from who the sender proved to be. An ordinary account has one inbox: every
  * message forwarded to any recipient DID it has bound lands there, and
