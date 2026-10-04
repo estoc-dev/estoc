@@ -15,8 +15,12 @@
  * show the peer writing to exactly the predecessor address, since a
  * link from an address the peer never used confirms nothing, and an
  * observation the runtime has not accepted for application use
- * decides nothing new. A successor is a fresh entity,
- * or one recorded earlier; either way the decision is folded with the
+ * decides nothing new. The successor is the one the fold's recipe
+ * names, a start of an entry bound to the peer's start or a next of a
+ * branch address, on the predecessor's own route, so that every
+ * replica deciding the rotation arrives at one entity; the rotation
+ * waits where the recipe waits for evidence, and is made by a runtime
+ * that can pick the successor up. The decision is folded with the
  * evidence here before it is written, and refused when that fold puts
  * it or its context in conflict: the continuity graph keeps every
  * branch and chooses no winner, so a cycle the producer could see
@@ -46,13 +50,13 @@ import {
   decisionFor,
   foldVault,
   kindOf,
-  mintDid,
   notificationChannel,
   objectReader,
   readVaultEvent,
   sameChannel,
   scanVault,
   signFromPrior,
+  successorRecipe,
   vaultDraft,
   type Channel,
   type ScopedConflict,
@@ -62,20 +66,19 @@ import {
   type EventReference,
   type ExecutionId,
   type Keys,
-  type LocalDidEntity,
   type MessageId,
-  type MintedDid,
   type VaultDraft,
   type VaultEvent,
   type VaultFold,
 } from "@estoc/vault";
 
 import { LiveAction, initialAction } from "./action.js";
-import { didOf, namedRouteOf, recordedDid, routeTargetOf, type RouteSpec } from "./dids.js";
+import { didOf } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
 import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
+import { ineligibleHere, materializeSuccessor } from "./successor.js";
 import type { AgentTrace } from "./trace.js";
 
 /** The pair to rotate away from: one of our DID entities and the peer, in any spelling; and the live application input that selected the rotation, none for a manual one. */
@@ -86,10 +89,6 @@ export interface RotationTarget {
 }
 
 export interface RotateOptions {
-  /** the successor's route; when left out, the preferred arrangement, or with none the predecessor's own route */
-  route?: RouteSpec;
-  /** the successor's entity ID, for a rotation repeated after a lost result; a fresh UUIDv7 when left out */
-  didId?: DidId;
   /** the clock the proof's issue time is read from, in milliseconds since the epoch; `Date.now` when left out */
   now?: () => number;
   /** a notification that could not be recorded or called goes to the `diag` stream */
@@ -106,7 +105,7 @@ export interface Rotated {
   /** the pair rotated away from, canonical */
   channel: Channel;
   successor: DidId;
-  /** the intent was recorded already: reused as it is, no successor minted, and its notification left to a completion */
+  /** the intent was recorded already: reused as it is, no successor made, and its notification left to a completion */
   existed: boolean;
   notification: EffectOutcome;
 }
@@ -147,8 +146,12 @@ export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: 
     if (existing.status !== "none") throw new Unusable("channel", key, [existing.because]);
     if (sourceEventCid !== null) assertSelectingSource(fold, channel, sourceEventCid);
     if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) === null) throw new Unusable("channel", key, ["no admitted receipt shows the peer writing to exactly this address"]);
+    const chosen = successorRecipe(fold, channel);
+    if (chosen.status !== "ready") throw new Unusable("channel", key, [`the successor is not decided, ${chosen.status}: ${chosen.because}`]);
+    const ineligible = ineligibleHere(fold, runtime.author, predecessor);
+    if (ineligible !== null) throw new Unusable("DID", predecessor.didId, [ineligible]);
 
-    const { drafts, successor } = await successorOf(fold, keys, predecessor, sourceEventCid !== null, options);
+    const { drafts, successor } = await materializeSuccessor(fold, keys, predecessor, chosen.recipe);
     const iat = Math.floor((options.now ?? Date.now)() / 1000);
     const fromPrior = await signFromPrior(keys, { didId: predecessor.didId, longFormDid: predecessor.created.longFormDid }, successor.longFormDid, iat);
     drafts.push(vaultDraft("did.rotationSelected", { fromDidId: predecessor.didId, peerDid: channel.peerDid, toDidId: successor.didId, sourceEventCid, fromPrior }));
@@ -201,43 +204,6 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
   const kind = kindOf(source.event.data);
   if (kind !== "application") faults.push(`a control input selects no rotation: it is ${kind}`);
   if (faults.length > 0) throw new Unusable("input", sourceEventCid, faults);
-}
-
-/**
- * The successor: minted from a fresh entity ID for the route given, or
- * the one new addresses go on, and created in the decision's own
- * commit. The route is chosen for the successor rather than handed
- * down: the preferred arrangement where there is one, so that an
- * address leaves a mediator the vault has moved away from, and the
- * arrangement or endpoint the predecessor's own document names
- * otherwise; the document is built for it as any new address is. An
- * entity already recorded under the ID given is read back as it was
- * committed, and is the successor of a manual rotation only, when it
- * names the route given, if one is, and is live; a rotation an input
- * selected is the private-address policy's, whose successor is an
- * address no one has yet. What would differ is refused rather than
- * replaced.
- */
-async function successorOf(fold: VaultFold, keys: Keys, predecessor: LocalDidEntity, selected: boolean, options: Pick<RotateOptions, "route" | "didId">): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
-  const didId = options.didId ?? (uuidv7() as DidId);
-  const existing = fold.dids.entities.get(didId);
-  if (existing === undefined) {
-    const successor = await mintDid(keys, didId, routeTargetOf(fold, options.route ?? successorRoute(fold, predecessor)));
-    return { drafts: [vaultDraft("did.created", { didId, did: successor.did, longFormDid: successor.longFormDid })], successor };
-  }
-  const successor = recordedDid(existing, options.route ?? null);
-  const faults: string[] = [];
-  if (selected) faults.push("a rotation an input selects takes a fresh successor");
-  if (!existing.live) faults.push(...(existing.retired !== null ? [`retired: ${existing.retired}`, ...existing.faults] : existing.faults));
-  if (faults.length > 0) throw new Unusable("DID", didId, faults);
-  return { drafts: [], successor };
-}
-
-function successorRoute(fold: VaultFold, predecessor: LocalDidEntity): RouteSpec {
-  if (fold.mediations.preferred !== null) return { kind: "mediated", mediationId: fold.mediations.preferred };
-  const route = namedRouteOf(predecessor);
-  if (route === null) throw new Unusable("DID", predecessor.didId, ["its document names no route a successor could take"]);
-  return route;
 }
 
 /**

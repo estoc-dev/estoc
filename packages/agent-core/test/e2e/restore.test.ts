@@ -5,7 +5,7 @@ import type { Did, DidId, MessageId, VaultFold } from "@estoc/vault";
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { Unusable, canonicalDid, createDid } from "../../src/index.js";
+import { canonicalDid, createDid } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, mediatedRoute } from "../helpers.js";
 import { LONG, channelOf, foldOf, imported, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
@@ -123,7 +123,7 @@ describe("a vault restored from a snapshot", () => {
     expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed")).toEqual([]);
   });
 
-  it("predating a rotation the peer has verified selects another successor when the message that prompted the first is delivered to it again: the peer keeps both proofs and shows the fork, with no head there and nothing sent on its authority, while what it recorded before stands", { timeout: LONG }, async () => {
+  it("predating a rotation the peer has verified selects the same successor when the message that prompted the first is delivered to it again: the peer joins the second proof to the one replacement, keeps its head there and sends on it", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE);
     const bob = await run(mediator, 2, BOB);
@@ -158,17 +158,19 @@ describe("a vault restored from a snapshot", () => {
     const second = restored.inbounds[0]!.address!;
     if (second.outcome !== "rotated") throw new Error(`the restored alice did not rotate: ${JSON.stringify(second)}`);
     const other = didOf(await foldOf(restored), second.rotation.successor);
-    expect(other).not.toBe(a1);
+    expect([other, second.rotation.successor]).toEqual([a1, first.rotation.successor]);
+    expect(second.rotation.decision.cid).not.toBe(first.rotation.decision.cid);
     expect(second.rotation.notification).toMatchObject({ outcome: "created", dispatched: { outcome: "submitted" } });
 
     await until("bob has the second notification", () => bob.inbounds.length === 2);
-    expect(bob.inbounds[1]).toMatchObject({ received: { outcome: "received", live: null }, after: { proof: { status: "conflict" } }, reacted: null, address: null });
+    expect(bob.inbounds[1]).toMatchObject({ received: { outcome: "received", live: null }, after: { proof: { status: "verified" } }, reacted: null, address: null });
     expect(queuedFor(mediator, bob)).toBe(0);
     const ofBob = await foldOf(bob);
-    expect(ofBob.continuity.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer" } }]);
-    expect(ofBob.continuity.model.history(channelOf(b0, a0)).links.map((link) => [link.to.peerDid, link.usable]).sort()).toEqual([[a1, false], [other, false]].sort());
-    expect(ofBob.continuity.head(channelOf(b0, a0))).toBeNull();
-    for (const successor of [a1, other]) await expect(bob.agent.send({ channel: channelOf(b0, successor) }, hello("which of you"))).rejects.toBeInstanceOf(Unusable);
+    expect(ofBob.continuity.conflicts).toEqual([]);
+    expect(ofBob.continuity.model.history(channelOf(b0, a0)).links.map((link) => [link.to.peerDid, link.usable, link.support.length])).toEqual([[a1, true, 2]]);
+    expect(ofBob.continuity.head(channelOf(b0, a0))).toEqual(channelOf(b0, a1));
+    const onward = await bob.agent.send({ channel: channelOf(b0, a1) }, hello("to the one successor"));
+    expect(onward.dispatched).toMatchObject({ outcome: "submitted" });
     expect(ofBob.outbound.outbounds.get(FIRST)).toMatchObject({ outcome: { status: "submitted" } });
     expect(ofBob.set.of("message.in")).toHaveLength(2);
   });

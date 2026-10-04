@@ -36,19 +36,19 @@ import { completeResponse, type EffectOptions, type EffectOutcome } from "./effe
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { MAX_CONTENT_BYTES } from "./prepare.js";
 import { recorder, type ManualEntry, type Recorder, type ViewOptions } from "./records.js";
-import { completeNotification, rotate, type RotateOptions, type Rotated, type RotationTarget } from "./rotate.js";
+import { completeNotification, rotate, type Rotated, type RotationTarget } from "./rotate.js";
 
 const scanOptionsOf = (options: ViewOptions): ScanOptions => ({ effectTypes: effectTypesOf(handlersOf(options.handlers)) });
 
-/** The records of the vault as it is now. A body larger than a message may be is shown as missing. */
+/** The records of the vault as it is now, the rotations it lists being those this runtime's replica could make. A body larger than a message may be is shown as missing. */
 export async function readRecords(runtime: VaultRuntime, keys: Keys, options: ViewOptions = {}): Promise<Recorder> {
   const fold = await scanVault(runtime.vault, keys, scanOptionsOf(options));
-  return recorder(fold, objectReader(runtime.vault.objects, MAX_CONTENT_BYTES), options);
+  return recorder(fold, objectReader(runtime.vault.objects, MAX_CONTENT_BYTES), { ...options, author: runtime.author });
 }
 
 export type ManualOptions = Pick<EffectOptions, "handlers" | "acknowledge" | "now" | "trace">;
 
-/** Each manual procedure under the name a record gives it. `rotate` here is the user's own: it names no source. */
+/** Each manual procedure under the name a record gives it. `rotate` here is the user's own: it names no source, and takes the successor the fold's recipe names. */
 export interface Manual extends Record<ManualEntry, unknown> {
   eraseMessage(messageId: MessageId, because?: string): Promise<Committed>;
   deleteContact(contactId: ContactId, options?: DeleteContactOptions): Promise<Committed>;
@@ -57,7 +57,7 @@ export interface Manual extends Record<ManualEntry, unknown> {
   retry(messageId: MessageId): Promise<Dispatched>;
   completeResponse(executionId: ExecutionId, effectType: string): Promise<EffectOutcome>;
   completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<EffectOutcome>;
-  rotate(target: Omit<RotationTarget, "sourceEventCid">, successor?: Pick<RotateOptions, "route" | "didId">): Promise<Rotated>;
+  rotate(target: Omit<RotationTarget, "sourceEventCid">): Promise<Rotated>;
 }
 
 export function manualProcedures(runtime: VaultRuntime, keys: Keys, dispatcher: Dispatcher, options: ManualOptions = {}): Manual {
@@ -72,6 +72,6 @@ export function manualProcedures(runtime: VaultRuntime, keys: Keys, dispatcher: 
     retry: (messageId) => dispatcher.retry(messageId),
     completeResponse: (executionId, effectType) => completeResponse(runtime, keys, executionId, effectType, { ...options, dispatch }),
     completeNotification: (rotationEventCid) => completeNotification(runtime, keys, rotationEventCid, { now, trace, dispatch }),
-    rotate: ({ localDidId, peerDid }, successor = {}) => rotate(runtime, keys, { localDidId, peerDid, sourceEventCid: null }, { ...successor, now, trace, dispatch }),
+    rotate: ({ localDidId, peerDid }) => rotate(runtime, keys, { localDidId, peerDid, sourceEventCid: null }, { now, trace, dispatch }),
   };
 }

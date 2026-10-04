@@ -128,6 +128,7 @@ function pendingWork(pending: read.PendingWork): PendingWork {
   return {
     pendingOutbounds: pending.pendingOutbounds.map(({ messageId, channel, outcome, because, entries }) => ({ messageId: apiId(messageId), channelId: channelId(channel), outcome, because, entries })),
     missingResponses: pending.missingResponses.map(({ executionId, messageId, effectType, channel, entries }) => ({ executionId: apiId(executionId), messageId: apiId(messageId), effectType, channelId: channelIdOf(channel), entries })),
+    rotationCandidates: pending.rotationCandidates.map(({ channel, sourceEventCids, status, because, entries }) => ({ channelId: channelIdOf(channel), sourceEventCids: sourceEventCids.map((cid) => apiId<EventCid>(cid)), status, because, entries })),
     missingNotifications: pending.missingNotifications.map(({ rotationEventCid, channel, sourceEventCid, entries }) => ({ rotationEventCid: apiId(rotationEventCid), channelId: channelIdOf(channel), sourceEventCid: sourceEventCid === null ? null : apiId<EventCid>(sourceEventCid), entries })),
     notificationConflicts: pending.notificationConflicts.map(({ rotationEventCid, messageIds, entries }) => ({ rotationEventCid: apiId(rotationEventCid), messageIds: messageIds.map((messageId) => apiId<MessageId>(messageId)), entries })),
     pendingProofs: pending.pendingProofs.map(({ sourceEventCid, messageId, channel, entries }) => ({ sourceEventCid: apiId(sourceEventCid), messageId: apiId(messageId), channelId: channelId(channel), entries })),
@@ -314,7 +315,7 @@ export async function project(reader: read.Recorder, vault: ReadVault): Promise<
   const unplaced = await reader.unplaced();
   for (const { candidates } of unplaced.outputs) for (const channel of candidates) await channels.take(channel);
   const pending = reader.pending();
-  for (const { channel } of [...pending.pendingOutbounds, ...pending.missingResponses, ...pending.missingNotifications, ...pending.pendingProofs]) if (channel !== null) await channels.take(channel);
+  for (const { channel } of [...pending.pendingOutbounds, ...pending.missingResponses, ...pending.rotationCandidates, ...pending.missingNotifications, ...pending.pendingProofs]) if (channel !== null) await channels.take(channel);
   await channels.takeHeads();
   conversations.push(...namelessConversations(channels, assigned));
 

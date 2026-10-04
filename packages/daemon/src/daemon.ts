@@ -324,7 +324,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   /** The records as of one cut: the fold, the content and the local option read under the writer lock, with nothing committed between them. */
   async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
     const fold = await scanVault(vault, keys, SCAN);
-    const records = recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES));
+    const records = recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author });
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",

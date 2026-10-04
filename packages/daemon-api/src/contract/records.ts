@@ -255,6 +255,20 @@ export interface MissingResponse {
   entries: ManualEntry[];
 }
 
+/**
+ * A rotation the private-address policy would make from a disclosed
+ * entry and no decision records yet, with the inputs calling for it:
+ * `rotate` is its step while it is ready; waiting and blocked say what
+ * it waits for or is stopped by, this runtime's standing included.
+ */
+export interface RotationCandidate {
+  channelId: ChannelId;
+  sourceEventCids: EventCid[];
+  status: "ready" | "waiting" | "blocked";
+  because: string | null;
+  entries: ManualEntry[];
+}
+
 export interface MissingNotification {
   rotationEventCid: EventCid;
   channelId: ChannelId;
@@ -280,6 +294,7 @@ export interface PendingProof {
 export interface PendingWork {
   pendingOutbounds: PendingOutbound[];
   missingResponses: MissingResponse[];
+  rotationCandidates: RotationCandidate[];
   missingNotifications: MissingNotification[];
   notificationConflicts: NotificationConflict[];
   pendingProofs: PendingProof[];

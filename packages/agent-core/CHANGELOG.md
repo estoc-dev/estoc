@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **The successor is derived, never chosen**: a rotation makes the entity
+  the vault's `successorRecipe` names, a start of the entry bound to the
+  peer's start or a next of the branch address, under `did.created` with its
+  generation, on the predecessor's own route whatever arrangement is
+  preferred; an entity recorded already under that ID is reused only as
+  exactly what would be made now, document and generation alike, and
+  `EntityConflict` otherwise. Two runtimes of one seed deciding the same
+  rotation apart arrive at one entity, and their records join one intent
+  when merged. The rotation is refused while the recipe waits, for a
+  predecessor's creation or for the usable history to lead from the
+  branch's anchor to the pair, and by a runtime that is not a replica of
+  the arrangement routing a mediated predecessor. `RotateOptions.route`,
+  `RotateOptions.didId` and the successor options of `manual.rotate` are
+  gone; `createDid` makes entries alone, `disclose` discloses entries
+  alone, and the private-address policy acts on disclosed entries alone
+  and reuses an existing exact successor. `ineligibleHere` and
+  `materializeSuccessor` are exported.
+- **Rotations to make by hand**: `PendingWork.rotationCandidates` lists the
+  rotations the private-address policy would make and no decision records,
+  `ready` with the `rotate` entry, `waiting` or `blocked` with why, this
+  runtime's standing in the arrangement included; `ViewOptions.author` names
+  the runtime, which `readRecords` fills in, and
+  `ViewOptions.privateAddresses: false` lists none, as the agent passes its
+  own setting.
 - **One rotation intent, several records**: `Rotated` and `RotationDecided`
   carry `records`, every record of the intent in canonical event order, and
   `decision` is the first candidate among them; a rotation that finds the

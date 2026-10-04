@@ -355,7 +355,7 @@ describe("the gate before the vault", () => {
     document["keyAgreement"] = [method];
     const longFormDid = encodeLongForm(document) as Did;
     const did = longToShort(longFormDid) as Did;
-    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: QUERIED, did, longFormDid })]);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: QUERIED, did, longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     const { receipt, seen } = recording();
     const receiver = await receiverOver(alice, { receipt });
     const packed = await sealed(await peerSealer(bob), longFormDid);

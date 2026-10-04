@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Every DID says how it was made**: `did.created.generation` is required,
+  `{ kind: "entry", profile }`, `{ kind: "start", profile, predecessor,
+  binding }` or `{ kind: "next", profile, predecessor }`, and under profile
+  `v1`, the one this version makes entities under (`GENERATION_PROFILE`),
+  the schema holds the entity ID to it: an entry is a minted UUIDv7, a start
+  is `startDidId(predecessor, binding)`, a next `successorDidId(predecessor)`.
+  A creation without it is refused; nothing reads the old shape. The DID
+  fold reads each entity's `lineage` once: `entry`, `branch` with the anchor
+  pair its start was bound to, `pending` while a predecessor's creation is
+  not here, `unsupported` under another profile, `invalid` where the
+  generations contradict each other.
+- **One recipe for a successor**: `successorRecipe(fold, channel)` says what
+  a rotation away from the pair makes, from the fold alone: `ready` with a
+  `start` of an entry bound to `peerRoot`'s start, or a `next` of a branch
+  address once `model.path` leads from the branch's anchor to the pair;
+  `waiting` while a predecessor's creation or that path is missing;
+  `blocked` where a conflict or an invalid generation stops it.
+  `recipeDidId` and `generationOf` turn a recipe into the entity ID and the
+  generation it records.
+- **Rotations the policy would make**: `unfinishedWork(fold).rotationCandidates`
+  lists, per rotation intent, the established application inputs at a
+  disclosed entry that no decision answers yet, with the latest input's
+  pair and the recipe's `choice`; a candidate decision takes the group over
+  to its notification, a decision waiting or in conflict and a denied or
+  superseded pair are its reason.
 - **The peer's start**: `Continuity.peerRoot(channel)` walks the usable peer
   replacements back from a pair, its local DID fixed, to the one address of
   the peer no replacement leads to: `found` with that DID and the support

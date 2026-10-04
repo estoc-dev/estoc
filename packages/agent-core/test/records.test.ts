@@ -46,7 +46,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
+import { copyOf, didcomm, directParty, mediatedParty, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_OTHER = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -128,7 +128,7 @@ describe("records", () => {
     const after = await channel(pair);
     expect(only(after, "in")).toMatchObject({ manualAction: "none", completes: [] });
     expect(only(after, "out")).toMatchObject({ msg: { type: EMPTY_MESSAGE_TYPE }, effectType: PURE_ACK_EFFECT, outcome: { status: "submitted" }, manualAction: "none", contactIds: [CONTACT] });
-    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     await closeAll(alice, bob);
   });
 
@@ -416,6 +416,28 @@ describe("records", () => {
     expect(pending.notificationConflicts).toEqual([{ rotationEventCid, messageIds: [notified.messageId, other.draft.data.messageId].sort(), entries: [] }]);
     expect(pending.pendingOutbounds).toEqual([]);
     await closeAll(alice, bob);
+  });
+
+  test("the rotation the private-address policy would make from a disclosed entry is listed with its inputs: ready with the rotate entry for the runtime that can commit it, blocked for a runtime enrolled nowhere, none with the policy off, and gone once a decision is recorded", async () => {
+    const mediator = await newMediator();
+    const alice = await mediatedParty(mediator, 1, ALICE);
+    const bob = await directParty(2, "https://bob.example/didcomm", BOB);
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const second = await receive(bob, { body: { content: "hi again" } });
+    const pair = { localDid: alice.did, peerDid: bob.did };
+    const candidates = async (holder: Holder, privateAddresses?: boolean) => (await readRecords(holder.runtime, holder.keys, { privateAddresses })).pending().rotationCandidates;
+    expect(await candidates(alice)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "ready", because: null, entries: ["rotate"] }]);
+    expect(await candidates(alice, false)).toEqual([]);
+    const copy = await copyOf(1, alice);
+    expect(await candidates(copy)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "blocked", because: `this runtime is not enrolled in the arrangement ${alice.mediationId}, which routes the predecessor`, entries: [] }]);
+    expect(JSON.parse(JSON.stringify(await candidates(alice)))).toEqual(await candidates(alice));
+
+    const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
+    const pending = (await readRecords(alice.runtime, alice.keys)).pending();
+    expect([pending.rotationCandidates, pending.missingNotifications.map(({ rotationEventCid }) => rotationEventCid)]).toEqual([[], rotated.notification.outcome === "created" ? [] : [rotated.decision.cid]]);
+    await closeAll(alice, bob, copy);
   });
 
   test("a contact shows its selected channels, then the history verified continuity reaches, with where a send goes; deleting and blocking through the manual entries changes what is shown and nothing a message says", async () => {

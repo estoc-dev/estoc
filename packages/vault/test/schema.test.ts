@@ -21,6 +21,9 @@ import {
   type VaultData,
   type VaultEventType,
   type WireMessageId,
+  startDidId,
+  successorDidId,
+  type Did,
 } from "../src/index.js";
 import { fakeEventCid } from "./fold/helpers.js";
 
@@ -122,7 +125,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   "mediation.selected": [{ mediationId: MEDIATION } as Data<"mediation.selected">, []],
   "mediation.retired": [{ mediationId: MEDIATION, because: "replaced" } as Data<"mediation.retired">, []],
   "replica.created": [{ replicaId: REPLICA, mediationId: MEDIATION, grant: grantOf() } as Data<"replica.created">, []],
-  "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG } as Data<"did.created">, []],
+  "did.created": [{ didId: DID_ID, did: SHORT, longFormDid: LONG, generation: { kind: "entry", profile: "v1" } } as Data<"did.created">, []],
   "did.disclosed": [{ didId: DID_ID, as: "oob", oobId: OOB, goal: "Write to Alice" } as Data<"did.disclosed">, []],
   "did.retired": [{ didId: DID_ID, because: "contact-deleted" } as Data<"did.retired">, []],
   "did.rotationSelected": [{ fromDidId: DID_ID, peerDid: PEER, toDidId: DID_ID2, sourceEventCid: null, fromPrior: JWT } as Data<"did.rotationSelected">, []],
@@ -380,6 +383,28 @@ describe("rules between members", () => {
     rejects("did.created", { ...data, did: "did:web:alice.example", longFormDid: "did:web:alice.example:z1" }, [], /short form/);
     rejects("did.created", { ...data, longFormDid: SHORT }, [], /long form/);
     rejects("did.created", { ...data, longFormDid: "did:peer:4zQmOther:z2NpDocument" }, [], /long form of did/);
+  });
+
+  test("did.created names how the entity was made: an entry under profile v1 is minted, a start or a next is the ID its inputs derive, and a generation under another profile is read as it is", () => {
+    const data = ALL["did.created"][0] as Loose;
+    const start = { kind: "start", profile: "v1", predecessor: LOCAL, binding: PEER };
+    const next = { kind: "next", profile: "v1", predecessor: LOCAL };
+    accepts("did.created", { ...data, didId: startDidId(LOCAL as Did, PEER as Did), generation: start });
+    accepts("did.created", { ...data, didId: successorDidId(LOCAL as Did), generation: next });
+    accepts("did.created", { ...data, didId: UUID_V5_DID_ID, generation: { kind: "entry", profile: "v9" } });
+    accepts("did.created", { ...data, didId: UUID_V5_DID_ID, generation: { ...start, profile: "v9" } });
+    rejects("did.created", { ...data, didId: UUID_V5_DID_ID }, [], /an entry under profile v1 is minted: didId is a UUIDv7/);
+    rejects("did.created", { ...data, generation: start }, [], new RegExp(`didId is the one the start generation derives, ${startDidId(LOCAL as Did, PEER as Did)}`));
+    rejects("did.created", { ...data, didId: successorDidId(LOCAL as Did), generation: start }, [], /the start generation derives/);
+    rejects("did.created", { ...data, didId: startDidId(LOCAL as Did, PEER as Did), generation: next }, [], /the next generation derives/);
+    rejects("did.created", { ...data, didId: startDidId(LOCAL as Did, PEER as Did), generation: { ...start, binding: LOCAL } }, [], /generation.binding is another DID than generation.predecessor/);
+    rejects("did.created", { ...data, did: LOCAL, longFormDid: `${LOCAL}:z2Mine`, didId: successorDidId(LOCAL as Did), generation: next }, [], /generation.predecessor is another DID than the entity's own/);
+    rejects("did.created", { ...data, generation: { kind: "entry", profile: "" } }, [], /generation.profile must be a non-empty string/);
+    rejects("did.created", { ...data, generation: { kind: "branch", profile: "v1" } }, [], /generation.kind must be one of "entry", "start", "next"/);
+    rejects("did.created", { ...data, generation: { kind: "entry", profile: "v1", predecessor: LOCAL } }, [], /generation.predecessor is not a member/);
+    rejects("did.created", { ...data, generation: { kind: "start", profile: "v1", predecessor: LOCAL } }, [], /generation.binding is missing/);
+    rejects("did.created", { ...data, generation: { ...next, predecessor: PEER_LONG } }, [], /generation.predecessor must be a did:peer:4 short form/);
+    rejects("did.created", { ...data, generation: "v1" }, [], /generation must be a JSON object/);
   });
 
   test("did.disclosed carries an oobId exactly for an oob disclosure", () => {

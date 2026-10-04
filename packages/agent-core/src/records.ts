@@ -38,6 +38,7 @@ import {
   type Did,
   type DidId,
   type EpochSeconds,
+  type ReplicaId,
   type EventCid,
   type Execution,
   type ExecutionId,
@@ -52,6 +53,7 @@ import {
   type Outbound,
   type Outcome,
   type ReadObject,
+  type RotationCandidate,
   type SendGate,
   type Source,
   type Standing,
@@ -63,8 +65,14 @@ import {
 import { PROFILE } from "./protocol/user-profile.js";
 import type { EffectOptions } from "./effects.js";
 import { claimedName, handlerFor, handlersOf, reportedProblem, trustPing, type Handler } from "./handlers/index.js";
+import { ineligibleHere } from "./successor.js";
 
-export type ViewOptions = Pick<EffectOptions, "handlers">;
+export type ViewOptions = Pick<EffectOptions, "handlers"> & {
+  /** whether the runtime applies the private-address policy, on unless said otherwise: with it off, the rotations it would make are no work of the user's */
+  privateAddresses?: boolean;
+  /** the runtime's own replica, by which a rotation it could not commit is listed as blocked; left out, no runtime is assumed */
+  author?: ReplicaId;
+};
 
 export type ManualEntry = "eraseMessage" | "deleteContact" | "blockChannels" | "cancel" | "retry" | "completeResponse" | "completeNotification" | "rotate";
 
@@ -220,6 +228,21 @@ export interface OwedResponse {
   entries: ManualEntry[];
 }
 
+/**
+ * A rotation the private-address policy would make from a disclosed
+ * entry and no decision records yet: the pair of the latest input and
+ * every input calling for it. Ready names `rotate` as the step; waiting
+ * and blocked name none and say what the rotation waits for or is
+ * stopped by, this runtime's standing in the arrangement included.
+ */
+export interface OpenRotation {
+  channel: Channel;
+  sourceEventCids: EventCid[];
+  status: "ready" | "waiting" | "blocked";
+  because: string | null;
+  entries: ManualEntry[];
+}
+
 export interface OwedNotification {
   rotationEventCid: EventCid;
   channel: Channel;
@@ -245,6 +268,7 @@ export interface WaitingProof {
 export interface PendingWork {
   pendingOutbounds: OpenOutbound[];
   missingResponses: OwedResponse[];
+  rotationCandidates: OpenRotation[];
   missingNotifications: OwedNotification[];
   notificationConflicts: ConflictingNotification[];
   pendingProofs: WaitingProof[];
@@ -307,7 +331,7 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
       return contactRecord(view, records);
     },
     invitations: () => invitationRecords(fold),
-    pending: () => pendingWork(work, responses),
+    pending: () => pendingWork(fold, options, work, responses),
   };
 }
 
@@ -586,7 +610,14 @@ function invitationRecords(fold: VaultFold): InvitationRecord[] {
   }));
 }
 
-function pendingWork(work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[]): PendingWork {
+function openRotation(fold: VaultFold, author: ReplicaId | undefined, { channel, sources, choice }: RotationCandidate): OpenRotation {
+  const didId = fold.dids.entityOfDid(channel.localDid);
+  const ineligible = choice.status !== "ready" || author === undefined || didId === null ? null : ineligibleHere(fold, author, fold.dids.entities.get(didId)!);
+  const standing = ineligible !== null ? { status: "blocked" as const, because: ineligible } : choice;
+  return { channel, sourceEventCids: sources.map((source) => source.event.cid), status: standing.status, because: standing.status === "ready" ? null : standing.because, entries: standing.status === "ready" ? ["rotate"] : [] };
+}
+
+function pendingWork(fold: VaultFold, options: ViewOptions, work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[]): PendingWork {
   return {
     pendingOutbounds: work.outbounds.map((outbound) => {
       const because = outbound.work.kind === "none" ? outbound.work.because : null;
@@ -599,6 +630,7 @@ function pendingWork(work: ReturnType<typeof unfinishedWork>, responses: readonl
       channel,
       entries: ["completeResponse"],
     })),
+    rotationCandidates: options.privateAddresses === false ? [] : work.rotationCandidates.map((candidate) => openRotation(fold, options.author, candidate)),
     missingNotifications: work.notifications.map(({ decision, channel, source }) => ({ rotationEventCid: decision.event.cid, channel, sourceEventCid: source?.event.cid ?? null, entries: ["completeNotification"] })),
     notificationConflicts: work.notificationConflicts.map(({ decision, notification }) => ({ rotationEventCid: decision.event.cid, messageIds: [...notification.messageIds], entries: [] })),
     pendingProofs: work.proofs.map(({ source }) => ({ sourceEventCid: source.event.cid, messageId: source.event.data.messageId, channel: source.channel, entries: [] })),

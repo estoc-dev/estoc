@@ -132,6 +132,60 @@ display and send choices under [the contact view](../../packages/vault/src/fold/
 not protocol authority. Deletion that also blocks communication must append
 concrete channel denials separately.
 
+<a id="private-branches"></a>
+
+### 5.3 Entries and private branches
+
+A local address is made for one of two uses, recorded immutably in its
+creation's `generation` under [did.created](vault-events.md#did-created). An
+**entry** is an address handed out: disclosed as an invitation or a direct
+DID, written to by whoever holds it. A **private branch** is the succession
+of addresses one relationship moves through once it leaves the entry: its
+**start** is the first address toward one peer, bound to the peer's
+address the usable history led back to when the branch was made, and every
+**next** replaces the start or a next in the same branch. Only an entry is
+disclosed; an address of a branch is the one peer's and is refused as a
+disclosure, with a new entry to be created instead.
+
+A successor is derived, never chosen: every replica deciding a rotation
+away from one pair arrives at one entity, under one document on the
+predecessor's own route, so that two replicas deciding apart record two
+records of one intent and no fork. The recipe is
+[the succession query](../../packages/vault/src/succession.ts) over the fold:
+
+- From an entry, a start bound to the peer's start, the one address of the
+  peer that [the continuity fold](../../packages/vault/src/fold/continuity.ts) leads back to
+  from the pair along the usable peer replacements, the pair's own peer
+  when none leads to it. The binding is read off verified evidence and
+  never off a bare `from_prior`, the order of events, the canonical order
+  of the context or any timestamp; where a conflict leaves the start
+  undecidable, no successor is made.
+- From a branch address, a next, once the usable history leads from the
+  branch's anchor, the start's predecessor toward its binding, to the pair.
+  While it does not, the rotation waits and writes nothing: a branch
+  address a pair is not shown to belong to is given to no other
+  relationship by an ordinary rotation. Making a branch address serve
+  another relationship, or splitting one a peer reused, is an explicit
+  operation this version does not provide.
+
+The binding of a start is what the deciding vault could see. Two replicas
+that see different fragments of the peer's history may bind to different
+addresses and so make different starts; once the evidence that relates them
+merges, continuity shows the competition as a conflict, and nothing picks a
+winner by arrival. A start recorded already keeps its binding whatever
+earlier history arrives later.
+
+The private-address policy makes the first branch toward a peer from a
+disclosed entry over the peer's first established application input, under
+[the policy](../../packages/agent-core/src/privacy.ts); a manual rotation from the same entry
+toward the same peer makes the same start, disclosed or not. An address in
+a branch is rotated by ordinary rotation alone, and the policy never rotates
+it again, whatever disclosure claim arrives. The rotations the policy would
+make and no decision records yet are listed under
+[pending work](../../packages/vault/src/pending-work.ts), each with what it waits
+for or is stopped by, for a person to make by hand; listing one sends
+nothing.
+
 <a id="out-of-band-discovery"></a>
 
 ## 6. Out-of-band discovery
@@ -327,8 +381,11 @@ matching document, a proof that passes the checks not requiring it stays pending
 A receiver compares predecessor DID spellings and authentication-method IDs
 under [the channel evidence fold](../../packages/vault/src/fold/channels.ts), using only the method's validated spelling
 equivalence and the exact verification document. Exact wire spellings remain retained.
-A successor may send through another arrangement or endpoint for privacy. Neither changing
-transport preference nor choosing another service changes an existing DID.
+A successor inherits its predecessor's route, the same arrangement or
+endpoint, whatever arrangement the vault prefers for new entries; moving a
+relationship to another route is a migration this version does not provide.
+Neither changing transport preference nor choosing another service changes
+an existing DID.
 
 <a id="privacy-abuse-interoperability-and-security"></a>
 

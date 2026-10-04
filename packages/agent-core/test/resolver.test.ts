@@ -133,12 +133,12 @@ describe("did:peer:4", () => {
     await runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: creation.data.mediationId, routingDid: short })]);
     const forged = `${short}:${creation.data.me.did.slice(creation.data.me.did.lastIndexOf(":") + 1)}` as Did;
     const bad = await mintDid(keys, "019b0000-0000-7000-8000-00000000000e" as DidId, { kind: "mediated", routingDid: forged });
-    await runtime.vault.commit([], [vaultDraft("did.created", { didId: bad.didId, did: bad.did, longFormDid: bad.longFormDid })]);
+    await runtime.vault.commit([], [vaultDraft("did.created", { didId: bad.didId, did: bad.did, longFormDid: bad.longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     let fold = await scanVault(runtime.vault, keys);
     expect([fold.dids.entities.get(bad.didId)!.conflict, knownLongForms(fold)(short)]).toEqual([true, null]);
 
     const elsewhere = await mintDid(keys, "019b0000-0000-7000-8000-00000000000f" as DidId, { kind: "mediated", routingDid: mediator.did as Did });
-    await runtime.vault.commit([], [vaultDraft("did.created", { didId: elsewhere.didId, did: elsewhere.did, longFormDid: elsewhere.longFormDid })]);
+    await runtime.vault.commit([], [vaultDraft("did.created", { didId: elsewhere.didId, did: elsewhere.did, longFormDid: elsewhere.longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     fold = await scanVault(runtime.vault, keys);
     expect([fold.mediations.mediations.get(creation.data.mediationId)!.routingDid, fold.dids.entities.get(elsewhere.didId)]).toMatchObject([short, { live: true, mediation: creation.data.mediationId }]);
     expect(knownLongForms(fold)(short)).toBe(mediator.did);

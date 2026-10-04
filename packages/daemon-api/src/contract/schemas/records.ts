@@ -27,6 +27,7 @@ import type {
   PendingOutbound,
   PendingProof,
   PendingWork,
+  RotationCandidate,
   SendGate,
   Snapshot,
   Standing,
@@ -221,6 +222,8 @@ export const pendingOutbound: z.ZodType<PendingOutbound> = z.object({
 
 export const missingResponse: z.ZodType<MissingResponse> = z.object({ executionId, messageId, effectType: z.string(), channelId, entries });
 
+export const rotationCandidate: z.ZodType<RotationCandidate> = z.object({ channelId, sourceEventCids: z.array(eventCid), status: z.enum(["ready", "waiting", "blocked"]), because: z.string().nullable(), entries });
+
 export const missingNotification: z.ZodType<MissingNotification> = z.object({ rotationEventCid: eventCid, channelId, sourceEventCid: eventCid.nullable(), entries });
 
 export const notificationConflict: z.ZodType<NotificationConflict> = z.object({ rotationEventCid: eventCid, messageIds: z.array(messageId), entries });
@@ -230,6 +233,7 @@ export const pendingProof: z.ZodType<PendingProof> = z.object({ sourceEventCid: 
 export const pendingWork: z.ZodType<PendingWork> = z.object({
   pendingOutbounds: z.array(pendingOutbound),
   missingResponses: z.array(missingResponse),
+  rotationCandidates: z.array(rotationCandidate),
   missingNotifications: z.array(missingNotification),
   notificationConflicts: z.array(notificationConflict),
   pendingProofs: z.array(pendingProof),

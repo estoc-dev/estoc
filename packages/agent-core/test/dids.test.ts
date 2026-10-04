@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "vitest";
 
 import { longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
 import { createSeedKeystore } from "@estoc/keystore";
-import { InvalidIdentifier, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
+import { InvalidIdentifier, InvalidPayload, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, createMediation, createVault, disclose, dispatch, enroll, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf, send } from "../src/index.js";
@@ -46,7 +46,7 @@ describe("communication DIDs", () => {
     const { runtime, keys } = await freshVault();
     const first = await createDid(runtime, keys, DIRECT, DID);
     expect(first.existed).toBe(false);
-    expect(first.created.data).toEqual({ didId: DID, did: first.minted.did, longFormDid: first.minted.longFormDid });
+    expect(first.created.data).toEqual({ didId: DID, did: first.minted.did, longFormDid: first.minted.longFormDid, generation: { kind: "entry", profile: "v1" } });
     expect(didcommServiceUris(first.minted.inputDocument)).toEqual([ENDPOINT]);
     const doc = await resolveDIDCommDoc(first.minted.longFormDid);
     expect(doc?.keyAgreement).toEqual([`${first.minted.longFormDid}#key-2`]);
@@ -62,16 +62,13 @@ describe("communication DIDs", () => {
     await runtime.close();
   });
 
-  it("is minted under a derived UUIDv5 as under a minted UUIDv7; an ID of another version is refused and nothing written", async () => {
+  it("is an entry minted under a fresh UUIDv7 alone: a derived ID, which a rotation's recipe gives, and an ID of another version are refused and nothing written", async () => {
     const { runtime, keys } = await freshVault();
-    const derived = "019b0000-0000-5000-8000-00000000000c" as DidId;
-    const { created, minted } = await createDid(runtime, keys, DIRECT, derived);
-    expect(created.data.didId).toBe(derived);
-    expect((await scanVault(runtime.vault, keys)).dids.entities.get(derived)).toMatchObject({ live: true, created: { did: minted.did } });
+    await expect(createDid(runtime, keys, DIRECT, "019b0000-0000-5000-8000-00000000000c" as DidId)).rejects.toBeInstanceOf(InvalidPayload);
     await expect(createDid(runtime, keys, DIRECT, "019b0000-0000-4000-8000-00000000000c" as DidId)).rejects.toBeInstanceOf(InvalidIdentifier);
     const fold = await scanVault(runtime.vault, keys);
-    expect(fold.set.of("did.created")).toHaveLength(1);
-    expect(fold.dids.entities.size).toBe(1);
+    expect(fold.set.of("did.created")).toHaveLength(0);
+    expect(fold.dids.entities.size).toBe(0);
     await runtime.close();
   });
 
@@ -126,7 +123,7 @@ describe("communication DIDs", () => {
     const a = await party(mediator);
     const forged = `${longToShort(mediator.did)}:${a.created.data.me.did.slice(a.created.data.me.did.lastIndexOf(":") + 1)}` as Did;
     const bad = await mintDid(a.keys, DID, { kind: "mediated", routingDid: forged });
-    await a.runtime.vault.commit([], [vaultDraft("did.created", { didId: DID, did: bad.did, longFormDid: bad.longFormDid })]);
+    await a.runtime.vault.commit([], [vaultDraft("did.created", { didId: DID, did: bad.did, longFormDid: bad.longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     expect((await scanVault(a.runtime.vault, a.keys)).dids.entities.get(DID)).toMatchObject({ live: false, conflict: true, routeTarget: null });
     await expect(createDid(a.runtime, a.keys, mediatedRoute(a.mediationId), DID)).rejects.toThrow(EntityConflict);
     expect((await scanVault(a.runtime.vault, a.keys)).set.of("did.created")).toHaveLength(1);

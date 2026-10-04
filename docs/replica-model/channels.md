@@ -162,7 +162,10 @@ that decision as `did.rotationSelected`, with `roots == []` and five closed fiel
 canonical peer DID `B`. They fix the oriented old pair `C(A0,B)`, including
 when `sourceEventCid` is null. `toDidId` names an eligible local DID `A1`, distinct
 from both old endpoints; its `did.created` is committed earlier or in the same
-atomic commit as this decision. Its document and route come from that creation.
+atomic commit as this decision. Its document, route and generation come from
+that creation: a start of the predecessor's entry bound to the peer's start,
+or a next of the predecessor, under [the succession query](../../packages/vault/src/succession.ts),
+so that replicas deciding the same rotation apart name one successor.
 Validate both local DID entities and their exact retained
 key evidence. The original JWT is signed by the retained local `A0`
 authentication method, with exact `iss`/`sub` spellings for `A0`/`A1`.

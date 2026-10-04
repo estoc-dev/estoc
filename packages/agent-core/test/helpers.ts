@@ -90,6 +90,14 @@ export async function newMediator(fill = 200, http = MEDIATOR_HTTP): Promise<Fak
   return new FakeMediator(await deriveIdentity(await importSeed(seedOf(fill)), "anchor"), http);
 }
 
+/** Another runtime over the seed `fill` fills, holding every event of `of` as a merge would bring them: a second replica of that vault, enrolled nowhere. */
+export async function copyOf(fill: number, of: Pick<Fresh, "runtime" | "keys">): Promise<Fresh> {
+  const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(fill) });
+  const opened = await createVault(memoryDriver(), { seedKey, wrapped: doc, label: `copy of party ${fill}`, now: ticking("2026-09-15T00:00:00.000Z") });
+  await opened.runtime.ingest([...(await scanVault(of.runtime.vault, of.keys)).set.all()]);
+  return { ...opened, seedKey, keystore: doc };
+}
+
 export interface Party extends Fresh {
   mediator: FakeMediator;
   mediationId: MediationId;

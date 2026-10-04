@@ -320,10 +320,13 @@ derivation of [section 3.2](#single-seed) and the numalgo-4 document
 builder; a change to any of the three is a new version string, and entities
 already created keep their IDs.
 
-These rules define the IDs. Which rule a procedure uses, if any, is that
-procedure's own: the procedures of this version mint a fresh UUIDv7 for a
-new address, and the fold does not check whether a UUIDv5 entity ID follows
-a rule.
+These rules define the IDs. Which rule made an entity is recorded in its
+creation's `generation` under [`did.created`](#did-created): an entry is
+minted, a start follows `startDidId` over its predecessor and binding, a
+next follows `successorDidId` over its predecessor, and under profile `v1`
+the schema checks the entity ID against the rule its generation names. A
+generation under another profile is read as recorded and never rebuilt by
+these rules.
 
 Test vectors, over the delivery fixture's DIDs
 `did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd` (ours) and
@@ -737,10 +740,13 @@ stop old arrangements from receiving.
 
 Retirement is terminal for the arrangement ID, and the ID is the one the
 mediator's DID derives: the vault does not arrange with that mediator
-again. A procedure SHOULD give every DID routed through it a successor
-first. A DID whose document sends to the retired arrangement's routing DID
-waits under [the DID fold](../../packages/vault/src/fold/dids.ts); the fold never changes
-a DID's document.
+again. A successor inherits its predecessor's route, so a DID routed
+through a retired arrangement takes no successor: an ordinary rotation
+away from it is refused, and moving a relationship off a retired
+arrangement is a migration this version does not provide. A DID whose
+document sends to the retired arrangement's routing DID waits under
+[the DID fold](../../packages/vault/src/fold/dids.ts); the fold never changes a DID's
+document.
 
 <a id="replica-created"></a>
 
@@ -819,10 +825,42 @@ A locally controlled communication DID is a Peer DID:
   "data": {
     "didId": "019b2a54-05bd-74ef-b8ac-e8375cb776c2",
     "did": "did:peer:4zQm...rendezvous-short",
-    "longFormDid": "did:peer:4zQm...rendezvous-short:z...rendezvous-input-document"
+    "longFormDid": "did:peer:4zQm...rendezvous-short:z...rendezvous-input-document",
+    "generation": { "kind": "entry", "profile": "v1" }
   }
 }
 ```
+
+`generation` is REQUIRED and records, once and immutably, how the entity
+was made and what it is for:
+
+- `{ "kind": "entry", "profile" }`: an address branches are made from, the
+  one kind a procedure discloses. Under profile `v1` its ID is a minted
+  UUIDv7.
+- `{ "kind": "start", "profile", "predecessor", "binding" }`: the first
+  address toward one peer under the entry `predecessor`, bound to
+  `binding`, the peer's address the usable history led back to when the
+  branch was made. Under `v1` its ID is `startDidId(predecessor, binding)`.
+- `{ "kind": "next", "profile", "predecessor" }`: the replacement of the
+  start or next `predecessor` in the same branch. Under `v1` its ID is
+  `successorDidId(predecessor)`.
+
+`predecessor` and `binding` are canonical `did:peer:4` short forms;
+`predecessor` is another DID than the entity's own, and `binding` another
+than `predecessor`. `profile` names the key derivation, the entity-ID
+transcripts and the document builder the entity was made by; this version
+makes entities under `v1` alone, reads a non-empty unknown profile as
+recorded and continues no branch under it.
+
+The branch an entity belongs to is read back from the generations under
+[the DID fold](../../packages/vault/src/fold/dids.ts): an entry; a branch,
+anchored at the pair of the start's `predecessor` and `binding`; pending
+while a predecessor's creation is not here; invalid where the generations
+contradict each other, a start under a branch, a next under an entry, a
+profile that changes along the way, a predecessor in conflict or a chain
+leading back to itself. The lineage bears on what a successor is made from
+and what may be disclosed; it grants no continuity, confirms no receipt and
+unmakes no verification of a historical message.
 
 The entity ID determines exactly
 one authentication key name, `did/<id>/authentication`, and one key-agreement
@@ -847,10 +885,16 @@ The long form is disclosed before the short form is relied upon by a peer.
 The short form is canonical for vault references and mediator recipient
 registration after the mapping is known.
 
-A communication DID entity ID is a UUIDv7 minted for a new address, or a
-UUIDv5 derived under the [DID entity rules](#did-entity-rules); which a
-procedure uses is that procedure's rule, and the procedures of this version
-mint. Same ID with different identity fields is an integrity conflict.
+A communication DID entity ID is a UUIDv7 minted for an entry, or a UUIDv5
+derived under the [DID entity rules](#did-entity-rules) for a start or a
+next, as its `generation` says. A creation procedure makes entries alone;
+a start or a next is made by [the rotation procedure](../../packages/agent-core/src/rotate.ts)
+from the recipe [the succession query](../../packages/vault/src/succession.ts)
+names, on the predecessor's own route, and an entity already recorded under
+that ID is reused only when its document and generation are exactly what
+would be made. Same ID with different identity fields, the generation
+included, is an integrity conflict; a retry of a creation never writes a
+second creation to change an entity's use.
 
 <a id="delivery-routes"></a>
 
@@ -905,7 +949,9 @@ entity.
 regardless of audience or publication medium. `oobId` is REQUIRED for `oob` and null otherwise;
 `goal` is nullable. `didId` names a local DID entity under
 [section 3.5](#identifier-and-reference-vocabulary), which retains its spellings.
-Any live communication DID may be disclosed. An invitation is reusable: whoever
+Any live entry may be disclosed, and no address of a private branch: a
+start or a next is the one peer's, and a disclosure of it is refused with
+the reason that an entry is to be created instead. An invitation is reusable: whoever
 holds it writes to the disclosed DID in a channel of their own, and no receipt
 takes it from the next; [the invitation fold](../../packages/vault/src/fold/invitations.ts) says whether
 the DID still takes one.
@@ -1819,9 +1865,11 @@ shows what it finds unfinished for manual action. The open is
 [`packages/agent-core/src/agent.ts`](../../packages/agent-core/src/agent.ts) over
 [`identity.ts`](../../packages/agent-core/src/identity.ts); local queue state is not a recovery source.
 
-A local DID created after the snapshot, including a privacy successor, may be
-absent after restore. The seed alone cannot reconstruct the missing UUIDv7
-entity IDs in its key names. Once local recipient state is authoritative,
+A local DID created after the snapshot may be absent after restore. The
+seed alone cannot reconstruct a missing entry, whose UUIDv7 entity ID is
+minted; a missing start or next is made again from the same recipe, the same
+entity under the same keys and document, once the rotation that made it is
+decided again. Once local recipient state is authoritative,
 deliveries with no known or recoverably pending recipient mapping follow the
 terminal wrong-recipient gate and its bounded visible diagnostic under
 [the receiver](../../packages/agent-core/src/receive/receiver.ts). Such an address stays
@@ -1848,14 +1896,19 @@ evidence; otherwise the channel may need to be established again.
 Traffic at a snapshot-era address is not a guaranteed repair. Supersession
 can prevent a reply, and eligible live input, including an already queued
 message, can trigger another privacy rotation when the snapshot lacks a later
-decision. A manual rotation can also select a different successor. If the peer
-already verified the lost decision's successor, it can then retain two valid
-replacements of the same endpoint in one context. Phase 1 preserves this fork
-as a visible conflict under [channels.md](channels.md#continuity), with no
-default send head in the affected context and no authority through conflicted
-continuity. Restoring the lost decision does not choose between the branches.
-Communication may be established independently from a fresh local DID; doing
-so does not resolve the old context. Restore UI MUST explain these limits under
+decision. The successor it selects is the one the recipe derives, so where
+the restored vault leads back to the same start of the peer it is the lost
+decision's own successor, and the new record joins the lost intent once the
+histories merge; the peer verifies one replacement under two proofs. Where
+the restored vault sees another start of the peer, the recipe differs and
+so does the successor: if the peer already verified the lost decision's
+successor, it then retains two valid replacements of the same endpoint in
+one context. Phase 1 preserves that fork as a visible conflict under
+[channels.md](channels.md#continuity), with no default send head in the
+affected context and no authority through conflicted continuity. Restoring
+the lost decision does not choose between the branches. Communication may
+be established independently from a fresh entry; doing so does not resolve
+the old context. Restore UI MUST explain these limits under
 [vault-sqlite.md](vault-sqlite.md#restore).
 
 No previous process must be online. Mediator retention still bounds messages

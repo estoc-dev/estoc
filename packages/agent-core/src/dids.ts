@@ -1,12 +1,13 @@
 /**
- * Communication DIDs: an entity minted from its ID and a route alone, a
- * mediation arrangement or a direct endpoint, so a committed ID reuses
+ * Communication DIDs: an entry minted from a fresh ID and a route alone,
+ * a mediation arrangement or a direct endpoint, so a committed ID reuses
  * its exact keys and document after a crash and is not recreated for
- * another route; the disclosure that reveals an address, its mediated
- * registration verified first; and the retirement that ends new sending
- * and disclosure at it. Where a DID sends is read back from its
- * document, never recorded beside it. Every decision is taken over the
- * fold under the lock.
+ * another route or another use; the disclosure that reveals an entry,
+ * its mediated registration verified first, and never an address of a
+ * private branch, which stays the one peer's; and the retirement that
+ * ends new sending and disclosure at it. Where a DID sends is read back
+ * from its document, never recorded beside it. Every decision is taken
+ * over the fold under the lock.
  */
 
 import { v7 as uuidv7 } from "uuid";
@@ -14,6 +15,7 @@ import { v7 as uuidv7 } from "uuid";
 import { decodeLongForm, isShortForm } from "@estoc/did-peer";
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
 import {
+  GENERATION_PROFILE,
   canonicalDid,
   mediationIdOf,
   mintDid,
@@ -21,6 +23,7 @@ import {
   serviceTargetOf,
   vaultDraft,
   type Did,
+  type DidGeneration,
   type DidId,
   type DisclosureAs,
   type Keys,
@@ -120,12 +123,15 @@ export interface CreatedDid {
   existed: boolean;
 }
 
+const ENTRY: DidGeneration = { kind: "entry", profile: GENERATION_PROFILE };
+
 /**
- * `did.created` for a route: the fixed keys derived from the entity
- * ID, the numalgo-4 document built over them and the route's target,
- * the short form and long form committed. The same ID again returns
- * the entity as recorded, when its document names the route, and
- * writes nothing.
+ * `did.created` of an entry for a route: the fixed keys derived from
+ * the entity ID, the numalgo-4 document built over them and the route's
+ * target, the short form and long form committed. The same ID again
+ * returns the entity as recorded, when its document names the route and
+ * it is an entry, and writes nothing. A successor is not made here: the
+ * rotation makes it, from the recipe the fold names.
  */
 export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
   let minted!: MintedDid;
@@ -133,10 +139,11 @@ export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteS
     const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
       minted = recordedDid(existing, route);
+      if (existing.created!.generation.kind !== "entry") throw new EntityConflict("DID", didId, `a ${existing.created!.generation.kind}, not an entry`);
       return [];
     }
     minted = await mintDid(keys, didId, routeTargetOf(fold, route));
-    return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid })];
+    return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid, generation: ENTRY })];
   });
   const created = events[0] as VaultEvent<"did.created"> | undefined;
   return created === undefined
@@ -173,8 +180,14 @@ function requireLive(entity: LocalDidEntity): void {
   if (!entity.live) throw new Unusable("DID", entity.didId, entity.retired !== null ? [`retired: ${entity.retired}`, ...entity.faults] : entity.faults);
 }
 
+/** An address of a private branch is the one peer's: disclosing it would hand the branch to anyone, so a new entry is disclosed instead. */
+function requireEntry(fold: VaultFold, entity: LocalDidEntity): void {
+  const lineage = fold.dids.lineage(entity.didId);
+  if (lineage.status !== "entry") throw new Unusable("DID", entity.didId, [`only an entry is disclosed, and this address is ${lineage.status === "branch" ? "in a private branch" : `of ${lineage.status} generation`}: create an entry to disclose`]);
+}
+
 /**
- * `did.disclosed` for a live entity, and the invitation when it is an
+ * `did.disclosed` for a live entry, and the invitation when it is an
  * `oob` one. A mediated address is added, over `link`, to the account
  * of the one arrangement that routes it, which needs the runtime's
  * `confirmations`, and refused unless the mediator holds it. A direct
@@ -190,6 +203,7 @@ export async function disclose(link: MediatorLink | null, runtime: VaultRuntime,
   const fold = await scanVault(runtime.vault, keys);
   const entity = didOf(fold, didId);
   requireLive(entity);
+  requireEntry(fold, entity);
   const created = entity.created as VaultData["did.created"];
   const route = routeOf(entity);
   const goal = disclosure.goal ?? null;

@@ -10,7 +10,7 @@
 import { isEventCid, isJsonObject, isRawCid, type Draft, type Event } from "@estoc/event-store";
 
 import { InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, InvalidReplicaGrant } from "./errors.js";
-import { anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationIdOf, mediationKeyName } from "./ids.js";
+import { GENERATION_PROFILE, anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationIdOf, mediationKeyName, startDidId, successorDidId } from "./ids.js";
 import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
@@ -21,6 +21,7 @@ import type {
   Cid,
   ContactId,
   Did,
+  DidGeneration,
   DidId,
   DidUrl,
   EventReference,
@@ -179,6 +180,31 @@ function spellingOf(spelling: string, shortForm: string): boolean {
 
 const channel: Check<Channel> = shape({ localDid: channelDid, peerDid: channelDid });
 
+const generations: { [K in DidGeneration["kind"]]: Check<Extract<DidGeneration, { kind: K }>> } = {
+  entry: shape({ kind: oneOf(["entry"]), profile: nonEmpty }),
+  start: shape({ kind: oneOf(["start"]), profile: nonEmpty, predecessor: channelDid, binding: channelDid }),
+  next: shape({ kind: oneOf(["next"]), profile: nonEmpty, predecessor: channelDid }),
+};
+
+const generation: Check<DidGeneration> = (value, at) => {
+  if (!isJsonObject(value)) fail(at, "a JSON object");
+  const kind = oneOf(["entry", "start", "next"] as const)(value.kind, `${at}.kind`);
+  return generations[kind](value, at);
+};
+
+/** Under this version's profile the entity ID says how the entity was made: an entry is minted, a start or a next follows from its generation's inputs. */
+function generationNames(didId: DidId, did: Did, generation: DidGeneration): void {
+  if (generation.kind !== "entry" && generation.predecessor === did) throw new Fault("generation.predecessor is another DID than the entity's own");
+  if (generation.kind === "start" && generation.binding === generation.predecessor) throw new Fault("generation.binding is another DID than generation.predecessor");
+  if (generation.profile !== GENERATION_PROFILE) return;
+  if (generation.kind === "entry") {
+    if (!isMintedId(didId)) throw new Fault(`an entry under profile ${GENERATION_PROFILE} is minted: didId is a UUIDv7`);
+    return;
+  }
+  const expected = generation.kind === "start" ? startDidId(generation.predecessor, generation.binding) : successorDidId(generation.predecessor);
+  if (didId !== expected) throw new Fault(`didId is the one the ${generation.kind} generation derives, ${expected}`);
+}
+
 /** A channel selector as a selection stores it: two distinct canonical endpoints. */
 const distinctChannel: Check<Channel> = checked(channel, (data) => {
   if (data.localDid === data.peerDid) throw new Fault("localDid and peerDid are two DIDs");
@@ -319,9 +345,10 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     none
   ),
   "did.created": schema(
-    checked(shape({ didId: idMembers.didId, did: text, longFormDid: text }), (data) => {
+    checked(shape({ didId: idMembers.didId, did: text, longFormDid: text, generation }), (data) => {
       if (!isPeer4Short(data.did)) throw new Fault("did is a did:peer:4 short form");
       if (!isPeer4Long(data.longFormDid) || !data.longFormDid.startsWith(`${data.did}:`)) throw new Fault("longFormDid is the did:peer:4 long form of did");
+      generationNames(data.didId, data.did as Did, data.generation);
     }) as Check<VaultData["did.created"]>,
     none
   ),

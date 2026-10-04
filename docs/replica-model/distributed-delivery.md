@@ -97,7 +97,13 @@ Each local communication DID sends where its document's one DIDComm service
 says, a mediator's routing DID or a direct endpoint. Changing its keys or
 route creates a successor DID entity;
 [local rotation decisions](channels.md#did-rotationselected) select continuation
-in an exact channel context; their links are derived.
+in an exact channel context; their links are derived. An ordinary rotation's
+successor inherits the predecessor's route, so the runtime committing it
+must be one that picks up there: a mediated predecessor is continued by a
+replica of the arrangement that routes it, and a runtime enrolled nowhere
+or in another arrangement refuses the rotation before anything is written,
+under [the rotation procedure](../../packages/agent-core/src/rotate.ts). A
+replica's membership stands for no other runtime's.
 An external recipient's resolved document may offer transport choices; choosing
 among authorized routes does not change the application recipient. A direct
 endpoint MUST NOT expose a replica ID as the peer-visible recipient.
