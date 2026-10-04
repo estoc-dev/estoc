@@ -295,7 +295,6 @@ export async function merged<T extends VaultEventType>(runtime: VaultRuntime, ty
   return event;
 }
 
-/** `seconds` after an event's stamp, as another stamp. */
 export const after = (at: string, seconds: number): string => new Date(Date.parse(at) + seconds * 1000).toISOString();
 
 /** Someone with one communication DID, whichever route it is on. */

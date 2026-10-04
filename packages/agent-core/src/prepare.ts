@@ -286,13 +286,8 @@ async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, chann
  * at the pair itself or on a verified role-preserving path to it. Null
  * when no record made the sender a successor here. The records are read
  * off their own fields, since one waiting for its predecessor's creation
- * has no channel in the fold yet; whether they are one intent is the
- * vault's reading. A record refused or contradicted, or records that
- * are not one intent, stop the package: no proof among them is one to
- * send, and the sender is not to go out proof-free either. One still
- * waiting for its evidence holds the package. Of one intent, the first
- * candidate in canonical event order gives the proof, whatever the
- * other records froze.
+ * has no channel in the fold yet; what they amount to, and which proof
+ * stands for them, is the vault's reading of the intent.
  */
 function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): string | null | { pending: string } | { because: string } {
   const records = [...fold.channels.decisions.values()].filter((decision) => decision.event.data.toDidId === sender.didId && leadsTo(fold, decision, channel));
