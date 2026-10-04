@@ -74,11 +74,6 @@ export function foldAdmissions(set: VaultEventSet, evidence: ChannelEvidence): A
   };
 }
 
-/**
- * A source's own evidence read for what contradicts it, which refuses
- * it for good, before what it lacks, which it still waits for; with
- * neither, it is placed and any proof it brought is verified.
- */
 type SourceReading = { status: "refused"; because: string } | { status: "missing"; because: string } | { status: "positive"; source: PlacedSource };
 
 function readSource(source: Source, evidence: ChannelEvidence): SourceReading {
