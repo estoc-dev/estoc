@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Successors are derived**: `rotate` and `rotateChannel` make the
+  successor the vault's recipe names, on the predecessor's own route, and
+  refuse a rotation this runtime cannot commit, one away from an address
+  routed through an arrangement it is not a replica of. The pending work of
+  a state lists `rotationCandidates`, the private addresses a peer's first
+  messages call for and no decision records yet. Every `did.created` carries
+  its `generation`; the test corpus is regenerated, and a vault written by an
+  earlier daemon is read anew.
 - **Arrangement IDs are derived**: `setMediator` names the arrangement by
   the ID the mediator's DID derives, so a reopened or restored runtime
   finds the arrangement that stands by its ID, and a mediator other than

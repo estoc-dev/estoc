@@ -119,7 +119,7 @@ function reader({ contacts = [], channels = [], unplaced = { inputs: [], outputs
     },
     contact: async (contactId) => contacts.find(([id]) => id === contactId)![1],
     invitations: () => [],
-    pending: () => ({ pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [], ...pending }),
+    pending: () => ({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [], ...pending }),
   };
 }
 
@@ -316,6 +316,7 @@ describe("the snapshot", () => {
     expect(snapshot.pending).toEqual({
       pendingOutbounds: [{ messageId: "m3", channelId: null, outcome: "queued", because: null, entries: ["retry", "cancel"] }],
       missingResponses: [{ executionId: "x1", messageId: "m1", effectType: "pure-ack", channelId: idOf("a1", "b1"), entries: ["completeResponse"] }],
+      rotationCandidates: [],
       missingNotifications: [],
       notificationConflicts: [],
       pendingProofs: [{ sourceEventCid: "o1", messageId: "m2", channelId: idOf("a2", "b2"), entries: [] }],

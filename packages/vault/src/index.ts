@@ -18,6 +18,7 @@ export type {
   DeliveryFailureCode,
   DeliveryId,
   Did,
+  DidGeneration,
   DidId,
   DidUrl,
   DisclosureAs,
@@ -63,6 +64,7 @@ export {
   executionId,
   effectKey,
   automaticMessageId,
+  GENERATION_PROFILE,
   ANCHOR_KEY_NAME,
   observationFactId,
   transitionFactId,
@@ -167,6 +169,7 @@ export {
 export { type ReplicaStatus, type Replica, type ReplicaFold, type ReplicaFoldOptions, foldReplicas, verifyReplicaGrants } from "./fold/replicas.js";
 export {
   type LocalDidEntity,
+  type Lineage,
   type ReceiptEligibility,
   type DidFold,
   type DidFoldOptions,
@@ -233,6 +236,7 @@ export { type Committed } from "./commit.js";
 export { eraseDrafts, erasureClosure, eraseMessage, closeErasures } from "./erasure.js";
 export { type AutomaticIntent, type ResponseChannel, type NotificationChannel, automaticIntent, responseChannel, notificationChannel } from "./response-policy.js";
 export { type DecisionGroup, type DecisionGroups, type RotationIntent, decisionGroups, rotationIntent, decisionFor } from "./rotation-policy.js";
+export { type SuccessorRecipe, type SuccessorChoice, recipeDidId, generationOf, successorRecipe } from "./succession.js";
 export { type DeleteContactOptions, blockDrafts, blockChannels, deleteContactDrafts, deleteContact } from "./contact-commands.js";
-export { type MissingResponse, type MissingNotification, type NotificationConflict, type PendingWork, unfinishedWork } from "./pending-work.js";
+export { type MissingResponse, type RotationCandidate, type MissingNotification, type NotificationConflict, type PendingWork, unfinishedWork } from "./pending-work.js";
 export { type Admitted, admissionDrafts, admitReceipts, reconcileAdmissions } from "./admission/record.js";

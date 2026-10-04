@@ -138,6 +138,7 @@ export const invitation: InvitationRecord = { disclosureEventCid: as("bafydisc")
 export const pending: PendingWork = {
   pendingOutbounds: [{ messageId: as("m-out"), channelId: HEAD_CHANNEL, outcome: "prepared", because: null, entries: ["retry", "cancel"] }],
   missingResponses: [{ executionId: as("x-1"), messageId: as("m-in"), effectType: "https://didcomm.org/basicmessage/2.0/ack", channelId: HEAD_CHANNEL, entries: ["completeResponse"] }],
+  rotationCandidates: [{ channelId: OLD_CHANNEL, sourceEventCids: [as("bafyobs")], status: "ready", because: null, entries: ["rotate"] }],
   missingNotifications: [{ rotationEventCid: as("bafyrot"), channelId: HEAD_CHANNEL, sourceEventCid: null, entries: ["completeNotification"] }],
   notificationConflicts: [{ rotationEventCid: as("bafyrot2"), messageIds: [as("m-n1"), as("m-n2")], entries: [] }],
   pendingProofs: [{ sourceEventCid: as("bafyobs2"), messageId: as("m-pending"), channelId: HEAD_CHANNEL, entries: [] }],

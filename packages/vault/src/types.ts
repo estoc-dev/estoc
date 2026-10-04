@@ -104,6 +104,17 @@ export type AnonymousPeer = { peerResolutionEventCid: null; presentedDid: null; 
 /** An authenticated observation: its resolution evidence, the sender's DID as presented and its canonical short form. */
 export type ResolvedPeer = { peerResolutionEventCid: EventReference<"peer.resolved">; presentedDid: Did; did: Did };
 
+/**
+ * How a communication DID came to be, fixed at its creation: an entry is
+ * an address branches are made from, a start the first address toward
+ * one peer under an entry, bound to the peer's address the relationship
+ * was first anchored to, and a next the replacement of a start or a
+ * next. The profile names the key derivation, the entity-ID transcripts
+ * and the document builder the entity was made by; a generation under
+ * another profile is read, never rebuilt by this one's rules.
+ */
+export type DidGeneration = { kind: "entry"; profile: string } | { kind: "start"; profile: string; predecessor: Did; binding: Did } | { kind: "next"; profile: string; predecessor: Did };
+
 /** One durable inbound observation. `fromPrior` is the original string off the wire, whatever it turns out to be. */
 export type MessageIn = {
   messageId: MessageId;
@@ -144,7 +155,7 @@ export type VaultData = {
   "mediation.selected": { mediationId: MediationId };
   "mediation.retired": { mediationId: MediationId; because: string };
   "replica.created": { replicaId: ReplicaId; mediationId: MediationId; grant: string };
-  "did.created": { didId: DidId; did: Did; longFormDid: Did };
+  "did.created": { didId: DidId; did: Did; longFormDid: Did; generation: DidGeneration };
   "did.disclosed": { didId: DidId; as: DisclosureAs; oobId: string | null; goal: string | null };
   "did.retired": { didId: DidId; because: string };
   "message.admitted": { sourceEventCid: EventReference<"message.in"> };

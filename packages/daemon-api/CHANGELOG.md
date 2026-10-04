@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `PendingWork.rotationCandidates` (`RotationCandidate`: the pair, the
+  inputs calling for it, `ready`, `waiting` or `blocked` with why, and
+  `rotate` as the entry while ready) lists the private addresses a peer's
+  first messages call for and no decision records yet.
 - `ConnectionRecord.recipients` (`RecipientsRecord`: the DIDs the
   account is to hold, those the connection had confirmed, those refused
   and why) replaces `reconciled` and `unknownRegistrations`: every

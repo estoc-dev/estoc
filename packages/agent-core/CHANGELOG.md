@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- **The successor is derived, never chosen**: a rotation makes the entity
+  the vault's `successorRecipe` names, a start of the entry bound to the
+  peer's start or a next of the branch address, under `did.created` with its
+  generation, on the predecessor's own route whatever arrangement is
+  preferred; an entity recorded already under that ID is reused only as
+  exactly what would be made now, document and generation alike, and the
+  rotation is blocked otherwise. Two runtimes of one seed deciding the same
+  rotation apart arrive at one entity, and their records join one intent
+  when merged. The rotation is refused while the recipe waits, for a
+  predecessor's creation or for the usable history to lead from the
+  branch's anchor to the pair, and by a runtime that is not a replica of
+  the arrangement routing a mediated predecessor. `RotateOptions.route`,
+  `RotateOptions.didId` and the successor options of `manual.rotate` are
+  gone; `createDid` makes entries alone, `disclose` discloses entries
+  alone, and the private-address policy acts on disclosed entries alone
+  and reuses an existing exact successor. `successorStanding` says, off the
+  fold, whether the runtime named can make the recipe's successor now, or
+  with no runtime named whether a member of the predecessor's arrangement
+  could: `ready` with the route it inherits and where that sends, `waiting`
+  while the arrangement routing the predecessor is not recorded, granted or
+  resolved here yet or the runtime's own membership of it is not borne out
+  yet, `blocked` for a runtime enrolled elsewhere or nowhere, a route that
+  has ended and an entity of another generation, route or document, or
+  retired, under the successor's ID, and blocked before waiting, so that a
+  route that has ended is not reported as evidence still to arrive;
+  `materializeSuccessor` takes the runtime's
+  author and refuses as `Unusable` what the standing does. `routeStanding`
+  is the same reading of a route alone, which `routeTargetOf` throws for.
+- **Rotations to make by hand**: `PendingWork.rotationCandidates` lists the
+  rotations the private-address policy would make and no decision records,
+  `ready` with the `rotate` entry only for a successor this runtime can
+  make now, `waiting` or `blocked` with why, the route the successor
+  inherits and this runtime's standing in the arrangement included;
+  `ViewOptions.author` names the runtime, which `readRecords` fills in, and
+  without it a rotation is listed as any member of the predecessor's
+  arrangement could make it; `ViewOptions.privateAddresses: false` lists
+  none, as the agent passes its own setting.
 - **One rotation intent, several records**: `Rotated` and `RotationDecided`
   carry `records`, every record of the intent in canonical event order, and
   `decision` is the first candidate among them; a rotation that finds the

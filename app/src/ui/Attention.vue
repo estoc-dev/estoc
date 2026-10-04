@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { cancel, completeNotification, completeResponse, retry, state } from "../core/store.js";
+import { cancel, completeNotification, completeResponse, retry, rotate, state } from "../core/store.js";
 import type { ChannelId } from "../core/types.js";
 import { useAttention } from "./attention.js";
 import { go } from "./nav.js";
@@ -12,8 +12,9 @@ import { dispositionOf, labelOf, shortDid } from "./util.js";
  * Everything that waits for the person, each thing on a card with the
  * step it waits for. Opening a vault sends nothing on its own: a
  * message a transport was never called for, a reply an input still
- * earns, a rotation the peer was never told of, each waits here. What
- * has no step says what it waits for.
+ * earns, a private address a peer's first message calls for, a rotation
+ * the peer was never told of, each waits here. What has no step says
+ * what it waits for.
  */
 const { pending, byHand, waiting, discarded, unplacedInputs, unplacedOutputs, count } = useAttention();
 const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
@@ -80,6 +81,18 @@ const peerOf = (channelId: ChannelId): string => {
           <p class="note">{{ response.effectType }}</p>
           <div v-if="response.entries.includes('completeResponse')" class="card-actions">
             <button class="btn small" type="button" :disabled="busy || sendsClosed" @click="act(() => completeResponse(response.executionId, response.effectType))">Give it</button>
+          </div>
+        </div>
+        <div v-for="candidate in pending.rotationCandidates" :key="candidate.channelId" class="card" data-rotation-candidate>
+          <p>
+            {{ whoIs(candidate.channelId) }} wrote to an address you handed out.
+            <template v-if="candidate.status === 'ready'">A private address for them can be made now.</template>
+            <template v-else-if="candidate.status === 'waiting'">A private address for them waits for evidence.</template>
+            <template v-else>A private address for them cannot be made here.</template>
+          </p>
+          <p v-if="candidate.because" class="note">{{ candidate.because }}</p>
+          <div v-if="candidate.entries.includes('rotate')" class="card-actions">
+            <button class="btn small" type="button" :disabled="busy || sendsClosed" data-make-private @click="act(() => rotate(candidate.channelId))">Make one</button>
           </div>
         </div>
         <div v-for="notification in pending.missingNotifications" :key="notification.rotationEventCid" class="card" data-missing-notification>

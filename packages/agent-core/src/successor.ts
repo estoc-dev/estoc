@@ -1,0 +1,93 @@
+/**
+ * The successor a rotation makes from its recipe, and whether this
+ * runtime can make it now. The recipe fixes the entity ID and the
+ * generation; the route is the predecessor's own, read off its
+ * document, so that two replicas rotating from one address arrive at
+ * one document whatever arrangement either prefers. A mediated
+ * predecessor is continued by a replica of the arrangement that routes
+ * it: the successor inherits the route, so the runtime committing the
+ * rotation must be the one picking up there, and no other replica's
+ * membership stands in for its own; and the route must carry, since a
+ * document is minted over where it sends. An entity recorded already
+ * under the successor's ID is reused only when it is exactly what would
+ * be made now, generation, route and document alike, and live; anything
+ * else under the ID stops the rotation, since a second creation would
+ * put the entity in conflict and a successor minted under another ID
+ * would part the replicas. The standing is read off the fold alone, so
+ * that what is offered by hand is a rotation that commits, and read
+ * again under the lock before it does.
+ */
+
+import { encodeLongForm } from "@estoc/did-peer";
+import { generationOf, inputDocumentOf, methodPublicKey, mintDid, recipeDidId, routeServiceUri, samePayload, vaultDraft, type DidUrl, type Keys, type LocalDidEntity, type MediationId, type MintedDid, type ReplicaId, type RouteTarget, type SuccessorRecipe, type VaultDraft, type VaultFold } from "@estoc/vault";
+
+import { namedRouteOf, routeStanding, sameRoute, type RouteSpec } from "./dids.js";
+import { Unusable } from "./errors.js";
+
+/** Ready with the route the successor inherits and where it sends; waiting while evidence may still arrive; blocked where this runtime cannot make the successor at all. */
+export type SuccessorStanding = { status: "ready"; route: RouteSpec; target: RouteTarget } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
+
+/**
+ * The standing of the recipe's successor on the fold: for `author`, the
+ * runtime that would make it, or for no runtime in particular, when
+ * membership of the arrangement routing a mediated predecessor is not
+ * asked and ready says a member could make it. What is blocked for
+ * certain is said before what waits on evidence, so that a route that
+ * has ended is not reported as evidence still to arrive.
+ */
+export function successorStanding(fold: VaultFold, predecessor: LocalDidEntity, recipe: SuccessorRecipe, author?: ReplicaId): SuccessorStanding {
+  const blocked = (because: string): SuccessorStanding => ({ status: "blocked", because });
+  const route = namedRouteOf(predecessor);
+  if (route === null) return blocked(`the document of ${predecessor.didId} names no route a successor could inherit`);
+  const membership = route.kind === "mediated" && author !== undefined ? membershipStanding(fold, author, route.mediationId) : null;
+  const carried = routeStanding(fold, route);
+  if (membership?.status === "blocked") return membership;
+  if (carried.status !== "ready") return { status: carried.status, because: `the predecessor's route does not carry: ${carried.because}` };
+  if (membership !== null) return membership;
+  const didId = recipeDidId(recipe);
+  const existing = fold.dids.entities.get(didId);
+  if (existing === undefined) return { status: "ready", route, target: carried.target };
+  if (existing.conflict || existing.created === null) return blocked(`the successor's ID ${didId} is held by an entity in conflict: ${existing.faults.join("; ")}`);
+  if (!samePayload(existing.created.generation, generationOf(recipe))) return blocked(`the successor's ID ${didId} is held by an entity of another generation`);
+  if (!sameRoute(namedRouteOf(existing), route)) return blocked(`the successor's ID ${didId} is held by an entity on another route`);
+  if (!existing.live) return blocked(`the successor ${didId} is recorded already and is not live: ${existing.retired !== null ? `retired: ${existing.retired}` : existing.faults.join("; ")}`);
+  if (existing.created.longFormDid !== mintedLongForm(existing, carried.target)) return blocked(`the successor's ID ${didId} is held by an entity under another document`);
+  return { status: "ready", route, target: carried.target };
+}
+
+/** The long form a live entity's keys mint over the target: the document the seed would make, read off the keys the entity is verified to hold. */
+function mintedLongForm(entity: LocalDidEntity, target: RouteTarget): string {
+  const document = entity.resolution!.document;
+  const key = (id: DidUrl) => ({ publicKey: methodPublicKey(document, id) });
+  return encodeLongForm(inputDocumentOf({ authentication: key(entity.methodIds.authentication[0]!), keyAgreement: key(entity.methodIds.keyAgreement[0]!) }, routeServiceUri(target)));
+}
+
+/**
+ * Null for a member of the arrangement; blocked for a runtime that is
+ * no replica of it; waiting while the replica is pending. An
+ * arrangement whose creation is not here is reported by the route's own
+ * standing, so a pending replica met here waits for its grant to be
+ * checked against the seed.
+ */
+function membershipStanding(fold: VaultFold, author: ReplicaId, mediationId: MediationId): SuccessorStanding | null {
+  const replica = fold.replicas.replicas.get(author);
+  if (replica === undefined) return { status: "blocked", because: `this runtime is not enrolled in the arrangement ${mediationId}, which routes the predecessor` };
+  if (replica.status === "conflict") return { status: "blocked", because: `this runtime's replica is in conflict: ${replica.faults.join("; ")}` };
+  if (replica.mediationId !== mediationId) return { status: "blocked", because: `this runtime is a replica of the arrangement ${replica.mediationId}, not of ${mediationId}, which routes the predecessor` };
+  if (replica.status === "pending") return { status: "waiting", because: `this runtime's replica in the arrangement ${mediationId} is not yet a member: its grant is not checked against the seed` };
+  return null;
+}
+
+/**
+ * The successor the recipe names, on the predecessor's route: minted
+ * and drafted when no entity holds its ID, the one recorded when an
+ * entity holds it with exactly this document, which a ready standing
+ * has read. `Unusable` while the standing is not ready.
+ */
+export async function materializeSuccessor(fold: VaultFold, keys: Keys, author: ReplicaId, predecessor: LocalDidEntity, recipe: SuccessorRecipe): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
+  const standing = successorStanding(fold, predecessor, recipe, author);
+  if (standing.status !== "ready") throw new Unusable("DID", predecessor.didId, [standing.because]);
+  const minted = await mintDid(keys, recipeDidId(recipe), standing.target);
+  const drafts = fold.dids.entities.has(minted.didId) ? [] : [vaultDraft("did.created", { didId: minted.didId, did: minted.did, longFormDid: minted.longFormDid, generation: generationOf(recipe) })];
+  return { drafts, successor: minted };
+}

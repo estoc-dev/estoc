@@ -109,7 +109,7 @@ describe("one pickup batch holding a message from the address the peer then rota
     ]);
     expect(old.observations.map(({ disposition }) => disposition)).toEqual([{ status: "admitted" }, { status: "admitted" }]);
     expect((await records.channel(channelOf(a0, b1))).observations).toMatchObject([{ disposition: { status: "admitted" }, verification: { status: "verified" } }]);
-    expect(records.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    expect(records.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     const acks = [...(await foldOf(alice)).outbound.outbounds.values()].filter((outbound) => outbound.intent.status === "consistent" && outbound.intent.data.effectType === PURE_ACK_EFFECT);
     const acknowledgedIn = (peer: Did): string[] => acks.filter(({ channel }) => channel !== null && channel.peerDid === peer).map(({ outcome }) => outcome.status);
     expect([acks.length, acknowledgedIn(b0), acknowledgedIn(b1)]).toEqual([2, ["submitted"], ["submitted"]]);

@@ -1,12 +1,13 @@
 /**
- * Communication DIDs: an entity minted from its ID and a route alone, a
- * mediation arrangement or a direct endpoint, so a committed ID reuses
+ * Communication DIDs: an entry minted from a fresh ID and a route alone,
+ * a mediation arrangement or a direct endpoint, so a committed ID reuses
  * its exact keys and document after a crash and is not recreated for
- * another route; the disclosure that reveals an address, its mediated
- * registration verified first; and the retirement that ends new sending
- * and disclosure at it. Where a DID sends is read back from its
- * document, never recorded beside it. Every decision is taken over the
- * fold under the lock.
+ * another route or another use; the disclosure that reveals an entry,
+ * its mediated registration verified first, and never an address of a
+ * private branch, which stays the one peer's; and the retirement that
+ * ends new sending and disclosure at it. Where a DID sends is read back
+ * from its document, never recorded beside it. Every decision is taken
+ * over the fold under the lock.
  */
 
 import { v7 as uuidv7 } from "uuid";
@@ -14,6 +15,7 @@ import { v7 as uuidv7 } from "uuid";
 import { decodeLongForm, isShortForm } from "@estoc/did-peer";
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
 import {
+  GENERATION_PROFILE,
   canonicalDid,
   mediationIdOf,
   mintDid,
@@ -21,6 +23,7 @@ import {
   serviceTargetOf,
   vaultDraft,
   type Did,
+  type DidGeneration,
   type DidId,
   type DisclosureAs,
   type Keys,
@@ -53,28 +56,42 @@ export function didOf(fold: VaultFold, didId: DidId): LocalDidEntity {
   return entity;
 }
 
+/** Whether a route carries a DID now: where it sends; waiting while evidence may still arrive; blocked where the arrangement has ended or is in conflict, or the endpoint is no URL a document names. */
+export type RouteStanding = { status: "ready"; target: RouteTarget } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
+
 /**
  * Where a route sends, once it can carry a DID: the mediator of a
  * usable arrangement, or the endpoint itself. A did:peer:4 mediator is
  * named by its long form, validated against its hash, so that whoever
  * is given the address resolves the mediator from the address alone;
  * the spelling an arrangement is reported under changes with the
- * evidence merged here and names no document. `Unusable` while the
- * arrangement is not usable or no long form of its mediator is in
- * evidence.
+ * evidence merged here and names no document. An arrangement not
+ * recorded here, not granted yet or whose mediator has no long form in
+ * evidence waits for what a merge may bring.
  */
-export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
+export function routeStanding(fold: VaultFold, route: RouteSpec): RouteStanding {
   if (route.kind === "direct") {
     const target = serviceTargetOf(route.endpoint);
-    if (target === null || target.kind !== "direct") throw new Unusable("endpoint", route.endpoint, ["an endpoint is an absolute HTTPS or WSS URL"]);
-    return target;
+    if (target === null || target.kind !== "direct") return { status: "blocked", because: "an endpoint is an absolute HTTPS or WSS URL" };
+    return { status: "ready", target };
   }
-  const mediation = mediationOf(fold, route.mediationId);
-  if (mediation.status !== "usable" || mediation.mediatorDid === null) throw new Unusable("mediation", route.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
+  const mediation = fold.mediations.mediations.get(route.mediationId);
+  if (mediation === undefined) return { status: "waiting", because: `no arrangement ${route.mediationId} is recorded here` };
+  if (mediation.status === "pending") return { status: "waiting", because: `the arrangement ${route.mediationId} is ${mediation.mediatorDid === null ? "not created here" : mediation.routingDid === null ? "not granted" : "not checked against the seed"} yet` };
+  if (mediation.status !== "usable" || mediation.mediatorDid === null) return { status: "blocked", because: `the arrangement ${route.mediationId} is ${mediation.retired !== null ? `retired: ${mediation.retired}` : `in conflict: ${mediation.faults.join("; ")}`}` };
   const mediator = canonicalDid(mediation.mediatorDid);
   const routingDid = isShortForm(mediator) ? knownLongForms(fold)(mediator) : mediator;
-  if (routingDid === null) throw new Unusable("mediation", route.mediationId, [`no long form of ${mediator} is in evidence`]);
-  return { kind: "mediated", routingDid };
+  if (routingDid === null) return { status: "waiting", because: `no long form of ${mediator} is in evidence` };
+  return { status: "ready", target: { kind: "mediated", routingDid } };
+}
+
+/** The target of `routeStanding`; `UnknownEntity` for an arrangement not recorded here and `Unusable` while the route does not carry. */
+export function routeTargetOf(fold: VaultFold, route: RouteSpec): RouteTarget {
+  const standing = routeStanding(fold, route);
+  if (standing.status === "ready") return standing.target;
+  if (route.kind === "direct") throw new Unusable("endpoint", route.endpoint, [standing.because]);
+  if (!fold.mediations.mediations.has(route.mediationId)) throw new UnknownEntity("mediation", route.mediationId);
+  throw new Unusable("mediation", route.mediationId, [standing.because]);
 }
 
 /**
@@ -94,7 +111,7 @@ export function routeOf(entity: LocalDidEntity): RouteSpec | null {
   return route?.kind === "mediated" && entity.mediation === null ? null : route;
 }
 
-function sameRoute(a: RouteSpec | null, b: RouteSpec): boolean {
+export function sameRoute(a: RouteSpec | null, b: RouteSpec): boolean {
   if (a === null) return false;
   return a.kind === "direct" ? b.kind === "direct" && a.endpoint === b.endpoint : b.kind === "mediated" && a.mediationId === b.mediationId;
 }
@@ -120,12 +137,15 @@ export interface CreatedDid {
   existed: boolean;
 }
 
+const ENTRY: DidGeneration = { kind: "entry", profile: GENERATION_PROFILE };
+
 /**
- * `did.created` for a route: the fixed keys derived from the entity
- * ID, the numalgo-4 document built over them and the route's target,
- * the short form and long form committed. The same ID again returns
- * the entity as recorded, when its document names the route, and
- * writes nothing.
+ * `did.created` of an entry for a route: the fixed keys derived from
+ * the entity ID, the numalgo-4 document built over them and the route's
+ * target, the short form and long form committed. The same ID again
+ * returns the entity as recorded, when its document names the route and
+ * it is an entry, and writes nothing. A successor is not made here: the
+ * rotation makes it, from the recipe the fold names.
  */
 export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
   let minted!: MintedDid;
@@ -133,10 +153,11 @@ export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteS
     const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
       minted = recordedDid(existing, route);
+      if (existing.created!.generation.kind !== "entry") throw new EntityConflict("DID", didId, `a ${existing.created!.generation.kind}, not an entry`);
       return [];
     }
     minted = await mintDid(keys, didId, routeTargetOf(fold, route));
-    return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid })];
+    return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid, generation: ENTRY })];
   });
   const created = events[0] as VaultEvent<"did.created"> | undefined;
   return created === undefined
@@ -173,8 +194,14 @@ function requireLive(entity: LocalDidEntity): void {
   if (!entity.live) throw new Unusable("DID", entity.didId, entity.retired !== null ? [`retired: ${entity.retired}`, ...entity.faults] : entity.faults);
 }
 
+/** An address of a private branch is the one peer's: disclosing it would hand the branch to anyone, so a new entry is disclosed instead. */
+function requireEntry(fold: VaultFold, entity: LocalDidEntity): void {
+  const lineage = fold.dids.lineage(entity.didId);
+  if (lineage.status !== "entry") throw new Unusable("DID", entity.didId, [`only an entry is disclosed, and this address is ${lineage.status === "branch" ? "in a private branch" : `of ${lineage.status} generation`}: create an entry to disclose`]);
+}
+
 /**
- * `did.disclosed` for a live entity, and the invitation when it is an
+ * `did.disclosed` for a live entry, and the invitation when it is an
  * `oob` one. A mediated address is added, over `link`, to the account
  * of the one arrangement that routes it, which needs the runtime's
  * `confirmations`, and refused unless the mediator holds it. A direct
@@ -190,6 +217,7 @@ export async function disclose(link: MediatorLink | null, runtime: VaultRuntime,
   const fold = await scanVault(runtime.vault, keys);
   const entity = didOf(fold, didId);
   requireLive(entity);
+  requireEntry(fold, entity);
   const created = entity.created as VaultData["did.created"];
   const route = routeOf(entity);
   const goal = disclosure.goal ?? null;

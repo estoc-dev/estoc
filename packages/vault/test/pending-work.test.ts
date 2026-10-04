@@ -14,6 +14,7 @@ import {
   automaticMessageId,
   decisionFor,
   effectKey,
+  startDidId,
   executionId,
   foldVault,
   kindOf,
@@ -21,14 +22,15 @@ import {
   type MessageId,
   type PendingWork,
 } from "../src/index.js";
-import { expectOrderFree } from "./fold/helpers.js";
-import { IAT, PURE_ACK, automatic, channel, foldScene, intent, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
+import { MEDIATED, createdDid, expectOrderFree } from "./fold/helpers.js";
+import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const inputOf = (source: { data: { wireMessageId: string } }, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId as never);
 
 const workSnapshot = (work: PendingWork) => ({
   outbounds: work.outbounds.map((o) => [o.messageId, o.work.kind]),
   responses: work.responses.map((r) => [r.execution.messageId, r.effectType, r.channel]),
+  rotationCandidates: work.rotationCandidates.map((c) => [c.channel, c.sources.map((s) => s.event.cid), c.choice]),
   notifications: work.notifications.map((n) => [n.decision.event.cid, n.channel, n.source?.event.cid ?? null]),
   notificationConflicts: work.notificationConflicts.map((c) => [c.decision.event.cid, c.notification.messageIds]),
   proofs: work.proofs.map((c) => c.source.event.cid),
@@ -65,6 +67,7 @@ describe("unfinished work", () => {
         .map((event) => event.data.messageId)
         .sort()
         .flatMap((messageId) => (messageId === ping.data.messageId ? [PURE_ACK_EFFECT, PING_RESPONSE_EFFECT] : [PURE_ACK_EFFECT]).map((effectType) => [messageId, effectType, channel(a0, b0)])),
+      rotationCandidates: [],
       notifications: [],
       notificationConflicts: [],
       proofs: [waiting.cid],
@@ -98,6 +101,57 @@ describe("unfinished work", () => {
     expect(vault.outbound.ackTarget(fromSuccessor.cid)).toEqual({ status: "eligible", wireMessageId: fromSuccessor.data.wireMessageId });
     expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[fromSuccessor.data.messageId, PURE_ACK_EFFECT, channel(a0, b1)]]);
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
+  });
+
+  it("lists the rotation a disclosed entry's established application inputs call for, one per intent with every input, ready with the start it would select, blocked where the pair is denied, and taken over by the decision once one is recorded", async () => {
+    const { scene, keys, peerKeys, a0, a1, b0, b1, b2, b3 } = await vaults();
+    invitation(scene, a0);
+    const first = proofFreeReceipt(scene, a0, b0);
+    const second = proofFreeReceipt(scene, a0, b0);
+    proofFreeReceipt(scene, a1, b0);
+    const unrelated = proofFreeReceipt(scene, a0, b2);
+    const control = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), overrides: { msgType: EMPTY_MESSAGE_TYPE, ack: [first.data.wireMessageId] } });
+    const unadmitted = receipt(scene, { local: a0, peer: b3, resolution: resolved(scene, a0.didId, b3), admitted: false });
+    let vault = await foldScene(scene, keys);
+    expect(kindOf(control.data)).not.toBe("application");
+    expect(vault.admissions.admitted(unadmitted.cid)).toBe(false);
+    const ready = (local: Local, binding: Peer, support: string[] = []) => ({ status: "ready", recipe: { kind: "start", predecessor: local.did, binding: binding.did }, support });
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([
+      [channel(a0, b2), [unrelated.cid], ready(a0, b2)],
+      [channel(a0, b0), [first.cid, second.cid], ready(a0, b0)],
+    ]);
+    expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))).rotationCandidates);
+
+    const moved = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    blocked(scene, a0, b2);
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([
+      [channel(a0, b2), [unrelated.cid], { status: "blocked", because: "the channel is denied" }],
+      [channel(a0, b1), [first.cid, second.cid, moved.cid], ready(a0, b0, [`receipt:${moved.cid}:transition`])],
+    ]);
+
+    const successor: Local = await createdDid(scene, keys, startDidId(a0.did, b0.did), MEDIATED, { kind: "start", profile: "v1", predecessor: a0.did, binding: b0.did });
+    const decision = await rotation(scene, keys, { from: a0, peer: b1, to: successor, source: moved });
+    vault = await foldScene(scene, keys);
+    expect(decisionFor(vault, a0.did, b1.did).status).toBe("candidate");
+    const work = workSnapshot(unfinishedWork(vault));
+    expect(work.rotationCandidates).toEqual([[channel(a0, b2), [unrelated.cid], { status: "blocked", because: "the channel is denied" }]]);
+    expect(work.notifications).toEqual([[decision.cid, channel(successor, b1), moved.cid]]);
+  });
+
+  it("names the pair current policy still rotates whatever the inputs' clocks say: an input at the peer's replaced address stamped after the input that carried the replacement hides neither the rotation nor, once that pair is denied, the denial", async () => {
+    const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
+    invitation(scene, a0);
+    const moved = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const late = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0) }, { at: "2026-10-05T00:00:00.000Z" });
+    let vault = await foldScene(scene, keys);
+    expect([vault.continuity.superseded(channel(a0, b0)), vault.continuity.head(channel(a0, b0))]).toEqual([true, channel(a0, b1)]);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [`receipt:${moved.cid}:transition`] }]]);
+    expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))).rotationCandidates);
+
+    blocked(scene, a0, b1);
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "blocked", because: "the channel is denied" }]]);
   });
 
   it("lists the notification a verified decision permits while its source stays eligible, reuses one already recorded, and reports several as a conflict", async () => {

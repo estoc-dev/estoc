@@ -314,7 +314,7 @@ export class Agent {
   }
 
   records(): Promise<Recorder> {
-    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers });
+    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses });
   }
 
   /** The work an open leaves to the user. */

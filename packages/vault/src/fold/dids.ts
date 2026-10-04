@@ -10,15 +10,18 @@
  * conflict or not, and a consistent DID spelling its one entity;
  * liveness governs sending and recipient registration, not history.
  * The key check needs the seed and runs beside the fold; an entity the
- * seed has not confirmed is pending, never live.
+ * seed has not confirmed is pending, never live. An entity's generation
+ * is read back to the branch it belongs to, each entity resolved once:
+ * what a successor of it is made from, and what a rotation away from it
+ * must be anchored to.
  */
 
 import { IdentityMismatch, InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { checkDidKeys, didDocumentOf, serviceTargetOf, type Keys, type RouteTarget } from "../identity.js";
-import { didKeyName } from "../ids.js";
+import { GENERATION_PROFILE, channelOf, didKeyName } from "../ids.js";
 import { authorizedMethodIds, canonicalDidOf, didcommServiceUris, type PeerResolution } from "../peer-document.js";
 import type { VaultEvent } from "../schema.js";
-import type { Did, DidId, DidUrl, KeyName, MediationId, VaultData } from "../types.js";
+import type { Channel, Did, DidGeneration, DidId, DidUrl, KeyName, MediationId, VaultData } from "../types.js";
 import { foldMediations, verifyMediationKeys, type IdentityCheck, type KeyCheck, type MediationFold } from "./mediation.js";
 import { groupBy, samePayload, type VaultEventSet } from "./set.js";
 
@@ -48,13 +51,33 @@ export interface LocalDidEntity {
    */
   readonly conflict: boolean;
   readonly identity: IdentityCheck;
-  /** consistent, verified, not retired, document and arrangement in order: may send, disclose and register */
+  /** consistent, verified, not retired, document and arrangement in order: may send and register; disclosure asks for an entry besides */
   readonly live: boolean;
 }
 
 
+/**
+ * The branch an entity's generation leads back to. An entry is an
+ * address branches are made from; a branch is anchored at the pair its
+ * start was bound to, the entry and the peer's address the relationship
+ * first led back to, and every next under it keeps that anchor. Pending
+ * while a predecessor's creation is not here; unsupported under a
+ * profile this version does not make, whose rules are not applied;
+ * invalid where the generations contradict each other, a start under a
+ * branch, a next under an entry, a profile that changes along the way,
+ * a predecessor in conflict or a chain that leads back to itself.
+ */
+export type Lineage =
+  | { status: "entry" }
+  | { status: "branch"; anchor: Channel; start: DidId }
+  | { status: "pending"; because: string }
+  | { status: "unsupported"; profile: string }
+  | { status: "invalid"; because: string };
+
 export interface DidFold {
   readonly entities: ReadonlyMap<DidId, LocalDidEntity>;
+  /** the branch the entity's generation leads back to; invalid for an entity no creation here records */
+  lineage(didId: DidId): Lineage;
   /** the entity a key name derives from, whatever its state, since one entity ID names each key; null for a name no entity here records */
   entityOfKey(name: KeyName): DidId | null;
   /** the entity a spelling belongs to, short or long form; null for a spelling no consistent entity records */
@@ -80,7 +103,7 @@ export type ReceiptEligibility = "eligible" | "pending" | "terminal";
 export type DidFoldOptions = { keyChecks?: ReadonlyMap<DidId, KeyCheck> };
 
 export function foldDids(set: VaultEventSet, mediations: MediationFold, options: DidFoldOptions = {}): DidFold {
-  const dids = foldDidTable(set, mediations, options.keyChecks);
+  const { dids, claimants } = foldDidTable(set, mediations, options.keyChecks);
 
   const byKey = new Map<KeyName, DidId>();
   const byDid = new Map<string, DidId>();
@@ -91,9 +114,11 @@ export function foldDids(set: VaultEventSet, mediations: MediationFold, options:
     byDid.set(did.created.did, did.didId);
     byDid.set(did.created.longFormDid, did.didId);
   }
+  const lineages = new Map<DidId, Lineage>();
 
   return {
     entities: dids,
+    lineage: (didId) => lineageOf(didId, { dids, byDid, claimants, lineages }),
     entityOfKey: (name) => byKey.get(name) ?? null,
     entityOfDid: (did) => byDid.get(did) ?? null,
     receipt(didId) {
@@ -121,7 +146,9 @@ function routedBy(mediations: MediationFold, routingDid: Did): { usable: Mediati
   return { usable, faults: through.map((mediation) => `mediation ${mediation.mediationId} is ${mediation.status}`) };
 }
 
-function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: ReadonlyMap<DidId, KeyCheck> | undefined): Map<DidId, LocalDidEntity> {
+type DidTable = { dids: Map<DidId, LocalDidEntity>; claimants: Map<string, Set<DidId>> };
+
+function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: ReadonlyMap<DidId, KeyCheck> | undefined): DidTable {
   const created = groupBy(set.of("did.created"), (event) => event.data.didId);
   const disclosed = groupBy(set.of("did.disclosed"), (event) => event.data.didId);
   const retired = groupBy(set.of("did.retired"), (event) => event.data.didId);
@@ -195,7 +222,95 @@ function foldDidTable(set: VaultEventSet, mediations: MediationFold, keyChecks: 
       live: conflicts.length === 0 && faults.length === 0 && retirement === null,
     });
   }
-  return dids;
+  return { dids, claimants };
+}
+
+type Lineages = DidTable & { byDid: ReadonlyMap<string, DidId>; lineages: Map<DidId, Lineage> };
+
+/**
+ * The generations followed back from the entity until one is resolved
+ * already, is an entry, waits or fails, then read forward again, each
+ * entity on the way given its answer once. A predecessor is found by
+ * its DID among the consistent entities; a DID only an entity in
+ * conflict claims fails the chain for good, one no entity claims leaves
+ * it waiting.
+ */
+function lineageOf(didId: DidId, table: Lineages): Lineage {
+  const chain: DidId[] = [];
+  let current = didId;
+  let result: Lineage | undefined;
+  let own = true;
+  for (;;) {
+    const known = table.lineages.get(current);
+    if (known !== undefined) {
+      result = known;
+      own = false;
+      break;
+    }
+    if (chain.includes(current)) {
+      result = { status: "invalid", because: `the generations of ${current} lead back to itself` };
+      own = false;
+      break;
+    }
+    chain.push(current);
+    const entity = table.dids.get(current);
+    if (entity === undefined) {
+      result = { status: "invalid", because: `no entity ${current} is recorded here` };
+      break;
+    }
+    if (entity.conflict) {
+      result = { status: "invalid", because: `entity ${current} is in conflict: ${entity.faults[0]}` };
+      break;
+    }
+    if (entity.created === null) {
+      result = { status: "pending", because: `entity ${current} has no creation here` };
+      break;
+    }
+    const { generation } = entity.created;
+    if (generation.profile !== GENERATION_PROFILE) {
+      result = { status: "unsupported", profile: generation.profile };
+      break;
+    }
+    if (generation.kind === "entry") {
+      result = { status: "entry" };
+      break;
+    }
+    const predecessor = table.byDid.get(generation.predecessor);
+    if (predecessor === undefined) {
+      const claimed = table.claimants.get(generation.predecessor);
+      result =
+        claimed === undefined || claimed.size === 0
+          ? { status: "pending", because: `the creation of its predecessor ${generation.predecessor} is not here` }
+          : { status: "invalid", because: `its predecessor ${generation.predecessor} is entity ${[...claimed].sort()[0]}, which is in conflict` };
+      break;
+    }
+    current = predecessor;
+  }
+  let i = chain.length - 1;
+  if (own) table.lineages.set(chain[i--]!, result);
+  for (; i >= 0; i--) {
+    const entity = table.dids.get(chain[i]!)!;
+    result = follows(chain[i]!, entity.created!.generation as Exclude<DidGeneration, { kind: "entry" }>, result);
+    table.lineages.set(chain[i]!, result);
+  }
+  return result;
+}
+
+/** What a start or a next is, given what its predecessor is. */
+function follows(didId: DidId, generation: Exclude<DidGeneration, { kind: "entry" }>, predecessor: Lineage): Lineage {
+  const { predecessor: did } = generation;
+  switch (predecessor.status) {
+    case "pending":
+      return { status: "pending", because: `its predecessor ${did} waits: ${predecessor.because}` };
+    case "invalid":
+      return { status: "invalid", because: `its predecessor ${did} is invalid: ${predecessor.because}` };
+    case "unsupported":
+      return { status: "invalid", because: `its predecessor ${did} is under profile ${predecessor.profile}, not ${generation.profile}` };
+    case "entry":
+      return generation.kind === "start" ? { status: "branch", anchor: channelOf(did, generation.binding), start: didId } : { status: "invalid", because: `a next follows a start or a next, and its predecessor ${did} is an entry` };
+    case "branch":
+      return generation.kind === "next" ? predecessor : { status: "invalid", because: `a start follows an entry, and its predecessor ${did} is in a branch` };
+  }
 }
 
 /**

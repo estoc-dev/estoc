@@ -18,6 +18,8 @@ import {
   reconcileAdmissions,
   scanVault,
   signFromPrior,
+  startDidId,
+  successorDidId,
   unfinishedWork,
   vaultDraft,
   type Did,
@@ -44,14 +46,15 @@ import {
   createMediation,
   disclose,
   dispatch,
+  enroll,
   manualNotificationDraft,
   pinnedResolver,
   privateAddress,
   reactTo,
   receiptOf,
+  retireDid,
   rotate,
   selectMediation,
-  send,
   unpack,
   type EffectOutcome,
   type Reacted,
@@ -60,8 +63,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { after, didcomm, directParty, freshVault, merged, newMediator, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
+import { after, copyOf, didcomm, directParty, mediatedParty, merged, newMediator, party, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -72,11 +74,13 @@ const BOB_FORK = "019b0000-0000-7000-8000-0000000000b2" as DidId;
 const BOB_OTHER_FORK = "019b0000-0000-7000-8000-0000000000b3" as DidId;
 const CHARLIE = "019b0000-0000-7000-8000-0000000000c0" as DidId;
 const DAVE = "019b0000-0000-7000-8000-0000000000d0" as DidId;
+const EVE = "019b0000-0000-7000-8000-0000000000e0" as DidId;
 const CREATED = 1_757_700_000;
 const IAT = 1_757_700_000;
 
 const DIRECT: Source = { kind: "direct" };
 const BOB_ENDPOINT = "https://bob.example/didcomm";
+const ALICE_ENDPOINT = "https://alice.example/didcomm";
 
 const accepted = (): Response => new Response(null, { status: 202 });
 
@@ -85,7 +89,7 @@ type Holder = Pick<Fresh, "runtime" | "keys">;
 const foldOf = (holder: Holder): Promise<VaultFold> => scanVault(holder.runtime.vault, holder.keys);
 
 async function parties(): Promise<{ alice: DirectParty; bob: DirectParty }> {
-  return { alice: await directParty(1, "https://alice.example/didcomm", ALICE), bob: await directParty(2, BOB_ENDPOINT, BOB) };
+  return { alice: await directParty(1, ALICE_ENDPOINT, ALICE), bob: await directParty(2, BOB_ENDPOINT, BOB) };
 }
 
 async function closeAll(...holders: Holder[]): Promise<void> {
@@ -148,6 +152,7 @@ describe("a local rotation", () => {
     const rotation = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.longFormDid }, options);
     expect([rotation.existed, rotation.channel]).toEqual([false, { localDid: alice.did, peerDid: bob.did }]);
     const successor = await successorOf(alice, rotation);
+    expect([rotation.successor, successor.generation]).toEqual([startDidId(alice.did, bob.did), { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did }]);
     expect(rotation.decision.data).toMatchObject({ fromDidId: ALICE, peerDid: bob.did, toDidId: rotation.successor, sourceEventCid: null });
     expect(decodeJwt(rotation.decision.data.fromPrior)).toMatchObject({ iss: alice.longFormDid, sub: successor.longFormDid, iat: IAT });
     let fold = await foldOf(alice);
@@ -214,107 +219,104 @@ describe("a local rotation", () => {
     await closeAll(alice, bob);
   });
 
-  test("the successor goes on the route new addresses go on: its predecessor's while no arrangement is preferred, the preferred arrangement's once one is, and a route given outright whichever that is; a successor recorded already keeps its own", async () => {
+  test("the successor is the start the entry and the peer's start derive, on the predecessor's own route whatever arrangement is preferred; two runtimes of one seed deciding apart arrive at one entity, whose records join one intent when merged", async () => {
     const { alice, bob } = await parties();
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
-    const dave = await directParty(4, "https://dave.example/didcomm", DAVE);
     const { options, receive } = await rotating(alice);
-    for (const peer of [bob, charlie, dave]) await receive(peer, { type: BASIC_MESSAGE });
+    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE });
     const direct = routeOf((await foldOf(alice)).dids.entities.get(ALICE)!)!;
-
-    const unpreferred = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
-    expect(await successorRoute(alice, unpreferred)).toEqual(direct);
-
     const mediator = await newMediator();
     const { mediationId } = (await createMediation(alice.runtime, alice.keys, mediator.did as Did)).data;
     await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
     await selectMediation(alice.runtime, alice.keys, mediationId);
-    const mediated = mediatedRoute(mediationId);
-    expect(mediated).not.toEqual(direct);
+    expect((await foldOf(alice)).mediations.preferred).toBe(mediationId);
+    const copy = await copyOf(1, alice);
+    const { options: theirs } = await rotating({ ...copy, didId: ALICE, did: alice.did, longFormDid: alice.longFormDid });
 
-    const preferred = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options);
-    const onMediated = await successorOf(alice, preferred);
-    expect(await successorRoute(alice, preferred)).toEqual(mediated);
-    expect((await resolveDIDCommDoc(onMediated.longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
+    const hers = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
+    const his = await rotate(copy.runtime, copy.keys, { localDidId: ALICE, peerDid: bob.longFormDid }, theirs);
+    expect([hers.existed, his.existed, hers.successor, his.successor]).toEqual([false, false, startDidId(alice.did, bob.did), startDidId(alice.did, bob.did)]);
+    expect(await successorOf(copy, his)).toEqual(await successorOf(alice, hers));
+    expect(await successorRoute(alice, hers)).toEqual(direct);
+    expect(hers.decision.cid).not.toBe(his.decision.cid);
 
-    const again = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, { ...options, didId: preferred.successor });
-    expect([again.existed, again.successor]).toEqual([true, preferred.successor]);
+    await alice.runtime.ingest([...(await foldOf(copy)).set.all()]);
+    const fold = await foldOf(alice);
+    expect([fold.dids.entities.size, fold.set.of("did.created").length, fold.set.of("did.rotationSelected").length, fold.continuity.conflicts]).toEqual([2, 3, 2, []]);
+    expect(fold.dids.entities.get(hers.successor)).toMatchObject({ live: true, conflict: false });
+    const again = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
+    expect(again).toMatchObject({ existed: true, decision: { cid: hers.decision.cid }, records: [{ cid: hers.decision.cid }, { cid: his.decision.cid }] });
 
-    const given = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: dave.did }, { ...options, route: direct });
-    expect(await successorRoute(alice, given)).toEqual(direct);
-    await closeAll(alice, bob, charlie, dave);
+    const toCharlie = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options);
+    expect([toCharlie.successor, (await successorOf(alice, toCharlie)).generation]).toEqual([startDidId(alice.did, charlie.did), { kind: "start", profile: "v1", predecessor: alice.did, binding: charlie.did }]);
+    expect(toCharlie.successor).not.toBe(hers.successor);
+    await closeAll(alice, bob, charlie, copy);
   });
 
-  test("a successor recorded with the mediator's short form as its service is read back as committed by a manual rotation naming its arrangement or none, and refused another route; a fresh successor names the mediator's validated long form whichever spelling its predecessor's document names, and while none is in evidence nothing is written", async () => {
+  test("an entity recorded already under the successor's ID is reused only as exactly what would be made now, generation, route and document alike, and live: another route or another generation under the ID is refused with nothing written, and so is a retired successor", async () => {
     const { alice, bob } = await parties();
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const dave = await directParty(4, "https://dave.example/didcomm", DAVE);
-    const { options, receive } = await rotating(alice);
-    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE });
-    const mediator = await newMediator();
-    const short = longToShort(mediator.did) as Did;
-    const { mediationId } = (await createMediation(alice.runtime, alice.keys, short)).data;
-    await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: short })]);
-    const mediated = mediatedRoute(mediationId);
+    const eve = await directParty(5, "https://eve.example/didcomm", EVE);
+    const { wire, options, receive } = await rotating(alice);
+    for (const peer of [bob, charlie, dave, eve]) await receive(peer, { type: BASIC_MESSAGE });
+    const direct = { kind: "direct", endpoint: ALICE_ENDPOINT } as const;
+    const start = (peer: DirectParty) => ({ didId: startDidId(alice.did, peer.did), generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: peer.did } as const });
 
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, route: mediated })).rejects.toThrow(new Unusable("mediation", mediationId, [`no long form of ${short} is in evidence`]));
+    const elsewhere = await mintDid(alice.keys, start(bob).didId, { kind: "direct", endpoint: "https://elsewhere.example/didcomm" });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: elsewhere.didId, did: elsewhere.did, longFormDid: elsewhere.longFormDid, generation: start(bob).generation })]);
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor's ID ${elsewhere.didId} is held by an entity on another route`]));
+
+    const foreign = await mintDid(alice.keys, start(charlie).didId, direct);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: foreign.didId, did: foreign.did, longFormDid: foreign.longFormDid, generation: { kind: "entry", profile: "v9" } })]);
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor's ID ${foreign.didId} is held by an entity of another generation`]));
+
+    const exact = await mintDid(alice.keys, start(dave).didId, direct);
+    const recorded = await merged(alice.runtime, "did.created", { didId: exact.didId, did: exact.did, longFormDid: exact.longFormDid, generation: start(dave).generation }, "2026-09-14T00:00:00.500Z");
+    const retiring = await mintDid(alice.keys, start(eve).didId, direct);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: retiring.didId, did: retiring.did, longFormDid: retiring.longFormDid, generation: start(eve).generation })]);
+    await retireDid(alice.runtime, alice.keys, retiring.didId, "gone");
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: eve.did }, options)).rejects.toThrow(new Unusable("DID", ALICE, [`the successor ${retiring.didId} is recorded already and is not live: retired: gone`]));
     let fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected"), fold.dids.entities.size]).toEqual([[], 1]);
+    expect([fold.set.of("did.rotationSelected"), fold.set.of("did.created").length, wire.posts.length]).toEqual([[], 5, 0]);
 
-    const recorded = { next: await mintDid(alice.keys, ALICE_NEXT, { kind: "mediated", routingDid: short }), other: await mintDid(alice.keys, ALICE_OTHER, { kind: "mediated", routingDid: short }) };
-    for (const { didId, did, longFormDid } of Object.values(recorded)) await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId, did, longFormDid })]);
-    await createMediation(alice.runtime, alice.keys, mediator.did as Did);
+    const reused = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: dave.did }, options);
+    expect([reused.existed, reused.successor, reused.notification.outcome]).toEqual([false, exact.didId, "created"]);
     fold = await foldOf(alice);
-    expect([fold.mediations.mediations.get(mediationId)!.mediatorDid, fold.dids.entities.get(ALICE_NEXT)]).toMatchObject([short, { live: true, mediation: mediationId }]);
-    expect((await createDid(alice.runtime, alice.keys, mediated, ALICE_NEXT)).minted).toEqual(recorded.next);
-
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, didId: ALICE_NEXT, route: { kind: "direct", endpoint: BOB_ENDPOINT } })).rejects.toThrow(new EntityConflict("DID", ALICE_NEXT, "another route"));
-    const named = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, didId: ALICE_NEXT, route: mediated });
-    const unnamed = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: charlie.did }, { ...options, didId: ALICE_OTHER });
-    expect([named.existed, named.successor, unnamed.existed, unnamed.successor]).toEqual([false, ALICE_NEXT, false, ALICE_OTHER]);
-    fold = await foldOf(alice);
-    expect([(await successorOf(alice, named)).longFormDid, (await successorOf(alice, unnamed)).longFormDid, fold.set.of("did.created").length]).toEqual([recorded.next.longFormDid, recorded.other.longFormDid, 3]);
-
-    await receive(dave, { type: BASIC_MESSAGE }, undefined, recorded.next.longFormDid);
-    expect(fold.mediations.preferred).toBeNull();
-    const fresh = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: dave.did }, options);
-    const minted = await successorOf(alice, fresh);
-    expect([fresh.existed, await successorRoute(alice, fresh)]).toEqual([false, mediated]);
-    expect((await resolveDIDCommDoc(minted.longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
-
-    const stranger = await freshVault(5);
-    const local = await createDid(stranger.runtime, stranger.keys, { kind: "direct", endpoint: "https://stranger.example/didcomm" });
-    const { messageId, action } = await send(stranger.runtime, stranger.keys, { channel: { localDid: local.minted.did, peerDid: minted.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
-    const wire = posting(accepted);
-    expect(await dispatch(stranger.runtime, stranger.keys, action, { didcomm, fetch: wire.fetch })).toMatchObject({ outcome: "submitted", messageId });
-    expect(wire.posts.map((post) => post.url)).toEqual([MEDIATOR_HTTP]);
-    await closeAll(alice, bob, charlie, dave, stranger);
+    expect([fold.set.of("did.created").length, fold.set.of("did.created").filter((event) => event.data.didId === exact.didId).map((event) => event.cid)]).toEqual([5, [recorded.cid]]);
+    expect(fold.continuity.status(reused.decision.cid)).toEqual({ status: "verified" });
+    await closeAll(alice, bob, charlie, dave, eve);
   });
 
-  test("a predecessor whose document names the mediator's long form, minted by another replica and merged before any record of the arrangement spelled it long, hands that long form to its successor: a rotation naming the arrangement or none goes through and writes no further record of the arrangement", async () => {
-    const { alice, bob } = await parties();
+  test("a mediated predecessor hands its arrangement to the successor, named by the mediator's validated long form whichever spelling the arrangement is recorded under, and is continued only by a replica of that arrangement: a runtime enrolled nowhere or in another arrangement is refused with nothing written", async () => {
+    const mediator = await newMediator();
+    const alice = await mediatedParty(mediator, 1, ALICE);
+    const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const { options, receive } = await rotating(alice);
-    const mediator = await newMediator();
-    const short = longToShort(mediator.did) as Did;
-    const { mediationId } = (await createMediation(alice.runtime, alice.keys, short)).data;
-    await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: short })]);
-    const elsewhere = await mintDid(alice.keys, ALICE_NEXT, { kind: "mediated", routingDid: mediator.did as Did });
-    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: ALICE_NEXT, did: elsewhere.did, longFormDid: elsewhere.longFormDid })]);
-    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE }, undefined, elsewhere.longFormDid);
+    for (const peer of [bob, charlie]) await receive(peer, { type: BASIC_MESSAGE });
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: alice.mediationId, routingDid: longToShort(mediator.did) as Did })]);
     let fold = await foldOf(alice);
-    expect([fold.mediations.mediations.get(mediationId)!.routingDid, fold.mediations.preferred, fold.dids.entities.get(ALICE_NEXT)]).toMatchObject([short, null, { live: true, mediation: mediationId }]);
+    expect(fold.mediations.mediations.get(alice.mediationId)).toMatchObject({ status: "usable", mediatorDid: mediator.did });
+    expect(fold.replicas.replicas.get(alice.runtime.author)).toMatchObject({ mediationId: alice.mediationId, status: "member" });
 
-    const mediated = mediatedRoute(mediationId);
-    const inherited = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: bob.did }, options);
-    const named = await rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: charlie.did }, { ...options, route: mediated });
-    for (const rotation of [inherited, named]) {
-      expect([rotation.existed, await successorRoute(alice, rotation)]).toEqual([false, mediated]);
-      expect((await resolveDIDCommDoc((await successorOf(alice, rotation)).longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
-    }
+    const nowhere = await copyOf(1, alice);
+    const { options: theirs } = await rotating({ ...nowhere, didId: ALICE, did: alice.did, longFormDid: alice.longFormDid });
+    await expect(rotate(nowhere.runtime, nowhere.keys, { localDidId: ALICE, peerDid: charlie.did }, theirs)).rejects.toThrow(new Unusable("DID", ALICE, [`this runtime is not enrolled in the arrangement ${alice.mediationId}, which routes the predecessor`]));
+    const other = await party(await newMediator(201, "https://other.example/didcomm"), 1);
+    await enroll(other.link, other.runtime, other.keys, other.confirmations, other.mediationId);
+    await other.runtime.ingest([...fold.set.all()]);
+    const { options: hers } = await rotating({ ...other, didId: ALICE, did: alice.did, longFormDid: alice.longFormDid });
+    await expect(rotate(other.runtime, other.keys, { localDidId: ALICE, peerDid: charlie.did }, hers)).rejects.toThrow(new Unusable("DID", ALICE, [`this runtime is a replica of the arrangement ${other.mediationId}, not of ${alice.mediationId}, which routes the predecessor`]));
+    for (const holder of [nowhere, other]) expect((await foldOf(holder)).set.of("did.rotationSelected")).toEqual([]);
+
+    const rotation = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
+    const successor = await successorOf(alice, rotation);
+    expect([rotation.existed, await successorRoute(alice, rotation)]).toEqual([false, mediatedRoute(alice.mediationId)]);
+    expect((await resolveDIDCommDoc(successor.longFormDid))!.service[0]!.serviceEndpoint).toMatchObject({ uri: mediator.did });
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.set.of("mediation.created").length, fold.dids.entities.size]).toEqual([2, 1, 4]);
-    await closeAll(alice, bob, charlie);
+    expect([fold.set.of("did.rotationSelected").length, fold.set.of("mediation.created").length, fold.dids.entities.get(rotation.successor)]).toMatchObject([1, 1, { live: true, mediation: alice.mediationId }]);
+    await closeAll(alice, bob, charlie, nowhere, other);
   });
 
   test("no rotation from an address the peer never wrote to, or wrote to only in an observation not admitted, in a denied channel, toward oneself, from an unknown entity, over a control input, or where decisions already compete", async () => {
@@ -361,35 +363,36 @@ describe("a local rotation", () => {
     await closeAll(fresh.alice, fresh.bob);
   });
 
-  test("an entity recorded earlier is a manual rotation's successor only while the decision folds without conflict, and never the policy's: a rotation back to the predecessor and a policy rotation to a disclosed address are refused before anything is written, and a fresh ID given to the policy is taken", async () => {
+  test("a rotation away from a branch address is a next of it, and toward a peer the usable history does not lead to from the branch's anchor it waits and writes nothing; a branch address is neither disclosed nor created as an entry", async () => {
     const { alice, bob } = await parties();
+    const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const { wire, options, receive } = await rotating(alice);
     await receive(bob, { type: BASIC_MESSAGE });
-    const forward = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, { ...options, didId: ALICE_NEXT });
-    const successor = await successorOf(alice, forward);
-    await receive(bob, { type: BASIC_MESSAGE }, undefined, successor.longFormDid);
+    const forward = await rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: bob.did }, options);
+    const first = await successorOf(alice, forward);
+    await receive(bob, { type: BASIC_MESSAGE }, undefined, first.longFormDid);
+    await receive(charlie, { type: BASIC_MESSAGE }, undefined, first.longFormDid);
     let fold = await foldOf(alice);
-    expect(fold.continuity.confirmedBy(successor.did, bob.did)).not.toBeNull();
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE_NEXT, peerDid: bob.did }, { ...options, didId: ALICE })).rejects.toThrow(new Unusable("DID", ALICE, ["the decision would be in conflict: its context is in conflict"]));
+    expect([fold.continuity.confirmedBy(first.did, bob.did), fold.continuity.confirmedBy(first.did, charlie.did)]).not.toContain(null);
+    const toCharlie = { localDid: first.did, peerDid: charlie.did };
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: first.didId, peerDid: charlie.did }, options)).rejects.toThrow(new Unusable("channel", channelKey(toCharlie), [`the successor is not decided, waiting: no usable history leads from the branch's anchor, ${alice.did} toward ${bob.did}, to the pair`]));
     fold = await foldOf(alice);
-    expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, fold.continuity.head({ localDid: alice.did, peerDid: bob.did }), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: successor.did, peerDid: bob.did }, [], 1]);
-    await closeAll(alice, bob);
+    expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, wire.posts.length]).toEqual([1, 2, 1]);
 
-    const disclosed = await parties();
-    const route = routeOf((await foldOf(disclosed.alice)).dids.entities.get(ALICE)!)!;
-    await createDid(disclosed.alice.runtime, disclosed.alice.keys, route, ALICE_OTHER);
-    for (const didId of [ALICE, ALICE_OTHER]) await disclose(null, disclosed.alice.runtime, disclosed.alice.keys, didId, { as: "direct" });
-    const { wire: theirs, options: policy, arrived: written } = await rotating(disclosed.alice);
-    const chat = await written(disclosed.bob, { type: BASIC_MESSAGE });
-    await expect(privateAddress(disclosed.alice.runtime, disclosed.alice.keys, chat, { ...policy, didId: ALICE_OTHER })).rejects.toThrow(new Unusable("DID", ALICE_OTHER, ["a rotation an input selects takes a fresh successor"]));
-    fold = await foldOf(disclosed.alice);
-    expect([fold.set.of("did.rotationSelected"), fold.set.of("message.out"), theirs.posts.length, fold.dids.entities.size]).toEqual([[], [], 0, 2]);
-    const fresh = rotated(await privateAddress(disclosed.alice.runtime, disclosed.alice.keys, chat, { ...policy, didId: ALICE_NEXT }));
-    expect([fresh.successor, fresh.decision.data.sourceEventCid, fresh.notification.outcome, theirs.posts.length, (await foldOf(disclosed.alice)).dids.entities.size]).toEqual([ALICE_NEXT, chat.cid, "created", 1, 3]);
-    await closeAll(disclosed.alice, disclosed.bob);
+    const onward = await rotate(alice.runtime, alice.keys, { localDidId: first.didId, peerDid: bob.did }, options);
+    const second = await successorOf(alice, onward);
+    expect([onward.existed, second.didId, second.generation, await successorRoute(alice, onward)]).toEqual([false, successorDidId(first.did), { kind: "next", profile: "v1", predecessor: first.did }, routeOf(fold.dids.entities.get(ALICE)!)]);
+    fold = await foldOf(alice);
+    expect([fold.continuity.status(onward.decision.cid), fold.continuity.conflicts, fold.continuity.head({ localDid: alice.did, peerDid: bob.did })]).toEqual([{ status: "verified" }, [], { localDid: second.did, peerDid: bob.did }]);
+    expect(fold.dids.lineage(second.didId)).toEqual({ status: "branch", anchor: { localDid: alice.did, peerDid: bob.did }, start: first.didId });
+
+    await expect(disclose(null, alice.runtime, alice.keys, first.didId, { as: "direct" })).rejects.toThrow(new Unusable("DID", first.didId, ["only an entry is disclosed, and this address is in a private branch: create an entry to disclose"]));
+    await expect(createDid(alice.runtime, alice.keys, routeOf(fold.dids.entities.get(ALICE)!)!, first.didId)).rejects.toThrow(new EntityConflict("DID", first.didId, "a start, not an entry"));
+    expect((await foldOf(alice)).set.of("did.disclosed")).toEqual([]);
+    await closeAll(alice, bob, charlie);
   });
 
-  test("no rotation toward a peer that has replaced its DID, whatever a join at the old pair would make of a waiting decision: nothing is written, while the same local DIDs rotate back and forth toward unrelated peers, each context keeping its own head", async () => {
+  test("no rotation toward a peer that has replaced its DID, whatever a join at the old pair would make of a waiting decision: nothing is written", async () => {
     const { alice, bob } = await parties();
     const { wire, options, receive } = await rotating(alice);
     const bobRoute = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
@@ -405,28 +408,10 @@ describe("a local rotation", () => {
     const old = { localDid: alice.did, peerDid: prior.did };
     let fold = await foldOf(alice);
     expect([fold.continuity.status(pending!.cid).status, fold.continuity.confirmedBy(alice.did, prior.did) !== null, fold.continuity.head(old)]).toEqual(["pending-history", true, { localDid: alice.did, peerDid: bob.did }]);
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, { ...options, didId: ALICE_NEXT })).rejects.toThrow(new Unusable("channel", channelKey(old), ["the peer has replaced its DID"]));
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, options)).rejects.toThrow(new Unusable("channel", channelKey(old), ["the peer has replaced its DID"]));
     fold = await foldOf(alice);
     expect([fold.set.of("did.rotationSelected").length, fold.dids.entities.size, fold.continuity.head(old), fold.continuity.conflicts, wire.posts.length]).toEqual([1, 2, { localDid: alice.did, peerDid: bob.did }, [], 0]);
     await closeAll(alice, bob);
-
-    const three = await parties();
-    const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
-    const { wire: hers, options: theirs, receive: written } = await rotating(three.alice);
-    await written(three.bob, { type: BASIC_MESSAGE });
-    const forward = await rotate(three.alice.runtime, three.alice.keys, { localDidId: ALICE, peerDid: three.bob.did }, { ...theirs, didId: ALICE_NEXT });
-    const successor = await successorOf(three.alice, forward);
-    await written(charlie, { type: BASIC_MESSAGE }, undefined, successor.longFormDid);
-    const back = await rotate(three.alice.runtime, three.alice.keys, { localDidId: ALICE_NEXT, peerDid: charlie.did }, { ...theirs, didId: ALICE });
-    expect([back.existed, back.successor, back.decision.data.peerDid, back.notification.outcome]).toEqual([false, ALICE, charlie.did, "created"]);
-    fold = await foldOf(three.alice);
-    expect(fold.continuity.status(back.decision.cid)).toEqual({ status: "verified" });
-    expect([fold.continuity.conflicts, fold.dids.entities.size, hers.posts.map((post) => post.url)]).toEqual([[], 2, [BOB_ENDPOINT, "https://charlie.example/didcomm"]]);
-    expect([fold.continuity.head({ localDid: three.alice.did, peerDid: three.bob.did }), fold.continuity.head({ localDid: successor.did, peerDid: charlie.did })]).toEqual([
-      { localDid: successor.did, peerDid: three.bob.did },
-      { localDid: three.alice.did, peerDid: charlie.did },
-    ]);
-    await closeAll(three.alice, three.bob, charlie);
   });
 
   test("a decision whose joins would carry an existing peer fork into a channel no conflict reached is refused with nothing written, while a rotation the fork does not touch goes through beside it", async () => {
@@ -450,7 +435,7 @@ describe("a local rotation", () => {
     let fold = await foldOf(alice);
     expect([fold.continuity.conflicts.map(({ conflict }) => conflict.kind), fold.continuity.conflicted(healthy), fold.continuity.head(healthy), fold.continuity.confirmedBy(alice.did, prior.did) !== null]).toEqual([["competing-changes"], false, healthy, true]);
 
-    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, { ...options, didId: ALICE_NEXT })).rejects.toThrow(/^channel \[.*\] is not usable: the channel's continuity is in conflict$/);
+    await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, options)).rejects.toThrow(/^channel \[.*\] is not usable: the channel's continuity is in conflict$/);
     fold = await foldOf(alice);
     expect([fold.set.of("did.rotationSelected").length, fold.set.of("message.out").length, fold.dids.entities.size, fold.continuity.conflicted(healthy), fold.continuity.head(healthy), wire.posts.length]).toEqual([0, 0, 2, false, healthy, 0]);
 
@@ -474,7 +459,7 @@ describe("a local rotation", () => {
       [PING_RESPONSE_EFFECT, "created"],
     ]);
     const rotation = rotated(await privateAddress(alice.runtime, alice.keys, input, options));
-    expect([rotation.existed, rotation.decision.data.sourceEventCid, rotation.decision.data.peerDid]).toEqual([false, reacted.cid, bob.did]);
+    expect([rotation.existed, rotation.successor, rotation.decision.data.sourceEventCid, rotation.decision.data.peerDid]).toEqual([false, startDidId(alice.did, bob.did), reacted.cid, bob.did]);
     const successor = await successorOf(alice, rotation);
     const notification = created(rotation.notification);
     expect(notification.messageId).toBe(automaticMessageId(effectKey(reacted.executionId!, ROTATION_NOTIFICATION_EFFECT)));

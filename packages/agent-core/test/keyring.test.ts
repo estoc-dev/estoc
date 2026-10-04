@@ -35,7 +35,7 @@ describe("the keyring", () => {
     const bob = await freshVault(2);
     const { minted } = await createDid(bob.runtime, bob.keys, DIRECT);
     // Bob's record in Alice's vault: a document the seed of this vault does not derive
-    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid })]);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
     expect(fold.dids.entities.get(minted.didId)?.identity).toBe("mismatch");
     const ring = await Keyring.load(alice.keys, fold);

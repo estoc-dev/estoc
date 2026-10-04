@@ -8,7 +8,7 @@ export function useAttention() {
   const byHand = computed(() => {
     const p = pending.value;
     if (p === null) return 0;
-    return p.pendingOutbounds.length + p.missingResponses.length + p.missingNotifications.length + p.notificationConflicts.length + p.pendingProofs.length;
+    return p.pendingOutbounds.length + p.missingResponses.length + p.rotationCandidates.length + p.missingNotifications.length + p.notificationConflicts.length + p.pendingProofs.length;
   });
   const waiting = computed(() => state.lines?.waiting ?? []);
   const discarded = computed(() => state.lines?.discarded ?? []);

@@ -5,7 +5,7 @@ import { vi } from "vitest";
 
 import { resolveDIDCommDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { eventCidOf, type AuthorId, type Cid, type EventEnvelope, type Held, type JsonObject, type SqliteDriver, type VaultRuntime } from "@estoc/event-store";
+import { eventCidOf, type AuthorId, type Cid, type Event, type EventEnvelope, type Held, type JsonObject, type SqliteDriver, type VaultRuntime } from "@estoc/event-store";
 import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type SeedKeystoreDocument } from "@estoc/keystore";
 import {
   AUTHENTICATION_METHOD,
@@ -88,6 +88,14 @@ export async function freshVault(fill = 1, label = `party ${fill}`, driver = mem
 
 export async function newMediator(fill = 200, http = MEDIATOR_HTTP): Promise<FakeMediator> {
   return new FakeMediator(await deriveIdentity(await importSeed(seedOf(fill)), "anchor"), http);
+}
+
+/** Another runtime over the seed `fill` fills, holding the events of `of` that `keep` lets through as a merge would bring them: a second replica of that vault, enrolled nowhere. */
+export async function copyOf(fill: number, of: Pick<Fresh, "runtime" | "keys">, keep: (event: Event) => boolean = () => true): Promise<Fresh> {
+  const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(fill) });
+  const opened = await createVault(memoryDriver(), { seedKey, wrapped: doc, label: `copy of party ${fill}`, now: ticking("2026-09-15T00:00:00.000Z") });
+  await opened.runtime.ingest([...(await scanVault(of.runtime.vault, of.keys)).set.all()].filter(keep));
+  return { ...opened, seedKey, keystore: doc };
 }
 
 export interface Party extends Fresh {
@@ -300,7 +308,6 @@ export const after = (at: string, seconds: number): string => new Date(Date.pars
 /** Someone with one communication DID, whichever route it is on. */
 export type Addressed = Pick<DirectParty, "runtime" | "keys" | "didId" | "did" | "longFormDid">;
 
-/** The route over a mediation arrangement, as `createDid` and `rotate` take it. */
 export const mediatedRoute = (mediationId: MediationId): RouteSpec => ({ kind: "mediated", mediationId });
 
 const PROOF_IAT = 1_757_700_000;

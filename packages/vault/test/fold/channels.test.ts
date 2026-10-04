@@ -35,7 +35,7 @@ import {
   type VaultEvent,
   type WireMessageId,
 } from "../../src/index.js";
-import { DIRECT, ENDPOINT, MEDIATED, checksOf, createdDid, expectOrderFree, foldChecked, type KeyChecks, type Scene, fakeEventCid } from "./helpers.js";
+import { DIRECT, ENDPOINT, ENTRY, MEDIATED, checksOf, createdDid, expectOrderFree, foldChecked, type KeyChecks, type Scene, fakeEventCid } from "./helpers.js";
 import { IAT, PEER_ID3, asPeer, channel, evidenceChecks, factsOf, noObjects, peerAgreeingOn, proof, receipt, resolved, rotation, vaults, type Peer } from "./scene.js";
 
 const UNCREATED = "019b7000-0000-7000-8000-000000000c00" as DidId;
@@ -532,7 +532,7 @@ describe("foldDecisions", () => {
     expectSameOverEveryOrder(scene.events, checks, proofs);
 
     const otherDocument = await mintDid(keys, a0.didId, DIRECT);
-    scene.add("did.created", { didId: a0.didId, did: otherDocument.did, longFormDid: otherDocument.longFormDid });
+    scene.add("did.created", { didId: a0.didId, did: otherDocument.did, longFormDid: otherDocument.longFormDid, generation: ENTRY });
     const entityConflict = await fold(scene, keys);
     expect(entityConflict.evidence.decisions.get(wrongPair.cid)).toMatchObject({ channel: null, status: { status: "conflict", because: "the predecessor entity is in conflict: creations disagree" } });
     expect(entityConflict.evidence.sources.get(conflicted.cid)).toMatchObject({ localDidId: a0.didId, channel: null, standing: { status: "conflict", because: "the local entity is in conflict: creations disagree" } });

@@ -121,7 +121,7 @@ describe("adding recipients", () => {
     (input.verificationMethod as { type: string }[])[0]!.type = "Ed25519VerificationKey2018";
     const longFormDid = encodeLongForm(input);
     const unsigned = longToShort(longFormDid) as Did;
-    await p.runtime.vault.commit([], [vaultDraft("did.created", { didId, did: unsigned, longFormDid: longFormDid as Did })]);
+    await p.runtime.vault.commit([], [vaultDraft("did.created", { didId, did: unsigned, longFormDid: longFormDid as Did, generation: { kind: "entry", profile: "v1" } })]);
     expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(didId)).toMatchObject({ identity: "verified" });
 
     const recipients = await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);

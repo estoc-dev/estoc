@@ -12,6 +12,7 @@ import {
   rawCidOfBytes,
   vaultDraft,
   type Did,
+  type DidGeneration,
   type DidId,
   type KeyName,
   type MediationId,
@@ -137,10 +138,12 @@ export function mediatedRoute(scene: Scene, keys: { me: Did }, mediationId = MED
   scene.add("mediation.selected", { mediationId });
 }
 
-/** A communication DID minted from the seed for a route, recorded as `did.created`. */
-export async function createdDid(scene: Scene, keys: Keys, didId: DidId, target: RouteTarget): Promise<VaultData["did.created"]> {
+export const ENTRY: DidGeneration = { kind: "entry", profile: "v1" };
+
+/** A communication DID minted from the seed for a route, recorded as `did.created`: an entry unless its generation is given. */
+export async function createdDid(scene: Scene, keys: Keys, didId: DidId, target: RouteTarget, generation: DidGeneration = ENTRY): Promise<VaultData["did.created"]> {
   const minted = await mintDid(keys, didId, target);
-  const data = { didId, did: minted.did, longFormDid: minted.longFormDid };
+  const data = { didId, did: minted.did, longFormDid: minted.longFormDid, generation };
   scene.add("did.created", data);
   return data;
 }

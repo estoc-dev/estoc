@@ -1,16 +1,17 @@
 /**
- * The early private-address policy: an address we disclosed is one
+ * The early private-address policy: an entry we disclosed is one
  * anyone may have; the first established application input a peer
- * writes to it selects a fresh private successor toward that peer,
- * decided over the input as its source and announced to the peer
- * alone. The policy is applied only while the input is live, in the
- * receipt's own call chain, and applies to disclosure alone: a DID
- * reused across channels, one a peer's rotation led to, or one never
- * disclosed selects nothing, and separating such an address is a
- * manual rotation. A pair whose predecessor already decided reuses
- * that intent, under its first candidate record, whatever verified it
- * since and however many records support it, and selects no second
- * successor and no other notification.
+ * writes to it selects a private branch toward that peer, the start
+ * the fold's recipe names, decided over the input as its source and
+ * announced to the peer alone. The policy is applied only while the
+ * input is live, in the receipt's own call chain, and to a disclosed
+ * entry alone: an address in a branch, disclosed or not, one a peer's
+ * rotation led to, or one never disclosed selects nothing. A pair
+ * whose predecessor already decided reuses that intent, under its
+ * first candidate record, whatever verified it since and however many
+ * records support it, and selects no second successor and no other
+ * notification. The same input on two replicas selects the same
+ * successor; what each then records is its own record of one intent.
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
@@ -37,6 +38,7 @@ export function privacyPolicy(fold: VaultFold, cid: EventReference<"message.in">
   if (kind !== "application") return none(`a control input selects no rotation: it is ${kind}`);
   const entity = fold.dids.entities.get(source.localDidId);
   if (entity === undefined || entity.disclosures.length === 0) return none("the local DID is not disclosed");
+  if (fold.dids.lineage(entity.didId).status !== "entry") return none("the local DID is not an entry");
   const denied = channelPolicy(fold, source.channel);
   if (denied !== null) return none(denied);
   const existing = decisionFor(fold, source.channel.localDid, source.channel.peerDid);
@@ -55,9 +57,8 @@ export type PrivateAddress =
  * checked again under the writer lock, where the decision and the
  * notification's intent are committed, and the notification's one
  * transport call is made once the lock is released. A decision
- * recorded meanwhile is reused as it is. The successor is a fresh
- * entity: the rotation refuses an address recorded before, disclosed
- * or not, as the policy's successor.
+ * recorded meanwhile is reused as it is, and so is the successor
+ * another replica already created for the same start.
  */
 export async function privateAddress(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: RotateOptions): Promise<PrivateAddress> {
   return callPrivateAddress(await decidePrivateAddress(runtime, keys, live, options), options);

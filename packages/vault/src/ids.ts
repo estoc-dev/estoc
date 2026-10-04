@@ -186,7 +186,7 @@ export function mediationIdOf(mediatorDid: Did): MediationId {
  * document builder the entity's keys and DID are made by.
  */
 export function successorDidId(predecessor: Did): DidId {
-  return derive("did-entity", ["v1", "next", canonical(predecessor, "predecessor DID")]) as DidId;
+  return derive("did-entity", [GENERATION_PROFILE, "next", canonical(predecessor, "predecessor DID")]) as DidId;
 }
 
 /**
@@ -199,8 +199,17 @@ export function startDidId(publicDid: Did, binding: Did): DidId {
   const ours = canonical(publicDid, "public DID");
   const theirs = canonical(binding, "binding DID");
   if (ours === theirs) throw new InvalidIdentifier("a relationship binds two distinct DIDs");
-  return derive("did-entity", ["v1", "start", ours, theirs]) as DidId;
+  return derive("did-entity", [GENERATION_PROFILE, "start", ours, theirs]) as DidId;
 }
+
+/**
+ * The generation profile this version makes DID entities under: the
+ * two transcripts above, the key derivation by name and the numalgo-4
+ * document builder, named together, since a change to any of them makes
+ * other entities of the same inputs. A generation recorded under another
+ * profile is read as it is and never rebuilt by these rules.
+ */
+export const GENERATION_PROFILE = "v1";
 
 export const ANCHOR_KEY_NAME = "anchor" as KeyName;
 

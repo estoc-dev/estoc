@@ -1,6 +1,7 @@
 import { v7 as uuidv7 } from "uuid";
 import { describe, expect, it, test } from "vitest";
 
+import { encodeLongForm, longToShort } from "@estoc/did-peer";
 import { envelopeOf, eventCidOf, type Event } from "@estoc/event-store";
 import {
   EMPTY_MESSAGE_TYPE,
@@ -12,11 +13,15 @@ import {
   checkVault,
   compareChannels,
   foldVault,
+  mintDid,
   objectReader,
   scanVault,
+  signReplicaGrant,
+  startDidId,
   vaultDraft,
   type Channel,
   type ContactId,
+  type Did,
   type DidId,
   type EventReference,
   type MessageId,
@@ -29,6 +34,7 @@ import {
   Dispatcher,
   Keyring,
   Receiver,
+  Unusable,
   afterReceipt,
   createDid,
   disclose,
@@ -39,6 +45,7 @@ import {
   receiptOf,
   recorder,
   reportedProblem,
+  retireDid,
   send,
   type ChannelRecord,
   type Handler,
@@ -46,7 +53,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
+import { copyOf, didcomm, directParty, mediatedParty, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_OTHER = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -60,6 +67,9 @@ const accepted = (): Response => new Response(null, { status: 202 });
 const refused = (): Response => new Response("no", { status: 500 });
 
 type Holder = Pick<Fresh, "runtime" | "keys">;
+
+/** The rotations listed off the holder's fold for no runtime in particular. */
+const unassumed = async (holder: Holder) => recorder(await scanVault(holder.runtime.vault, holder.keys), objectReader(holder.runtime.vault.objects)).pending().rotationCandidates;
 
 async function parties(): Promise<{ alice: DirectParty; bob: DirectParty }> {
   return { alice: await directParty(1, "https://alice.example/didcomm", ALICE), bob: await directParty(2, "https://bob.example/didcomm", BOB) };
@@ -128,7 +138,7 @@ describe("records", () => {
     const after = await channel(pair);
     expect(only(after, "in")).toMatchObject({ manualAction: "none", completes: [] });
     expect(only(after, "out")).toMatchObject({ msg: { type: EMPTY_MESSAGE_TYPE }, effectType: PURE_ACK_EFFECT, outcome: { status: "submitted" }, manualAction: "none", contactIds: [CONTACT] });
-    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     await closeAll(alice, bob);
   });
 
@@ -415,6 +425,117 @@ describe("records", () => {
     const pending = records.pending();
     expect(pending.notificationConflicts).toEqual([{ rotationEventCid, messageIds: [notified.messageId, other.draft.data.messageId].sort(), entries: [] }]);
     expect(pending.pendingOutbounds).toEqual([]);
+    await closeAll(alice, bob);
+  });
+
+  test("the rotation the private-address policy would make from a disclosed entry is listed with its inputs: ready with the rotate entry for the runtime that can commit it, blocked for a runtime enrolled nowhere, none with the policy off, and gone once a decision is recorded", async () => {
+    const mediator = await newMediator();
+    const alice = await mediatedParty(mediator, 1, ALICE);
+    const bob = await directParty(2, "https://bob.example/didcomm", BOB);
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const second = await receive(bob, { body: { content: "hi again" } });
+    const pair = { localDid: alice.did, peerDid: bob.did };
+    const candidates = async (holder: Holder, privateAddresses?: boolean) => (await readRecords(holder.runtime, holder.keys, { privateAddresses })).pending().rotationCandidates;
+    expect(await candidates(alice)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "ready", because: null, entries: ["rotate"] }]);
+    expect(await candidates(alice, false)).toEqual([]);
+    const copy = await copyOf(1, alice);
+    expect(await candidates(copy)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "blocked", because: `this runtime is not enrolled in the arrangement ${alice.mediationId}, which routes the predecessor`, entries: [] }]);
+    expect(await unassumed(copy)).toEqual(await candidates(alice));
+    expect(JSON.parse(JSON.stringify(await candidates(alice)))).toEqual(await candidates(alice));
+
+    const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
+    const pending = (await readRecords(alice.runtime, alice.keys)).pending();
+    expect([pending.rotationCandidates, pending.missingNotifications.map(({ rotationEventCid }) => rotationEventCid)]).toEqual([[], rotated.notification.outcome === "created" ? [] : [rotated.decision.cid]]);
+    await closeAll(alice, bob, copy);
+  });
+
+  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted or not created here yet and is ready once the evidence arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired, its creation here or not", async () => {
+    const mediator = await newMediator();
+    const alice = await mediatedParty(mediator, 1, ALICE);
+    const bob = await directParty(2, "https://bob.example/didcomm", BOB);
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const candidates = async (holder: Holder) => (await readRecords(holder.runtime, holder.keys)).pending().rotationCandidates;
+    const listed = (status: "ready" | "waiting" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
+    const events = async (holder: Holder) => [...(await scanVault(holder.runtime.vault, holder.keys)).set.all()];
+    const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
+
+    const ungranted = await copyOf(1, alice, (event) => event.type !== "mediation.granted");
+    const grant = await signReplicaGrant(ungranted.keys, alice.created.data, ungranted.runtime.author);
+    await ungranted.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: ungranted.runtime.author, mediationId: alice.mediationId, grant })]);
+    expect(await candidates(ungranted)).toEqual(listed("waiting", `the predecessor's route does not carry: the arrangement ${alice.mediationId} is not granted yet`));
+    await ungranted.runtime.ingest((await events(alice)).filter((event) => event.type === "mediation.granted"));
+    expect(await candidates(ungranted)).toEqual(listed("ready", null));
+
+    const uncreated = await copyOf(1, alice, (event) => event.type !== "mediation.created");
+    await uncreated.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: uncreated.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(uncreated.keys, alice.created.data, uncreated.runtime.author) })]);
+    expect(await candidates(uncreated)).toEqual(listed("waiting", `the predecessor's route does not carry: the arrangement ${alice.mediationId} is not created here yet`));
+    await uncreated.runtime.ingest([alice.created]);
+    expect(await candidates(uncreated)).toEqual(listed("ready", null));
+
+    const retiredWithoutCreation = await copyOf(1, alice, (event) => event.type !== "mediation.created");
+    await retiredWithoutCreation.runtime.vault.commit([], [
+      vaultDraft("replica.created", { replicaId: retiredWithoutCreation.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(retiredWithoutCreation.keys, alice.created.data, retiredWithoutCreation.runtime.author) }),
+      vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" }),
+    ]);
+    expect((await scanVault(retiredWithoutCreation.runtime.vault, retiredWithoutCreation.keys)).replicas.replicas.get(retiredWithoutCreation.runtime.author)?.status).toBe("pending");
+    expect(await candidates(retiredWithoutCreation)).toEqual(listed("blocked", ended));
+    await retiredWithoutCreation.runtime.ingest([alice.created]);
+    expect(await candidates(retiredWithoutCreation)).toEqual(listed("blocked", ended));
+
+    const successorId = startDidId(alice.did, bob.did);
+    const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    const held = `the successor ${successorId} is recorded already and is not live: retired: gone`;
+    expect(await candidates(alice)).toEqual(listed("blocked", held));
+    const before = (await events(alice)).length;
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
+
+    await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
+    expect(await candidates(alice)).toEqual(listed("blocked", ended));
+    expect(await unassumed(alice)).toEqual(listed("blocked", ended));
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [ended]));
+    expect((await events(alice)).length).toBe(before + 1);
+    await closeAll(alice, bob, ungranted, uncreated, retiredWithoutCreation);
+  });
+
+  test("listed for no runtime in particular, a rotation is read as any member of the predecessor's arrangement could make it: ready for a direct predecessor and for a mediated one whose reader is enrolled nowhere, blocked while the successor's ID is held by a retired entity", async () => {
+    const { alice, bob } = await parties();
+    const { receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const listed = (status: "ready" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
+    expect(await unassumed(alice)).toEqual(listed("ready", null));
+    expect(await unassumed(alice)).toEqual((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates);
+
+    const successorId = startDidId(alice.did, bob.did);
+    const retiring = await mintDid(alice.keys, successorId, { kind: "direct", endpoint: "https://alice.example/didcomm" });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    expect(await unassumed(alice)).toEqual(listed("blocked", `the successor ${successorId} is recorded already and is not live: retired: gone`));
+    await closeAll(alice, bob);
+  });
+
+  test("a successor's ID held by a live entity of the same generation, route and keys under another serialization of the document blocks the rotation in the listing and refuses it with nothing written", async () => {
+    const { alice, bob } = await parties();
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const successorId = startDidId(alice.did, bob.did);
+    const exact = await mintDid(alice.keys, successorId, { kind: "direct", endpoint: "https://alice.example/didcomm" });
+    const longFormDid = encodeLongForm(Object.fromEntries(Object.entries(exact.inputDocument).reverse())) as Did;
+    expect(longFormDid).not.toBe(exact.longFormDid);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: longToShort(longFormDid) as Did, longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    const fold = await scanVault(alice.runtime.vault, alice.keys);
+    expect(fold.dids.entities.get(successorId)).toMatchObject({ live: true, identity: "verified" });
+    const held = `the successor's ID ${successorId} is held by an entity under another document`;
+    expect((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates).toEqual([{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status: "blocked", because: held, entries: [] }]);
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
+    expect([...(await scanVault(alice.runtime.vault, alice.keys)).set.all()]).toHaveLength([...fold.set.all()].length);
     await closeAll(alice, bob);
   });
 

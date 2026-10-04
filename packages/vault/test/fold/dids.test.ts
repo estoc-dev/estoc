@@ -12,16 +12,20 @@ import {
   mintDid,
   mintMediationDid,
   requiredReceivingSet,
+  startDidId,
+  successorDidId,
   verifyDidKeys,
   type Did,
   type DidId,
   type KeyName,
   type DidFold,
+  type DidGeneration,
   type VaultData,
 } from "../../src/index.js";
 import {
   DIRECT,
   DID_ID,
+  ENTRY,
   DID_ID2,
   DID_ID3,
   MEDIATED,
@@ -60,8 +64,8 @@ async function editedDid(scene: Scene, didId: DidId, edit: (document: Record<str
   edit(document);
   const longFormDid = encodeLongForm(document as never) as Did;
   const data = { didId, did: longToShort(longFormDid) as Did, longFormDid };
-  scene.add("did.created", data);
-  return data;
+  scene.add("did.created", { ...data, generation: ENTRY });
+  return { ...data, generation: ENTRY };
 }
 
 describe("the DID fold", () => {
@@ -194,7 +198,7 @@ describe("the DID fold", () => {
     const elsewhere = await mintDid(keys, DID_ID, DIRECT);
     scene.add("did.created", { ...created, did: elsewhere.did, longFormDid: elsewhere.longFormDid });
     const minted = await mintDid(keys, DID_ID2, MEDIATED);
-    scene.add("did.created", { didId: DID_ID2, did: minted.did, longFormDid: `${minted.did}:z2Broken` as Did });
+    scene.add("did.created", { didId: DID_ID2, did: minted.did, longFormDid: `${minted.did}:z2Broken` as Did, generation: ENTRY });
     const third = await createdDid(scene, keys, DID_ID3, MEDIATED);
     scene.add("did.created", { ...third, didId: "019b6a10-12c0-7410-89ab-38e54b097c22" as DidId });
     const dids = await checked(scene);
@@ -215,7 +219,7 @@ describe("the DID fold", () => {
       const own = await mintDid(keys, DID_ID, MEDIATED);
       const other = await createdDid(scene, keys, DID_ID2, MEDIATED);
       const claims = [
-        { didId: DID_ID, did: own.did, longFormDid: own.longFormDid },
+        { didId: DID_ID, did: own.did, longFormDid: own.longFormDid, generation: ENTRY },
         { ...other, didId: DID_ID },
       ];
       for (const claim of ownFirst ? claims : claims.reverse()) scene.add("did.created", claim);
@@ -411,5 +415,69 @@ describe("receipt eligibility and the required receiving set", () => {
     expect(requiredReceivingSet(mediations, dids)).toEqual(new Set([MEDIATION]));
     expect(dids.receipt(DID_ID2)).toBe("pending");
     expect(dids.entities.get(DID_ID)).toMatchObject({ live: true, mediation: MEDIATION });
+  });
+});
+
+describe("the lineage", () => {
+  const PEER = "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP" as Did;
+  const OTHER_PEER = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd" as Did;
+  const start = (predecessor: Did, binding: Did): [DidId, DidGeneration] => [startDidId(predecessor, binding), { kind: "start", profile: "v1", predecessor, binding }];
+  const next = (predecessor: Did): [DidId, DidGeneration] => [successorDidId(predecessor), { kind: "next", profile: "v1", predecessor }];
+  const made = (scene: Scene, [didId, generation]: [DidId, DidGeneration]) => createdDid(scene, keys, didId, DIRECT, generation);
+  const lineages = (dids: DidFold) => [...dids.entities.keys()].map((didId) => [didId, dids.lineage(didId)]);
+
+  it("reads an entry, the start under it anchored at the entry and its binding, and every next under the start to the same anchor, each entity once and in any order", async () => {
+    const scene = new Scene();
+    const entry = await createdDid(scene, keys, DID_ID, DIRECT);
+    const first = await made(scene, start(entry.did, PEER));
+    const second = await made(scene, next(first.did));
+    const third = await made(scene, next(second.did));
+    const other = await made(scene, start(entry.did, OTHER_PEER));
+    const dids = await checked(scene);
+    const branch = { status: "branch", anchor: { localDid: entry.did, peerDid: PEER }, start: first.didId };
+    expect(dids.lineage(entry.didId)).toEqual({ status: "entry" });
+    expect([dids.lineage(first.didId), dids.lineage(second.didId), dids.lineage(third.didId)]).toEqual([branch, branch, branch]);
+    expect(dids.lineage(other.didId)).toEqual({ status: "branch", anchor: { localDid: entry.did, peerDid: OTHER_PEER }, start: other.didId });
+    expect(dids.lineage(third.didId)).toBe(dids.lineage(third.didId));
+    expect(dids.lineage(DID_ID2)).toEqual({ status: "invalid", because: `no entity ${DID_ID2} is recorded here` });
+    const checks = await checksOf(scene.events, keys);
+    expectOrderFree(scene.events, (set) => lineages(both(set, checks).dids));
+  });
+
+  it("waits while a predecessor's creation is not here, and so does everything under it", async () => {
+    const scene = new Scene();
+    const entry = await mintDid(keys, DID_ID, DIRECT);
+    const [firstId] = start(entry.did, PEER);
+    const first = await mintDid(keys, firstId, DIRECT);
+    const second = await made(scene, next(first.did));
+    const third = await made(scene, next(second.did));
+    scene.add("did.retired", { didId: DID_ID2, because: "gone" });
+    const dids = await checked(scene);
+    expect(dids.lineage(second.didId)).toEqual({ status: "pending", because: `the creation of its predecessor ${first.did} is not here` });
+    expect(dids.lineage(third.didId)).toEqual({ status: "pending", because: `its predecessor ${second.did} waits: the creation of its predecessor ${first.did} is not here` });
+    expect(dids.lineage(DID_ID2)).toEqual({ status: "pending", because: `entity ${DID_ID2} has no creation here` });
+  });
+
+  it("is invalid where the generations contradict each other: a start under a branch, a next under an entry, a predecessor in conflict, and a profile that changes along the way; a generation under another profile is unsupported", async () => {
+    const scene = new Scene();
+    const entry = await createdDid(scene, keys, DID_ID, DIRECT);
+    const first = await made(scene, start(entry.did, PEER));
+    const startOfBranch = await made(scene, start(first.did, OTHER_PEER));
+    const nextOfEntry = await made(scene, next(entry.did));
+    const [foreignId, foreign] = start(entry.did, OTHER_PEER);
+    const elsewhere = await made(scene, [foreignId, { ...foreign, profile: "v9" }]);
+    const under = await made(scene, next(elsewhere.did));
+    const disputed = await createdDid(scene, keys, DID_ID2, DIRECT);
+    const otherDocument = await mintDid(await openKeys(OTHER_SEED), DID_ID2, DIRECT);
+    scene.add("did.created", { ...disputed, did: otherDocument.did, longFormDid: otherDocument.longFormDid });
+    const ofDisputed = await made(scene, start(disputed.did, PEER));
+    const dids = await checked(scene);
+    expect(dids.lineage(startOfBranch.didId)).toEqual({ status: "invalid", because: `a start follows an entry, and its predecessor ${first.did} is in a branch` });
+    expect(dids.lineage(nextOfEntry.didId)).toEqual({ status: "invalid", because: `a next follows a start or a next, and its predecessor ${entry.did} is an entry` });
+    expect(dids.lineage(elsewhere.didId)).toEqual({ status: "unsupported", profile: "v9" });
+    expect(dids.lineage(under.didId)).toEqual({ status: "invalid", because: `its predecessor ${elsewhere.did} is under profile v9, not v1` });
+    expect(dids.lineage(disputed.didId)).toEqual({ status: "invalid", because: `entity ${DID_ID2} is in conflict: creations disagree` });
+    expect(dids.lineage(ofDisputed.didId)).toEqual({ status: "invalid", because: `its predecessor ${disputed.did} is entity ${DID_ID2}, which is in conflict` });
+    expect(dids.lineage(first.didId)).toEqual({ status: "branch", anchor: { localDid: entry.did, peerDid: PEER }, start: first.didId });
   });
 });

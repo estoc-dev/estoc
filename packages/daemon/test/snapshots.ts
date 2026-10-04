@@ -32,7 +32,7 @@ export function resolves(snapshot: Snapshot): void {
   }
   for (const contactId of contacts) expect(snapshot.conversations.filter((record) => record.contactId === contactId)).toHaveLength(1);
   const { pending, unplaced } = snapshot;
-  inChannels([...pending.pendingOutbounds, ...pending.missingResponses, ...pending.missingNotifications, ...pending.pendingProofs].map(({ channelId }) => channelId));
+  inChannels([...pending.pendingOutbounds, ...pending.missingResponses, ...pending.rotationCandidates, ...pending.missingNotifications, ...pending.pendingProofs].map(({ channelId }) => channelId));
   inObservations(unplaced.observationIds);
   for (const output of unplaced.outputs) {
     inMessages([output.messageId]);
