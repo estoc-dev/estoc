@@ -31,6 +31,13 @@ interface Connection {
   origin: string | null;
 }
 
+/**
+ * Close codes the runtime reports but no Close frame may carry (RFC 6455
+ * §7.4.1): the client's frame had no code (1005), no frame arrived at all
+ * (1006), or the TLS handshake failed (1015).
+ */
+const UNSENDABLE_CLOSE_CODES = new Set([1005, 1006, 1015]);
+
 export class InboxHub {
   private sessions = new Sessions();
   private bySocket = new Map<WebSocket, Connection>();
@@ -154,8 +161,16 @@ export class InboxHub {
     }
   }
 
-  webSocketClose(ws: WebSocket) {
+  webSocketClose(ws: WebSocket, code: number, reason: string) {
     this.drop(ws);
+    // The runtime leaves a hibernatable socket's closing handshake to the
+    // object; unanswered, the client waits out its close timeout and
+    // records the connection as dropped (1006).
+    if (UNSENDABLE_CLOSE_CODES.has(code)) {
+      ws.close();
+    } else {
+      ws.close(code, reason);
+    }
   }
 
   webSocketError(ws: WebSocket) {

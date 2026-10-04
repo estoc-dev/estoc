@@ -32,5 +32,6 @@
 - didcomm-rust re-serializes JSON with sorted keys — compare forwarded payloads structurally, never by string equality
 - `pack_encrypted` here always `forward: false` — the mediator replies directly; wrapping its own replies for another mediator would be wrong
 - vitest runs HTTP tests via Hono's `app.request()`, but live delivery needs a real listen + `ws` client (`test/live-delivery.test.ts`)
+- The Workers transport is tested on a local workerd through wrangler's `createTestHarness` (`test/inbox-hub.test.ts`, the deployed config minus `build`): the runtime does not answer a Close frame on a hibernatable socket, so `InboxHub.webSocketClose` sends the reply itself, echoing the code unless it is one no Close frame may carry (1005/1006/1015); the same test evicts the hub with its sockets hibernated and checks a push still arrives
 - tsconfig `rootDir: "src"` and `exclude: src/workers` so Docker's `tsc` emits `dist/index.js` without workerd types
 - The `@hono/node-server` audit advisory (serve-static path traversal on Windows) doesn't apply: nothing is served statically

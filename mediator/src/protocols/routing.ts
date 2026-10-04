@@ -11,8 +11,6 @@ import { pushLiveDelivery } from "./pickup.js";
 import { canonicalDid } from "./replica-grant.js";
 
 /**
- * routing/2.0 — https://didcomm.org/routing/2.0
- *
  * The one protocol an anonymous sender may use: the outer envelope of a
  * forward is anoncrypt by design (the whole point is that the mediator cannot
  * see who is writing to its clients), so no account gate and no DIDComm
