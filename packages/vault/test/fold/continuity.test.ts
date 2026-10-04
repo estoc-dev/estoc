@@ -11,11 +11,13 @@ import {
   authorizedMethodIds,
   checkVault,
   compareChannels,
+  compareUtf8,
   didKeyName,
   foldVault,
   foldVaultChecked,
   methodPublicKey,
   type Channel,
+  type DidId,
   type Keys,
   type MessageHash,
   type ReadObject,
@@ -62,6 +64,7 @@ function picture(vault: VaultFold, probes: readonly Channel[] = []) {
       modelHead: continuity.model.head(c),
       superseded: continuity.superseded(c),
       conflicted: continuity.conflicted(c),
+      root: continuity.peerRoot(c),
       confirmedBy: continuity.confirmedBy(c.localDid, c.peerDid)?.event.cid ?? null,
       blocked: continuity.blocked(c).map((event) => event.cid),
       decisions: continuity.decisionsIn(c).map((decision) => decision.event.cid).sort(),
@@ -559,6 +562,185 @@ describe("authority behind a conflict", () => {
     expect(c.head(channel(a2, b3))).toEqual(channel(a1, b4));
     expect(c.head(channel(a2, b4))).toEqual(channel(a1, b4));
     expectSameOverEveryOrder(control.scene, vault.checks);
+  });
+});
+
+describe("the peer's start", () => {
+  it("is the pair's own peer while no replacement leads to it, and the one address the usable peer replacements lead back to, over one hop or several, repeated carriers of one proof adding support rather than an address", async () => {
+    const { scene, keys, peerKeys, a0, b0, b1, b2, b3 } = await vaults();
+    proofFreeReceipt(scene, a0, b0);
+    let vault = await fold(scene, keys);
+    expect(vault.continuity.peerRoot(channel(a0, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
+    expect(vault.continuity.peerRoot(channel(a0, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
+
+    const first = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const again = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const second = await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
+    vault = await fold(scene, keys);
+    const c = vault.continuity;
+    const hop = (carrier: { cid: string }) => `receipt:${carrier.cid}:transition`;
+    expect(c.conflicts).toEqual([]);
+    expect(c.peerRoot(channel(a0, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
+    expect(c.peerRoot(channel(a0, b1))).toEqual({ status: "found", peerDid: b0.did, support: [hop(first), hop(again)].sort(compareUtf8) });
+    expect(c.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: [hop(first), hop(again), hop(second)].sort(compareUtf8) });
+    expect(c.peerRoot(channel(a0, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
+    expectSameOverEveryOrder(scene, vault.checks, [channel(a0, b3)]);
+  });
+
+  it("is where the chain started, not the address that sorts first in the context: the same two addresses walked either way round give opposite answers under one context order", async () => {
+    const forward = await vaults();
+    await receiptCarryingProof(forward.scene, forward.peerKeys, forward.a0, forward.b0, forward.b1);
+    const backward = await vaults();
+    await receiptCarryingProof(backward.scene, backward.peerKeys, backward.a0, backward.b1, backward.b0);
+    const { a0, b0, b1 } = forward;
+    const forwardFold = (await fold(forward.scene, forward.keys)).continuity;
+    const backwardFold = (await fold(backward.scene, backward.keys)).continuity;
+    expect(forwardFold.peerRoot(channel(a0, b1))).toMatchObject({ status: "found", peerDid: b0.did });
+    expect(backwardFold.peerRoot(channel(a0, b0))).toMatchObject({ status: "found", peerDid: b1.did });
+    expect(forwardFold.peerContext(channel(a0, b1))).toEqual(backwardFold.peerContext(channel(a0, b0)));
+    expect(forwardFold.peerContext(channel(a0, b1))[0]!.peerDid).toBe([b0.did, b1.did].sort(compareUtf8)[0]);
+  });
+
+  it("is what a join carries to the successor's pair: the peer's replacement toward the predecessor counts there, one made toward a pair the successor never joined does not, however the path to it runs", async () => {
+    const joined = await vaults();
+    {
+      const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = joined;
+      const source = proofFreeReceipt(scene, a0, b0);
+      const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
+      const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+      const elsewhere = await receiptCarryingProof(scene, peerKeys, a2, b0, b1);
+      const vault = await fold(scene, keys);
+      const c = vault.continuity;
+      expect(c.peerRoot(channel(a1, b1))).toEqual({ status: "found", peerDid: b0.did, support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:transition`, `receipt:${source.cid}:observation`].sort(compareUtf8) });
+      expect(c.peerRoot(channel(a1, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
+      expect(c.peerRoot(channel(a2, b1))).toEqual({ status: "found", peerDid: b0.did, support: [`receipt:${elsewhere.cid}:transition`] });
+      expect(c.model.path(channel(a0, b0), channel(a1, b1))).toMatchObject({ status: "path" });
+      expectSameOverEveryOrder(scene, vault.checks);
+    }
+
+    const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await rotation(scene, keys, { from: a0, peer: b1, to: a1, source: carrier });
+    const vault = await fold(scene, keys);
+    const c = vault.continuity;
+    expect(c.conflicts).toEqual([]);
+    expect(c.head(channel(a0, b0))).toEqual(channel(a1, b1));
+    expect(c.model.path(channel(a0, b0), channel(a1, b1))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1)] });
+    expect(c.peerRoot(channel(a0, b1))).toMatchObject({ status: "found", peerDid: b0.did });
+    expect(c.peerRoot(channel(a1, b1))).toEqual({ status: "found", peerDid: b1.did, support: [] });
+    expectSameOverEveryOrder(scene, vault.checks);
+  });
+
+  it("sees only the history here: the predecessor of the one replacement verified is the start, an earlier replacement moves it, and a proof not yet verified adds no address", async () => {
+    const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
+    const later = await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
+    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b1.did, support: [`receipt:${later.cid}:transition`] });
+    expect(foldVault(scene.set()).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b2.did, support: [] });
+
+    const earlier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: [`receipt:${earlier.cid}:transition`, `receipt:${later.cid}:transition`].sort(compareUtf8) });
+  });
+
+  it("refuses a replacement a conflict reaches on the way back, while a successor that joined beyond the conflict starts where it joined: the join carries the replacements leaving that pair, not the history behind it", async () => {
+    const { scene, keys, peerKeys, a0, a1, b0, b1, b2, b3 } = await vaults();
+    const b4 = await peerDid(peerKeys, "019b7000-0000-7000-8000-000000000b04" as DidId);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b2);
+    const masked = await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
+    const onward = await receiptCarryingProof(scene, peerKeys, a0, b3, b4);
+    const manual = await rotation(scene, keys, { from: a0, peer: b3, to: a1 });
+    const vault = await fold(scene, keys);
+    const c = vault.continuity;
+    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0)] } }]);
+    expect(c.status(masked.cid)).toMatchObject({ status: "conflict" });
+    expect(c.status(manual.cid)).toEqual({ status: "verified" });
+    expect(c.model.history(channel(a0, b3)).links).toContainEqual({ from: channel(a0, b1), to: channel(a0, b3), replaces: "peer", support: [`receipt:${masked.cid}:transition`], derived: false, usable: false });
+    const behind = { status: "conflict", because: `the replacement of ${b1.did} by ${b3.did} is not usable: conflict: its context is in conflict` };
+    expect(c.peerRoot(channel(a0, b3))).toEqual(behind);
+    expect(c.peerRoot(channel(a0, b4))).toEqual(behind);
+    expect(c.peerRoot(channel(a1, b4))).toEqual({ status: "found", peerDid: b3.did, support: [`decision:${manual.cid}`, `receipt:${onward.cid}:observation`, `receipt:${onward.cid}:transition`].sort(compareUtf8) });
+    expect(c.peerRoot(channel(a1, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
+    expectSameOverEveryOrder(scene, vault.checks, [channel(a1, b4)]);
+  });
+
+  it("refuses a pair a conflict reaches, a fork or a cycle behind it, and a history leading back to two addresses", async () => {
+    const forked = await vaults();
+    await receiptCarryingProof(forked.scene, forked.peerKeys, forked.a0, forked.b0, forked.b1);
+    await receiptCarryingProof(forked.scene, forked.peerKeys, forked.a0, forked.b0, forked.b2);
+    let c = (await fold(forked.scene, forked.keys)).continuity;
+    const { a0, b0, b1, b2, b3 } = forked;
+    for (const peer of [b0, b1, b2]) expect(c.peerRoot(channel(a0, peer))).toEqual({ status: "conflict", because: `a conflict reaches the pair of ${a0.did} and ${peer.did}` });
+    expect(c.peerRoot(channel(a0, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
+    expect(c.model.path(channel(a0, b0), channel(a0, b1))).toMatchObject({ status: "conflict" });
+
+    const cycled = await vaults();
+    await receiptCarryingProof(cycled.scene, cycled.peerKeys, cycled.a0, cycled.b0, cycled.b1);
+    await receiptCarryingProof(cycled.scene, cycled.peerKeys, cycled.a0, cycled.b1, cycled.b0);
+    c = (await fold(cycled.scene, cycled.keys)).continuity;
+    for (const peer of [b0, b1]) expect(c.peerRoot(channel(a0, peer))).toMatchObject({ status: "conflict" });
+
+    const merged = await vaults();
+    await receiptCarryingProof(merged.scene, merged.peerKeys, merged.a0, merged.b0, merged.b1);
+    await receiptCarryingProof(merged.scene, merged.peerKeys, merged.a0, merged.b2, merged.b1);
+    const vault = await fold(merged.scene, merged.keys);
+    c = vault.continuity;
+    expect(c.conflicts).toEqual([]);
+    expect(c.peerRoot(channel(a0, b1))).toEqual({ status: "conflict", because: `the history leads back to 2 addresses of the peer: ${[b0.did, b2.did].sort(compareUtf8).join(", ")}` });
+    expect(c.peerRoot(channel(a0, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
+    expectSameOverEveryOrder(merged.scene, vault.checks);
+  });
+});
+
+describe("the branch path", () => {
+  it("runs from the anchor pair to the current pair through the rotations of either side, whichever rotated first, never backward, and never between pairs that only share a DID", async () => {
+    const localFirst = await vaults();
+    {
+      const { scene, keys, peerKeys, a0, a1, a2, b0, b1, b3 } = localFirst;
+      const source = proofFreeReceipt(scene, a0, b0);
+      const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
+      const carrier = await receiptCarryingProof(scene, peerKeys, a1, b0, b1);
+      await receiptCarryingProof(scene, peerKeys, a2, b0, b1);
+      proofFreeReceipt(scene, a0, b3);
+      const c = (await fold(scene, keys)).continuity;
+      expect(c.conflicts).toEqual([]);
+      expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a1, b0), channel(a1, b1)], support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:transition`, `receipt:${source.cid}:observation`].sort(compareUtf8) });
+      expect(c.model.path(channel(a0, b0), channel(a1, b0))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a1, b0)] });
+      expect(c.model.path(channel(a0, b0), channel(a0, b0))).toEqual({ status: "path", channels: [channel(a0, b0)], support: [] });
+      expect(c.model.path(channel(a1, b1), channel(a0, b0))).toEqual({ status: "none" });
+      expect(c.model.path(channel(a0, b0), channel(a2, b1))).toEqual({ status: "none" });
+      expect(c.model.path(channel(a0, b0), channel(a0, b3))).toEqual({ status: "none" });
+      expect(c.model.path(channel(a0, b3), channel(a1, b1))).toEqual({ status: "none" });
+    }
+
+    const { scene, keys, peerKeys, a0, a1, b0, b1, b2 } = await vaults();
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    const decision = await rotation(scene, keys, { from: a0, peer: b1, to: a1, source: carrier });
+    const later = await receiptCarryingProof(scene, peerKeys, a1, b1, b2);
+    const c = (await fold(scene, keys)).continuity;
+    expect(c.conflicts).toEqual([]);
+    expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1)], support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:observation`, `receipt:${carrier.cid}:transition`].sort(compareUtf8) });
+    expect(c.model.path(channel(a0, b0), channel(a1, b2))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1), channel(a1, b2)] });
+    expect(c.model.path(channel(a0, b1), channel(a1, b2))).toMatchObject({ status: "path", support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:observation`, `receipt:${carrier.cid}:transition`, `receipt:${later.cid}:transition`].sort(compareUtf8) });
+    expect(c.model.path(channel(a0, b0), channel(a1, b0))).toEqual({ status: "none" });
+  });
+
+  it("stops where the history is missing or in conflict: an anchor no fact mentions reaches nothing, a gap gives none, a fork at either end gives conflict, and a decision whose witness the fork masks gives no path even between pairs outside the fork's scope", async () => {
+    const { scene, keys, peerKeys, a0, a1, b0, b1, b2, b3 } = await vaults();
+    const carrier = await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
+    await rotation(scene, keys, { from: a0, peer: b2, to: a1, source: carrier });
+    let c = (await fold(scene, keys)).continuity;
+    expect(c.model.path(channel(a0, b0), channel(a1, b2))).toEqual({ status: "none" });
+    expect(c.model.path(channel(a0, b1), channel(a1, b2))).toMatchObject({ status: "path", channels: [channel(a0, b1), channel(a0, b2), channel(a1, b2)] });
+
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
+    c = (await fold(scene, keys)).continuity;
+    expect(c.model.path(channel(a0, b0), channel(a1, b2))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a0, b2), channel(a1, b2)] });
+
+    await receiptCarryingProof(scene, peerKeys, a0, b0, b3);
+    c = (await fold(scene, keys)).continuity;
+    expect(c.model.path(channel(a0, b0), channel(a1, b2))).toMatchObject({ status: "conflict" });
+    expect(c.model.path(channel(a0, b1), channel(a1, b2))).toMatchObject({ status: "conflict" });
+    expect(c.model.path(channel(a0, b2), channel(a1, b2))).toEqual({ status: "none" });
   });
 });
 

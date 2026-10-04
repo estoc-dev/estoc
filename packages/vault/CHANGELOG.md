@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The peer's start**: `Continuity.peerRoot(channel)` walks the usable peer
+  replacements back from a pair, its local DID fixed, to the one address of
+  the peer no replacement leads to: `found` with that DID and the support
+  that re-derives the replacements walked, `conflict` when a conflict
+  reaches the pair or a replacement on the way, or the history leads back to
+  more than one address. The answer is a start in this snapshot, not the
+  first address the relationship ever had: a replacement whose proof is not
+  verified adds nothing, and a replacement the peer made toward another
+  local DID counts only where a join carries it to this one. A pure read
+  over the existing model; no event changes.
 - **One rotation intent, several records**: a rotation away from a pair is
   one intent, this predecessor replaced by this successor toward the peer
   anywhere in its verified peer-only context, and several
