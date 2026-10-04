@@ -12,7 +12,7 @@ import type { MediationStore } from "../store/types.js";
  */
 export interface Session {
   /** The account this session authenticated as, once it has. */
-  did: string | null;
+  readonly did: string | null;
   liveDelivery: boolean;
   /**
    * Whether this connection has been declared a return route: the

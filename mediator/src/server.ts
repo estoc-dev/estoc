@@ -10,7 +10,6 @@ import type { MediatorConfig } from "./config.js";
 import { DIDCommContext } from "./didcomm/didcomm.js";
 import type { MediatorIdentity } from "./identity-core.js";
 import { dispatch } from "./protocols/dispatch.js";
-import type { Session } from "./protocols/types.js";
 import type { MediationStore } from "./store/types.js";
 import { Sessions } from "./transport/sessions.js";
 
@@ -67,30 +66,27 @@ export function buildServer({
   app.get(
     "/",
     upgradeWebSocket(() => {
-      const session: Session & { socket: WSLike | null } = {
-        did: null,
-        liveDelivery: false,
-        returnRoute: false,
-        socket: null,
+      let socket: WSLike | null = null;
+      const session = sessions.open({
         send(packed: string): boolean {
-          if (this.socket === null || this.socket.readyState !== 1) {
+          if (socket === null || socket.readyState !== 1) {
             return false;
           }
           // Text frame: the spec is silent on frame type, and a text frame
           // reaches every receiver as a plain string (browser, RN, Node)
           // while binary arrives as Blob/Buffer/ArrayBuffer depending on
           // the environment. Send the most compatible; accept both.
-          this.socket.send(packed);
+          socket.send(packed);
           return true;
         },
-      };
+      });
 
       return {
         onOpen(_evt, ws) {
-          session.socket = ws;
+          socket = ws;
         },
         async onMessage(evt, ws) {
-          session.socket = ws;
+          socket = ws;
           if (frameBytes(evt.data) > config.maxMessageBytes) {
             log("websocket envelope refused: too large");
             return;
@@ -105,14 +101,8 @@ export function buildServer({
                       : new Uint8Array(evt.data)
                   );
             const unpacked = await ctx.unpack(raw);
-
-            // The socket inherits the first proven identity and keeps it: live
-            // delivery needs a DID to index the connection under, and a session
-            // that could re-bind mid-flight could be walked onto someone else's
-            // inbox by a single crafted envelope.
-            if (session.did === null && unpacked.verifiedFrom !== null) {
-              session.did = unpacked.verifiedFrom;
-              sessions.bind(session.did, session);
+            if (unpacked.verifiedFrom !== null) {
+              session.bindFirst(unpacked.verifiedFrom);
             }
 
             const packed = await dispatch(unpacked, {
@@ -134,7 +124,7 @@ export function buildServer({
           }
         },
         onClose() {
-          sessions.drop(session.did, session);
+          session.close();
         },
       };
     })

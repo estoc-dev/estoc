@@ -1,7 +1,6 @@
 import { frameBytes } from "../app.js";
 import { dispatch } from "../protocols/dispatch.js";
-import type { Session } from "../protocols/types.js";
-import { Sessions } from "../transport/sessions.js";
+import { Sessions, type LiveSession, type SessionState } from "../transport/sessions.js";
 import { depsForOrigin, type Env, type WorkerDeps } from "./env.js";
 
 /**
@@ -22,22 +21,19 @@ import { depsForOrigin, type Env, type WorkerDeps } from "./env.js";
  * whatever sockets survived.
  */
 
-interface Attachment {
-  did: string | null;
-  liveDelivery: boolean;
-  returnRoute: boolean;
+interface Attachment extends SessionState {
   /** The origin the socket connected on — which of the mediator's names it talks to. */
   origin: string | null;
 }
 
-interface HubSession extends Session {
-  ws: WebSocket;
+interface Connection {
+  session: LiveSession;
   origin: string | null;
 }
 
 export class InboxHub {
   private sessions = new Sessions();
-  private bySocket = new Map<WebSocket, HubSession>();
+  private bySocket = new Map<WebSocket, Connection>();
   // One identity per origin, resolved lazily — the DO wakes from hibernation
   // with sockets but no request, so the origin rides each socket's attachment.
   private deps = new Map<string, Promise<WorkerDeps>>();
@@ -61,56 +57,30 @@ export class InboxHub {
     return deps;
   }
 
-  private adopt(ws: WebSocket, origin?: string): HubSession {
+  private adopt(ws: WebSocket, origin?: string): Connection {
     const saved = (ws.deserializeAttachment() ?? null) as Attachment | null;
-    let liveDelivery = saved?.liveDelivery ?? false;
-    let returnRoute = saved?.returnRoute ?? false;
-
-    const session: HubSession = {
-      ws,
-      origin: origin ?? saved?.origin ?? null,
-      did: saved?.did ?? null,
-      get liveDelivery() {
-        return liveDelivery;
+    const connectedOn = origin ?? saved?.origin ?? null;
+    const session = this.sessions.open(
+      {
+        send(packed: string): boolean {
+          try {
+            // Text frame — reaches every receiver as a plain string; binary
+            // arrives as Blob/Buffer/ArrayBuffer depending on the environment.
+            ws.send(packed);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        save(state: SessionState): void {
+          ws.serializeAttachment({ ...state, origin: connectedOn } satisfies Attachment);
+        },
       },
-      set liveDelivery(value: boolean) {
-        liveDelivery = value;
-        persist();
-      },
-      get returnRoute() {
-        return returnRoute;
-      },
-      set returnRoute(value: boolean) {
-        returnRoute = value;
-        persist();
-      },
-      send(packed: string): boolean {
-        try {
-          // Text frame — reaches every receiver as a plain string; binary
-          // arrives as Blob/Buffer/ArrayBuffer depending on the environment.
-          ws.send(packed);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    };
-    const persist = () =>
-      ws.serializeAttachment({
-        did: session.did,
-        liveDelivery,
-        returnRoute,
-        origin: session.origin,
-      } satisfies Attachment);
-
-    if (origin !== undefined) {
-      persist();
-    }
-    if (session.did !== null) {
-      this.sessions.bind(session.did, session);
-    }
-    this.bySocket.set(ws, session);
-    return session;
+      saved
+    );
+    const connection = { session, origin: connectedOn };
+    this.bySocket.set(ws, connection);
+    return connection;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -143,15 +113,15 @@ export class InboxHub {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    const session = this.bySocket.get(ws) ?? this.adopt(ws);
-    if (session.origin === null) {
+    const { session, origin } = this.bySocket.get(ws) ?? this.adopt(ws);
+    if (origin === null) {
       // A socket from before origins were persisted — it cannot be answered
       // as the name it connected to, so it gets a fresh start instead.
       ws.close(1011, "reconnect");
       return;
     }
     try {
-      const deps = await this.depsFor(session.origin);
+      const deps = await this.depsFor(origin);
       if (frameBytes(message) > deps.policy.maxMessageBytes) {
         console.warn("websocket envelope refused: too large");
         return;
@@ -161,20 +131,8 @@ export class InboxHub {
           ? message
           : new TextDecoder().decode(message);
       const unpacked = await deps.ctx.unpack(raw);
-
-      // The socket inherits the first proven identity and keeps it: live
-      // delivery needs a DID to index the connection under, and a session
-      // that could re-bind mid-flight could be walked onto someone else's
-      // inbox by a single crafted envelope.
-      if (session.did === null && unpacked.verifiedFrom !== null) {
-        session.did = unpacked.verifiedFrom;
-        this.sessions.bind(session.did, session);
-        ws.serializeAttachment({
-          did: session.did,
-          liveDelivery: session.liveDelivery,
-          returnRoute: session.returnRoute,
-          origin: session.origin,
-        } satisfies Attachment);
+      if (unpacked.verifiedFrom !== null) {
+        session.bindFirst(unpacked.verifiedFrom);
       }
 
       const packed = await dispatch(unpacked, {
@@ -205,10 +163,7 @@ export class InboxHub {
   }
 
   private drop(ws: WebSocket) {
-    const session = this.bySocket.get(ws);
-    if (session !== undefined) {
-      this.sessions.drop(session.did, session);
-      this.bySocket.delete(ws);
-    }
+    this.bySocket.get(ws)?.session.close();
+    this.bySocket.delete(ws);
   }
 }
