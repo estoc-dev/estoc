@@ -21,9 +21,10 @@ import { storeMessage } from "../document.js";
 import { executionId } from "../ids.js";
 import type { Channel, EventCid, ExecutionId, MessageHash, MessageId, MessageIn, WireMessageId } from "../types.js";
 import type { AdmissionFold } from "../admission/model.js";
-import type { ChannelEvidence, Source } from "./channels.js";
+import type { ChannelEvidence, PlacedSource, Source } from "./channels.js";
 import type { Continuity, Witness } from "./continuity.js";
 import type { Erasures } from "./held.js";
+import { groupBy } from "./set.js";
 
 export const EMPTY_MESSAGE_TYPE = "https://didcomm.org/empty/1.0/empty";
 export const PING_RESPONSE_TYPE = "https://didcomm.org/trust-ping/2.0/ping-response";
@@ -61,7 +62,7 @@ export function kindOf(data: MessageIn): InboundKind {
 
 /** One observation of an input whose own authentication is complete, with what the admissions and the continuity fold make of it. */
 export interface Member {
-  readonly source: Source;
+  readonly source: PlacedSource;
   /** its proof, if it brought one, supports a link: the evidence continuity is derived from */
   readonly positive: boolean;
   /** an effective admission names it: it counts toward the input's intent and, a complete witness, establishes the input */
@@ -115,19 +116,10 @@ export interface InboundFold {
 }
 
 export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): InboundFold {
-  const anonymous: Source[] = [];
-  const members = new Map<MessageId, Source[]>();
-  const siblings = new Map<MessageId, Source[]>();
-  for (const source of evidence.sources.values()) {
-    const { data } = source.event;
-    if (data.peerResolutionEventCid === null) anonymous.push(source);
-    else {
-      const group = source.standing.status === "complete" ? members : siblings;
-      const list = group.get(data.messageId);
-      if (list === undefined) group.set(data.messageId, [source]);
-      else list.push(source);
-    }
-  }
+  const observed = [...evidence.sources.values()];
+  const anonymous = observed.filter((source) => source.status === "anonymous");
+  const members = groupBy(observed.filter((source) => source.status === "complete"), messageIdOf);
+  const siblings = groupBy(observed.filter((source) => source.status === "incomplete" || source.status === "conflict"), messageIdOf);
 
   const byMessage = new Map<MessageId, Execution>();
   const executions = new Map<ExecutionId, Execution>();
@@ -140,7 +132,7 @@ export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, a
   for (const [messageId, sources] of siblings) if (!members.has(messageId)) unplaced.push(...sources);
   const ofSource = (sourceEventCid: EventCid): Execution | null => {
     const source = evidence.sources.get(sourceEventCid);
-    return source === undefined || source.event.data.peerResolutionEventCid === null ? null : (byMessage.get(source.event.data.messageId) ?? null);
+    return source === undefined || source.status === "anonymous" ? null : (byMessage.get(source.event.data.messageId) ?? null);
   };
   return {
     executions,
@@ -153,14 +145,15 @@ export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, a
 }
 
 const byEvent = (a: Source, b: Source) => compareEvents(a.event, b.event);
+const messageIdOf = (source: Source) => source.event.data.messageId;
 
 /**
  * The members share the message ID, and a complete authentication has
  * checked that ID against the observation's own endpoints and wire ID,
  * so they share the channel and the wire ID too.
  */
-function executionOf(messageId: MessageId, sources: readonly Source[], siblings: readonly Source[], evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): Execution {
-  const channel = sources[0]!.channel!;
+function executionOf(messageId: MessageId, sources: readonly PlacedSource[], siblings: readonly Source[], evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): Execution {
+  const { channel } = sources[0]!;
   const wireMessageId = sources[0]!.event.data.wireMessageId;
   const members: Member[] = sources.map((source) => ({ source, positive: evidence.positive(source.event.cid), admitted: admissions.admitted(source.event.cid), witness: continuity.witness(source.event.cid) }));
   const admitted = members.filter((member) => member.admitted);

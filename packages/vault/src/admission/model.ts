@@ -35,7 +35,7 @@ import { compareEvents } from "@estoc/event-store";
 
 import type { VaultEvent } from "../schema.js";
 import type { EventCid } from "../types.js";
-import type { ChannelEvidence, Source } from "../fold/channels.js";
+import type { ChannelEvidence, PlacedSource, Source } from "../fold/channels.js";
 import type { Continuity } from "../fold/continuity.js";
 import type { InboundFold } from "../fold/inbound.js";
 import { groupBy, type VaultEventSet } from "../fold/set.js";
@@ -74,32 +74,32 @@ export function foldAdmissions(set: VaultEventSet, evidence: ChannelEvidence): A
   };
 }
 
-/** Why a source can never be admitted, or null: its own evidence read for what contradicts it before what it lacks. */
-function refusedForGood(source: Source, evidence: ChannelEvidence): string | null {
-  const { cid, data } = source.event;
-  if (data.peerResolutionEventCid === null) return "the source is anonymous, in no channel";
-  if (source.standing.status === "conflict") return `the source's authentication is contradicted: ${source.standing.because}`;
-  const proof = evidence.carriers.get(cid)?.proof;
-  if (proof?.status === "invalid" || proof?.status === "unsupported") return `the source's proof is ${proof.status}: ${proof.because}`;
-  return null;
-}
+/**
+ * A source's own evidence read for what contradicts it, which refuses
+ * it for good, before what it lacks, which it still waits for; with
+ * neither, it is placed and any proof it brought is verified.
+ */
+type SourceReading = { status: "refused"; because: string } | { status: "missing"; because: string } | { status: "positive"; source: PlacedSource };
 
-/** What a source still waits for before it is positive evidence, or null. */
-function stillMissing(source: Source, evidence: ChannelEvidence): string | null {
-  if (source.standing.status === "incomplete") return `the source's authentication is incomplete: ${source.standing.because}`;
-  if (evidence.carriers.get(source.event.cid)?.proof.status === "pending-proof") return "the source's proof is not yet verified";
-  return null;
+function readSource(source: Source, evidence: ChannelEvidence): SourceReading {
+  const refused = (because: string): SourceReading => ({ status: "refused", because });
+  const missing = (because: string): SourceReading => ({ status: "missing", because });
+  if (source.status === "anonymous") return refused("the source is anonymous, in no channel");
+  if (source.status === "conflict") return refused(`the source's authentication is contradicted: ${source.because}`);
+  const proof = evidence.carriers.get(source.event.cid)?.proof;
+  if (proof?.status === "invalid" || proof?.status === "unsupported") return refused(`the source's proof is ${proof.status}: ${proof.because}`);
+  if (source.status === "incomplete") return missing(`the source's authentication is incomplete: ${source.because}`);
+  if (proof?.status === "pending-proof") return missing("the source's proof is not yet verified");
+  return { status: "positive", source };
 }
 
 function admissionStatus(event: VaultEvent<"message.admitted">, set: VaultEventSet, evidence: ChannelEvidence): AdmissionStatus {
   const resolved = set.resolve(event.data.sourceEventCid, "message.in");
   if (resolved.status === "missing") return { status: "pending", because: "the source it names is not here" };
   if (resolved.status === "mismatched") return { status: "invalid", because: `the source it names is a ${resolved.event.type}` };
-  const source = evidence.sources.get(resolved.event.cid)!;
-  const refused = refusedForGood(source, evidence);
-  if (refused !== null) return { status: "invalid", because: refused };
-  const missing = stillMissing(source, evidence);
-  if (missing !== null) return { status: "pending", because: missing };
+  const reading = readSource(evidence.sources.get(resolved.event.cid)!, evidence);
+  if (reading.status === "refused") return { status: "invalid", because: reading.because };
+  if (reading.status === "missing") return { status: "pending", because: reading.because };
   return { status: "effective" };
 }
 
@@ -176,15 +176,13 @@ export function foldDispositions(evidence: ChannelEvidence, continuity: Continui
 }
 
 function eligibilityOf(source: Source, evidence: ChannelEvidence, continuity: Continuity, inbound: InboundFold): Eligibility {
-  const refused = refusedForGood(source, evidence);
-  if (refused !== null) return { status: "invalid", because: refused };
-  const { cid, data } = source.event;
-  const missing = stillMissing(source, evidence);
-  if (missing !== null) return { status: "deferred", because: missing };
+  const reading = readSource(source, evidence);
+  if (reading.status === "refused") return { status: "invalid", because: reading.because };
+  if (reading.status === "missing") return { status: "deferred", because: reading.because };
+  const { channel, event: { cid, data } } = reading.source;
   const witness = continuity.witness(cid);
   if (witness.status === "conflict") return { status: "refused", because: `the continuity its proof establishes is in conflict: ${witness.because}` };
   if (witness.status !== "complete") return { status: "deferred", because: witness.because };
-  const channel = source.channel!;
   if (continuity.superseded(channel)) return { status: "refused", because: "the peer has replaced its DID" };
   if (continuity.blocked(channel).length > 0) return { status: "refused", because: "the channel is denied" };
   const execution = inbound.ofSource(cid);

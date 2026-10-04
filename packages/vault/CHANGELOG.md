@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A source's standing is its type**: `Source` is its common fields with
+  one of four members, told apart by `status`: `complete` with
+  `localDidId`, `resolution` and `channel` all present, `incomplete` with
+  `because`, `conflict` with `because` and no channel, and `anonymous`
+  with neither a resolution nor a channel. `status` and `because` replace
+  the `standing` object. An anonymous observation, read as complete
+  before, has a status of its own, so `complete` alone means placed in a
+  channel. `PlacedSource` names that member, and an execution's members,
+  the acknowledgement witnesses, a missing response's source and a
+  rotation candidate's sources carry it. `Standing` is no longer exported.
 - **An input's standing is its type**: `Execution` is its common fields
   with one of three members, told apart by `status`: `complete` with
   `intentHash`, `kind` and `firstWitness` all present, `pending` with

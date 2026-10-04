@@ -55,7 +55,6 @@ import {
   type RotationCandidate,
   type SendGate,
   type Source,
-  type Standing,
   type Status,
   type StoredAttachment,
   type VaultFold,
@@ -87,6 +86,9 @@ export interface MessageHeaders {
 export type BodyRecord = { state: "available"; body: JsonObject; attachments: StoredAttachment[] } | { state: "erased" } | { state: "missing" };
 
 export type ExecutionStatus = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string };
+
+/** Whether an observation's own authentication evidence is all here and consistent: an anonymous one has none to miss or contradict. */
+export type Standing = { status: "complete" } | { status: "incomplete"; because: string } | { status: "conflict"; because: string };
 
 export type DiagnosticKind = "input" | "observations" | "contradicting" | "intent" | "outcome" | "effect" | "work" | "remote-error";
 
@@ -400,14 +402,15 @@ function observationRecords(fold: VaultFold, sources: readonly Source[]): Observ
   return sources
     .slice()
     .sort((a, b) => compareEvents(a.event, b.event))
-    .map(({ event, channel, standing }) => {
+    .map((source) => {
+      const { event, channel } = source;
       const disposition = fold.dispositions.disposition(event.cid);
       return {
         sourceEventCid: event.cid,
         messageId: event.data.messageId,
         channel,
         at: event.at,
-        standing,
+        standing: source.status === "incomplete" || source.status === "conflict" ? { status: source.status, because: source.because } : { status: "complete" },
         verification: fold.continuity.status(event.cid),
         disposition: disposition.status === "admitted" ? { status: "admitted" } : disposition,
         contradicting: fold.inbound.ofSource(event.cid)?.contradicting.some((member) => member.source.event.cid === event.cid) ?? false,

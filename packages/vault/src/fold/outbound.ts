@@ -24,7 +24,7 @@ import { agreementKey } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
 import { senderGate } from "../channel-policy.js";
 import type { Channel, Did, EventCid, MessageId, MessageOut, WireMessageId } from "../types.js";
-import { keyAgreementTypeOf, type ChannelEvidence, type Source } from "./channels.js";
+import { keyAgreementTypeOf, type ChannelEvidence, type PlacedSource, type Source } from "./channels.js";
 import type { Continuity } from "./continuity.js";
 import type { EvidenceCheck } from "./evidence.js";
 import type { Erasures } from "./held.js";
@@ -80,7 +80,7 @@ export type AckTarget = { status: "eligible"; wireMessageId: WireMessageId } | {
 
 /** An admitted complete witness in the outbound's channel, or a role-preserving successor of it, whose `ack` names the outbound. */
 export interface AckWitness {
-  readonly source: Source;
+  readonly source: PlacedSource;
 }
 
 export type AcknowledgementStatus = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string };
@@ -267,11 +267,11 @@ function admittedWitness(sourceEventCid: EventCid, inbound: InboundFold): boolea
 }
 
 /** The admitted witnesses whose `ack` names each wire ID, in canonical event order. */
-function witnessesByTarget(evidence: ChannelEvidence, inbound: InboundFold): Map<string, Source[]> {
-  const byTarget = new Map<string, Source[]>();
+function witnessesByTarget(evidence: ChannelEvidence, inbound: InboundFold): Map<string, PlacedSource[]> {
+  const byTarget = new Map<string, PlacedSource[]>();
   const sources = [...evidence.sources.values()].sort((a, b) => compareEvents(a.event, b.event));
   for (const source of sources) {
-    if (source.channel === null || source.event.data.ack.length === 0 || !admittedWitness(source.event.cid, inbound)) continue;
+    if (source.status !== "complete" || source.event.data.ack.length === 0 || !admittedWitness(source.event.cid, inbound)) continue;
     for (const target of new Set(source.event.data.ack)) {
       const list = byTarget.get(target);
       if (list === undefined) byTarget.set(target, [source]);
@@ -286,7 +286,7 @@ type Inputs = {
   submissions: readonly VaultEvent<"delivery.submitted">[];
   failures: readonly VaultEvent<"delivery.failed">[];
   acknowledgements: readonly VaultEvent<"delivery.acknowledged">[];
-  witnesses: readonly Source[];
+  witnesses: readonly PlacedSource[];
   set: VaultEventSet;
   dids: DidFold;
   evidence: ChannelEvidence;
@@ -335,7 +335,7 @@ function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.o
   const effect = data === null ? { status: "complete" as const } : effectOf(data, channel, inputs);
   if (effect.status === "conflict" && fault === null) fault = effect.because;
 
-  const ackWitnesses: AckWitness[] = channel === null || packaged.status !== "complete" ? [] : inputs.witnesses.filter((source) => inputs.continuity.ackPath(channel, source.channel!)).map((source) => ({ source }));
+  const ackWitnesses: AckWitness[] = channel === null || packaged.status !== "complete" ? [] : inputs.witnesses.filter((source) => inputs.continuity.ackPath(channel, source.channel)).map((source) => ({ source }));
   const acknowledgements = inputs.acknowledgements.map((event) => acknowledgementOf(event, packaged, ackWitnesses, inputs.evidence, inputs.continuity, inputs.inbound));
   const acknowledged = ackWitnesses.length > 0;
   const late = acknowledged && data?.expiresTime != null && Math.min(...ackWitnesses.map(({ source }) => Date.parse(source.event.at))) >= data.expiresTime * 1000;
@@ -464,7 +464,7 @@ function acknowledgementOf(event: VaultEvent<"delivery.acknowledged">, packaged:
     const carrier = source.event.data;
     if (carrier.wireMessageId !== data.ackWireMessageId) return "the wire ID is not the carrier's";
     if (carrier.localKeyName !== data.localKeyName) return "the local key is not the carrier's";
-    if (source.resolution!.data.peerPublicKey !== data.peerPublicKey) return "the peer key is not the carrier's";
+    if (source.resolution.data.peerPublicKey !== data.peerPublicKey) return "the peer key is not the carrier's";
     return null;
   });
   if (mismatches.includes(null)) return { event, status: { status: "complete" } };
@@ -507,8 +507,8 @@ function effectOf(data: MessageOut, channel: Channel | null, inputs: Inputs): Ef
     if (resolved.status === "missing") missing.push("the source it names is not here");
     else {
       source = inputs.evidence.sources.get(data.sourceEventCid)!;
-      if (source.event.data.peerResolutionEventCid === null) return conflict("the source is anonymous, in no channel");
-      if (source.standing.status === "conflict") return conflict(`the source's authentication is in conflict: ${source.standing.because}`);
+      if (source.status === "anonymous") return conflict("the source is anonymous, in no channel");
+      if (source.status === "conflict") return conflict(`the source's authentication is in conflict: ${source.because}`);
       execution = inputs.inbound.ofSource(data.sourceEventCid);
       if (execution !== null) {
         if (execution.id !== data.executionId) return conflict(`the execution ID is not the one the source's input derives, ${execution.id}`);

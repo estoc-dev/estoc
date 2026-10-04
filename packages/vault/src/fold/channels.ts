@@ -27,22 +27,31 @@ import type { LocalDidEntity, DidFold } from "./dids.js";
 import type { VaultEventSet } from "./set.js";
 
 /**
- * Whether a receipt's own authentication evidence is all here and
- * consistent. Missing evidence is incomplete and may still arrive;
- * evidence that contradicts the observation is a conflict for good.
+ * One `message.in` read against the local entity and the resolution it
+ * names, with whether its own authentication evidence is all here and
+ * consistent. Complete evidence places it in its channel. Missing
+ * evidence is incomplete and may still arrive; evidence that
+ * contradicts the observation is a conflict for good and places it in
+ * no channel. An anonymous observation names no resolution: there is
+ * no sender to authenticate and no channel to place it in.
  */
-export type Standing = { status: "complete" } | { status: "incomplete"; because: string } | { status: "conflict"; because: string };
-
-export interface Source {
+export type Source = {
   readonly event: VaultEvent<"message.in">;
   /** the entity the local key name derives from, whatever its state; null while no entity here records that name */
   readonly localDidId: DidId | null;
   /** the resolution the observation names, once it is here and is one */
   readonly resolution: VaultEvent<"peer.resolved"> | null;
-  /** the actual pair; null for an anonymous observation, while the local endpoint is unknown, and for a standing in conflict */
+  /** the actual pair, once the local endpoint is known */
   readonly channel: Channel | null;
-  readonly standing: Standing;
-}
+} & (
+  | { readonly status: "complete"; readonly localDidId: DidId; readonly resolution: VaultEvent<"peer.resolved">; readonly channel: Channel }
+  | { readonly status: "incomplete"; readonly because: string }
+  | { readonly status: "conflict"; readonly because: string; readonly channel: null }
+  | { readonly status: "anonymous"; readonly resolution: null; readonly channel: null }
+);
+
+/** A source whose own authentication is complete, in the channel its local entity and the resolution it names agree on. */
+export type PlacedSource = Extract<Source, { readonly status: "complete" }>;
 
 /**
  * What a carrier's proof establishes on its own. Invalid is for good:
@@ -58,7 +67,7 @@ export type Proof = { status: "invalid"; because: string } | { status: "unsuppor
 export interface Carrier {
   readonly source: Source;
   readonly proof: Proof;
-  /** the peer transition and the observation of its successor, both of this receipt; empty until the proof is verified and the standing complete */
+  /** the peer transition and the observation of its successor, both of this receipt; empty until the proof is verified and the source placed */
   readonly facts: readonly ContinuityFact[];
 }
 
@@ -83,11 +92,10 @@ export interface ChannelEvidence {
   readonly carriers: ReadonlyMap<EventCid, Carrier>;
   readonly decisions: ReadonlyMap<EventCid, Decision>;
   /**
-   * Does this observation stand as an address observation? Its
-   * standing is complete, it has a channel, and any proof it brought
-   * is verified and bound. This is what the continuity model is
-   * derived from and what intent conflicts are detected over; it
-   * authorizes no operation by itself.
+   * Does this observation stand as an address observation? It is
+   * placed, and any proof it brought is verified and bound. This is
+   * what the continuity model is derived from and what intent
+   * conflicts are detected over; it authorizes no operation by itself.
    */
   positive(sourceEventCid: EventCid): boolean;
 }
@@ -109,7 +117,7 @@ export function foldChannelEvidence(set: VaultEventSet, dids: DidFold, checks: C
   const carriers = foldCarriers(sources, checks.proofChecks ?? noProofChecks);
   const positive = (id: EventCid) => {
     const source = sources.get(id);
-    if (source === undefined || source.channel === null || source.standing.status !== "complete") return false;
+    if (source === undefined || source.status !== "complete") return false;
     return source.event.data.fromPrior === null || (carriers.get(id)?.facts.length ?? 0) > 0;
   };
   return { sources, carriers, decisions: foldDecisions(set, dids, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
@@ -133,12 +141,12 @@ export function foldSources(set: VaultEventSet, dids: DidFold, resolutionChecks:
 
 function sourceOf(event: VaultEvent<"message.in">, localDidId: DidId | null, local: LocalDidEntity | null, set: VaultEventSet, resolutionChecks: ReadonlyMap<EventCid, EvidenceCheck>): Source {
   const { data } = event;
-  if (data.peerResolutionEventCid === null) return { event, localDidId, resolution: null, channel: null, standing: { status: "complete" } };
+  if (data.peerResolutionEventCid === null) return { event, localDidId, resolution: null, channel: null, status: "anonymous" };
   const missing: string[] = [];
   let channel: Channel | null = null;
   let resolution: VaultEvent<"peer.resolved"> | null = null;
   let localKeyType: KeyType | null = null;
-  const conflict = (because: string): Source => ({ event, localDidId, resolution, channel: null, standing: { status: "conflict", because } });
+  const conflict = (because: string): Source => ({ event, localDidId, resolution, channel: null, status: "conflict", because });
 
   if (local === null) missing.push("no communication DID here derives the local key");
   else if (local.conflict) return conflict(`the local entity is in conflict: ${local.faults[0]}`);
@@ -174,8 +182,8 @@ function sourceOf(event: VaultEvent<"message.in">, localDidId: DidId | null, loc
     if (check === undefined) missing.push("the resolution's document is not here");
   }
 
-  const standing: Standing = missing.length === 0 ? { status: "complete" } : { status: "incomplete", because: missing[0]! };
-  return { event, localDidId, resolution, channel, standing };
+  if (missing.length > 0 || localDidId === null || resolution === null || channel === null) return { event, localDidId, resolution, channel, status: "incomplete", because: missing[0]! };
+  return { event, localDidId, resolution, channel, status: "complete" };
 }
 
 /** The curve of the entity's own key-agreement key, null while its document does not read. */
@@ -216,7 +224,7 @@ function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck |
   if (check === undefined) return refused({ status: "pending-proof" });
   if (check.status === "invalid") return refused({ status: "invalid", because: check.because });
   const proof: Proof = { status: "verified", proof: check.proof };
-  if (source.channel === null || source.standing.status !== "complete") return { proof, facts: [] };
+  if (source.status !== "complete") return { proof, facts: [] };
   const { cid } = source.event;
   const binding = bindFromPrior(check.proof, { ref: cid, token: jwt, recipient: source.channel.localDid, sender }, { transitionId: transitionFactId(cid), observationId: observationFactId(cid) });
   if (binding.status !== "bound") return refused({ status: "invalid", because: binding.because });
@@ -301,13 +309,13 @@ function decisionStatus(
     else if (resolved.status === "mismatched") return conflict(`the source it names is a ${resolved.event.type}`);
     else {
       const source = sources.get(data.sourceEventCid)!;
-      if (source.event.data.peerResolutionEventCid === null) return conflict("the source is anonymous, in no pair");
+      if (source.status === "anonymous") return conflict("the source is anonymous, in no pair");
       if (source.event.data.did !== data.peerDid) return conflict("the source is not from the peer the decision rotates away from");
       if (source.event.data.localKeyName !== didKeyName(data.fromDidId, "key-agreement")) return conflict("the source is not at the predecessor's key-agreement key");
-      if (source.standing.status === "conflict") return conflict(`the source's authentication is in conflict: ${source.standing.because}`);
+      if (source.status === "conflict") return conflict(`the source's authentication is in conflict: ${source.because}`);
       const carrier = carriers.get(data.sourceEventCid);
       if (carrier?.proof.status === "invalid" || carrier?.proof.status === "unsupported") return conflict(`the source's proof is ${carrier.proof.status}: ${carrier.proof.because}`);
-      if (source.standing.status === "incomplete") missing.push(`the source's authentication is incomplete: ${source.standing.because}`);
+      if (source.status === "incomplete") missing.push(`the source's authentication is incomplete: ${source.because}`);
       if (carrier?.proof.status === "pending-proof") missing.push("the source's proof is not yet verified");
     }
   }

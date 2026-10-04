@@ -117,7 +117,7 @@ export interface Continuity {
 export function projectFacts(evidence: ChannelEvidence): ContinuityFact[] {
   const facts: ContinuityFact[] = [];
   for (const source of evidence.sources.values()) {
-    if (source.channel === null || source.standing.status !== "complete") continue;
+    if (source.status !== "complete") continue;
     const { cid, data } = source.event;
     if (data.fromPrior === null) facts.push({ kind: "address-observed", id: observationFactId(cid), at: source.channel, carriedTransition: null, receipt: cid });
     else facts.push(...(evidence.carriers.get(cid)?.facts ?? []));
@@ -167,9 +167,9 @@ class ContinuityFold implements Continuity {
     if (carrier !== undefined) {
       const { proof, source } = carrier;
       if (proof.status === "invalid" || proof.status === "unsupported") return proof;
-      if (source.standing.status === "conflict") return { status: "invalid", because: `the carrier's own authentication is contradicted: ${source.standing.because}` };
+      if (source.status === "conflict") return { status: "invalid", because: `the carrier's own authentication is contradicted: ${source.because}` };
       if (proof.status === "pending-proof") return proof;
-      if (source.standing.status === "incomplete") return { status: "pending-history", because: `the carrier's own authentication is incomplete: ${source.standing.because}` };
+      if (source.status === "incomplete") return { status: "pending-history", because: `the carrier's own authentication is incomplete: ${source.because}` };
       return this.factStatus(transitionFactId(cid));
     }
     if (this.evidence.sources.has(cid)) return { status: "not-present" };
@@ -205,11 +205,11 @@ class ContinuityFold implements Continuity {
   witness(sourceEventCid: EventCid): Witness {
     const source = this.evidence.sources.get(sourceEventCid);
     if (source === undefined) return { status: "pending", because: "the source is not here" };
-    if (source.event.data.peerResolutionEventCid === null) return { status: "invalid", because: "the source is anonymous, in no pair" };
-    if (source.standing.status === "conflict") return { status: "conflict", because: source.standing.because };
+    if (source.status === "anonymous") return { status: "invalid", because: "the source is anonymous, in no pair" };
+    if (source.status === "conflict") return { status: "conflict", because: source.because };
     const proof = this.evidence.carriers.get(sourceEventCid)?.proof;
     if (proof?.status === "invalid" || proof?.status === "unsupported") return { status: "invalid", because: proof.because };
-    if (source.standing.status === "incomplete") return { status: "pending", because: source.standing.because };
+    if (source.status === "incomplete") return { status: "pending", because: source.because };
     if (proof?.status === "pending-proof") return { status: "pending", because: "the proof is not yet verified" };
     if (proof === undefined) return { status: "complete" };
     const status = this.model.status(observationFactId(sourceEventCid));

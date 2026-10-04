@@ -180,8 +180,8 @@ export {
 } from "./fold/dids.js";
 export { type EvidenceCheck, type ReadObject, resolvedDocumentOf, verifyResolutions } from "./fold/evidence.js";
 export {
-  type Standing,
   type Source,
+  type PlacedSource,
   type Proof,
   type Carrier,
   type DecisionStatus,
