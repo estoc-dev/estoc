@@ -7,8 +7,8 @@
   peer's start or a next of the branch address, under `did.created` with its
   generation, on the predecessor's own route whatever arrangement is
   preferred; an entity recorded already under that ID is reused only as
-  exactly what would be made now, document and generation alike, and
-  `EntityConflict` otherwise. Two runtimes of one seed deciding the same
+  exactly what would be made now, document and generation alike, and the
+  rotation is blocked otherwise. Two runtimes of one seed deciding the same
   rotation apart arrive at one entity, and their records join one intent
   when merged. The rotation is refused while the recipe waits, for a
   predecessor's creation or for the usable history to lead from the
@@ -24,8 +24,8 @@
   while the arrangement routing the predecessor is not recorded, granted or
   resolved here yet or the runtime's own membership of it is not borne out
   yet, `blocked` for a runtime enrolled elsewhere or nowhere, a route that
-  has ended and an entity of another generation or route, or retired,
-  under the successor's ID; `materializeSuccessor` takes the runtime's
+  has ended and an entity of another generation, route or document, or
+  retired, under the successor's ID; `materializeSuccessor` takes the runtime's
   author and refuses as `Unusable` what the standing does. `routeStanding`
   is the same reading of a route alone, which `routeTargetOf` throws for.
 - **Rotations to make by hand**: `PendingWork.rotationCandidates` lists the

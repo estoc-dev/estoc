@@ -1,6 +1,7 @@
 import { v7 as uuidv7 } from "uuid";
 import { describe, expect, it, test } from "vitest";
 
+import { encodeLongForm, longToShort } from "@estoc/did-peer";
 import { envelopeOf, eventCidOf, type Event } from "@estoc/event-store";
 import {
   EMPTY_MESSAGE_TYPE,
@@ -506,6 +507,25 @@ describe("records", () => {
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
     await retireDid(alice.runtime, alice.keys, successorId, "gone");
     expect(await unassumed(alice)).toEqual(listed("blocked", `the successor ${successorId} is recorded already and is not live: retired: gone`));
+    await closeAll(alice, bob);
+  });
+
+  test("a successor's ID held by a live entity of the same generation, route and keys under another serialization of the document blocks the rotation in the listing and refuses it with nothing written", async () => {
+    const { alice, bob } = await parties();
+    const { manual, receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const successorId = startDidId(alice.did, bob.did);
+    const exact = await mintDid(alice.keys, successorId, { kind: "direct", endpoint: "https://alice.example/didcomm" });
+    const longFormDid = encodeLongForm(Object.fromEntries(Object.entries(exact.inputDocument).reverse())) as Did;
+    expect(longFormDid).not.toBe(exact.longFormDid);
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: longToShort(longFormDid) as Did, longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    const fold = await scanVault(alice.runtime.vault, alice.keys);
+    expect(fold.dids.entities.get(successorId)).toMatchObject({ live: true, identity: "verified" });
+    const held = `the successor's ID ${successorId} is held by an entity under another document`;
+    expect((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates).toEqual([{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status: "blocked", because: held, entries: [] }]);
+    await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
+    expect([...(await scanVault(alice.runtime.vault, alice.keys)).set.all()]).toHaveLength([...fold.set.all()].length);
     await closeAll(alice, bob);
   });
 

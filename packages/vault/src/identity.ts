@@ -142,7 +142,7 @@ export const DIDCOMM_SERVICE = "#service";
  * route's target. Member order is fixed because the long form hashes
  * the document's own serialization.
  */
-export function inputDocumentOf(keys: DidKeys, service: string | null): JsonObject {
+export function inputDocumentOf(keys: { authentication: Pick<LocalKey, "publicKey">; keyAgreement: Pick<LocalKey, "publicKey"> }, service: string | null): JsonObject {
   return {
     "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"],
     verificationMethod: [

@@ -18,10 +18,11 @@
  * again under the lock before it does.
  */
 
-import { generationOf, mintDid, recipeDidId, samePayload, vaultDraft, type Keys, type LocalDidEntity, type MediationId, type MintedDid, type ReplicaId, type RouteTarget, type SuccessorRecipe, type VaultDraft, type VaultFold } from "@estoc/vault";
+import { encodeLongForm } from "@estoc/did-peer";
+import { generationOf, inputDocumentOf, methodPublicKey, mintDid, recipeDidId, routeServiceUri, samePayload, vaultDraft, type Keys, type LocalDidEntity, type MediationId, type MintedDid, type ReplicaId, type RouteTarget, type SuccessorRecipe, type VaultDraft, type VaultFold } from "@estoc/vault";
 
 import { namedRouteOf, routeStanding, sameRoute, type RouteSpec } from "./dids.js";
-import { EntityConflict, Unusable } from "./errors.js";
+import { Unusable } from "./errors.js";
 
 /** Ready with the route the successor inherits and where it sends; waiting while evidence may still arrive; blocked where this runtime cannot make the successor at all. */
 export type SuccessorStanding = { status: "ready"; route: RouteSpec; target: RouteTarget } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
@@ -47,7 +48,15 @@ export function successorStanding(fold: VaultFold, predecessor: LocalDidEntity, 
   if (!samePayload(existing.created.generation, generationOf(recipe))) return blocked(`the successor's ID ${didId} is held by an entity of another generation`);
   if (!sameRoute(namedRouteOf(existing), route)) return blocked(`the successor's ID ${didId} is held by an entity on another route`);
   if (!existing.live) return blocked(`the successor ${didId} is recorded already and is not live: ${existing.retired !== null ? `retired: ${existing.retired}` : existing.faults.join("; ")}`);
+  if (existing.created.longFormDid !== mintedLongForm(existing, carried.target)) return blocked(`the successor's ID ${didId} is held by an entity under another document`);
   return { status: "ready", route, target: carried.target };
+}
+
+/** The long form a live entity's keys mint over the target: the document the seed would make, read off the keys the entity is verified to hold. */
+function mintedLongForm(entity: LocalDidEntity, target: RouteTarget): string {
+  const document = entity.resolution!.document;
+  const key = (id: string) => ({ publicKey: methodPublicKey(document, id) });
+  return encodeLongForm(inputDocumentOf({ authentication: key(entity.methodIds.authentication[0]!), keyAgreement: key(entity.methodIds.keyAgreement[0]!) }, routeServiceUri(target)));
 }
 
 /** Null for a member of the arrangement; waiting while the replica's own membership is not borne out yet; blocked for a runtime that is no replica of it. */
@@ -66,14 +75,13 @@ function membershipStanding(fold: VaultFold, author: ReplicaId, mediationId: Med
 /**
  * The successor the recipe names, on the predecessor's route: minted
  * and drafted when no entity holds its ID, the one recorded when an
- * entity holds it with exactly this document. `Unusable` while the
- * standing is not ready.
+ * entity holds it with exactly this document, which a ready standing
+ * has read. `Unusable` while the standing is not ready.
  */
 export async function materializeSuccessor(fold: VaultFold, keys: Keys, author: ReplicaId, predecessor: LocalDidEntity, recipe: SuccessorRecipe): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
   const standing = successorStanding(fold, predecessor, recipe, author);
   if (standing.status !== "ready") throw new Unusable("DID", predecessor.didId, [standing.because]);
   const minted = await mintDid(keys, recipeDidId(recipe), standing.target);
-  const existing = fold.dids.entities.get(minted.didId)?.created ?? null;
-  if (existing !== null && existing.longFormDid !== minted.longFormDid) throw new EntityConflict("DID", minted.didId, "another document");
-  return { drafts: existing === null ? [vaultDraft("did.created", { didId: minted.didId, did: minted.did, longFormDid: minted.longFormDid, generation: generationOf(recipe) })] : [], successor: minted };
+  const drafts = fold.dids.entities.has(minted.didId) ? [] : [vaultDraft("did.created", { didId: minted.didId, did: minted.did, longFormDid: minted.longFormDid, generation: generationOf(recipe) })];
+  return { drafts, successor: minted };
 }
