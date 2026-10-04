@@ -21,11 +21,11 @@
  * already forbids another successor.
  */
 
-import { deriveContinuity, successorChannel, type Conflict, type ContinuityFact, type Continuity as ContinuityModel, type FactId, type HeadResult } from "@estoc/continuity";
+import { deriveContinuity, successorChannel, type Conflict, type ContinuityFact, type Continuity as ContinuityModel, type FactId, type HeadResult, type PositiveLink } from "@estoc/continuity";
 
-import { channelKey, channelOf, compareChannels, observationFactId, sameChannel, transitionFactId } from "../ids.js";
+import { channelKey, channelOf, compareChannels, compareUtf8, observationFactId, sameChannel, transitionFactId } from "../ids.js";
 import type { VaultEvent } from "../schema.js";
-import type { Channel, EventCid } from "../types.js";
+import type { Channel, Did, EventCid } from "../types.js";
 import type { AdmissionFold } from "../admission/model.js";
 import type { ChannelEvidence, Decision, Source } from "./channels.js";
 import type { VaultEventSet } from "./set.js";
@@ -51,6 +51,19 @@ export type Status =
  * alone authorizes nothing.
  */
 export type Witness = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string } | { status: "invalid"; because: string };
+
+/**
+ * The peer's earliest address the usable history leads back to from a
+ * pair, the local DID fixed. `found` is a start in this snapshot: the
+ * replacements its support re-derives are the ones walked, and more
+ * history may show an earlier address or a competing one. It confirms
+ * nothing about the pair itself.
+ */
+export type PeerRoot =
+  /** the one peer DID of the pair's peer-only context no usable replacement leads to; the pair's own peer when none leads to it */
+  | { status: "found"; peerDid: Did; support: readonly FactId[] }
+  /** a conflict reaches the pair or a replacement on the way back, or the history leads back to more than one address */
+  | { status: "conflict"; because: string };
 
 /** A conflict of the model with the channels its scope reaches: its context and the successors the claims in it name. */
 export interface ScopedConflict {
@@ -88,6 +101,14 @@ export interface Continuity {
   blocked(channel: Channel): readonly VaultEvent<"channel.blocked">[];
   /** the pairs of the channel's verified peer-only context, the channel itself included, in canonical order: the scope a decision at any of them is read in */
   peerContext(channel: Channel): readonly Channel[];
+  /**
+   * The peer's earliest address in the channel's peer-only context,
+   * walking the usable peer replacements back from the channel: what a
+   * relationship is anchored to when its first private branch is made.
+   * Replacements the peer made toward another local DID count only
+   * where a join carries them to this one.
+   */
+  peerRoot(channel: Channel): PeerRoot;
   /** every decision rotating away from the channel's local DID anywhere in its peer-only context, whatever its status and whether or not it is projected */
   decisionsIn(channel: Channel): readonly Decision[];
 }
@@ -120,6 +141,8 @@ class ContinuityFold implements Continuity {
   private readonly heads = new Map<string, HeadResult>();
   private readonly covered = new Map<EventCid, ReadonlySet<string>>();
   private readonly observed = new Map<FactId, Source>();
+  private readonly conflictedKeys = new Set<string>();
+  private readonly factKinds = new Map<FactId, ContinuityFact["kind"]>();
 
   constructor(
     set: VaultEventSet,
@@ -130,6 +153,8 @@ class ContinuityFold implements Continuity {
     this.facts = model.facts;
     const byId = new Map(model.facts.map((fact) => [fact.id, fact]));
     this.conflicts = model.conflicts().map((conflict) => ({ conflict, channels: scopeOf(conflict, byId) }));
+    for (const { channels } of this.conflicts) for (const channel of channels) this.conflictedKeys.add(channelKey(channel));
+    for (const fact of model.facts) this.factKinds.set(fact.id, fact.kind);
     this.denials = set.of("channel.blocked");
     for (const source of evidence.sources.values()) this.observed.set(observationFactId(source.event.cid), source);
   }
@@ -260,6 +285,52 @@ class ContinuityFold implements Continuity {
 
   peerContext(channel: Channel): readonly Channel[] {
     return this.model.history(channel).peerContext.map(asChannel);
+  }
+
+  peerRoot(channel: Channel): PeerRoot {
+    const leadingTo = new Map<string, PositiveLink[]>();
+    for (const link of this.model.history(channel).links) {
+      if (link.replaces !== "peer" || link.to.localDid !== channel.localDid) continue;
+      const key = channelKey(asChannel(link.to));
+      const links = leadingTo.get(key);
+      if (links === undefined) leadingTo.set(key, [link]);
+      else links.push(link);
+    }
+    const roots: Did[] = [];
+    const reached = new Set<string>([channelKey(channel)]);
+    const frontier = [channel];
+    while (frontier.length > 0) {
+      const current = frontier.pop()!;
+      if (this.conflictedKeys.has(channelKey(current))) return { status: "conflict", because: `a conflict reaches the pair of ${current.localDid} and ${current.peerDid}` };
+      const links = leadingTo.get(channelKey(current)) ?? [];
+      if (links.length === 0) roots.push(current.peerDid);
+      for (const link of links) {
+        if (!link.usable) return this.unusableReplacement(link);
+        const from = asChannel(link.from);
+        if (reached.has(channelKey(from))) continue;
+        reached.add(channelKey(from));
+        frontier.push(from);
+      }
+    }
+    if (roots.length !== 1) return { status: "conflict", because: `the history leads back to ${roots.length} addresses of the peer: ${roots.sort(compareUtf8).join(", ")}` };
+    const root = roots[0]!;
+    if (root === channel.peerDid) return { status: "found", peerDid: root, support: [] };
+    const path = this.model.path(channelOf(channel.localDid, root), channel);
+    if (path.status !== "path") return { status: "conflict", because: `no usable path leads from ${root} to ${channel.peerDid}` };
+    return { status: "found", peerDid: root, support: path.support };
+  }
+
+  /**
+   * A replacement the positive history shows but the usable one does
+   * not, read off the claims it rests on. Here that is always one a
+   * conflict reaches: the facts are named by event CIDs, so no ID has
+   * two values, and a decision is projected only once it is a candidate.
+   */
+  private unusableReplacement(link: PositiveLink): PeerRoot {
+    const claims = link.support.filter((id) => this.factKinds.get(id) !== "address-observed");
+    const failing = claims.map((id) => this.model.status(id)).find((status) => status.status !== "usable");
+    const because = failing === undefined ? "" : `: ${failing.status}${"because" in failing ? `: ${failing.because}` : ""}`;
+    return { status: "conflict", because: `the replacement of ${link.from.peerDid} by ${link.to.peerDid} is not usable${because}` };
   }
 
   decisionsIn(channel: Channel): readonly Decision[] {
