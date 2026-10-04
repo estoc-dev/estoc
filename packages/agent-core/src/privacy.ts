@@ -8,7 +8,8 @@
  * reused across channels, one a peer's rotation led to, or one never
  * disclosed selects nothing, and separating such an address is a
  * manual rotation. A pair whose predecessor already decided reuses
- * that decision, whatever verified it since, and selects no second
+ * that intent, under its first candidate record, whatever verified it
+ * since and however many records support it, and selects no second
  * successor and no other notification.
  */
 
@@ -39,7 +40,7 @@ export function privacyPolicy(fold: VaultFold, cid: EventReference<"message.in">
   const denied = channelPolicy(fold, source.channel);
   if (denied !== null) return none(denied);
   const existing = decisionFor(fold, source.channel.localDid, source.channel.peerDid);
-  if (existing.status === "reuse") return { status: "reuse", decision: existing.decision };
+  if (existing.status === "candidate") return { status: "reuse", decision: existing.candidate };
   if (existing.status !== "none") return none(existing.because);
   return { status: "rotate", target: { localDidId: entity.didId, peerDid: source.channel.peerDid, sourceEventCid: cid } };
 }

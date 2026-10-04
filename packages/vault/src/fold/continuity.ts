@@ -86,6 +86,8 @@ export interface Continuity {
   ackPath(outbound: Channel, carrier: Channel): boolean;
   /** the denials that cover the channel: on the pair itself, or on a pair the history makes it succeed, conflicted or not, when that denial includes successors */
   blocked(channel: Channel): readonly VaultEvent<"channel.blocked">[];
+  /** the pairs of the channel's verified peer-only context, the channel itself included, in canonical order: the scope a decision at any of them is read in */
+  peerContext(channel: Channel): readonly Channel[];
   /** every decision rotating away from the channel's local DID anywhere in its peer-only context, whatever its status and whether or not it is projected */
   decisionsIn(channel: Channel): readonly Decision[];
 }
@@ -256,8 +258,12 @@ class ContinuityFold implements Continuity {
     return reached;
   }
 
+  peerContext(channel: Channel): readonly Channel[] {
+    return this.model.history(channel).peerContext.map(asChannel);
+  }
+
   decisionsIn(channel: Channel): readonly Decision[] {
-    const context = new Set(this.model.history(channel).peerContext.map((member) => channelKey(asChannel(member))));
+    const context = new Set(this.peerContext(channel).map(channelKey));
     const decisions: Decision[] = [];
     for (const decision of this.evidence.decisions.values()) {
       if (decision.channel === null || decision.channel.localDid !== channel.localDid) continue;

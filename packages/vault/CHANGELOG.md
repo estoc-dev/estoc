@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **One rotation intent, several records**: a rotation away from a pair is
+  one intent, this predecessor replaced by this successor toward the peer
+  anywhere in its verified peer-only context, and several
+  `did.rotationSelected` records may support it, each under its own author,
+  time, source and proof, when two replicas decide the same rotation apart
+  or one decides it again over a restored snapshot. `rotationIntent(fold,
+  records)` reads records as the intents they support, `decisionGroups`
+  groups them by predecessor, successor and context, keeping a record whose
+  predecessor's creation is not here as `unresolved`, and
+  `Continuity.peerContext(channel)` is the context a decision's scope is read
+  in. `decisionFor` returns that reading in place of `ExistingDecision`:
+  `candidate` with the first candidate record in canonical event order and
+  its group where it said `reuse`, `pending` where it said `defer`. Two
+  records of one intent are no longer a conflict; two successors in one
+  context still compete, the same successor from two predecessors is not one
+  intent, and a record in conflict beside a verified one still refuses the
+  whole. Each record keeps its own notification.
 - **A payload's cross-field rules are its type**: `MessageOut` is its
   common fields with `LocalSend` or `AutomaticEffect`, the producing
   tuple, its key and the source all null or all present, and `MessageIn`

@@ -232,7 +232,7 @@ export { vaultRetention, vaultHeldRoots, collectGarbage } from "./retention.js";
 export { type Committed } from "./commit.js";
 export { eraseDrafts, erasureClosure, eraseMessage, closeErasures } from "./erasure.js";
 export { type AutomaticIntent, type ResponseChannel, type NotificationChannel, automaticIntent, responseChannel, notificationChannel } from "./response-policy.js";
-export { type ExistingDecision, decisionFor } from "./rotation-policy.js";
+export { type DecisionGroup, type DecisionGroups, type RotationIntent, decisionGroups, rotationIntent, decisionFor } from "./rotation-policy.js";
 export { type DeleteContactOptions, blockDrafts, blockChannels, deleteContactDrafts, deleteContact } from "./contact-commands.js";
 export { type MissingResponse, type MissingNotification, type NotificationConflict, type PendingWork, unfinishedWork } from "./pending-work.js";
 export { type Admitted, admissionDrafts, admitReceipts, reconcileAdmissions } from "./admission/record.js";

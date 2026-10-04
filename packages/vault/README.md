@@ -57,7 +57,7 @@ derives are pinned there too.
 | How is a message erased, and kept erased? | `erasure.ts` | `eraseMessage`, `closeErasures` |
 | Which admissions are owed? | `admission/record.ts` | `reconcileAdmissions`, `admitReceipts` |
 | Where does a reply, or a notification, go? | `response-policy.ts` | `responseChannel`, `notificationChannel`, `automaticIntent` |
-| Which decision does a rotation reuse? | `rotation-policy.ts` | `decisionFor` |
+| Which records are one rotation intent, and which does a rotation reuse? | `rotation-policy.ts` | `rotationIntent`, `decisionGroups`, `decisionFor` |
 | What does blocking or deleting a contact append? | `contact-commands.ts` | `blockChannels`, `deleteContact` |
 | What does an open find unfinished? | `pending-work.ts` | `unfinishedWork` |
 

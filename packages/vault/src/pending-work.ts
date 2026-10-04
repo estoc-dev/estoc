@@ -31,7 +31,7 @@ export interface MissingResponse {
   readonly source: Source;
 }
 
-/** A verified rotation decision with no notification intent yet, while its source, when it has one, still permits one. */
+/** A verified rotation record with no notification intent yet, while its source, when it has one, still permits one. Each record has its own notification, whatever intent it shares with others. */
 export interface MissingNotification {
   readonly decision: Decision;
   /** from the successor to the decision's peer */

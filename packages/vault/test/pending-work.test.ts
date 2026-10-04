@@ -11,6 +11,9 @@ import {
   PURE_ACK_EFFECT,
   ROTATION_NOTIFICATION_EFFECT,
   automaticIntent,
+  automaticMessageId,
+  decisionFor,
+  effectKey,
   executionId,
   foldVault,
   kindOf,
@@ -19,7 +22,7 @@ import {
   type PendingWork,
 } from "../src/index.js";
 import { expectOrderFree } from "./fold/helpers.js";
-import { PURE_ACK, automatic, channel, foldScene, intent, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
+import { IAT, PURE_ACK, automatic, channel, foldScene, intent, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const inputOf = (source: { data: { wireMessageId: string } }, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId as never);
 
@@ -122,6 +125,55 @@ describe("unfinished work", () => {
     const work = workSnapshot(unfinishedWork(vault));
     expect(work.notifications).toEqual([]);
     expect(work.notificationConflicts).toEqual([[decision.cid, [notification.data.messageId, manualForm.data.messageId].sort()]]);
+  });
+
+  it("tracks one notification per record: two records of one intent over different inputs, or manual under different message IDs, each have their own and none conflicts; two records over one input derive one message ID, and their notification intents collide", async () => {
+    const { scene, keys, a0, a1, b0, b1 } = await vaults();
+    const first = proofFreeReceipt(scene, a0, b0);
+    const second = proofFreeReceipt(scene, a0, b0);
+    const overFirst = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: first });
+    const overSecond = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: second, fromPrior: await proof(keys, a0, a1, IAT + 1) });
+    let vault = await foldScene(scene, keys);
+    expect(decisionFor(vault, a0.did, b0.did)).toMatchObject({ status: "candidate", candidate: { event: overFirst }, group: { records: [{ event: overFirst }, { event: overSecond }] } });
+    expect(workSnapshot(unfinishedWork(vault)).notifications).toEqual([
+      [overFirst.cid, channel(a1, b0), first.cid],
+      [overSecond.cid, channel(a1, b0), second.cid],
+    ]);
+    const content = { bodyCid: EMPTY_CONTENT_CID, pleaseAck: [""] };
+    const ofFirst = automatic(scene, a1, b0, first, inputOf(first, b0, a0), ROTATION_NOTIFICATION_EFFECT, { ...content, thid: first.data.wireMessageId, rotationEventCid: ref(overFirst) });
+    const ofSecond = automatic(scene, a1, b0, second, inputOf(second, b0, a0), ROTATION_NOTIFICATION_EFFECT, { ...content, thid: second.data.wireMessageId, rotationEventCid: ref(overSecond) });
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault))).toMatchObject({ notifications: [], notificationConflicts: [] });
+    expect(vault.outbound.notificationFor(overFirst.cid)).toEqual({ status: "selected", messageId: ofFirst.data.messageId });
+    expect(vault.outbound.notificationFor(overSecond.cid)).toEqual({ status: "selected", messageId: ofSecond.data.messageId });
+    expect(unfinishedWork(vault).outbounds.map((o) => [o.messageId, o.work.kind])).toEqual([[ofFirst.data.messageId, "prepare"], [ofSecond.data.messageId, "prepare"]].sort(([a], [b]) => (a! < b! ? -1 : 1)));
+
+    proofFreeReceipt(scene, a0, b1);
+    const manual = await rotation(scene, keys, { from: a0, peer: b1, to: a1 });
+    const manualAgain = await rotation(scene, keys, { from: a0, peer: b1, to: a1, fromPrior: await proof(keys, a0, a1, IAT + 2) });
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault)).notifications).toEqual([
+      [manual.cid, channel(a1, b1), null],
+      [manualAgain.cid, channel(a1, b1), null],
+    ]);
+    intent(scene, a1, b1, { msgType: EMPTY_MESSAGE_TYPE, ...content, rotationEventCid: ref(manual) });
+    intent(scene, a1, b1, { msgType: EMPTY_MESSAGE_TYPE, ...content, rotationEventCid: ref(manualAgain) });
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault))).toMatchObject({ notifications: [], notificationConflicts: [] });
+
+    const third = proofFreeReceipt(scene, a0, b0);
+    const overThird = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: third, fromPrior: await proof(keys, a0, a1, IAT + 3) });
+    const overThirdAgain = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source: third, fromPrior: await proof(keys, a0, a1, IAT + 4) });
+    const input = inputOf(third, b0, a0);
+    automatic(scene, a1, b0, third, input, ROTATION_NOTIFICATION_EFFECT, { ...content, thid: third.data.wireMessageId, rotationEventCid: ref(overThird) });
+    automatic(scene, a1, b0, third, input, ROTATION_NOTIFICATION_EFFECT, { ...content, thid: third.data.wireMessageId, rotationEventCid: ref(overThirdAgain) });
+    vault = await foldScene(scene, keys);
+    const collided = automaticMessageId(effectKey(input, ROTATION_NOTIFICATION_EFFECT));
+    expect(decisionFor(vault, a0.did, b0.did)).toMatchObject({ status: "candidate", candidate: { event: overFirst }, group: { records: [{ event: overFirst }, { event: overSecond }, { event: overThird }, { event: overThirdAgain }] } });
+    expect(vault.outbound.outbounds.get(collided)!.intent).toEqual({ status: "conflict", because: "the intents recorded under one message ID disagree" });
+    for (const record of [overThird, overThirdAgain]) expect(vault.outbound.notificationFor(record.cid)).toEqual({ status: "selected", messageId: collided });
+    expect(workSnapshot(unfinishedWork(vault))).toMatchObject({ notifications: [], notificationConflicts: [] });
+    expect(unfinishedWork(vault).outbounds.map((o) => o.messageId)).not.toContain(collided);
   });
 
   it("lists no notification for a verified decision a control input triggered: a pure ACK, another Empty, a ping response or a problem report", async () => {

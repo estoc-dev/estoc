@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **One rotation intent, several records**: `Rotated` and `RotationDecided`
+  carry `records`, every record of the intent in canonical event order, and
+  `decision` is the first candidate among them; a rotation that finds the
+  intent recorded reuses it whatever the records' authors and proofs, and the
+  private-address policy reuses the same. A successor's package freezes the
+  proof of the intent's first candidate record and is no longer stopped by a
+  second record of the same intent, whether its proof differs or its source
+  is still missing; records that are not one intent, from different
+  predecessors or in conflict, still stop it, and one whose predecessor
+  creation is missing still holds it. Each record keeps its own notification,
+  made by a completion where a crash or a merge left it missing.
 - **One entry per authority**: `LiveAction.manual(messageId)` is the
   host's explicit step for a message already recorded, a retry or a
   completion; the constructor is private, and the initial action of an

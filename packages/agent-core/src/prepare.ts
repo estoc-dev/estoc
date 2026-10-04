@@ -44,6 +44,7 @@ import {
   rawCidOfBytes,
   readStoredDocument,
   readVaultEvent,
+  rotationIntent,
   sameChannel,
   scanVault,
   splitDidUrl,
@@ -280,27 +281,27 @@ async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, chann
 }
 
 /**
- * The frozen proof a sender carries as an unconfirmed successor: the
- * one of the decision that rotated to it toward this channel's peer,
- * at the pair itself or on a verified role-preserving path to it.
- * Null when no decision made the sender a successor here. A decision
- * that is refused, contradicted or still waiting for its evidence
- * stops the package: the proof it holds is not one to send, and the
- * sender is not to go out proof-free either. Which decisions concern
- * the sender is read off their own fields, since one waiting for its
- * predecessor's creation has no channel in the fold yet.
+ * The frozen proof a sender carries as an unconfirmed successor: that
+ * of the rotation intent which made it one toward this channel's peer,
+ * at the pair itself or on a verified role-preserving path to it. Null
+ * when no record made the sender a successor here. The records are read
+ * off their own fields, since one waiting for its predecessor's creation
+ * has no channel in the fold yet; what they amount to, and which proof
+ * stands for them, is the vault's reading of the intent.
  */
 function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): string | null | { pending: string } | { because: string } {
-  const decisions = [...fold.channels.decisions.values()].filter((decision) => decision.event.data.toDidId === sender.didId && leadsTo(fold, decision, channel));
-  if (decisions.length === 0) return null;
-  for (const decision of decisions) {
-    const { status } = decision;
-    if (status.status === "pending") return { pending: `the rotation ${decision.event.cid} to the sender is pending: ${status.because}` };
-    if (status.status !== "candidate") return { because: `the rotation ${decision.event.cid} to the sender is ${status.status}: ${status.because}` };
+  const records = [...fold.channels.decisions.values()].filter((decision) => decision.event.data.toDidId === sender.didId && leadsTo(fold, decision, channel));
+  const intent = rotationIntent(fold, records);
+  switch (intent.status) {
+    case "none":
+      return null;
+    case "conflict":
+      return { because: intent.because };
+    case "pending":
+      return { pending: intent.because };
+    case "candidate":
+      return intent.candidate.event.data.fromPrior;
   }
-  const proofs = new Set(decisions.map((decision) => decision.event.data.fromPrior));
-  if (proofs.size > 1) return { because: `${decisions.length} rotations to the sender toward ${channel.peerDid} freeze different proofs` };
-  return decisions[0]!.event.data.fromPrior;
 }
 
 /** Does the decision's rotation land in `channel`: its successor's pair with the same peer, or a pair a verified path from there preserves the roles into. */
