@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **An input's standing is its type**: `Execution` is its common fields
+  with one of three members, told apart by `status`: `complete` with
+  `intentHash`, `kind` and `firstWitness` all present, `pending` with
+  `because` and the admitted intent once one is admitted, and `conflict`
+  with `because` and no intent. `status` is now the string itself and
+  `because` sits beside it, in place of the `{ status, because }` object;
+  `ExecutionStatus` is no longer exported. Reading `status` tells whether
+  the first witness and the intent are there.
 - **Every DID says how it was made**: `did.created.generation` is required,
   `{ kind: "entry", profile }`, `{ kind: "start", profile, predecessor,
   binding }` or `{ kind: "next", profile, predecessor }`, and under profile

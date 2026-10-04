@@ -87,7 +87,6 @@ const acknowledged = (scene: Scene, out: VaultEvent<"message.out">, carrier: Vau
     ...overrides,
   });
 
-/** The input a receipt is, as its execution is named. */
 const inputOf = (source: VaultEvent<"message.in">, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId);
 
 /** A pure ACK of a source received at `received`, in its exact shape: Empty, body `{}`, the carrier's thread and creation time, targets in `ack`. */
@@ -355,7 +354,7 @@ describe("an outbound message", () => {
     vault = await fold(scene, keys);
     expect(vault.continuity.witness(first.cid).status).toBe("complete");
     expect(vault.continuity.witness(second.cid).status).toBe("complete");
-    expect(vault.inbound.ofSource(first.cid)!.status.status).toBe("conflict");
+    expect(vault.inbound.ofSource(first.cid)!.status).toBe("conflict");
     expect(outboundOf(vault, out)).toMatchObject({ ackWitnesses: [], acknowledged: false });
     expectSameOverEveryOrder(scene, vault.checks);
   });

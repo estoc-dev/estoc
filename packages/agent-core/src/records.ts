@@ -42,7 +42,6 @@ import {
   type EventCid,
   type Execution,
   type ExecutionId,
-  type ExecutionStatus,
   type InboundKind,
   type InvitationStatus,
   type Member,
@@ -86,6 +85,8 @@ export interface MessageHeaders {
 
 /** `missing` is content that is not here, is damaged, is too large to read or is no stored message document. */
 export type BodyRecord = { state: "available"; body: JsonObject; attachments: StoredAttachment[] } | { state: "erased" } | { state: "missing" };
+
+export type ExecutionStatus = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string };
 
 export type DiagnosticKind = "input" | "observations" | "contradicting" | "intent" | "outcome" | "effect" | "work" | "remote-error";
 
@@ -352,7 +353,7 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
 function owedResponses(fold: VaultFold, own: readonly MissingResponse[], handlers: readonly Handler[]): MissingResponse[] {
   const owed = own.filter((response) => response.effectType === PURE_ACK_EFFECT);
   for (const execution of fold.inbound.executions.values()) {
-    if (execution.firstWitness === null) continue;
+    if (execution.status !== "complete") continue;
     const { source } = execution.firstWitness;
     const handler = handlerFor(handlers, source.event.data.msgType);
     if (handler === null || (handler === trustPing && execution.erased)) continue;
@@ -456,9 +457,10 @@ const shownBy = (execution: Execution): Member => execution.firstWitness ?? exec
 async function remoteErrors(context: Context): Promise<ReadonlyMap<MessageId, Diagnostic[]>> {
   const { fold } = context;
   const reports = new Map<MessageId, Diagnostic[]>();
-  const executions = [...fold.inbound.executions.values()].filter((execution) => execution.kind === "error" && execution.status.status === "complete");
-  for (const execution of executions.sort((a, b) => (a.messageId < b.messageId ? -1 : 1))) {
-    const { source } = execution.firstWitness!;
+  const executions = [...fold.inbound.executions.values()].sort((a, b) => (a.messageId < b.messageId ? -1 : 1));
+  for (const execution of executions) {
+    if (execution.status !== "complete" || execution.kind !== "error") continue;
+    const { source } = execution.firstWitness;
     const outbound = fold.outbound.inReplyTo(source.event.cid);
     if (outbound === null) continue;
     const body = await document(context, execution.erased, source.event.data.bodyCid);
@@ -478,7 +480,7 @@ async function channelRecord(context: Context, view: ChannelView): Promise<Chann
     if (!execution.members.some((member) => member.admitted)) continue;
     const record = await inboundRecord(context, execution, contactIds);
     messages.push(record);
-    if (execution.status.status !== "complete" || record.msg?.type !== PROFILE || record.body.state !== "available") continue;
+    if (execution.status !== "complete" || record.msg?.type !== PROFILE || record.body.state !== "available") continue;
     const name = claimedName(record.body.body);
     if (name !== null) peerName = { name, messageId: execution.messageId };
   }
@@ -502,7 +504,7 @@ async function inboundRecord(context: Context, execution: Execution, contactIds:
   const agreed = execution.intentHash !== null;
   const { data } = member.source.event;
   const diagnostics: Diagnostic[] = [];
-  if (execution.status.status !== "complete") diagnostics.push({ kind: "input", because: execution.status.because });
+  if (execution.status !== "complete") diagnostics.push({ kind: "input", because: execution.because });
   if (execution.siblings.length > 0) diagnostics.push({ kind: "observations", because: `${execution.siblings.length} observations claiming this input are not authenticated` });
   if (execution.contradicting.length > 0) diagnostics.push({ kind: "contradicting", because: `${execution.contradicting.length} authenticated ${execution.contradicting.length === 1 ? "observation carries" : "observations carry"} another content than the one admitted` });
   const completes = context.completes.get(execution.messageId) ?? [];
@@ -516,7 +518,7 @@ async function inboundRecord(context: Context, execution: Execution, contactIds:
     body: agreed ? await document(context, execution.erased, data.bodyCid) : execution.erased ? { state: "erased" } : { state: "missing" },
     kind: execution.kind,
     effectType: null,
-    input: execution.status,
+    input: execution.status === "complete" ? { status: "complete" } : { status: execution.status, because: execution.because },
     outcome: null,
     acknowledged: false,
     late: false,

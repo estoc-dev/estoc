@@ -149,7 +149,7 @@ export async function callEffects(decided: DecidedEffects, options: Pick<EffectO
  * input established by no observation is settle's to explain.
  */
 function notWitnessing(fold: VaultFold, execution: Execution, cid: EventReference<"message.in">): string | null {
-  if (execution.firstWitness === null || execution.firstWitness.source.event.cid === cid) return null;
+  if (execution.status !== "complete" || execution.firstWitness.source.event.cid === cid) return null;
   const disposition = fold.dispositions.disposition(cid);
   if (disposition.status !== "admitted") return `the observation is not admitted: ${"because" in disposition ? disposition.because : disposition.status}`;
   const witness = fold.continuity.witness(cid);
@@ -199,7 +199,7 @@ export type Drafted =
  * response that cannot be recorded refuses its own operation alone.
  */
 async function settle(held: Held, fold: VaultFold, execution: Execution, options: Omit<EffectOptions, "dispatch">, only?: string): Promise<{ because: string | null; drafted: Drafted[] }> {
-  if (execution.firstWitness === null) return { because: `the input is not established: ${(execution.status as Exclude<Execution["status"], { status: "complete" }>).because}`, drafted: [] };
+  if (execution.status !== "complete") return { because: `the input is not established: ${execution.because}`, drafted: [] };
   const { source } = execution.firstWitness;
   const handler = handlerFor(handlersOf(options.handlers), source.event.data.msgType);
   const operations = [...new Set([PURE_ACK_EFFECT, ...(handler?.effectTypes ?? [])])].filter((effectType) => only === undefined || effectType === only);

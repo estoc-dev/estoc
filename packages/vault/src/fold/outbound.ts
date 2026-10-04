@@ -238,7 +238,7 @@ export function foldOutbound(
     inReplyTo: (sourceEventCid) => {
       const source = evidence.sources.get(sourceEventCid);
       const execution = inbound.ofSource(sourceEventCid);
-      if (source === undefined || source.channel === null || execution === null || execution.status.status !== "complete") return null;
+      if (source === undefined || source.channel === null || execution === null || execution.status !== "complete") return null;
       if (!admittedWitness(sourceEventCid, inbound)) return null;
       const { data } = source.event;
       const thread = execution.kind === "ping-response" ? data.thid : execution.kind === "error" ? data.pthid : null;
@@ -263,7 +263,7 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
  */
 function admittedWitness(sourceEventCid: EventCid, inbound: InboundFold): boolean {
   const member = inbound.memberOf(sourceEventCid);
-  return member !== null && member.admitted && member.witness.status === "complete" && inbound.ofSource(sourceEventCid)!.status.status !== "conflict";
+  return member !== null && member.admitted && member.witness.status === "complete" && inbound.ofSource(sourceEventCid)!.status !== "conflict";
 }
 
 /** The admitted witnesses whose `ack` names each wire ID, in canonical event order. */
@@ -512,7 +512,7 @@ function effectOf(data: MessageOut, channel: Channel | null, inputs: Inputs): Ef
       execution = inputs.inbound.ofSource(data.sourceEventCid);
       if (execution !== null) {
         if (execution.id !== data.executionId) return conflict(`the execution ID is not the one the source's input derives, ${execution.id}`);
-        if (execution.status.status === "conflict") return conflict(`the source's input is in conflict: ${execution.status.because}`);
+        if (execution.status === "conflict") return conflict(`the source's input is in conflict: ${execution.because}`);
       }
       const witness = inputs.continuity.witness(data.sourceEventCid);
       if (witness.status === "invalid" || witness.status === "conflict") return conflict(`the source is no complete witness: ${witness.because}`);
@@ -667,6 +667,6 @@ function ackTargetOf(sourceEventCid: EventCid, evidence: ChannelEvidence, inboun
   if (!member.admitted) return none("the carrier is not admitted");
   if (member.witness.status !== "complete") return none(`the carrier is no complete witness: ${member.witness.because}`);
   const execution = inbound.ofSource(sourceEventCid)!;
-  if (execution.status.status === "conflict") return none(`the carrier's input is in conflict: ${execution.status.because}`);
+  if (execution.status === "conflict") return none(`the carrier's input is in conflict: ${execution.because}`);
   return { status: "eligible", wireMessageId: data.wireMessageId };
 }

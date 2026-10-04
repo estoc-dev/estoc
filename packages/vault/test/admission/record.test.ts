@@ -41,7 +41,7 @@ describe("admitting receipts", () => {
       [denied.cid, "refused"],
     ]);
     const execution = admitted.fold.inbound.ofSource(opening.cid)!;
-    expect([execution.status, execution.members.map(({ admitted: isAdmitted }) => isAdmitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual([{ status: "complete" }, [true, false, true], [contradicting.cid]]);
+    expect([execution.status, execution.members.map(({ admitted: isAdmitted }) => isAdmitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual(["complete", [true, false, true], [contradicting.cid]]);
     expect(await reconcileAdmissions(memory, keys)).toEqual([]);
     const after = await scanVault(memory.vault, keys);
     expect([...after.admissions.admissions.values()].map(({ event, status }) => [event.data.sourceEventCid, status.status]).sort()).toEqual(admitted.events.map((event) => [event.data.sourceEventCid, "effective"]).sort());
@@ -79,7 +79,7 @@ describe("admitting receipts", () => {
 
     expect(await reconcileAdmissions(memory, keys)).toEqual([]);
     const after = await scanVault(memory.vault, keys);
-    expect(after.inbound.ofSource(later.cid)).toMatchObject({ status: { status: "complete" }, intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: later.cid } } }] });
+    expect(after.inbound.ofSource(later.cid)).toMatchObject({ status: "complete", intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: later.cid } } }] });
     expect(after.inbound.ofSource(later.cid)!.members.map(({ source, admitted }) => [source.event.cid, admitted])).toEqual([
       [earlier.cid, true],
       [later.cid, false],
@@ -107,7 +107,7 @@ describe("admitting receipts", () => {
     const memory = await vaultOf(scene);
     expect((await reconcileAdmissions(memory, keys)).map((event) => event.data.sourceEventCid)).toEqual([second.cid]);
     const after = await scanVault(memory.vault, keys);
-    expect(after.inbound.ofSource(first.cid)).toMatchObject({ status: { status: "complete" }, intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: first.cid } } }] });
+    expect(after.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: first.cid } } }] });
     expect(after.dispositions.disposition(first.cid)).toEqual({ status: "pending-admission", because: "the observation contradicts the intent its input has admitted" });
   });
 });

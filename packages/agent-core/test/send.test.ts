@@ -217,7 +217,7 @@ describe("automatic effects", () => {
     const sourceEventCid = await received(alice, bob, "wire-1", { type: BASIC_MESSAGE, body: { content: "hi" }, please_ack: [""], created_time: 1_000 });
     let f = await fold(alice);
     const execution = f.inbound.ofSource(sourceEventCid)!;
-    expect(execution.status).toEqual({ status: "complete" });
+    expect(execution.status).toBe("complete");
     const source = f.channels.sources.get(sourceEventCid)!;
     expect(responseChannel(f, execution)).toEqual({ status: "selected", channel: toBob });
     expect(unfinishedWork(f).responses.map((r) => r.effectType)).toEqual([PURE_ACK_EFFECT]);

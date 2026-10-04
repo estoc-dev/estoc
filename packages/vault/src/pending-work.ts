@@ -103,7 +103,7 @@ function missingResponses(fold: VaultFold): MissingResponse[] {
   const missing: MissingResponse[] = [];
   const executions = [...fold.inbound.executions.values()].sort((a, b) => cmp(a.messageId, b.messageId));
   for (const execution of executions) {
-    if (execution.firstWitness === null) continue;
+    if (execution.status !== "complete") continue;
     const { source } = execution.firstWitness;
     const candidates: string[] = [];
     if (fold.outbound.ackTarget(source.event.cid).status === "eligible") candidates.push(PURE_ACK_EFFECT);
@@ -121,9 +121,9 @@ function missingResponses(fold: VaultFold): MissingResponse[] {
 
 /** An input the policy reads as selecting a rotation: a complete, admitted, established application input at a disclosed entry of ours. */
 function selectingInput(fold: VaultFold, execution: Execution): Source | null {
-  if (execution.firstWitness === null) return null;
+  if (execution.status !== "complete") return null;
   const { source } = execution.firstWitness;
-  if (source.channel === null || source.localDidId === null || execution.status.status !== "complete") return null;
+  if (source.channel === null || source.localDidId === null) return null;
   if (!fold.admissions.admitted(source.event.cid) || kindOf(source.event.data) !== "application") return null;
   const entity = fold.dids.entities.get(source.localDidId);
   if (entity === undefined || entity.disclosures.length === 0 || fold.dids.lineage(entity.didId).status !== "entry") return null;

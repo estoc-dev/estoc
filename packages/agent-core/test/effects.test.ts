@@ -219,7 +219,7 @@ describe("the automatic effects of a live input", () => {
     const fold = await foldOf(alice);
     for (const [id, refused] of [[contradicting.executionId!, contradicting.cid], [executionId, later]] as const) {
       const execution = fold.inbound.executions.get(id)!;
-      expect([execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual([{ status: "complete" }, [true, false], [refused]]);
+      expect([execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual(["complete", [true, false], [refused]]);
       expect(fold.dispositions.disposition(refused)).toEqual({ status: "pending-admission", because: "the observation contradicts the intent its input has admitted" });
     }
     expect([wire.posts.length, fold.set.of("message.out").length, unfinishedWork(fold).responses.map(({ execution, effectType }) => [execution.id, effectType]).sort()]).toEqual([2, 2, [[contradicting.executionId, PING_RESPONSE_EFFECT], [executionId, PURE_ACK_EFFECT]].sort()]);
