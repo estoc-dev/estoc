@@ -155,34 +155,39 @@ export const objectCases: ObjectCase[] = [
       const store = new SqliteObjectStore(db);
       const bytes = bytesOf(2 * MIB + 10, 2);
       const cid = cidOf(bytes);
-      const prepared = store.prepare();
-      await prepared.putObject(cid, chunked(bytes, 700_001));
-      assert(await prepared.has(cid), "prepared here counts as present to the preparation");
-      assertEqual(await store.has(cid), false, "not to the store");
-      assertEqual(await store.stat(cid), null, "nor its metadata");
-      assertEqual(await listed(store), [], "nor in the list");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks"), [{ n: 0 }], "no chunk in the vault");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 3 }], "three staged in the temporary database");
       let published = false;
-      try {
-        db.driver.transaction("immediate", () => {
-          prepared.publish();
-          published = rows(db.driver, "SELECT count(*) AS n FROM object_chunks")[0]?.["n"] === 3;
-          throw new Error("the commit fails after publishing");
-        });
-      } catch (err) {
-        assert(err instanceof Error && err.message === "the commit fails after publishing", "the throw comes back");
-      }
+      const failed = await assertRejects(
+        () =>
+          store.preparing(async (prepared) => {
+            await prepared.putObject(cid, chunked(bytes, 700_001));
+            assert(await prepared.has(cid), "prepared here counts as present to the preparation");
+            assertEqual(await store.has(cid), false, "not to the store");
+            assertEqual(await store.stat(cid), null, "nor its metadata");
+            assertEqual(await listed(store), [], "nor in the list");
+            assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks"), [{ n: 0 }], "no chunk in the vault");
+            assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 3 }], "three staged in the temporary database");
+            try {
+              db.driver.transaction("immediate", () => {
+                prepared.publish();
+                published = rows(db.driver, "SELECT count(*) AS n FROM object_chunks")[0]?.["n"] === 3;
+                throw new Error("the commit fails after publishing");
+              });
+            } catch (err) {
+              assertEqual(await store.has(cid), false, "rolled back: absent");
+              assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 3 }], "the staging is back too");
+              throw err;
+            }
+          }),
+        "Error",
+        "the failed commit"
+      );
+      assertEqual(failed.message, "the commit fails after publishing", "the throw comes back");
       assert(published, "publish moved the chunks inside the transaction");
-      assertEqual(await store.has(cid), false, "rolled back: absent");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 3 }], "the staging is back too");
-      prepared.discard();
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "discarded");
-      const again = store.prepare();
-      await again.putObject(cid, chunked(bytes, MIB));
-      db.driver.transaction("immediate", () => again.publish());
-      again.settle();
-      again.discard();
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "dropped with the failed commit");
+      await store.preparing(async (again) => {
+        await again.putObject(cid, chunked(bytes, MIB));
+        db.driver.transaction("immediate", () => again.publish());
+      });
       assertEqual(await store.stat(cid), { cid, codec: "raw", size: bytes.length }, "published");
       assertBytes((await store.read(cid, bytes.length)) as Uint8Array, bytes, "and read back");
       assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "nothing staged after");
@@ -207,17 +212,18 @@ export const objectCases: ObjectCase[] = [
       assertBytes((await store.read(other, 10)) as Uint8Array, bytesOf(10, 4), "the other object reads");
       await assertRejects(() => store.putObject(cid, bytesOf(10, 5)), "DigestMismatch", "wrong bytes under the CID");
       await expectDamaged(store, cid, "after a refused repair");
-      const prepared = store.prepare();
-      await prepared.putObject(cid, bytes);
-      try {
-        db.driver.transaction("immediate", () => {
-          prepared.publish();
-          throw new Error("rolled back");
-        });
-      } catch {
-        // the repair is rolled back
-      }
-      prepared.discard();
+      await assertRejects(
+        () =>
+          store.preparing(async (prepared) => {
+            await prepared.putObject(cid, bytes);
+            db.driver.transaction("immediate", () => {
+              prepared.publish();
+              throw new Error("rolled back");
+            });
+          }),
+        "Error",
+        "the repair is rolled back"
+      );
       await expectDamaged(store, cid, "after a rolled-back repair");
       const [chunk] = rows(db.driver, "SELECT bytes FROM object_chunks WHERE cid = ? AND chunk_no = 0", cid);
       assert(((chunk?.["bytes"] as Uint8Array)[0] as number) !== (bytes[0] as number), "the old, corrupt bytes are still there");
@@ -249,27 +255,37 @@ export const objectCases: ObjectCase[] = [
       await store.putRaw(bytes);
       const fresh = bytesOf(10, 7);
       const freshCid = cidOf(fresh);
-      const prepared = store.prepare();
-      await prepared.putObject(freshCid, fresh);
-      assert(await prepared.has(cid), "sound when the root was checked");
-      prepared.reuse(cid);
-      corrupt(db.driver, cid);
-      await assertRejects(() => store.read(cid, 10), "DamagedObject", "a read finds the damage before the transaction");
-      await assertRejects(async () => db.driver.transaction("immediate", () => prepared.publish()), "DamagedObject", "the publication refuses");
-      assertEqual(await store.has(freshCid), false, "the staged object did not land");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 1 }], "still staged");
-      prepared.discard();
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "discarded");
-      const repairing = store.prepare();
-      await repairing.putObject(freshCid, fresh);
-      await repairing.putObject(cid, bytes);
-      repairing.reuse(cid);
-      db.driver.transaction("immediate", () => repairing.publish());
-      repairing.settle();
-      repairing.discard();
+      await assertRejects(
+        () =>
+          store.preparing(async (prepared) => {
+            await prepared.putObject(freshCid, fresh);
+            assert(await prepared.has(cid), "sound when the root was checked");
+            prepared.reuse(cid);
+            corrupt(db.driver, cid);
+            await assertRejects(() => store.read(cid, 10), "DamagedObject", "a read finds the damage before the transaction");
+            try {
+              db.driver.transaction("immediate", () => prepared.publish());
+            } catch (err) {
+              assertEqual(await store.has(freshCid), false, "the staged object did not land");
+              assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 1 }], "still staged");
+              throw err;
+            }
+          }),
+        "DamagedObject",
+        "the publication refuses"
+      );
+      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "dropped with the refused commit");
+      await store.preparing(async (repairing) => {
+        await repairing.putObject(freshCid, fresh);
+        await repairing.putObject(cid, bytes);
+        repairing.reuse(cid);
+        db.driver.transaction("immediate", () => repairing.publish());
+      });
       assertBytes((await store.read(cid, 10)) as Uint8Array, bytes, "repaired by the same publication");
       assertEqual(await store.has(freshCid), true, "the new object landed with it");
-      assertThrows(() => store.prepare().reuse("nope" as Cid), "InvalidCid", "a reuse of no CID");
+      await store.preparing(async (prepared) => {
+        assertThrows(() => prepared.reuse("nope" as Cid), "InvalidCid", "a reuse of no CID");
+      });
       db.close();
     },
   },
@@ -370,7 +386,7 @@ export const objectCases: ObjectCase[] = [
         }
         await assertRejects(() => store.putRaw(source()), "ReadOnlyVault", "putRaw");
         await assertRejects(() => store.putObject(cid, source()), "ReadOnlyVault", "putObject");
-        await assertRejects(() => store.prepare().putObject(cid, source()), "ReadOnlyVault", "a preparation's putObject");
+        await assertRejects(() => store.preparing((prepared) => prepared.putObject(cid, source())), "ReadOnlyVault", "a preparation's putObject");
         await assertRejects(() => store.collect([]), "ReadOnlyVault", "collect");
         assert(!pulled, "no source was read");
         assert(await store.has(cid), "still there");
@@ -411,47 +427,46 @@ export const objectCases: ObjectCase[] = [
       };
       const shown = (samples: MemoryHeld[]): string => samples.map((held) => `${(held.javascript / MIB).toFixed(1)}${held.sqlite === undefined ? "" : ` / SQLite ${(held.sqlite / MIB).toFixed(1)}`}`).join(", ");
       const samples: MemoryHeld[] = [];
-      const prepared = store.prepare();
-      await prepared.putObject(cid.text as Cid, sampled(samples));
-      assertEqual(rows(db.driver, "SELECT count(*) AS n, sum(length(bytes)) AS bytes FROM temp.staging_chunks"), [{ n: total, bytes: total * MIB }], "staged whole");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks"), [{ n: 0 }], "none accepted");
       let note: string | undefined;
-      if (samples.length === 3) {
-        note = `held ${shown(samples)} MiB at 8, 16 and 24 MiB staged`;
-        const javascript = grew(samples, "javascript");
-        assert(javascript !== undefined && javascript < 4 * MIB, `what JavaScript holds does not grow with the staging: ${note}`);
-        const sqlite = grew(samples, "sqlite");
-        if (sqlite !== undefined) {
-          assert(sqlite < 4 * MIB, `what SQLite holds does not grow with the staging: ${note}`);
-          // The same staging under a temporary cache the size of the object: the bound above is the cache's doing, and the measure sees the cache fill.
-          const cachingTarget = h.fresh();
-          const caching = createRuntime(await h.open(cachingTarget, "create"), { metadata: META, wrapped: WRAPPED });
-          try {
-            const cachingStore = new SqliteObjectStore(caching, { maxStagedBytes: 40 * MIB });
-            const small = bytesOf(16, 3);
-            await cachingStore.prepare().putObject(cidOf(small), small); // the first staging sets the temporary database's bounded cache; enlarged from here
-            caching.driver.exec(`PRAGMA temp.cache_size = -${32 * 1024}`);
-            const cached: MemoryHeld[] = [];
-            await cachingStore.prepare().putObject(cid.text as Cid, sampled(cached));
-            const cachedSqlite = grew(cached, "sqlite");
-            assert(cachedSqlite !== undefined && cachedSqlite >= 12 * MIB, `told to cache the staging, SQLite holds it: held ${shown(cached)} MiB at 8, 16 and 24 MiB staged`);
-            note += `; told to cache, SQLite held ${shown(cached)} MiB`;
-          } finally {
-            caching.close();
-            await h.remove?.(cachingTarget);
+      await store.preparing(async (prepared) => {
+        await prepared.putObject(cid.text as Cid, sampled(samples));
+        assertEqual(rows(db.driver, "SELECT count(*) AS n, sum(length(bytes)) AS bytes FROM temp.staging_chunks"), [{ n: total, bytes: total * MIB }], "staged whole");
+        assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks"), [{ n: 0 }], "none accepted");
+        if (samples.length === 3) {
+          note = `held ${shown(samples)} MiB at 8, 16 and 24 MiB staged`;
+          const javascript = grew(samples, "javascript");
+          assert(javascript !== undefined && javascript < 4 * MIB, `what JavaScript holds does not grow with the staging: ${note}`);
+          const sqlite = grew(samples, "sqlite");
+          if (sqlite !== undefined) {
+            assert(sqlite < 4 * MIB, `what SQLite holds does not grow with the staging: ${note}`);
+            // The same staging under a temporary cache the size of the object: the bound above is the cache's doing, and the measure sees the cache fill.
+            const cachingTarget = h.fresh();
+            const caching = createRuntime(await h.open(cachingTarget, "create"), { metadata: META, wrapped: WRAPPED });
+            try {
+              const cachingStore = new SqliteObjectStore(caching, { maxStagedBytes: 40 * MIB });
+              const small = bytesOf(16, 3);
+              await cachingStore.preparing((staging) => staging.putObject(cidOf(small), small)); // the first staging sets the temporary database's bounded cache; enlarged from here
+              caching.driver.exec(`PRAGMA temp.cache_size = -${32 * 1024}`);
+              const cached: MemoryHeld[] = [];
+              await cachingStore.preparing((staging) => staging.putObject(cid.text as Cid, sampled(cached)));
+              const cachedSqlite = grew(cached, "sqlite");
+              assert(cachedSqlite !== undefined && cachedSqlite >= 12 * MIB, `told to cache the staging, SQLite holds it: held ${shown(cached)} MiB at 8, 16 and 24 MiB staged`);
+              note += `; told to cache, SQLite held ${shown(cached)} MiB`;
+            } finally {
+              caching.close();
+              await h.remove?.(cachingTarget);
+            }
           }
         }
-      }
-      const other = store.prepare();
-      await assertRejects(() => other.putObject(cid.text as Cid, reusing()), "StagingFull", "a second put past the bound");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: total }], "nothing of it staged");
-      db.driver.transaction("immediate", () => prepared.publish());
-      prepared.settle();
-      prepared.discard();
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "the staging is empty once published");
-      assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks WHERE cid = ?", cid.text), [{ n: total }], "accepted");
-      assertEqual(await other.putObject(cid.text as Cid, reusing()), { cid: cid.text, codec: "raw", size: total * MIB }, "and the bound is free again");
-      other.discard();
+        await store.preparing(async (other) => {
+          await assertRejects(() => other.putObject(cid.text as Cid, reusing()), "StagingFull", "a second put past the bound");
+          assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: total }], "nothing of it staged");
+          db.driver.transaction("immediate", () => prepared.publish());
+          assertEqual(rows(db.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "the staging is empty once published");
+          assertEqual(rows(db.driver, "SELECT count(*) AS n FROM object_chunks WHERE cid = ?", cid.text), [{ n: total }], "accepted");
+          assertEqual(await other.putObject(cid.text as Cid, reusing()), { cid: cid.text, codec: "raw", size: total * MIB }, "and the bound is free again");
+        });
+      });
       db.close();
       await h.remove?.(target);
       return note;

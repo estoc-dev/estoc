@@ -110,37 +110,39 @@ export class SqliteObjectStore implements ObjectStore {
   }
 
   private async putAlone(want: DaslCid | undefined, source: ByteSource): Promise<ObjectInfo> {
-    const prepared = this.prepare();
-    try {
+    return this.preparing(async (prepared) => {
       const staged = await this.stage(want, source);
       prepared.hold(staged);
       this.driver.transaction("immediate", () => prepared.publish());
-      prepared.settle();
       return info(staged.cid, staged.size);
-    } finally {
-      prepared.discard();
-    }
+    });
   }
 
   /**
-   * A preparation over this store: what is put through it is verified
-   * and staged now, seen by no read, and accepted when `publish` runs
-   * inside the transaction the caller owns. See `SqlitePreparation`
-   * for the steps around that transaction.
+   * `commit` with a preparation over this store: what it puts through
+   * the preparation is verified and staged now, seen by no read, and
+   * accepted when `publish` runs inside the transaction `commit` owns.
+   * `commit` resolving means that transaction committed, and the
+   * objects it repaired are sound from then on; however `commit` ends,
+   * nothing it staged stays staged.
    */
-  prepare(): SqlitePreparation {
-    return new SqlitePreparation({
-      writable: (what) => this.requireWritable(what),
-      stage: (want, source) => this.stage(want, source),
-      has: (cid) => this.has(cid),
-      check: (cid) => {
-        if (this.damage.has(cid)) throw new DamagedObject(cid);
+  preparing<T>(commit: (prepared: SqlitePreparation) => Promise<T>): Promise<T> {
+    return SqlitePreparation.within(
+      {
+        writable: (what) => this.requireWritable(what),
+        stage: (want, source) => this.stage(want, source),
+        has: (cid) => this.has(cid),
+        check: (cid) => {
+          if (this.damage.has(cid)) throw new DamagedObject(cid);
+        },
+        inTransaction: () => this.driver.inTransaction,
+        stopped: () => this.driver.uncertain !== undefined,
+        accept: (staged) => this.accept(staged),
+        drop: (token) => this.drop(token),
+        forgive: (cid) => this.damage.delete(cid),
       },
-      inTransaction: () => this.driver.inTransaction,
-      accept: (staged) => this.accept(staged),
-      drop: (token) => this.drop(token),
-      forgive: (cid) => this.damage.delete(cid),
-    });
+      commit
+    );
   }
 
   /**
@@ -397,7 +399,7 @@ export class SqliteObjectStore implements ObjectStore {
   }
 }
 
-/** The steps a preparation takes on its store, which `SqliteObjectStore.prepare` closes over its own: no part of the store's interface. */
+/** The steps a preparation takes on its store, which `SqliteObjectStore.preparing` closes over its own: no part of the store's interface. */
 export interface PreparationSteps {
   writable(what: string): void;
   stage(want: DaslCid | undefined, source: ByteSource): Promise<Staged>;
@@ -405,6 +407,8 @@ export interface PreparationSteps {
   /** Throws `DamagedObject` for an object the store knows damaged; nothing otherwise. */
   check(cid: Cid): void;
   inTransaction(): boolean;
+  /** Whether the connection stopped at a commit of unknown outcome: it does nothing more, and its temporary database, the staging with it, goes when it closes. */
+  stopped(): boolean;
   accept(staged: Staged): Acceptance;
   drop(token: number): void;
   forgive(cid: string): void;
@@ -413,23 +417,40 @@ export interface PreparationSteps {
 /**
  * The objects of one commit between verification and publication,
  * staged in the connection's temporary database where no read of the
- * store sees them, and accepted by three steps around the transaction
- * the commit lands in: `publish` inside it, checking every object
- * declared reused against the damage known by then and moving every
- * staged object under its CID; `settle` once it has committed,
- * clearing the damage of the objects it repaired — inside the
- * transaction that would be too soon, since a rollback keeps the old
- * bytes and their damage — and `discard` in any case, dropping
- * whatever is still staged. A preparation dropped unpublished leaves
- * the store as it was; two in flight are two, each publishing only
- * what it verified.
+ * store sees them, and accepted by `publish` inside the transaction
+ * the commit lands in, which checks every object declared reused
+ * against the damage known by then and moves every staged object
+ * under its CID. A preparation lives for one call of `within`: once
+ * the commit has resolved, the damage of the objects it repaired is
+ * cleared — inside the transaction that would be too soon, since a
+ * rollback keeps the old bytes and their damage — and what was staged
+ * and never published is dropped, as is everything staged once the
+ * commit has failed. Two in flight are two, each publishing only what
+ * it verified.
  */
 export class SqlitePreparation implements Preparation {
   private readonly staged = new Map<string, Staged>();
   private readonly reused = new Set<string>();
-  private repaired: string[] = [];
+  private readonly repaired: string[] = [];
+  private published = false;
 
-  constructor(private readonly steps: PreparationSteps) {}
+  private constructor(private readonly steps: PreparationSteps) {}
+
+  /** `commit` with a fresh preparation over `steps`, which ends with it. */
+  static async within<T>(steps: PreparationSteps, commit: (prepared: SqlitePreparation) => Promise<T>): Promise<T> {
+    const prepared = new SqlitePreparation(steps);
+    let outcome: T;
+    try {
+      outcome = await commit(prepared);
+    } catch (err) {
+      // A stopped connection would refuse the drops; the error to report is the commit's.
+      if (!steps.stopped()) prepared.discard();
+      throw err;
+    }
+    if (prepared.published) prepared.settle();
+    else prepared.discard();
+    return outcome;
+  }
 
   async putObject(cid: Cid, source: ByteSource): Promise<ObjectInfo> {
     const want = rawCidOf(cid);
@@ -456,7 +477,7 @@ export class SqlitePreparation implements Preparation {
     this.reused.add(cid);
   }
 
-  /** Checks every object declared reused, then accepts every staged object, inside the caller's transaction; a repair among them is noted for `settle`. Returns how many landed — new or repaired — as opposed to being dropped for an object already held sound. */
+  /** Checks every object declared reused, then accepts every staged object, inside the caller's transaction; a repair among them is noted for once it has committed. Returns how many landed — new or repaired — as opposed to being dropped for an object already held sound. */
   publish(): number {
     if (!this.steps.inTransaction()) throw new Error("a preparation publishes inside the transaction its commit lands in");
     for (const cid of this.reused) if (!this.staged.has(cid)) this.steps.check(cid as Cid);
@@ -466,23 +487,18 @@ export class SqlitePreparation implements Preparation {
       if (accepted === "repaired") this.repaired.push(staged.cid.text);
       if (accepted !== "kept") landed += 1;
     }
+    this.published = true;
     return landed;
   }
 
-  /** After the transaction committed: the repaired objects are sound again, and nothing is staged. */
-  settle(): void {
+  /** After the transaction committed, which took everything staged: the repaired objects are sound again. */
+  private settle(): void {
     for (const cid of this.repaired) this.steps.forgive(cid);
-    this.repaired = [];
-    this.staged.clear();
-    this.reused.clear();
   }
 
-  /** Drops whatever is still staged: what an unpublished or rolled-back preparation leaves; nothing after `settle`. */
-  discard(): void {
+  /** Drops whatever is still staged. */
+  private discard(): void {
     for (const staged of this.staged.values()) this.steps.drop(staged.token);
-    this.staged.clear();
-    this.reused.clear();
-    this.repaired = [];
   }
 }
 

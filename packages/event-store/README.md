@@ -267,18 +267,19 @@ it in one `BEGIN IMMEDIATE` transaction with the `objects` row, so an
 object is visible whole or not at all and a source that fails, one
 over either bound or a digest that does not match leaves nothing
 staged. An object already held and sound is one object still, its
-bytes untouched; one known damaged is replaced whole. `prepare()` splits
-the two for the vault's commit: a `SqlitePreparation` stages what is
-put through it, counts it present to its own `has`, notes what the
-commit declares `reuse`d, and is accepted by `publish()` inside the
-transaction the commit lands in — the `publish` callback of
+bytes untouched; one known damaged is replaced whole.
+`preparing(commit)` splits the two for the vault's commit: `commit`
+is handed a `SqlitePreparation`, which stages what is put through it,
+counts it present to its own `has`, notes what the commit declares
+`reuse`d, and is accepted by `publish()` inside the transaction the
+commit lands in — the `publish` callback of
 `SqliteEventStore.appendAll` — which first checks every reused
 object against the damage known by then, refusing the transaction
 with `DamagedObject`, unless the object is staged as well, which
-repairs it; then `settle()`
-once that has committed, which is when the damage of what it
-repaired is cleared, a rollback keeping the old bytes and their
-damage, and `discard()` in any case. `open` streams one chunk a
+repairs it. `commit` resolving means that transaction committed, and
+only then is the damage of what it repaired cleared, a rollback
+keeping the old bytes and their damage; however `commit` ends,
+nothing it staged stays staged. `open` streams one chunk a
 pull, rehashing on the way out, each chunk checked against the
 layout the size gives the object — numbered from zero, the chunk
 size each but the last, which holds what remains — and the read

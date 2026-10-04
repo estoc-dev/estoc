@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **A preparation lives for one commit.** `SqliteObjectStore.prepare()`
+  is `preparing(commit)`: `commit` is handed the `SqlitePreparation`
+  and publishes it inside the transaction it owns. Once `commit`
+  resolves, the objects it repaired are sound again; however it ends,
+  nothing it staged stays staged, including a commit that resolves
+  without publishing. `settle()` and `discard()` are no longer public.
+  After a commit of unknown outcome nothing is dropped, so the error
+  the caller gets is that commit's.
+
 ## 0.3.0 — 2026-09-29
 
 The version-4 vault: events addressed by content.
