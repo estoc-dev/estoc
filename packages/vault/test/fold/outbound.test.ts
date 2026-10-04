@@ -355,7 +355,7 @@ describe("an outbound message", () => {
     vault = await fold(scene, keys);
     expect(vault.continuity.witness(first.cid).status).toBe("complete");
     expect(vault.continuity.witness(second.cid).status).toBe("complete");
-    expect(vault.inbound.ofSource(first.cid)!.status.status).toBe("conflict");
+    expect(vault.inbound.ofSource(first.cid)!.status).toBe("conflict");
     expect(outboundOf(vault, out)).toMatchObject({ ackWitnesses: [], acknowledged: false });
     expectSameOverEveryOrder(scene, vault.checks);
   });

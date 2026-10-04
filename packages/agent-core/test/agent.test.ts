@@ -582,7 +582,7 @@ describe("a live input", () => {
 
     expect(await agent.localStateChanged()).toEqual([]);
     const told = await fold(alice);
-    expect([told.continuity.status(carried.cid), told.dispositions.disposition(carried.cid).status, told.inbound.ofSource(carried.cid)!.status, told.set.of("message.out")]).toEqual([{ status: "verified" }, "admitted", { status: "complete" }, []]);
+    expect([told.continuity.status(carried.cid), told.dispositions.disposition(carried.cid).status, told.inbound.ofSource(carried.cid)!.status, told.set.of("message.out")]).toEqual([{ status: "verified" }, "admitted", "complete", []]);
     expect(forwardsSeen(mediator)).toBe(0);
     expect((await agent.pending()).missingResponses.map((owed) => owed.effectType)).toEqual([PING_RESPONSE_EFFECT]);
   });

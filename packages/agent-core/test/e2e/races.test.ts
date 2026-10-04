@@ -43,7 +43,7 @@ describe("first messages that race", () => {
 
     const ofAlice = await foldOf(alice);
     expect((await alice.agent.records()).invitations()).toMatchObject([{ oobId: invitation!.id, state: { status: "available" } }]);
-    expect([...ofAlice.inbound.executions.values()].filter((execution) => execution.kind === "application").map((execution) => [execution.channel.peerDid, execution.status.status])).toEqual([
+    expect([...ofAlice.inbound.executions.values()].filter((execution) => execution.kind === "application").map((execution) => [execution.channel.peerDid, execution.status])).toEqual([
       [bob.party.did, "complete"],
       [carol.party.did, "complete"],
     ]);
@@ -93,7 +93,7 @@ describe("first messages that race", () => {
       expect(fold.continuity.model.history(channel).links).toEqual([]);
       expect(fold.set.of("did.rotationSelected")).toEqual([]);
       const view = fold.views.channel(channel);
-      expect(view.inbound.map((execution) => [execution.kind, execution.status.status]).sort()).toEqual([
+      expect(view.inbound.map((execution) => [execution.kind, execution.status]).sort()).toEqual([
         ["application", "complete"],
         ["pure-ack", "complete"],
       ]);

@@ -211,7 +211,7 @@ describe("a channel", () => {
 
     const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire: later.data.wireMessageId, overrides: { intentHash: "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash } });
     vault = await fold(scene, keys);
-    expect(vault.inbound.ofSource(later.cid)!.status).toEqual({ status: "conflict", because: "2 intents are admitted for one input" });
+    expect(vault.inbound.ofSource(later.cid)).toMatchObject({ status: "conflict", because: "2 intents are admitted for one input" });
     const admitted = [later, contradicting].map((source) => observation(source, a0, b0).id);
     const confirmation = vault.continuity.model.confirmation(a0.did, b0.did);
     const firstAdmitted = confirmation.status === "confirmed" ? confirmation.observations.map(({ id }) => id).find((id) => admitted.includes(id)) : undefined;

@@ -119,7 +119,7 @@ describe("the receipt", () => {
     const fold = await foldOf(alice);
     const source = fold.channels.sources.get(event!.cid)!;
     expect([source.standing.status, source.channel, source.resolution?.cid]).toEqual(["complete", { localDid: alice.did, peerDid: bob.did }, resolved!.cid]);
-    expect(fold.inbound.ofSource(event!.cid)).toMatchObject({ messageId: event!.data.messageId, status: { status: "complete" }, members: [{ source: { event: { cid: event!.cid } } }] });
+    expect(fold.inbound.ofSource(event!.cid)).toMatchObject({ messageId: event!.data.messageId, status: "complete", members: [{ source: { event: { cid: event!.cid } } }] });
     expect((await trace.read({ type: "diag.receive" })).map((entry) => entry.data)).toEqual([{ via: "direct", outcome: "received", cid: event!.cid }]);
 
     expect((await receiver.receive({ packed: await sealed(sealer, alice.longFormDid), source: DIRECT })).outcome).toBe("received");
@@ -175,13 +175,13 @@ describe("the receipt", () => {
     ]);
     expect(await eventsOf(alice, "peer.resolved")).toHaveLength(1);
     const fold = await foldOf(alice);
-    expect([fold.inbound.executions.size, fold.inbound.ofMessage(messageId)?.members.length, fold.inbound.ofMessage(messageId)?.status]).toEqual([1, 3, { status: "complete" }]);
+    expect([fold.inbound.executions.size, fold.inbound.ofMessage(messageId)?.members.length, fold.inbound.ofMessage(messageId)?.status]).toEqual([1, 3, "complete"]);
 
     const other = await again.receive({ packed: await sealed(sealer, alice.longFormDid, { id: wire, body: { content: "other" } }), source: DIRECT });
     expect(other).toMatchObject({ outcome: "received", live: null });
     const contradicted = await foldOf(alice);
     const execution = contradicted.inbound.ofMessage(messageId)!;
-    expect([contradicted.inbound.executions.size, execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual([1, { status: "complete" }, [true, true, true, false], [(other as { cid: string }).cid]]);
+    expect([contradicted.inbound.executions.size, execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual([1, "complete", [true, true, true, false], [(other as { cid: string }).cid]]);
     expect(contradicted.dispositions.disposition((other as { cid: EventCid }).cid)).toEqual({ status: "pending-admission", because: "the observation contradicts the intent its input has admitted" });
     await closeAll(alice, bob);
   });
@@ -278,7 +278,7 @@ describe("the receipt", () => {
     const fold = await foldOf(alice);
     expect((await eventsOf(alice, "message.admitted")).map(({ data }) => data.sourceEventCid)).toEqual([carried.cid]);
     expect([fold.dispositions.disposition(carried.cid).status, fold.dispositions.disposition(fromOld.cid)]).toEqual(["admitted", { status: "ignored-superseded" }]);
-    expect([fold.inbound.ofSource(carried.cid)!.status, fold.inbound.ofSource(fromOld.cid)!.status]).toEqual([{ status: "complete" }, { status: "pending", because: "no observation of the input is admitted" }]);
+    expect([fold.inbound.ofSource(carried.cid), fold.inbound.ofSource(fromOld.cid)]).toMatchObject([{ status: "complete" }, { status: "pending", because: "no observation of the input is admitted" }]);
     receiver.close();
 
     const one = await authenticated(alice, bob);

@@ -70,16 +70,18 @@ export interface Member {
 }
 
 /**
- * Conflict is read from the admitted members' intents, not from their
- * current witnesses: a continuity conflict that later overtakes those
- * members leaves the intent contradiction standing. Pending carries
- * what the first admitted member still waiting for evidence waits for,
- * or, when none waits, why the first admitted member is no complete
- * witness, or that no member is admitted.
+ * A complete input is established: its admitted members agree on one
+ * intent, and its first witness is the first admitted complete witness
+ * in canonical event order, the observation an operation reads the
+ * input's fields from. A pending one has its admitted members' intent
+ * once one is admitted, and carries what the first admitted member
+ * still waiting for evidence waits for, or, when none waits, why the
+ * first admitted member is no complete witness, or that no member is
+ * admitted. Conflict is read from the admitted members' intents, not
+ * from their current witnesses: a continuity conflict that later
+ * overtakes those members leaves the intent contradiction standing.
  */
-export type ExecutionStatus = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string };
-
-export interface Execution {
+export type Execution = {
   readonly id: ExecutionId;
   readonly messageId: MessageId;
   readonly channel: Channel;
@@ -90,15 +92,13 @@ export interface Execution {
   readonly siblings: readonly Source[];
   /** the positive members no admission names whose intent differs from the admitted one: a discrepancy shown beside the input, never a conflict */
   readonly contradicting: readonly Member[];
-  /** the intent the admitted members agree on; null while none is admitted, or when they disagree */
-  readonly intentHash: MessageHash | null;
-  readonly kind: InboundKind | null;
-  readonly status: ExecutionStatus;
-  /** the first admitted complete witness, in canonical event order: the observation an operation reads the input's fields from; null while the input is not established */
-  readonly firstWitness: Member | null;
   /** an erasure names the message: its content produces no new work */
   readonly erased: boolean;
-}
+} & (
+  | { readonly status: "complete"; readonly intentHash: MessageHash; readonly kind: InboundKind; readonly firstWitness: Member }
+  | { readonly status: "pending"; readonly because: string; readonly intentHash: MessageHash | null; readonly kind: InboundKind | null; readonly firstWitness: null }
+  | { readonly status: "conflict"; readonly because: string; readonly intentHash: null; readonly kind: null; readonly firstWitness: null }
+);
 
 export interface InboundFold {
   /** every input one complete authentication places in a channel, by its execution */
@@ -167,13 +167,14 @@ function executionOf(messageId: MessageId, sources: readonly Source[], siblings:
   const intents = new Set<MessageHash>();
   for (const member of admitted) intents.add(member.source.event.data.intentHash);
   const shared = { id: executionId(channel.peerDid, channel.localDid, wireMessageId), messageId, channel, wireMessageId, members, siblings, erased: erasures.has(messageId) };
-  if (intents.size > 1) return { ...shared, contradicting: [], intentHash: null, kind: null, status: { status: "conflict", because: `${intents.size} intents are admitted for one input` }, firstWitness: null };
-  const intentHash = intents.size === 1 ? [...intents][0]! : null;
-  const contradicting = intentHash === null ? [] : members.filter((member) => member.positive && !member.admitted && member.source.event.data.intentHash !== intentHash);
-  const kind = intentHash === null ? null : kindOf(admitted[0]!.source.event.data);
-  const firstWitness = admitted.find((member) => member.witness.status === "complete") ?? null;
-  if (firstWitness !== null) return { ...shared, contradicting, intentHash, kind, status: { status: "complete" }, firstWitness };
-  const waiting = admitted.find((member) => member.witness.status === "pending") ?? admitted[0];
-  const because = waiting === undefined ? "no observation of the input is admitted" : `no admitted observation is a complete witness: ${(waiting.witness as Exclude<Witness, { status: "complete" }>).because}`;
-  return { ...shared, contradicting, intentHash, kind, status: { status: "pending", because }, firstWitness: null };
+  if (intents.size > 1) return { ...shared, contradicting: [], status: "conflict", because: `${intents.size} intents are admitted for one input`, intentHash: null, kind: null, firstWitness: null };
+  if (intents.size === 0) return { ...shared, contradicting: [], status: "pending", because: "no observation of the input is admitted", intentHash: null, kind: null, firstWitness: null };
+  const intentHash = [...intents][0]!;
+  const contradicting = members.filter((member) => member.positive && !member.admitted && member.source.event.data.intentHash !== intentHash);
+  const kind = kindOf(admitted[0]!.source.event.data);
+  const firstWitness = admitted.find((member) => member.witness.status === "complete");
+  if (firstWitness !== undefined) return { ...shared, contradicting, status: "complete", intentHash, kind, firstWitness };
+  const waiting = admitted.find((member) => member.witness.status === "pending") ?? admitted[0]!;
+  const because = `no admitted observation is a complete witness: ${(waiting.witness as Exclude<Witness, { status: "complete" }>).because}`;
+  return { ...shared, contradicting, status: "pending", because, intentHash, kind, firstWitness: null };
 }

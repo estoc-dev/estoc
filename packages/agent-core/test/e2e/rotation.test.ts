@@ -146,7 +146,7 @@ describe("rotation between two agents", () => {
     expect(carriesProof((await foldOf(alice)).outbound.outbounds.get(THIRD)!)).toBe(false);
     await until("bob has the message at the join", () => bob.inbounds.length === 4);
     expect(bob.inbounds[3]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "not-present" } } });
-    expect((await foldOf(bob)).views.channel(channelOf(b1, a1)).inbound.map((execution) => execution.status.status)).toEqual(["complete", "complete"]);
+    expect((await foldOf(bob)).views.channel(channelOf(b1, a1)).inbound.map((execution) => execution.status)).toEqual(["complete", "complete"]);
 
     await bob.agent.send({ channel: channelOf(b1, a1) }, hello("and back"), { messageId: FOURTH });
     await until("alice has the answer at the join", () => alice.inbounds.length === 4);

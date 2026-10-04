@@ -94,7 +94,7 @@ describe("after the receipt", () => {
     for (const { after } of [plain, first, later]) expect(after).toMatchObject({ disposition: { status: "admitted" }, acknowledged: [] });
     const fold = await foldOf(alice);
     expect(fold.invitations.invitations.get(disclosed.cid)!.status).toEqual({ status: "available" });
-    expect([...fold.inbound.executions.values()].map((execution) => [execution.channel.peerDid, execution.status.status])).toEqual([
+    expect([...fold.inbound.executions.values()].map((execution) => [execution.channel.peerDid, execution.status])).toEqual([
       [bob.did, "complete"],
       [bob.did, "complete"],
       [carol.did, "complete"],

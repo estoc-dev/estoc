@@ -133,7 +133,7 @@ describe("a disposition", () => {
     expect(dispositions.disposition(clashing.cid)).toEqual({ status: "pending-admission", because: "the channel is denied" });
     expect(dispositions.disposition(clashingToo.cid).status).toBe("admitted");
     expect(dispositions.disposition(fakeEventCid())).toEqual({ status: "pending-admission", because: "the source is not here" });
-    expect(vault.inbound.ofSource(first.cid)).toMatchObject({ status: { status: "complete" }, intentHash: HASH, contradicting: [{ source: { event: { cid: contradicting.cid } } }] });
+    expect(vault.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentHash: HASH, contradicting: [{ source: { event: { cid: contradicting.cid } } }] });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
@@ -204,7 +204,7 @@ describe("the candidates", () => {
       [plain.cid, { status: "eligible" }],
     ]);
     expect(vault.dispositions.disposition(toB1.cid).status).toBe("admitted");
-    expect(vault.inbound.ofSource(toB1.cid)!.status).toEqual({ status: "pending", because: expect.stringMatching(/^no admitted observation is a complete witness: /) });
+    expect(vault.inbound.ofSource(toB1.cid)).toMatchObject({ status: "pending", because: expect.stringMatching(/^no admitted observation is a complete witness: /) });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 });

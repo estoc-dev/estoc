@@ -198,7 +198,7 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
   if (!fold.admissions.admitted(source.event.cid)) faults.push(`not admitted: ${fold.dispositions.disposition(source.event.cid).status}`);
   const execution = fold.inbound.ofSource(source.event.cid);
   if (execution === null) faults.push("in no input here");
-  else if (execution.status.status !== "complete") faults.push(`its input is not established: ${execution.status.because}`);
+  else if (execution.status !== "complete") faults.push(`its input is not established: ${execution.because}`);
   const kind = kindOf(source.event.data);
   if (kind !== "application") faults.push(`a control input selects no rotation: it is ${kind}`);
   if (faults.length > 0) throw new Unusable("input", sourceEventCid, faults);

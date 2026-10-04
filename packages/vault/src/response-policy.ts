@@ -42,7 +42,7 @@ export type ResponseChannel = { status: "selected"; channel: Channel } | { statu
 
 export function responseChannel(fold: VaultFold, execution: Execution): ResponseChannel {
   const none = (because: string): ResponseChannel => ({ status: "none", because });
-  if (execution.status.status !== "complete") return none(`the input is not established: ${execution.status.because}`);
+  if (execution.status !== "complete") return none(`the input is not established: ${execution.because}`);
   const denied = channelPolicy(fold, execution.channel);
   if (denied !== null) return none(denied);
   const own = senderGate(fold, execution.channel);
@@ -84,7 +84,7 @@ export function notificationChannel(fold: VaultFold, decision: Decision): Notifi
   if (!fold.admissions.admitted(source.event.cid)) return none(`the source is not admitted: ${dispositionReason(fold, source.event.cid)}`);
   const execution = fold.inbound.ofSource(source.event.cid);
   if (execution === null) return none("the source is in no input here");
-  if (execution.status.status !== "complete") return none(`the source's input is not established: ${execution.status.because}`);
+  if (execution.status !== "complete") return none(`the source's input is not established: ${execution.because}`);
   if (kindOf(source.event.data) !== "application") return none(`a control input triggers no notification: the source is ${kindOf(source.event.data)}`);
   const denied = channelPolicy(fold, decision.channel);
   return denied === null ? { status: "selected", channel, source } : none(denied);

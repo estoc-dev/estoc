@@ -111,7 +111,7 @@ function channelView(fold: ViewInputs, channel: Channel, executions: readonly Ex
   const inbound = [...executions].sort(byFirstWitness);
   const errors: RemoteError[] = [];
   for (const execution of inbound) {
-    if (execution.kind !== "error" || execution.firstWitness === null) continue;
+    if (execution.status !== "complete" || execution.kind !== "error") continue;
     errors.push({ execution, outbound: fold.outbound.inReplyTo(execution.firstWitness.source.event.cid) });
   }
   return {
@@ -129,9 +129,9 @@ function channelView(fold: ViewInputs, channel: Channel, executions: readonly Ex
 
 /** The complete inputs in the canonical order of their first witnesses, then the rest in message order: a pending input has no witness an operation would freeze. */
 function byFirstWitness(a: Execution, b: Execution): number {
-  if (a.firstWitness !== null && b.firstWitness !== null) return compareEvents(a.firstWitness.source.event, b.firstWitness.source.event) || cmp(a.messageId, b.messageId);
-  if (a.firstWitness !== null) return -1;
-  if (b.firstWitness !== null) return 1;
+  if (a.status === "complete" && b.status === "complete") return compareEvents(a.firstWitness.source.event, b.firstWitness.source.event) || cmp(a.messageId, b.messageId);
+  if (a.status === "complete") return -1;
+  if (b.status === "complete") return 1;
   return cmp(a.messageId, b.messageId);
 }
 

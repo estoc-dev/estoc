@@ -188,7 +188,7 @@ function eligibilityOf(source: Source, evidence: ChannelEvidence, continuity: Co
   if (continuity.superseded(channel)) return { status: "refused", because: "the peer has replaced its DID" };
   if (continuity.blocked(channel).length > 0) return { status: "refused", because: "the channel is denied" };
   const execution = inbound.ofSource(cid);
-  if (execution?.status.status === "conflict") return { status: "refused", because: `the input's admitted intents disagree: ${execution.status.because}` };
+  if (execution?.status === "conflict") return { status: "refused", because: `the input's admitted intents disagree: ${execution.because}` };
   if (execution !== null && execution.intentHash !== null && execution.intentHash !== data.intentHash) return { status: "refused", because: "the observation contradicts the intent its input has admitted" };
   return { status: "eligible" };
 }
