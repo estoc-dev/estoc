@@ -70,7 +70,7 @@ import { successorStanding } from "./successor.js";
 export type ViewOptions = Pick<EffectOptions, "handlers"> & {
   /** whether the runtime applies the private-address policy, on unless said otherwise: with it off, the rotations it would make are no work of the user's */
   privateAddresses?: boolean;
-  /** the runtime's own replica, by which a rotation it could not commit is listed as blocked; left out, no runtime is assumed */
+  /** the runtime's own replica, by which a rotation it could not commit is listed as blocked; left out, no runtime is assumed and a rotation is listed as any member of the predecessor's arrangement could make it */
   author?: ReplicaId;
 };
 
@@ -232,10 +232,11 @@ export interface OwedResponse {
  * A rotation the private-address policy would make from a disclosed
  * entry and no decision records yet: the pair current policy still
  * rotates and every input calling for it. Ready names `rotate` as the
- * step, for a successor this runtime can make now; waiting and blocked
- * name none and say what the rotation waits for or is stopped by,
- * whether in the evidence, in the route the successor inherits or in
- * this runtime's standing in the arrangement.
+ * step, for a successor this runtime, or with no runtime assumed any
+ * member of the predecessor's arrangement, can make now; waiting and
+ * blocked name none and say what the rotation waits for or is stopped
+ * by, whether in the evidence, in the route the successor inherits or
+ * in this runtime's standing in the arrangement.
  */
 export interface OpenRotation {
   channel: Channel;
@@ -614,7 +615,7 @@ function invitationRecords(fold: VaultFold): InvitationRecord[] {
 
 function openRotation(fold: VaultFold, author: ReplicaId | undefined, { channel, sources, choice }: RotationCandidate): OpenRotation {
   const didId = fold.dids.entityOfDid(channel.localDid);
-  const standing = choice.status !== "ready" || author === undefined || didId === null ? choice : successorStanding(fold, author, fold.dids.entities.get(didId)!, choice.recipe);
+  const standing = choice.status !== "ready" || didId === null ? choice : successorStanding(fold, fold.dids.entities.get(didId)!, choice.recipe, author);
   return { channel, sourceEventCids: sources.map((source) => source.event.cid), status: standing.status, because: standing.status === "ready" ? null : standing.because, entries: standing.status === "ready" ? ["rotate"] : [] };
 }
 

@@ -18,10 +18,12 @@
   gone; `createDid` makes entries alone, `disclose` discloses entries
   alone, and the private-address policy acts on disclosed entries alone
   and reuses an existing exact successor. `successorStanding` says, off the
-  fold, whether this runtime can make the recipe's successor now: `ready`
-  with the route it inherits and where that sends, `waiting` while the
-  arrangement routing the predecessor is not recorded, granted or resolved
-  here yet, `blocked` for a runtime that is no member of it, a route that
+  fold, whether the runtime named can make the recipe's successor now, or
+  with no runtime named whether a member of the predecessor's arrangement
+  could: `ready` with the route it inherits and where that sends, `waiting`
+  while the arrangement routing the predecessor is not recorded, granted or
+  resolved here yet or the runtime's own membership of it is not borne out
+  yet, `blocked` for a runtime enrolled elsewhere or nowhere, a route that
   has ended and an entity of another generation or route, or retired,
   under the successor's ID; `materializeSuccessor` takes the runtime's
   author and refuses as `Unusable` what the standing does. `routeStanding`
@@ -31,10 +33,10 @@
   `ready` with the `rotate` entry only for a successor this runtime can
   make now, `waiting` or `blocked` with why, the route the successor
   inherits and this runtime's standing in the arrangement included;
-  `ViewOptions.author` names
-  the runtime, which `readRecords` fills in, and
-  `ViewOptions.privateAddresses: false` lists none, as the agent passes its
-  own setting.
+  `ViewOptions.author` names the runtime, which `readRecords` fills in, and
+  without it a rotation is listed as any member of the predecessor's
+  arrangement could make it; `ViewOptions.privateAddresses: false` lists
+  none, as the agent passes its own setting.
 - **One rotation intent, several records**: `Rotated` and `RotationDecided`
   carry `records`, every record of the intent in canonical event order, and
   `decision` is the first candidate among them; a rotation that finds the

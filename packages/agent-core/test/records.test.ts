@@ -67,6 +67,9 @@ const refused = (): Response => new Response("no", { status: 500 });
 
 type Holder = Pick<Fresh, "runtime" | "keys">;
 
+/** The rotations listed off the holder's fold for no runtime in particular. */
+const unassumed = async (holder: Holder) => recorder(await scanVault(holder.runtime.vault, holder.keys), objectReader(holder.runtime.vault.objects)).pending().rotationCandidates;
+
 async function parties(): Promise<{ alice: DirectParty; bob: DirectParty }> {
   return { alice: await directParty(1, "https://alice.example/didcomm", ALICE), bob: await directParty(2, "https://bob.example/didcomm", BOB) };
 }
@@ -438,6 +441,7 @@ describe("records", () => {
     expect(await candidates(alice, false)).toEqual([]);
     const copy = await copyOf(1, alice);
     expect(await candidates(copy)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "blocked", because: `this runtime is not enrolled in the arrangement ${alice.mediationId}, which routes the predecessor`, entries: [] }]);
+    expect(await unassumed(copy)).toEqual(await candidates(alice));
     expect(JSON.parse(JSON.stringify(await candidates(alice)))).toEqual(await candidates(alice));
 
     const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
@@ -446,7 +450,7 @@ describe("records", () => {
     await closeAll(alice, bob, copy);
   });
 
-  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted here yet and is ready once the grant arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired", async () => {
+  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted or not created here yet and is ready once the evidence arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired", async () => {
     const mediator = await newMediator();
     const alice = await mediatedParty(mediator, 1, ALICE);
     const bob = await directParty(2, "https://bob.example/didcomm", BOB);
@@ -464,6 +468,12 @@ describe("records", () => {
     await ungranted.runtime.ingest((await events(alice)).filter((event) => event.type === "mediation.granted"));
     expect(await candidates(ungranted)).toEqual(listed("ready", null));
 
+    const uncreated = await copyOf(1, alice, (event) => event.type !== "mediation.created");
+    await uncreated.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: uncreated.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(uncreated.keys, alice.created.data, uncreated.runtime.author) })]);
+    expect(await candidates(uncreated)).toEqual(listed("waiting", `this runtime's replica in the arrangement ${alice.mediationId} is not yet a member: the arrangement's creation is not here`));
+    await uncreated.runtime.ingest([alice.created]);
+    expect(await candidates(uncreated)).toEqual(listed("ready", null));
+
     const successorId = startDidId(alice.did, bob.did);
     const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
@@ -476,9 +486,27 @@ describe("records", () => {
     await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
     const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
     expect(await candidates(alice)).toEqual(listed("blocked", ended));
+    expect(await unassumed(alice)).toEqual(listed("blocked", ended));
     await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [ended]));
     expect((await events(alice)).length).toBe(before + 1);
-    await closeAll(alice, bob, ungranted);
+    await closeAll(alice, bob, ungranted, uncreated);
+  });
+
+  test("listed for no runtime in particular, a rotation is read as any member of the predecessor's arrangement could make it: ready for a direct predecessor and for a mediated one whose reader is enrolled nowhere, blocked while the successor's ID is held by a retired entity", async () => {
+    const { alice, bob } = await parties();
+    const { receive } = await hosting(alice);
+    await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
+    const first = await receive(bob, { body: { content: "hi alice" } });
+    const listed = (status: "ready" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
+    expect(await unassumed(alice)).toEqual(listed("ready", null));
+    expect(await unassumed(alice)).toEqual((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates);
+
+    const successorId = startDidId(alice.did, bob.did);
+    const retiring = await mintDid(alice.keys, successorId, { kind: "direct", endpoint: "https://alice.example/didcomm" });
+    await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
+    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    expect(await unassumed(alice)).toEqual(listed("blocked", `the successor ${successorId} is recorded already and is not live: retired: gone`));
+    await closeAll(alice, bob);
   });
 
   test("a contact shows its selected channels, then the history verified continuity reaches, with where a send goes; deleting and blocking through the manual entries changes what is shown and nothing a message says", async () => {

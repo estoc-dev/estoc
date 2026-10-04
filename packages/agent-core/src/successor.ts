@@ -26,12 +26,18 @@ import { EntityConflict, Unusable } from "./errors.js";
 /** Ready with the route the successor inherits and where it sends; waiting while evidence may still arrive; blocked where this runtime cannot make the successor at all. */
 export type SuccessorStanding = { status: "ready"; route: RouteSpec; target: RouteTarget } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
 
-export function successorStanding(fold: VaultFold, author: ReplicaId, predecessor: LocalDidEntity, recipe: SuccessorRecipe): SuccessorStanding {
+/**
+ * The standing of the recipe's successor on the fold: for `author`, the
+ * runtime that would make it, or for no runtime in particular, when
+ * membership of the arrangement routing a mediated predecessor is not
+ * asked and ready says a member could make it.
+ */
+export function successorStanding(fold: VaultFold, predecessor: LocalDidEntity, recipe: SuccessorRecipe, author?: ReplicaId): SuccessorStanding {
   const blocked = (because: string): SuccessorStanding => ({ status: "blocked", because });
   const route = namedRouteOf(predecessor);
   if (route === null) return blocked(`the document of ${predecessor.didId} names no route a successor could inherit`);
-  const ineligible = route.kind === "mediated" ? ineligibleHere(fold, author, route.mediationId) : null;
-  if (ineligible !== null) return blocked(ineligible);
+  const membership = route.kind === "mediated" && author !== undefined ? membershipStanding(fold, author, route.mediationId) : null;
+  if (membership !== null) return membership;
   const carried = routeStanding(fold, route);
   if (carried.status !== "ready") return { status: carried.status, because: `the predecessor's route does not carry: ${carried.because}` };
   const didId = recipeDidId(recipe);
@@ -44,11 +50,16 @@ export function successorStanding(fold: VaultFold, author: ReplicaId, predecesso
   return { status: "ready", route, target: carried.target };
 }
 
-function ineligibleHere(fold: VaultFold, author: ReplicaId, mediationId: MediationId): string | null {
+/** Null for a member of the arrangement; waiting while the replica's own membership is not borne out yet; blocked for a runtime that is no replica of it. */
+function membershipStanding(fold: VaultFold, author: ReplicaId, mediationId: MediationId): SuccessorStanding | null {
   const replica = fold.replicas.replicas.get(author);
-  if (replica === undefined) return `this runtime is not enrolled in the arrangement ${mediationId}, which routes the predecessor`;
-  if (replica.mediationId !== mediationId) return `this runtime is a replica of the arrangement ${replica.mediationId}, not of ${mediationId}, which routes the predecessor`;
-  if (replica.status !== "member") return `this runtime's replica in the arrangement ${mediationId} is ${replica.status}: ${replica.faults[0] ?? "not yet a member"}`;
+  if (replica === undefined) return { status: "blocked", because: `this runtime is not enrolled in the arrangement ${mediationId}, which routes the predecessor` };
+  if (replica.status === "conflict") return { status: "blocked", because: `this runtime's replica is in conflict: ${replica.faults.join("; ")}` };
+  if (replica.mediationId !== mediationId) return { status: "blocked", because: `this runtime is a replica of the arrangement ${replica.mediationId}, not of ${mediationId}, which routes the predecessor` };
+  if (replica.status === "pending") {
+    const arrangement = fold.mediations.mediations.get(mediationId);
+    return { status: "waiting", because: `this runtime's replica in the arrangement ${mediationId} is not yet a member: ${arrangement === undefined || arrangement.mediatorDid === null ? "the arrangement's creation is not here" : "its grant is not checked against the seed"}` };
+  }
   return null;
 }
 
@@ -59,7 +70,7 @@ function ineligibleHere(fold: VaultFold, author: ReplicaId, mediationId: Mediati
  * standing is not ready.
  */
 export async function materializeSuccessor(fold: VaultFold, keys: Keys, author: ReplicaId, predecessor: LocalDidEntity, recipe: SuccessorRecipe): Promise<{ drafts: VaultDraft[]; successor: MintedDid }> {
-  const standing = successorStanding(fold, author, predecessor, recipe);
+  const standing = successorStanding(fold, predecessor, recipe, author);
   if (standing.status !== "ready") throw new Unusable("DID", predecessor.didId, [standing.because]);
   const minted = await mintDid(keys, recipeDidId(recipe), standing.target);
   const existing = fold.dids.entities.get(minted.didId)?.created ?? null;
