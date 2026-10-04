@@ -19,7 +19,7 @@
  */
 
 import { encodeLongForm } from "@estoc/did-peer";
-import { generationOf, inputDocumentOf, methodPublicKey, mintDid, recipeDidId, routeServiceUri, samePayload, vaultDraft, type Keys, type LocalDidEntity, type MediationId, type MintedDid, type ReplicaId, type RouteTarget, type SuccessorRecipe, type VaultDraft, type VaultFold } from "@estoc/vault";
+import { generationOf, inputDocumentOf, methodPublicKey, mintDid, recipeDidId, routeServiceUri, samePayload, vaultDraft, type DidUrl, type Keys, type LocalDidEntity, type MediationId, type MintedDid, type ReplicaId, type RouteTarget, type SuccessorRecipe, type VaultDraft, type VaultFold } from "@estoc/vault";
 
 import { namedRouteOf, routeStanding, sameRoute, type RouteSpec } from "./dids.js";
 import { Unusable } from "./errors.js";
@@ -31,16 +31,19 @@ export type SuccessorStanding = { status: "ready"; route: RouteSpec; target: Rou
  * The standing of the recipe's successor on the fold: for `author`, the
  * runtime that would make it, or for no runtime in particular, when
  * membership of the arrangement routing a mediated predecessor is not
- * asked and ready says a member could make it.
+ * asked and ready says a member could make it. What is blocked for
+ * certain is said before what waits on evidence, so that a route that
+ * has ended is not reported as evidence still to arrive.
  */
 export function successorStanding(fold: VaultFold, predecessor: LocalDidEntity, recipe: SuccessorRecipe, author?: ReplicaId): SuccessorStanding {
   const blocked = (because: string): SuccessorStanding => ({ status: "blocked", because });
   const route = namedRouteOf(predecessor);
   if (route === null) return blocked(`the document of ${predecessor.didId} names no route a successor could inherit`);
   const membership = route.kind === "mediated" && author !== undefined ? membershipStanding(fold, author, route.mediationId) : null;
-  if (membership !== null) return membership;
   const carried = routeStanding(fold, route);
+  if (membership?.status === "blocked") return membership;
   if (carried.status !== "ready") return { status: carried.status, because: `the predecessor's route does not carry: ${carried.because}` };
+  if (membership !== null) return membership;
   const didId = recipeDidId(recipe);
   const existing = fold.dids.entities.get(didId);
   if (existing === undefined) return { status: "ready", route, target: carried.target };
@@ -55,20 +58,23 @@ export function successorStanding(fold: VaultFold, predecessor: LocalDidEntity, 
 /** The long form a live entity's keys mint over the target: the document the seed would make, read off the keys the entity is verified to hold. */
 function mintedLongForm(entity: LocalDidEntity, target: RouteTarget): string {
   const document = entity.resolution!.document;
-  const key = (id: string) => ({ publicKey: methodPublicKey(document, id) });
+  const key = (id: DidUrl) => ({ publicKey: methodPublicKey(document, id) });
   return encodeLongForm(inputDocumentOf({ authentication: key(entity.methodIds.authentication[0]!), keyAgreement: key(entity.methodIds.keyAgreement[0]!) }, routeServiceUri(target)));
 }
 
-/** Null for a member of the arrangement; waiting while the replica's own membership is not borne out yet; blocked for a runtime that is no replica of it. */
+/**
+ * Null for a member of the arrangement; blocked for a runtime that is
+ * no replica of it; waiting while the replica is pending. An
+ * arrangement whose creation is not here is reported by the route's own
+ * standing, so a pending replica met here waits for its grant to be
+ * checked against the seed.
+ */
 function membershipStanding(fold: VaultFold, author: ReplicaId, mediationId: MediationId): SuccessorStanding | null {
   const replica = fold.replicas.replicas.get(author);
   if (replica === undefined) return { status: "blocked", because: `this runtime is not enrolled in the arrangement ${mediationId}, which routes the predecessor` };
   if (replica.status === "conflict") return { status: "blocked", because: `this runtime's replica is in conflict: ${replica.faults.join("; ")}` };
   if (replica.mediationId !== mediationId) return { status: "blocked", because: `this runtime is a replica of the arrangement ${replica.mediationId}, not of ${mediationId}, which routes the predecessor` };
-  if (replica.status === "pending") {
-    const arrangement = fold.mediations.mediations.get(mediationId);
-    return { status: "waiting", because: `this runtime's replica in the arrangement ${mediationId} is not yet a member: ${arrangement === undefined || arrangement.mediatorDid === null ? "the arrangement's creation is not here" : "its grant is not checked against the seed"}` };
-  }
+  if (replica.status === "pending") return { status: "waiting", because: `this runtime's replica in the arrangement ${mediationId} is not yet a member: its grant is not checked against the seed` };
   return null;
 }
 

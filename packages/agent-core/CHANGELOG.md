@@ -25,7 +25,9 @@
   resolved here yet or the runtime's own membership of it is not borne out
   yet, `blocked` for a runtime enrolled elsewhere or nowhere, a route that
   has ended and an entity of another generation, route or document, or
-  retired, under the successor's ID; `materializeSuccessor` takes the runtime's
+  retired, under the successor's ID, and blocked before waiting, so that a
+  route that has ended is not reported as evidence still to arrive;
+  `materializeSuccessor` takes the runtime's
   author and refuses as `Unusable` what the standing does. `routeStanding`
   is the same reading of a route alone, which `routeTargetOf` throws for.
 - **Rotations to make by hand**: `PendingWork.rotationCandidates` lists the

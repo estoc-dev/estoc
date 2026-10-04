@@ -70,7 +70,7 @@ import { successorStanding } from "./successor.js";
 export type ViewOptions = Pick<EffectOptions, "handlers"> & {
   /** whether the runtime applies the private-address policy, on unless said otherwise: with it off, the rotations it would make are no work of the user's */
   privateAddresses?: boolean;
-  /** the runtime's own replica, by which a rotation it could not commit is listed as blocked; left out, no runtime is assumed and a rotation is listed as any member of the predecessor's arrangement could make it */
+  /** the runtime's own replica, whose membership of the arrangement routing a mediated predecessor the standing of a rotation is read for; left out, no runtime is assumed and a rotation is listed as any member of the predecessor's arrangement could make it */
   author?: ReplicaId;
 };
 

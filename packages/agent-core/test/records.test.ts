@@ -451,7 +451,7 @@ describe("records", () => {
     await closeAll(alice, bob, copy);
   });
 
-  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted or not created here yet and is ready once the evidence arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired", async () => {
+  test("a rotation whose successor this runtime cannot make now is not offered: it waits for a replica whose arrangement is not granted or not created here yet and is ready once the evidence arrives; it is blocked, and refused for the same reason with nothing written, while the successor's ID is held by a retired entity or the arrangement routing the predecessor is retired, its creation here or not", async () => {
     const mediator = await newMediator();
     const alice = await mediatedParty(mediator, 1, ALICE);
     const bob = await directParty(2, "https://bob.example/didcomm", BOB);
@@ -461,6 +461,7 @@ describe("records", () => {
     const candidates = async (holder: Holder) => (await readRecords(holder.runtime, holder.keys)).pending().rotationCandidates;
     const listed = (status: "ready" | "waiting" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
     const events = async (holder: Holder) => [...(await scanVault(holder.runtime.vault, holder.keys)).set.all()];
+    const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
 
     const ungranted = await copyOf(1, alice, (event) => event.type !== "mediation.granted");
     const grant = await signReplicaGrant(ungranted.keys, alice.created.data, ungranted.runtime.author);
@@ -471,9 +472,19 @@ describe("records", () => {
 
     const uncreated = await copyOf(1, alice, (event) => event.type !== "mediation.created");
     await uncreated.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: uncreated.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(uncreated.keys, alice.created.data, uncreated.runtime.author) })]);
-    expect(await candidates(uncreated)).toEqual(listed("waiting", `this runtime's replica in the arrangement ${alice.mediationId} is not yet a member: the arrangement's creation is not here`));
+    expect(await candidates(uncreated)).toEqual(listed("waiting", `the predecessor's route does not carry: the arrangement ${alice.mediationId} is not created here yet`));
     await uncreated.runtime.ingest([alice.created]);
     expect(await candidates(uncreated)).toEqual(listed("ready", null));
+
+    const unended = await copyOf(1, alice, (event) => event.type !== "mediation.created");
+    await unended.runtime.vault.commit([], [
+      vaultDraft("replica.created", { replicaId: unended.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(unended.keys, alice.created.data, unended.runtime.author) }),
+      vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" }),
+    ]);
+    expect((await scanVault(unended.runtime.vault, unended.keys)).replicas.replicas.get(unended.runtime.author)?.status).toBe("pending");
+    expect(await candidates(unended)).toEqual(listed("blocked", ended));
+    await unended.runtime.ingest([alice.created]);
+    expect(await candidates(unended)).toEqual(listed("blocked", ended));
 
     const successorId = startDidId(alice.did, bob.did);
     const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
@@ -485,12 +496,11 @@ describe("records", () => {
     await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
 
     await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
-    const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
     expect(await candidates(alice)).toEqual(listed("blocked", ended));
     expect(await unassumed(alice)).toEqual(listed("blocked", ended));
     await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [ended]));
     expect((await events(alice)).length).toBe(before + 1);
-    await closeAll(alice, bob, ungranted, uncreated);
+    await closeAll(alice, bob, ungranted, uncreated, unended);
   });
 
   test("listed for no runtime in particular, a rotation is read as any member of the predecessor's arrangement could make it: ready for a direct predecessor and for a mediated one whose reader is enrolled nowhere, blocked while the successor's ID is held by a retired entity", async () => {
