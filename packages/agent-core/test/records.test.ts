@@ -476,15 +476,15 @@ describe("records", () => {
     await uncreated.runtime.ingest([alice.created]);
     expect(await candidates(uncreated)).toEqual(listed("ready", null));
 
-    const unended = await copyOf(1, alice, (event) => event.type !== "mediation.created");
-    await unended.runtime.vault.commit([], [
-      vaultDraft("replica.created", { replicaId: unended.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(unended.keys, alice.created.data, unended.runtime.author) }),
+    const retiredWithoutCreation = await copyOf(1, alice, (event) => event.type !== "mediation.created");
+    await retiredWithoutCreation.runtime.vault.commit([], [
+      vaultDraft("replica.created", { replicaId: retiredWithoutCreation.runtime.author, mediationId: alice.mediationId, grant: await signReplicaGrant(retiredWithoutCreation.keys, alice.created.data, retiredWithoutCreation.runtime.author) }),
       vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" }),
     ]);
-    expect((await scanVault(unended.runtime.vault, unended.keys)).replicas.replicas.get(unended.runtime.author)?.status).toBe("pending");
-    expect(await candidates(unended)).toEqual(listed("blocked", ended));
-    await unended.runtime.ingest([alice.created]);
-    expect(await candidates(unended)).toEqual(listed("blocked", ended));
+    expect((await scanVault(retiredWithoutCreation.runtime.vault, retiredWithoutCreation.keys)).replicas.replicas.get(retiredWithoutCreation.runtime.author)?.status).toBe("pending");
+    expect(await candidates(retiredWithoutCreation)).toEqual(listed("blocked", ended));
+    await retiredWithoutCreation.runtime.ingest([alice.created]);
+    expect(await candidates(retiredWithoutCreation)).toEqual(listed("blocked", ended));
 
     const successorId = startDidId(alice.did, bob.did);
     const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
@@ -500,7 +500,7 @@ describe("records", () => {
     expect(await unassumed(alice)).toEqual(listed("blocked", ended));
     await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [ended]));
     expect((await events(alice)).length).toBe(before + 1);
-    await closeAll(alice, bob, ungranted, uncreated, unended);
+    await closeAll(alice, bob, ungranted, uncreated, retiredWithoutCreation);
   });
 
   test("listed for no runtime in particular, a rotation is read as any member of the predecessor's arrangement could make it: ready for a direct predecessor and for a mediated one whose reader is enrolled nowhere, blocked while the successor's ID is held by a retired entity", async () => {
