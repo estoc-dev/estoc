@@ -172,8 +172,6 @@ describe("SqliteObjectStore", () => {
     const { db } = create(":memory:", { maxObjectBytes: 10 * CHUNK_BYTES });
     const bounded = new SqliteObjectStore(db, { maxStagedBytes: 3 * CHUNK_BYTES });
     const a = bytesOf(2 * CHUNK_BYTES, 61);
-    const first = bounded.prepare();
-    await first.putObject(cidOf(a), a);
     let pulled = 0;
     async function* counting(bytes: Uint8Array): AsyncIterable<Uint8Array> {
       for (let at = 0; at < bytes.length; at += CHUNK_BYTES) {
@@ -182,35 +180,37 @@ describe("SqliteObjectStore", () => {
       }
     }
     const b = bytesOf(2 * CHUNK_BYTES, 62);
-    const second = bounded.prepare();
-    await expect(second.putObject(cidOf(b), counting(b))).rejects.toBeInstanceOf(StagingFull);
-    expect(pulled).toBe(2); // the first chunk fit; the second would not, and no more is read
-    expect(staged(db.driver)).toBe(2);
-    await expect(bounded.putRaw(bytesOf(4 * CHUNK_BYTES, 63))).rejects.toThrow(/3145728 bytes are staged .* past the 3145728-byte staging bound/);
-    expect(staged(db.driver)).toBe(2);
-    expect((await second.putObject(cidOf(bytesOf(CHUNK_BYTES, 64)), bytesOf(CHUNK_BYTES, 64))).size).toBe(CHUNK_BYTES); // exactly the bound
-    second.discard();
-    expect(staged(db.driver)).toBe(2);
-    db.driver.transaction("immediate", () => first.publish());
-    first.settle();
+    await bounded.preparing(async (first) => {
+      await first.putObject(cidOf(a), a);
+      await bounded.preparing(async (second) => {
+        await expect(second.putObject(cidOf(b), counting(b))).rejects.toBeInstanceOf(StagingFull);
+        expect(pulled).toBe(2); // the first chunk fit; the second would not, and no more is read
+        expect(staged(db.driver)).toBe(2);
+        await expect(bounded.putRaw(bytesOf(4 * CHUNK_BYTES, 63))).rejects.toThrow(/3145728 bytes are staged .* past the 3145728-byte staging bound/);
+        expect(staged(db.driver)).toBe(2);
+        expect((await second.putObject(cidOf(bytesOf(CHUNK_BYTES, 64)), bytesOf(CHUNK_BYTES, 64))).size).toBe(CHUNK_BYTES); // exactly the bound
+      });
+      expect(staged(db.driver)).toBe(2);
+      db.driver.transaction("immediate", () => first.publish());
+    });
     expect(staged(db.driver)).toBe(0);
     expect((await bounded.putRaw(bytesOf(3 * CHUNK_BYTES, 65))).size).toBe(3 * CHUNK_BYTES);
     db.close();
   });
 
-  test("a preparation dropped unpublished leaves the store as it was; a second staging of one CID replaces the first", async () => {
+  test("a preparation whose commit ends unpublished leaves the store as it was; a second staging of one CID replaces the first", async () => {
     const { db, store } = create(":memory:");
     const bytes = bytesOf(10, 4);
     const cid = cidOf(bytes);
-    const prepared = store.prepare();
-    await prepared.putObject(cid, bytes);
-    await prepared.putObject(cid, chunked(bytes, [5]));
-    expect(staged(db.driver)).toBe(1); // the first staging is gone
-    prepared.discard();
+    await store.preparing(async (prepared) => {
+      await prepared.putObject(cid, bytes);
+      await prepared.putObject(cid, chunked(bytes, [5]));
+      expect(staged(db.driver)).toBe(1); // the first staging is gone
+      expect(() => prepared.publish()).toThrow(/inside the transaction/);
+      expect(db.driver.inTransaction).toBe(false);
+    });
     expect(staged(db.driver)).toBe(0);
     expect(await store.has(cid)).toBe(false);
-    expect(() => prepared.publish()).toThrow(/inside the transaction/);
-    expect(db.driver.inTransaction).toBe(false);
     db.close();
   });
 
@@ -335,9 +335,7 @@ describe("SqliteObjectStore", () => {
       await store.read(cid, 10);
       await drain((await store.open(cid)) as ReadableStream<Uint8Array>);
       await all(store.list());
-      const prepared = store.prepare();
-      await prepared.putObject(cid, bytes);
-      prepared.discard();
+      await store.preparing((prepared) => prepared.putObject(cid, bytes));
       await store.damaged();
       if (i % 10 === 9) await store.collect([]);
     }
