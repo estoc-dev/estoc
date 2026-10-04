@@ -141,8 +141,6 @@ class ContinuityFold implements Continuity {
   private readonly heads = new Map<string, HeadResult>();
   private readonly covered = new Map<EventCid, ReadonlySet<string>>();
   private readonly observed = new Map<FactId, Source>();
-  private readonly conflictedKeys = new Set<string>();
-  private readonly factKinds = new Map<FactId, ContinuityFact["kind"]>();
 
   constructor(
     set: VaultEventSet,
@@ -153,8 +151,6 @@ class ContinuityFold implements Continuity {
     this.facts = model.facts;
     const byId = new Map(model.facts.map((fact) => [fact.id, fact]));
     this.conflicts = model.conflicts().map((conflict) => ({ conflict, channels: scopeOf(conflict, byId) }));
-    for (const { channels } of this.conflicts) for (const channel of channels) this.conflictedKeys.add(channelKey(channel));
-    for (const fact of model.facts) this.factKinds.set(fact.id, fact.kind);
     this.denials = set.of("channel.blocked");
     for (const source of evidence.sources.values()) this.observed.set(observationFactId(source.event.cid), source);
   }
@@ -301,7 +297,7 @@ class ContinuityFold implements Continuity {
     const frontier = [channel];
     while (frontier.length > 0) {
       const current = frontier.pop()!;
-      if (this.conflictedKeys.has(channelKey(current))) return { status: "conflict", because: `a conflict reaches the pair of ${current.localDid} and ${current.peerDid}` };
+      if (this.conflicts.some(({ channels }) => channels.some((reached) => sameChannel(reached, current)))) return { status: "conflict", because: `a conflict reaches the pair of ${current.localDid} and ${current.peerDid}` };
       const links = leadingTo.get(channelKey(current)) ?? [];
       if (links.length === 0) roots.push(current.peerDid);
       for (const link of links) {
@@ -327,8 +323,8 @@ class ContinuityFold implements Continuity {
    * two values, and a decision is projected only once it is a candidate.
    */
   private unusableReplacement(link: PositiveLink): PeerRoot {
-    const claims = link.support.filter((id) => this.factKinds.get(id) !== "address-observed");
-    const failing = claims.map((id) => this.model.status(id)).find((status) => status.status !== "usable");
+    const observations = new Set(this.facts.filter((fact) => fact.kind === "address-observed").map((fact) => fact.id));
+    const failing = link.support.filter((id) => !observations.has(id)).map((id) => this.model.status(id)).find((status) => status.status !== "usable");
     const because = failing === undefined ? "" : `: ${failing.status}${"because" in failing ? `: ${failing.because}` : ""}`;
     return { status: "conflict", because: `the replacement of ${link.from.peerDid} by ${link.to.peerDid} is not usable${because}` };
   }
