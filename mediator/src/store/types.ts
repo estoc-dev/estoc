@@ -20,24 +20,8 @@ export interface StoredMessage {
   createdAt: number;
 }
 
-/**
- * What names one forwarded package in an account's queue: the recipient the
- * forward named and the forward's own id. A sender retrying a call repeats
- * both, which is how the retry is told from new mail.
- */
-export interface PackageKey {
-  next: string;
-  forwardId: string;
-}
-
-/**
- * `repeated`: the key already holds these exact bytes, and nothing changed.
- * `conflict`: the key holds other bytes, which stay. `full`: the account is
- * at its quota. Nothing is written in any of the three.
- */
-export type StoreOutcome =
-  | { outcome: "stored"; message: StoredMessage }
-  | { outcome: "repeated" | "conflict" | "full" };
+/** `full`: the account is at its quota, and nothing was written. */
+export type StoreOutcome = { outcome: "stored"; message: StoredMessage } | { outcome: "full" };
 
 /** A replica-mediation account; its DID is a did:peer:4 short form. */
 export interface ReplicaAccount {
@@ -167,14 +151,14 @@ export interface ReplicaDelivery {
 }
 
 /**
- * `repeated` and `conflict` as for an ordinary queue. `unknown`: the key's
- * recipient is neither a shared recipient nor an active replica. `full`: the account
- * is at its message or byte limit. `lapsed`: the deadline has already passed.
- * Only `stored` put a package in, and it put in every delivery of it too.
+ * `unknown`: the recipient is neither a shared recipient nor an active
+ * replica. `full`: the account is at its message or byte limit. `lapsed`: the
+ * deadline has already passed. Only `stored` put a package in, and it put in
+ * every delivery of it too.
  */
 export type FanOutOutcome =
   | { outcome: "stored"; deliveries: ReplicaDelivery[] }
-  | { outcome: "repeated" | "conflict" | "unknown" | "full" | "lapsed" };
+  | { outcome: "unknown" | "full" | "lapsed" };
 
 export interface RecipientPage {
   recipients: string[];
@@ -266,9 +250,9 @@ export interface MediationStore {
   deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean>;
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
-   * Ends a replica's enrollment and drops what waited for it alone: its
-   * deliveries, and the mail forwarded to the replica itself. Its DID stays
-   * bound, so it is never enrolled again while the account exists.
+   * Ends a replica's enrollment and its deliveries, and with them every
+   * package it was the last target of. Its DID stays bound, so it is never
+   * enrolled again while the account exists.
    */
   removeReplica(accountDid: string, mediator: string, replicaDid: string): Promise<RemoveOutcome>;
   isReplicaAccount(did: string): Promise<boolean>;
@@ -312,14 +296,13 @@ export interface MediationStore {
   /** The long form of a replica-mediation account's shared recipient, if `did` is one. */
   sharedRecipientMaterial(did: string): Promise<string | null>;
   /**
-   * Keeps `packed` once for the account `key.next` routes to at that moment
-   * and queues a delivery of it: for each active replica the account holds
-   * when the recipient is shared, for that replica alone when it is one. A
-   * replica enrolled later gets none, and neither does anyone from a repeat.
-   * The key is that account's: what another account kept under it while the
-   * recipient was its own is neither a repeat nor a conflict.
+   * Keeps `packed` once for the account `next` routes to at that moment and
+   * queues a delivery of it: for each active replica the account holds when
+   * the recipient is shared, for that replica alone when it is one. A replica
+   * enrolled later gets none. The package is deleted with its last delivery;
+   * one that has none from the start waits out its retention.
    */
-  fanOut(key: PackageKey, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
+  fanOut(next: string, packed: string, bounds: PackageBounds): Promise<FanOutOutcome>;
   /**
    * What waits for a replica, oldest first, each under its delivery's id;
    * only what was forwarded to `next` when one is given.
@@ -328,14 +311,11 @@ export interface MediationStore {
   deliveryCount(replicaDid: string, next?: string | null): Promise<number>;
   /**
    * Ends the named deliveries that are this replica's and ignores every other
-   * id. Mail forwarded to the replica itself goes with its delivery; a shared
-   * package stays, for the other replicas and so a repeat is still known,
-   * whatever its recipient DID has been bound as since.
+   * id. A package goes with the last of its deliveries.
    */
   acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void>;
 
-  /** Queues `packed` under its key, once: the first bytes a key is given are the ones it keeps. */
-  storeMessage(ownerDid: string, key: PackageKey, packed: string): Promise<StoreOutcome>;
+  storeMessage(ownerDid: string, packed: string): Promise<StoreOutcome>;
   messageCount(ownerDid: string): Promise<number>;
   messagesFor(ownerDid: string, limit: number): Promise<StoredMessage[]>;
   /** Deletes the named messages; returns the ids that existed and are gone. */

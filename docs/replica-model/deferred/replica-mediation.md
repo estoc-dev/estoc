@@ -629,8 +629,8 @@ the owning specifications must adopt that separation before this profile is used
 
 ## 8. Routing and durable fan-out
 
-The accepted-envelope, normalization, package-idempotency and transport-status
-rules of [distributed delivery](../distributed-delivery.md#phase-1-mediator-envelope-and-storage-profile)
+The accepted-envelope and transport-status rules of
+[distributed delivery](../distributed-delivery.md#phase-1-mediator-envelope-and-storage-profile)
 apply to this account's opaque packages. Account creation, destination ownership
 and delivery selection follow this protocol; the phase-1 account-inbox rule
 does not apply. A local event/object CID is not a routing identifier.
@@ -639,7 +639,7 @@ Routing classification is determined by the registered `forward.body.next`:
 
 | Destination | Storage and delivery |
 | --- | --- |
-| Shared communication DID | One immutable shared mailbox package; a fixed set of deliveries for all replicas active at first acceptance |
+| Shared communication DID | One immutable shared mailbox package; a fixed set of deliveries for all replicas active at acceptance |
 | Active replica DID | One private mailbox package and delivery for that replica only |
 | Unknown or unauthorized destination | Refuse without partial storage or fan-out |
 
@@ -650,8 +650,10 @@ the new replica participates in that selection; if package acceptance commits
 first, it does not. Transaction order defines the boundary, not a sender timestamp
 or a comparison of second-resolution registration times.
 There is at most one delivery per `(mailbox package, replica DID)`. The set of
-delivery targets is fixed at first acceptance. Later registration, reconnection,
-queue drainage or a duplicate forward MUST NOT add targets or reset ACKs.
+delivery targets is fixed at acceptance. Later registration, reconnection or
+queue drainage MUST NOT add targets or reset ACKs. Every accepted forward, a
+repeated one included, is a new package with its own selection, so a replica
+registered in between is a target of the repeat.
 
 Account retained-byte/message limits may refuse the whole new package. There
 is no per-replica queue quota: an accepted shared package creates a delivery
@@ -664,16 +666,6 @@ A private envelope is opaque to the mediator. It is routed by the replica DID
 just like other mail; its encrypted protocol type or contents are not inspected.
 It is never copied to a newly enrolled replica. This routing path requires no
 particular synchronization protocol or payload format.
-
-Shared package deduplication retains the original recipient and `forward.id`
-key within its account. Private deduplication is scoped to its destination
-replica DID and `forward.id`. Equal IDs do not combine different recipients'
-delivery/ACK state. A repeated package with different normalized bytes is a
-conflict. Retransmission of an acknowledged shared package before expiry MUST
-NOT recreate that member's delivery or create one for a later member. A valid
-duplicate preserves the original acceptance result, including after all targets
-have ACKed; it does not perform a fresh target selection or extend the original
-retention deadline.
 
 The mediator never rewrites the inner application envelope's recipients or
 re-encrypts its contents. A live push references committed delivery state;
@@ -715,10 +707,11 @@ as required by the [adapter boundary](../../../packages/agent-core/README.md#did
 
 `messages-received.message_id_list` affects only this authenticated replica's
 deliveries. Repeating an ACK is harmless; unknown, already acknowledged and
-other replicas' IDs have no effect. A shared ACK marks that delivery consumed
-without deleting the shared ciphertext or another delivery. A private ACK may
-remove the private package. No end-to-end application or history-import receipt
-is implied by either operation.
+other replicas' IDs have no effect. An ACK ends only that replica's delivery
+and leaves every other delivery as it was. A package, shared or private, is
+deleted when its last delivery ends; no ciphertext is kept once every target
+has acknowledged it. No end-to-end application or history-import receipt is
+implied by either operation.
 
 For application mail, the client follows the existing
 [receive and commit boundaries](../distributed-delivery.md#cross-layer-commit-and-acknowledgment-table):
@@ -759,13 +752,15 @@ drains durable queued mail; live push is not a replacement for pickup.
 
 ## 10. Retention, limits and failure
 
-Shared mail expires at the earlier of mediator acceptance time plus its
+A package expires at the earlier of mediator acceptance time plus its
 advertised retention window and the outer forward's explicit expiry, if any.
 A past expiry is refused. Until that deadline, pending deliveries remain
-available only to their original target replicas. The shared package remains
-for duplicate detection even after all its deliveries have been acknowledged
-by their targets; retention never authorizes new delivery targets.
-Private mail remains until its own ACK or deadline.
+available only to their original target replicas; retention never authorizes
+new delivery targets. A package remains until its last delivery ends, by ACK
+or by its replica's removal, or until its deadline, whichever comes first, and
+its deletion frees its share of both quotas. A package accepted with no target
+is the exception: it remains until its deadline and counts toward the quotas
+until then.
 
 Expiry is independent of slow/offline replicas. This is bounded mail storage,
 not a history source for newly enrolled replicas. Earlier history and expired
@@ -778,10 +773,11 @@ to a replica or completion of history catch-up.
 `max_shared_recipients`, `max_retained_bytes`, `max_retained_messages` and
 `max_deliveries_per_request`. Byte and message quotas apply to all of the
 account's private and shared packages together. A shared package counts once
-toward both quotas regardless of its number of deliveries; a private package
-uses the same account budget and creates one delivery for its target replica.
-Exhausting the account budget refuses new shared and private packages without
-partial publication. Limits are checked in the publication transaction.
+toward both quotas, regardless of its number of deliveries, until it is
+deleted; a private package uses the same account budget and creates one
+delivery for its target replica. Exhausting the account budget refuses new
+shared and private packages without partial publication. Limits are checked in
+the publication transaction.
 `max_deliveries_per_request` bounds one pickup response, not a replica's backlog.
 Delivery and ACK state remain independent for each replica.
 

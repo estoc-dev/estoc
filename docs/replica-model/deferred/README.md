@@ -112,7 +112,7 @@ in a vault client, adopt the relevant contracts in
   Confirmed clients resume pickup on restart or reconnection; only unconfirmed
   work is retried. Exact repeats preserve delivery/ACK state and do not backfill
   old mail. No periodic registration replay or mediator-state repair is required.
-- Fix each shared package's delivery targets at first acceptance. Registration
+- Fix each shared package's delivery targets at acceptance. Registration
   begins eligibility for later packages and never backfills an earlier one.
   Apply storage quotas to the account's shared and private packages together;
   accept a shared package with deliveries for all active replicas or refuse

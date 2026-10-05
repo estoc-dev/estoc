@@ -186,31 +186,25 @@ check(
 const inner = await sealedNote("hello over http");
 const forwardId = randomUUID();
 check((await forwardAnonymously(alias, inner, forwardId)) === 202, "anonymous forward accepted");
-check((await forwardAnonymously(alias, inner, forwardId)) === 202, "the same forward again is accepted, and queued once");
-check(
-  (await forwardAnonymously(alias, await sealedNote("other bytes"), forwardId)) === 422,
-  "the forward's id with another envelope is refused"
-);
+check((await forwardAnonymously(alias, inner, forwardId)) === 202, "the same forward again is accepted, and queued again");
 check((await forwardAnonymously(alias, { not: "an envelope" })) === 400, "a forward carrying no envelope is refused");
 
 const status = await send(
   "https://didcomm.org/messagepickup/3.0/status-request",
   {}
 );
-check(status.body.message_count === 1, "one message waiting");
+check(status.body.message_count === 2, "both messages waiting");
 
 const delivery = await send(
   "https://didcomm.org/messagepickup/3.0/delivery-request",
   { limit: 10 }
 );
-const attachments = delivery.attachments as { id: string; data: { base64: string } }[];
+const attachments = delivery.attachments as Attached[];
 check(
   delivery.type === "https://didcomm.org/messagepickup/3.0/delivery" &&
-    sameJson(
-      JSON.parse(Buffer.from(attachments[0].data.base64, "base64url").toString("utf8")),
-      inner
-    ),
-  "delivery carries the forwarded message, base64url"
+    attachments.length === 2 &&
+    attachments.every((attachment) => sameJson(decoded(attachment), inner)),
+  "delivery carries the forwarded message twice, base64url"
 );
 
 const afterAck = await send(

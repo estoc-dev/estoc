@@ -115,9 +115,8 @@ export interface Limits {
   max_shared_recipients: number;
   /**
    * Envelope bytes and envelopes the account may have kept at once. A shared
-   * envelope counts once however many replicas it waits for, and keeps
-   * counting after all of them acknowledged it, until it lapses: it is kept
-   * that long so a repeat of its forward is still recognized.
+   * envelope counts once however many replicas it waits for, until none of
+   * them does; one taken with no replica to wait for it counts until it lapses.
    */
   max_retained_bytes: number;
   max_retained_messages: number;

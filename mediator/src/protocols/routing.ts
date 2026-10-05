@@ -1,6 +1,3 @@
-import { parse, traverse } from "@humanwhocodes/momoa";
-import type { AnyNode, MemberNode, StringNode } from "@humanwhocodes/momoa";
-import canonicalize from "canonicalize";
 import { decodeProtectedHeader } from "jose";
 
 import { DIDCommFailure, didOf } from "../didcomm/didcomm.js";
@@ -45,9 +42,9 @@ export const ENCRYPTED_MEDIA_TYPE = "application/didcomm-encrypted+json";
 /**
  * Why a forward was not queued, as the HTTP status its sender sees. Malformed
  * (400) and oversized (413) are judged on the forward alone. Everything that
- * depends on who holds mail here — no such recipient, a full queue, a key
- * already holding other bytes, a deadline only some queues honor — is one
- * answer (422), which does not tell them apart; an accepted forward still tells its sender that `next` takes
+ * depends on who holds mail here — no such recipient, a full queue, a
+ * deadline only some queues honor — is one answer (422), which does not tell
+ * them apart; an accepted forward still tells its sender that `next` takes
  * mail here right now. The message never quotes the forward.
  */
 export class ForwardRefused extends Error {
@@ -67,27 +64,6 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 /** base64url as JOSE writes it (RFC 7515 §2): that alphabet only, no padding. */
 const isBase64url = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value) && value.length % 4 !== 1;
-
-/**
- * JSON text as a value, refusing a member name that comes twice: JSON.parse
- * would quietly keep the last one, and RFC 8785 has no canonical form for an
- * object that was never unambiguous.
- */
-function parseUnambiguous(text: string): unknown {
-  traverse(parse(text, { mode: "json" }), {
-    enter(node) {
-      const { type, members } = node as AnyNode & { members?: MemberNode[] };
-      if (type !== "Object" || members === undefined) {
-        return;
-      }
-      const names = new Set(members.map(({ name }) => (name as StringNode).value));
-      if (names.size !== members.length) {
-        throw new SyntaxError("duplicate member name");
-      }
-    },
-  });
-  return JSON.parse(text);
-}
 
 /** An attachment's `base64`, decoded; senders differ on padding, so either way. */
 function carriedText(base64: string): string {
@@ -158,23 +134,14 @@ function isEncryptedMessage(envelope: unknown): envelope is Record<string, unkno
 }
 
 /**
- * The one envelope a forward carries, as the bytes that are queued and later
- * handed over: its RFC 8785 form, so a retry that spells the same JSON another
- * way is still the same package. The envelope is looked at, never opened —
- * a links attachment is refused too, since a mediator that fetches URLs on an
+ * The one envelope a forward carries, as the JSON text that is queued and
+ * later handed over: the envelope as parsed, written out again, whichever way
+ * it was carried. The envelope is looked at, never opened — a links
+ * attachment is refused too, since a mediator that fetches URLs on an
  * anonymous sender's say-so is a proxy.
  */
-function envelopeOf(incoming: Unpacked, limit: number): string {
-  // Read from the sender's text, not the library's message: there a name that
-  // came twice is already one value and a number may have moved, so the same
-  // envelope could be queued as different bytes depending on how it was carried.
-  let written: unknown;
-  try {
-    written = parseUnambiguous(incoming.plaintext);
-  } catch {
-    throw malformed("is not unambiguous JSON");
-  }
-  const attachments = isObject(written) && Array.isArray(written.attachments) ? written.attachments : [];
+function envelopeOf({ message }: Unpacked, limit: number): string {
+  const attachments = message.attachments ?? [];
   if (attachments.length !== 1) {
     throw malformed("must carry exactly one attachment");
   }
@@ -182,7 +149,7 @@ function envelopeOf(incoming: Unpacked, limit: number): string {
   // didcomm-rust's own forward wrapper leaves the media type out, so only an
   // attachment that claims to be something else is turned away; what it
   // holds is checked below either way.
-  const [attachment] = attachments as Record<string, unknown>[];
+  const [attachment] = attachments;
   if ((attachment.media_type ?? ENCRYPTED_MEDIA_TYPE) !== ENCRYPTED_MEDIA_TYPE) {
     throw malformed(`attachment must be ${ENCRYPTED_MEDIA_TYPE}`);
   }
@@ -196,29 +163,21 @@ function envelopeOf(incoming: Unpacked, limit: number): string {
 
   let envelope: unknown;
   try {
-    envelope = asJson ? data.json : parseUnambiguous(carriedText(data.base64 as string));
+    envelope = asJson ? data.json : JSON.parse(carriedText(data.base64 as string));
   } catch {
     throw malformed("attachment does not decode to JSON");
   }
-
-  let canonical: string | undefined;
-  try {
-    if (isEncryptedMessage(envelope)) {
-      canonical = canonicalize(envelope);
-    }
-  } catch {
-    // Nested past what the stack walks, or a value with no canonical form.
-  }
-  if (canonical === undefined) {
+  if (!isEncryptedMessage(envelope)) {
     throw malformed("attachment is not an encrypted message");
   }
 
   // The wire limit does not settle this: a number written `1e20` is four
-  // bytes on the wire and twenty-one in canonical form.
-  if (new TextEncoder().encode(canonical).byteLength > limit) {
+  // bytes on the wire and twenty-one once written out again.
+  const packed = JSON.stringify(envelope);
+  if (new TextEncoder().encode(packed).byteLength > limit) {
     throw new ForwardRefused(413, `Envelope exceeds ${limit} bytes`);
   }
-  return canonical;
+  return packed;
 }
 
 export async function forward(
@@ -250,7 +209,7 @@ export async function forward(
     // A store that could not commit is one more way of not being queued: the
     // forward itself was sound, and the same one may be sent again.
     const queued = await context.store
-      .fanOut({ next: canonicalDid(next), forwardId: incoming.message.id }, packed, {
+      .fanOut(canonicalDid(next), packed, {
         deadline: typeof expires === "number" ? expires * 1000 : null,
         maxRetainedBytes: context.config.maxRetainedBytes,
       })
@@ -258,24 +217,16 @@ export async function forward(
         context.log?.("fan-out failed; the forward is refused", err);
         return null;
       });
-    if (queued?.outcome === "stored") {
-      for (const { replicaDid, message } of queued.deliveries) {
-        await offer(incoming, context, replicaDid, message);
-      }
-    } else if (queued?.outcome !== "repeated") {
+    if (queued?.outcome !== "stored") {
       throw notQueued();
+    }
+    for (const { replicaDid, message } of queued.deliveries) {
+      await offer(incoming, context, replicaDid, message);
     }
     return null;
   }
 
-  const stored = await context.store.storeMessage(
-    owner,
-    { next, forwardId: incoming.message.id },
-    packed
-  );
-  if (stored.outcome === "repeated") {
-    return null;
-  }
+  const stored = await context.store.storeMessage(owner, packed);
   if (stored.outcome !== "stored") {
     throw notQueued();
   }

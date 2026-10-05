@@ -1373,17 +1373,7 @@ describe("recipient-remove", () => {
     expect((reply?.attachments as Attached[]).map(carried)).toEqual([inner]);
   });
 
-  it("refuses a repeat of that mail while the DID is bound nowhere", async () => {
-    const forward = forwardOf(first.recipient.did, await envelope(first.recipient));
-    await post(forward);
-
-    await removeRecipient(first.recipient);
-
-    expect((await post(forward)).status).toBe(422);
-    expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
-  });
-
-  it("keeps for the recipient's next account a forward the former one kept, as a package of its own", async () => {
+  it("queues a forward the former account kept again for the recipient's next account", async () => {
     const other = await peer4Agent(null);
     const theirs = await enrollment(other);
     await enroll(theirs.grant, firstContact(other));
@@ -1397,11 +1387,6 @@ describe("recipient-remove", () => {
     await add(moved, known(other));
 
     expect((await post(forward)).status).toBe(202);
-    expect((await post(forward)).status).toBe(202);
-    const changed = forwardOf(first.recipient.did, await envelope(first.recipient), {
-      id: forward.id,
-    });
-    expect((await post(changed)).status).toBe(422);
 
     expect(await store.deliveryCount(theirs.replica.did)).toBe(1);
     expect(await store.deliveryCount(enrolled[0].replica.did)).toBe(1);
@@ -1685,40 +1670,35 @@ describe("a forward", () => {
 
     const [forFirst] = await waiting(first);
     const [forSecond] = await waiting(second);
-    expect(forFirst.packed).toBe(canonicalize(inner));
+    expect(JSON.parse(forFirst.packed)).toEqual(inner);
     expect(forSecond.packed).toBe(forFirst.packed);
     expect(forFirst.id).toMatch(/^[0-9a-f]{32}$/);
     expect(forSecond.id).toMatch(/^[0-9a-f]{32}$/);
     expect(forSecond.id).not.toBe(forFirst.id);
   });
 
-  it("reaches no replica enrolled after it, however often it is repeated", async () => {
+  it("reaches a replica enrolled after it once it is sent again, as new mail for every replica", async () => {
     const forward = forwardOf(shared.did, await envelope(shared));
     await post(forward);
-    const before = await waiting(first);
     const late = await enrollment();
     await enroll(late.grant);
+    expect(await waiting(late)).toEqual([]);
 
     expect((await post(forward)).status).toBe(202);
 
-    expect(await waiting(late)).toEqual([]);
-    expect(await waiting(first)).toEqual(before);
-    expect(await waiting(second)).toHaveLength(1);
-
-    await post(forwardOf(shared.did, await envelope(shared, "later")));
     expect(await waiting(late)).toHaveLength(1);
+    expect(await waiting(first)).toHaveLength(2);
+    expect(await waiting(second)).toHaveLength(2);
   });
 
-  it("keeps the first bytes its recipient and ID were given", async () => {
-    const forward = forwardOf(shared.did, await envelope(shared));
+  it("is new mail under an ID that came before, with other bytes too", async () => {
+    const inner = await envelope(shared);
+    const forward = forwardOf(shared.did, inner);
     await post(forward);
+    const otherInner = await envelope(shared, "something else");
 
-    const other = forwardOf(shared.did, await envelope(shared, "something else"), {
-      id: forward.id,
-    });
-
-    expect((await post(other)).status).toBe(422);
-    expect(await waiting(first)).toHaveLength(1);
+    expect((await post(forwardOf(shared.did, otherInner, { id: forward.id }))).status).toBe(202);
+    expect((await waiting(first)).map((delivery) => JSON.parse(delivery.packed))).toEqual([inner, otherInner]);
   });
 
   it("names its recipient in either spelling", async () => {
@@ -1727,7 +1707,7 @@ describe("a forward", () => {
     expect((await post(forward)).status).toBe(202);
     expect((await post({ ...forward, body: { next: shared.did } })).status).toBe(202);
 
-    expect(await waiting(first)).toHaveLength(1);
+    expect(await waiting(first)).toHaveLength(2);
   });
 
   it("to a replica waits for that replica alone", async () => {
@@ -1737,9 +1717,7 @@ describe("a forward", () => {
     const late = await enrollment();
     await enroll(late.grant);
 
-    expect((await waiting(second)).map((delivery) => delivery.packed)).toEqual([
-      canonicalize(inner),
-    ]);
+    expect((await waiting(second)).map((delivery) => JSON.parse(delivery.packed))).toEqual([inner]);
     expect(await waiting(first)).toEqual([]);
     expect(await waiting(late)).toEqual([]);
   });
@@ -1806,7 +1784,7 @@ describe("a forward", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("counts once against its account, shared or not, whatever waits for each replica", async () => {
+  it("counts once against its account, shared or not, until the last replica it waits for acknowledges it", async () => {
     for (let i = 0; i < 3; i++) {
       expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
     }
@@ -1821,11 +1799,21 @@ describe("a forward", () => {
     ).toBe(422);
     expect(await waiting(first)).toHaveLength(3);
     expect(await waiting(second)).toHaveLength(5);
+
+    const acknowledge = async (replica: Enrollment) =>
+      store.acknowledgeDeliveries(
+        replica.replica.did,
+        (await waiting(replica)).map((delivery) => delivery.id)
+      );
+    await acknowledge(first);
+    expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(422);
+    await acknowledge(second);
+    expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
   });
 
   it("is refused whole once its account holds the bytes it may", async () => {
     const inner = await envelope(shared);
-    const bytes = Buffer.byteLength(canonicalize(inner)!);
+    const bytes = Buffer.byteLength(JSON.stringify(inner));
     const tight = serve({ maxRetainedBytes: 2 * bytes });
 
     expect((await post(forwardOf(shared.did, inner), tight)).status).toBe(202);
@@ -1875,22 +1863,19 @@ describe("a forward", () => {
     expect(await waiting(first)).toEqual([]);
   });
 
-  it("frees its ID and its room once it has lapsed", async () => {
+  it("frees its room once it has lapsed", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const now = Math.floor(Date.now() / 1000);
-    const forward = forwardOf(shared.did, await envelope(shared), { expires_time: now + 60 });
-    await post(forward);
-    for (let i = 1; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+    for (let i = 0; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
       await post(forwardOf(shared.did, await envelope(shared), { expires_time: now + 60 }));
     }
+    const inner = await envelope(shared, "anew");
+    expect((await post(forwardOf(shared.did, inner))).status).toBe(422);
 
     vi.setSystemTime((now + 61) * 1000);
-    const again = forwardOf(shared.did, await envelope(shared, "anew"), { id: forward.id });
 
-    expect((await post(again)).status).toBe(202);
-    expect((await waiting(first)).map((delivery) => delivery.packed)).toEqual([
-      canonicalize(again.attachments![0].data.json),
-    ]);
+    expect((await post(forwardOf(shared.did, inner))).status).toBe(202);
+    expect((await waiting(first)).map((delivery) => JSON.parse(delivery.packed))).toEqual([inner]);
   });
 
   it("finds nobody where replica mediation is off", async () => {
@@ -2030,25 +2015,6 @@ describe("pickup by a replica", () => {
 
     await pickup(first, "messages-received", { message_id_list: [forFirst.id] });
     expect(await count(second)).toBe(1);
-  });
-
-  it("still knows an acknowledged shared envelope as a repeat, and queues it for no one again", async () => {
-    const forward = forwardOf(shared.did, await envelope(shared));
-    await post(forward);
-    for (const replica of [first, second]) {
-      const ids = (await delivered(replica)).map((attached) => attached.id);
-      await pickup(replica, "messages-received", { message_id_list: ids });
-    }
-    const late = await enrollment();
-    await enroll(late.grant);
-
-    expect((await post(forward)).status).toBe(202);
-    const changed = forwardOf(shared.did, await envelope(shared, "other"), { id: forward.id });
-    expect((await post(changed)).status).toBe(422);
-
-    for (const replica of [first, second, late]) {
-      expect(await count(replica)).toBe(0);
-    }
   });
 
   it("frees the room of mail forwarded to the replica once it is acknowledged", async () => {
@@ -2422,6 +2388,23 @@ describe("replica-remove", () => {
     expect(await waiting(second)).toHaveLength(2);
   });
 
+  it("drops the shared mail it was the last replica to wait for, with the room it took", async () => {
+    for (let i = 0; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      await post(forwardOf(shared.did, await envelope(shared)));
+    }
+    await store.acknowledgeDeliveries(
+      second.replica.did,
+      (await waiting(second)).map((delivery) => delivery.id)
+    );
+    const refused = forwardOf(shared.did, await envelope(shared));
+    expect((await post(refused)).status).toBe(422);
+
+    await remove(first);
+
+    expect((await post(refused)).status).toBe(202);
+    expect(await waiting(second)).toHaveLength(1);
+  });
+
   it("queues nothing more for the replica, shared or its own", async () => {
     await remove(first);
 
@@ -2476,12 +2459,34 @@ describe("replica-remove", () => {
     expect(await waiting(late)).toEqual([]);
   });
 
-  describe("of a replica whose DID was a shared recipient before", () => {
-    let forward: IMessage;
+  it("keeps the mail taken while no replica was active, through a later replica's acknowledgment and its removal", async () => {
+    await remove(first);
+    await remove(second);
+    for (let i = 1; i < TEST_CONFIG.maxMessagesPerAccount; i++) {
+      expect((await post(forwardOf(shared.did, await envelope(shared)))).status).toBe(202);
+    }
+    const late = await enrollment();
+    await enroll(late.grant, known(account));
+    const fill = async () => (await post(forwardOf(shared.did, await envelope(shared)))).status;
 
+    expect(await fill()).toBe(202);
+    expect(await fill()).toBe(422);
+
+    await store.acknowledgeDeliveries(
+      late.replica.did,
+      (await waiting(late)).map((delivery) => delivery.id)
+    );
+    expect(await fill()).toBe(202);
+    expect(await fill()).toBe(422);
+
+    await remove(late);
+    expect(await fill()).toBe(202);
+    expect(await fill()).toBe(422);
+  });
+
+  describe("of a replica whose DID was a shared recipient before", () => {
     beforeEach(async () => {
-      forward = forwardOf(shared.did, await envelope(shared));
-      await post(forward);
+      await post(forwardOf(shared.did, await envelope(shared)));
       await removeRecipient(shared);
     });
 
@@ -2519,20 +2524,6 @@ describe("replica-remove", () => {
       expect(await waiting(first)).toHaveLength(2);
     });
 
-    it("keeps that mail a known repeat after every replica acknowledged, the former recipient included", async () => {
-      await enrollFormer(account);
-      for (const replica of [first, second]) {
-        await send(known(replica.replica), `${PICKUP}/messages-received`, {
-          message_id_list: (await waiting(replica)).map((message) => message.id),
-        });
-      }
-      await send(firstContact(shared), `${PICKUP}/messages-received`, { message_id_list: [] });
-
-      expect((await post(forward)).status).toBe(202);
-
-      expect(await store.deliveryCount(shared.did)).toBe(0);
-      expect(await waiting(first)).toEqual([]);
-    });
   });
 
   it("takes the replica in either spelling", async () => {
