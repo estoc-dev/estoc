@@ -14,10 +14,6 @@ import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
 import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
 
-/**
- * What the daemon last said stands here, as the screens read it: an open
- * vault's snapshot comes read by ID, and every other phase as it was said.
- */
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
 
 /**

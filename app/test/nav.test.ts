@@ -1,13 +1,14 @@
 import { indexSnapshot } from "@estoc/daemon-api/views";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
-import type { ConversationId, Hold, Snapshot } from "../src/core/types.js";
+import type { ConversationId, Hold, Invitation, Snapshot } from "../src/core/types.js";
 
 // the store reaches for the service worker's registration, which a build provides
 vi.mock("../src/core/pwa.js", () => ({ isInstalled: () => false, setupPwa: () => undefined }));
 // navigation reads the browser's history and media queries, which a test has none of
 vi.stubGlobal("window", { addEventListener: () => undefined });
-vi.stubGlobal("history", { state: null, pushState: () => undefined, replaceState: () => undefined, back: () => undefined });
+const pushState = vi.fn();
+vi.stubGlobal("history", { state: null, pushState, replaceState: () => undefined, back: () => undefined });
 vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => undefined }));
 
 const { nextTick } = await import("vue");
@@ -73,5 +74,50 @@ describe("where the person is, across snapshots", () => {
     await nextTick();
     await open("hold-2", showing("did:key:z6MkOne", { [HEAD]: ["head", "old"] }));
     expect(screen.value).toEqual({ kind: "list" });
+  });
+});
+
+describe("an invitation this page was opened with", () => {
+  const locked = async () => {
+    state.vault = { phase: "locked", hold: "hold-1" as Hold, detail: null };
+    await nextTick();
+  };
+  const offered = async (id: string) => {
+    state.pendingInvitation = { id } as Invitation;
+    await nextTick();
+  };
+
+  afterAll(() => {
+    state.pendingInvitation = null;
+  });
+
+  it("is offered once the vault opens", async () => {
+    await locked();
+    await offered("invitation-1");
+    expect(screen.value).toEqual({ kind: "list" });
+    await open("hold-1", showing("did:key:z6MkOne", {}));
+    expect(screen.value).toEqual({ kind: "new" });
+  });
+
+  it("is not offered again by a newer snapshot of the same vault after the person has left it", async () => {
+    go({ kind: "you" });
+    await nextTick();
+    pushState.mockClear();
+    await open("hold-1", showing("did:key:z6MkOne", { [OLD]: ["old"] }));
+    expect(screen.value).toEqual({ kind: "you" });
+    expect(pushState).not.toHaveBeenCalled();
+  });
+
+  it("is offered again when the vault opens anew", async () => {
+    await locked();
+    await open("hold-1", showing("did:key:z6MkOne", {}));
+    expect(screen.value).toEqual({ kind: "new" });
+  });
+
+  it("is offered when another arrives while the vault is open", async () => {
+    go({ kind: "you" });
+    await nextTick();
+    await offered("invitation-2");
+    expect(screen.value).toEqual({ kind: "new" });
   });
 });

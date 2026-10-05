@@ -136,7 +136,7 @@ watch(
 
 // A link this page was opened with is offered where a conversation starts.
 watch(
-  () => [state.vault.phase, state.pendingInvitation] as const,
+  [() => state.vault.phase, () => state.pendingInvitation],
   ([phase, invitation]) => {
     if (phase === "open" && invitation !== null && screen.value.kind !== "new") go({ kind: "new" });
   },
