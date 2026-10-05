@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import qrcode from "qrcode-generator";
 
-import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, state } from "../core/store.js";
+import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, openIndex, state } from "../core/store.js";
 import type { Invitation } from "../core/types.js";
 import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
@@ -19,7 +19,7 @@ import { useStatus } from "./status.js";
  * here too.
  */
 const { mediation } = useStatus();
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 const ready = computed(() => mediation.value !== null && !sendsClosed.value);
 
 type Mode = "menu" | "qr" | "scan" | "paste" | "accept";
@@ -37,7 +37,7 @@ function show(next: Mode) {
 }
 
 // our invitations: each a link anyone holding it may write to; the QR is the same link, for a phone
-const openInvitations = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.state.status === "available"));
+const openInvitations = computed(() => (openIndex()?.snapshot.invitations ?? []).filter((i) => i.state.status === "available"));
 const inviting = ref(false);
 const shownInvitation = ref<string | null>(null);
 const copied = ref(false);
@@ -59,7 +59,7 @@ async function invite(then: "qr" | "copy") {
   }
 }
 
-const shownRecord = computed(() => state.snapshot?.invitations.find((i) => i.oobId === shownInvitation.value) ?? null);
+const shownRecord = computed(() => openIndex()?.snapshot.invitations.find((i) => i.oobId === shownInvitation.value) ?? null);
 const shownUrl = computed(() => (shownRecord.value === null || shownRecord.value.state.status !== "available" ? null : invitationLink(shownRecord.value)));
 
 // A link can outgrow what a QR code holds: its length follows the DID,

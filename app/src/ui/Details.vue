@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { blockChannels, deleteContact, heldNow, introduce, nameConversation, renameContact, rotate, state } from "../core/store.js";
+import { blockChannels, deleteContact, heldNow, introduce, nameConversation, openIndex, renameContact, rotate } from "../core/store.js";
 import type { ConversationId, ShownChannel } from "../core/types.js";
 import { editableFrom } from "./editable.js";
 import Icon from "./Icon.vue";
@@ -17,8 +17,8 @@ import { initialOf, labelOf, observationsOf, ownsEnd, shortDid } from "./util.js
  */
 const props = defineProps<{ conversationKey: ConversationId }>();
 
-const conversation = computed(() => state.conversations.find((c) => c.id === props.conversationKey) ?? null);
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const conversation = computed(() => openIndex()?.conversation(props.conversationKey) ?? null);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 
 const petname = editableFrom(computed(() => conversation.value?.petname ?? conversation.value?.claimedName?.name ?? ""));
 
@@ -49,8 +49,8 @@ const current = computed(() => {
 });
 
 const introduced = computed(() => current.value?.profileSubmitted !== null);
-const rotatable = computed(() => current.value !== null && ownsEnd(state.snapshot, current.value));
-const observations = computed(() => conversation.value?.channels.flatMap((channel) => observationsOf(state.index, channel)) ?? []);
+const rotatable = computed(() => current.value !== null && ownsEnd(openIndex()?.snapshot ?? null, current.value));
+const observations = computed(() => conversation.value?.channels.flatMap((channel) => observationsOf(openIndex(), channel)) ?? []);
 const admitted = computed(() => observations.value.filter(({ disposition }) => disposition.status === "admitted").length);
 const received = computed(() => observations.value.length);
 

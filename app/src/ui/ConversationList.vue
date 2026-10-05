@@ -4,7 +4,7 @@ import { BASIC_MESSAGE, PROFILE } from "@estoc/daemon-api/contract";
 import { announcedName } from "@estoc/daemon-api/views";
 
 import { seenAt } from "../core/seen.js";
-import { chooseMediator, state } from "../core/store.js";
+import { chooseMediator, openIndex } from "../core/store.js";
 import type { Conversation, MessageRecord } from "../core/types.js";
 import { showsInThread, typeOf } from "../renderers/index.js";
 import { useAttention } from "./attention.js";
@@ -20,8 +20,8 @@ const { mediation, lamp, word } = useStatus();
 const { count: attention } = useAttention();
 
 const current = computed(() => keyOf(screen.value));
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
-const openLinks = computed(() => (state.snapshot?.invitations ?? []).filter((i) => i.state.status === "available").length);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
+const openLinks = computed(() => (openIndex()?.snapshot.invitations ?? []).filter((i) => i.state.status === "available").length);
 
 interface Row {
   conversation: Conversation;
@@ -41,7 +41,7 @@ function previewOf(message: MessageRecord): string {
 }
 
 const rows = computed<Row[]>(() =>
-  state.conversations
+  (openIndex()?.conversations ?? [])
     .map((conversation) => {
       const shown = conversation.messages.filter(showsInThread);
       const last = shown.at(-1) ?? null;
@@ -56,7 +56,7 @@ const rows = computed<Row[]>(() =>
 <template>
   <div class="screen">
     <Topbar>
-      <button class="avatar" type="button" aria-label="You and settings" data-you @click="go({ kind: 'you' })">{{ initialOfName(state.snapshot?.label ?? null) }}</button>
+      <button class="avatar" type="button" aria-label="You and settings" data-you @click="go({ kind: 'you' })">{{ initialOfName(openIndex()?.snapshot.label ?? null) }}</button>
       <span class="heading">
         <span class="title">Messages</span>
         <span class="status" :class="{ error: lamp === 'error', quiet: lamp === '' }" data-status><span class="lamp" :class="lamp"></span>{{ word }}</span>
@@ -78,7 +78,7 @@ const rows = computed<Row[]>(() =>
     <div class="screen-body flush">
       <div v-if="sendsClosed" class="list-card"><RestoreNotice /></div>
       <div v-if="rows.length === 0 && mediation === null" class="empty" data-choose-mediator>
-        <p>You are {{ state.snapshot?.label }}. To be reached, pick a mediator: it holds sealed envelopes until you fetch them.</p>
+        <p>You are {{ openIndex()?.snapshot.label }}. To be reached, pick a mediator: it holds sealed envelopes until you fetch them.</p>
         <MediatorForm submit-label="Use this mediator" busy-label="Connecting…" :pick="chooseMediator" />
       </div>
       <div v-else-if="rows.length === 0" class="empty">

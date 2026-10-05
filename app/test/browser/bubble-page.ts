@@ -4,7 +4,7 @@ import "../../src/style.css";
 import type { MessageRecord } from "../../src/core/types.js";
 import BasicMessage from "../../src/renderers/BasicMessage.vue";
 import Generic from "../../src/renderers/Generic.vue";
-import { actions, state } from "./store-stub.js";
+import { actions, snapshot } from "./store-stub.js";
 
 /**
  * A page that mounts one message in the frame the thread gives it, for a
@@ -48,7 +48,7 @@ window.actions = actions;
 window.mount = (fixture) => {
   app?.unmount();
   actions.length = 0;
-  state.snapshot.pending.pendingOutbounds = fixture === "retry" ? [{ messageId: "message-1", entries: ["cancel"], because: null }] : [];
+  snapshot.pending.pendingOutbounds = fixture === "retry" ? [{ messageId: "message-1", entries: ["cancel"], because: null }] : [];
   app = createApp({ render: () => h("div", { class: "thread" }, [h(fixture === "generic" ? Generic : BasicMessage, { message: message(fixture) })]) });
   app.mount("#app");
 };

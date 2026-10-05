@@ -24,7 +24,7 @@ async function submit() {
 }
 
 function forget() {
-  const hold = state.hold;
+  const hold = state.vault.hold;
   return remove("Delete this identity from this device? Its keys and messages here are gone for good. Only a backup brings them back.", async () => {
     await forgetIdentity(hold);
   });

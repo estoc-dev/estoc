@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { cancel, completeNotification, completeResponse, retry, rotate, state } from "../core/store.js";
+import { cancel, completeNotification, completeResponse, openIndex, retry, rotate, state } from "../core/store.js";
 import type { ChannelId } from "../core/types.js";
 import { useAttention } from "./attention.js";
 import { go } from "./nav.js";
@@ -17,7 +17,7 @@ import { dispositionOf, labelOf, shortDid } from "./util.js";
  * what it waits for.
  */
 const { pending, byHand, waiting, discarded, unplacedInputs, unplacedOutputs, count } = useAttention();
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 
 const busy = ref(false);
 const failure = ref<string | null>(null);
@@ -37,14 +37,14 @@ async function act(action: () => Promise<void>) {
 
 /** The person at the other end of a channel, by the name they go by here, or their address when no conversation shows it. */
 function whoIs(channelId: ChannelId): string {
-  const peerDid = state.index?.channel(channelId)?.peerDid ?? null;
+  const peerDid = openIndex()?.channel(channelId)?.peerDid ?? null;
   if (peerDid === null) return "someone";
-  const conversation = state.conversations.find((c) => c.channels.some((channel) => channel.peerDid === peerDid));
+  const conversation = openIndex()?.conversations.find((c) => c.channels.some((channel) => channel.peerDid === peerDid));
   return conversation === undefined ? shortDid(peerDid) : labelOf(conversation);
 }
 
 const peerOf = (channelId: ChannelId): string => {
-  const channel = state.index?.channel(channelId) ?? null;
+  const channel = openIndex()?.channel(channelId) ?? null;
   return channel === null ? channelId : shortDid(channel.peerDid);
 };
 

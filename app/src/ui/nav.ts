@@ -1,7 +1,7 @@
 import { ref, shallowRef, watch } from "vue";
 import { successorOf, trailOf, type ConversationTrail } from "@estoc/daemon-api/views";
 
-import { state } from "../core/store.js";
+import { openIndex, state } from "../core/store.js";
 import type { ConversationId, Snapshot } from "../core/types.js";
 
 /**
@@ -51,7 +51,7 @@ export function back(): void {
 // one that has gone, or a screen the vault no longer has: it lands on
 // where the conversation is now, or on the list.
 function valid(s: Screen | undefined): Screen {
-  if (s === undefined || state.phase !== "open") return LIST;
+  if (s === undefined || state.vault.phase !== "open") return LIST;
   const key = keyOf(s);
   if (key === null) return s;
   const now = follow(key);
@@ -71,16 +71,19 @@ window.addEventListener("popstate", (event) => {
 // IDs alone: what a snapshot showed goes with the snapshot.
 const trails = new Map<ConversationId, ConversationTrail>();
 
+const shown = (): Snapshot | null => openIndex()?.snapshot ?? null;
+
 const has = (snapshot: Snapshot | null, key: ConversationId): boolean => snapshot !== null && snapshot.conversations.some((c) => c.id === key);
 
 function remember(key: ConversationId): void {
-  const trail = state.snapshot === null ? null : trailOf(state.snapshot, key);
+  const snapshot = shown();
+  const trail = snapshot === null ? null : trailOf(snapshot, key);
   if (trail !== null) trails.set(key, trail);
 }
 
 /** The ID the conversation goes by now, or null when it is gone or was never shown. */
 function follow(key: ConversationId): ConversationId | null {
-  const now = state.snapshot;
+  const now = shown();
   if (now === null) return null;
   if (has(now, key)) return key;
   const trail = trails.get(key);
@@ -98,7 +101,7 @@ watch(
 
 // Another vault in place of the one shown: no screen of the old one holds, and no trail of its conversations leads anywhere.
 watch(
-  () => state.hold,
+  () => state.vault.hold,
   (_hold, before) => {
     trails.clear();
     if (before !== null) swap(LIST);
@@ -106,7 +109,7 @@ watch(
 );
 
 watch(
-  () => state.snapshot,
+  shown,
   (snapshot) => {
     const s = screen.value;
     const key = keyOf(s);
@@ -124,7 +127,7 @@ watch(
 );
 
 watch(
-  () => state.phase,
+  () => state.vault.phase,
   (phase) => {
     if (phase !== "open") swap(LIST);
   }
@@ -133,7 +136,7 @@ watch(
 
 // A link this page was opened with is offered where a conversation starts.
 watch(
-  () => [state.phase, state.pendingInvitation] as const,
+  [() => state.vault.phase, () => state.pendingInvitation],
   ([phase, invitation]) => {
     if (phase === "open" && invitation !== null && screen.value.kind !== "new") go({ kind: "new" });
   },

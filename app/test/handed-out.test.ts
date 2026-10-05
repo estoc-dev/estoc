@@ -1,11 +1,11 @@
-import { parseInvitation } from "@estoc/daemon-api/views";
+import { indexSnapshot, parseInvitation } from "@estoc/daemon-api/views";
 import { describe, expect, it, vi } from "vitest";
 
 // the store reaches for the service worker's registration, which a build provides
 vi.mock("../src/core/pwa.js", () => ({ isInstalled: () => false, setupPwa: () => undefined }));
 
 import { handedOutDid, invitationLink, state } from "../src/core/store.js";
-import type { Snapshot } from "../src/core/types.js";
+import type { Hold, Snapshot } from "../src/core/types.js";
 
 type LocalDid = Snapshot["dids"][number];
 type InvitationRecord = Snapshot["invitations"][number];
@@ -49,7 +49,8 @@ describe("the link of an invitation the vault holds", () => {
     state: { status: "available" },
   };
   const over = (dids: LocalDid[], links: Record<string, string>) => {
-    state.snapshot = { dids, invitations: [record] } as Snapshot;
+    const shown = { dids, invitations: [record], channels: [], messages: [], observations: [], contacts: [], conversations: [] } as unknown as Snapshot;
+    state.vault = { phase: "open", hold: "hold" as Hold, index: indexSnapshot(shown) };
     state.links = links;
   };
 

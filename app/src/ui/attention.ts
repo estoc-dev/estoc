@@ -1,10 +1,10 @@
 import { computed } from "vue";
 
-import { state } from "../core/store.js";
+import { openIndex, state } from "../core/store.js";
 import type { ObservationRecord } from "../core/types.js";
 
 export function useAttention() {
-  const pending = computed(() => state.snapshot?.pending ?? null);
+  const pending = computed(() => openIndex()?.snapshot.pending ?? null);
   const byHand = computed(() => {
     const p = pending.value;
     if (p === null) return 0;
@@ -13,10 +13,10 @@ export function useAttention() {
   const waiting = computed(() => state.lines?.waiting ?? []);
   const discarded = computed(() => state.lines?.discarded ?? []);
   const unplacedInputs = computed(() => {
-    const index = state.index;
+    const index = openIndex();
     return index === null ? [] : index.snapshot.unplaced.observationIds.flatMap((cid): ObservationRecord[] => (index.observation(cid) === null ? [] : [index.observation(cid)!]));
   });
-  const unplacedOutputs = computed(() => state.snapshot?.unplaced.outputs ?? []);
+  const unplacedOutputs = computed(() => openIndex()?.snapshot.unplaced.outputs ?? []);
   const count = computed(
     () => byHand.value + waiting.value.length + discarded.value.length + unplacedInputs.value.length + unplacedOutputs.value.length
   );
