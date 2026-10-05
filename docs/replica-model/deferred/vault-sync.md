@@ -1,19 +1,19 @@
 # vault-sync/1.0
 
-> Deferred candidate; not implemented, outside the current replica-mediation
-> scope and not part of the [phase-1 contract](../README.md). The detailed rules
+> Deferred candidate; not implemented and not part of the
+> [phase-1 contract](../README.md). The detailed rules
 > below describe one peer-message design, not a selected synchronization
 > interface. Revisit the [deferred sync work](README.md#deferred-vault-sync)
 > before adoption, including the choice between event/object transfer and
 > encrypted portable SQLite snapshots over blob-store.
 
-[Replica mediation](replica-mediation.md) can be implemented and tested as an
-independent transport milestone. It requires none of this draft's `hello`,
-inventory, transfer or receipt messages. Until a sync design is adopted,
-initial history uses existing portable recovery/import; missing history remains
-pending rather than being inferred complete from successful registration.
+[Replica mediation](../../../mediator/README.md#replica-mediation) works
+without this draft's `hello`, inventory, transfer or receipt messages. Until a
+sync design is adopted, initial history uses existing portable recovery/import;
+missing history remains pending rather than being inferred complete from
+successful registration.
 
-[Suite guide](../README.md) · [Identity](replica-mediation.md#identity-model) ·
+[Suite guide](../README.md) · [Replica identity](../vault-events.md#replica-created) ·
 [Messages](#messages) · [Durability](#durability-and-acknowledgments)
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT** and
@@ -46,7 +46,7 @@ object lookup, event merge, sync cursors or a remote reset operation. Those
 requests are answered by replicas. Mailbox acceptance is not a sync receipt,
 and a mailbox with finite retention is not a permanent backup.
 
-[Replica mediation](replica-mediation.md#protocol-boundary) owns membership,
+[Replica mediation](../../../mediator/README.md#replica-mediation) owns membership,
 shared incoming-mail fan-out and pickup. This protocol owns transfer, peer
 reconciliation and acknowledgement of imported vault data. It uses the same
 mediator without another account-wide sync key, custom encrypted-container
@@ -91,7 +91,7 @@ execution.
 
 ## 2. Identities, authorization and transport
 
-The [identity model and signed replica grant](replica-mediation.md#replica-authorization)
+The [replica DID and its signed grant](../vault-events.md#replica-created)
 are shared with replica mediation. No second sync identity or independently
 maintained membership registry exists. A client uses its own replica DID as
 sender and one authorized active peer's replica DID as recipient.
@@ -115,8 +115,8 @@ mediation account by asserting it in its own body.
 `hello` is the only message accepted from a not-yet-known replica DID. It
 carries the signed grant and long-form resolution material through that grant.
 To decrypt a first `hello`, resolve its sender's long-form DID key identifier
-locally, as for the account sender in
-[replica registration](replica-mediation.md#replica-lifecycle),
+locally, as for the account sender's first contact in
+[replica mediation](../../../mediator/README.md#replica-mediation),
 then verify the grant inside. The encrypted grant cannot be its own decryption
 prerequisite. A reply to a pending `hello` is accepted only from its expected
 peer and must pass the same binding checks.
@@ -134,7 +134,7 @@ authentication, the vault binding and current local identity-conflict state;
 persisted verification never overrides a conflicting binding.
 
 Replica retirement belongs to
-[deferred administration](replica-mediation.md#deferred-administration).
+[replica administration](README.md#replica-administration).
 This initial profile has no retirement notification or terminal-receipt exception.
 All accepted batches and receipts use the ordinary authorization and durability
 rules. Being offline or absent from a mediator snapshot does not revoke a
@@ -637,7 +637,8 @@ Enrollment proceeds as follows:
    domain revision defines when the new runtime may enable automatic effects.
 
 Local replica registration and pending recipient adds follow
-[replica-mediation reconciliation](replica-mediation.md#append-only-reconciliation).
+[enrollment](../../../packages/agent-core/src/replica-enrollment.ts) and
+[recipient adds](../../../packages/agent-core/src/replica-recipients.ts).
 Successful local confirmations are not replayed to repair mediator state;
 that operational recovery is outside the initial mediation profile.
 
