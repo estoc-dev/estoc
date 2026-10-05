@@ -3,9 +3,8 @@
  * a live action that carries exactly one such call. The package goes
  * where the resolution it names says the peer receives: straight to an
  * HTTP endpoint, or inside a Routing 2.0 forward to the mediator a DID
- * there names, the forward carrying the package's ID so that the
- * mediator tells a retry of the package from another package. What
- * goes on the wire is the envelope stored with the package, every time.
+ * there names. What goes on the wire is the envelope stored with the
+ * package, every time.
  * Before the call: the message is prepared when it still needs a
  * package, and what the vault owes is recorded either way, under the
  * lock the preparation runs in; a mediated sender the peer has not

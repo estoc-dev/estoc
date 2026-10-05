@@ -171,30 +171,25 @@ which — a 2xx always means queued mail:
   names its key in `header.kid`. For every recipient the protected, shared
   and per-recipient headers share no name and together give `alg` and `enc`
   as non-empty strings; which algorithms they name is the recipient's
-  business. `base64` content is base64url (padded or not) of UTF-8 JSON. No
-  object in the forward repeats a member name, whichever way the envelope is
-  carried. Members the mediator does not know are kept. All of these are a
-  **400** too.
-- What is queued, and what pickup later hands over, is the envelope's
-  [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) form, read from the
-  sender's own JSON text: the same JSON spelled another way or carried the
-  other way is the same bytes, numbers included. That form is held to
+  business. `base64` content is base64url (padded or not) of UTF-8 JSON.
+  All of these are a **400** too. Members the mediator does not know are
+  kept. In `body` and in the envelope, a member name that comes twice in one
+  object is read as its last value, whichever way the envelope is carried.
+  The forward's own members and the attachment's are read by the DIDComm
+  library first, which can refuse one that comes twice: **400**.
+- What is queued, and what pickup later hands over, is the envelope as the
+  mediator read it, written out again as JSON. It is not the sender's text:
+  spacing, member order and how a number is written may differ, and the two
+  carriers need not give the same bytes. That text is held to
   `MEDIATOR_MAX_MESSAGE_BYTES` as well (a number can grow in it): **413**.
-- `(account, body.next, forward id)` names the package, the account being
-  the one `body.next` routes to when the forward arrives. The same forward
-  again is accepted and queued once; the same id with another envelope is
-  refused and the first stays. An ordinary recipient's name is free again
-  once its mail has been picked up and acknowledged, or has expired, and so
-  is a replica's own. A shared package's name stays taken until the package
-  expires, even after every target replica has acknowledged it. A recipient
-  that has moved to another account takes none of the former account's names
-  with it: a forward only the former account kept is a new package for the
-  new one, under the new one's limits. A name the new account itself still
-  keeps for that recipient, from an earlier binding, still applies.
-- A recipient nobody here holds, a full queue and a reused id are one answer,
-  **422**, which does not tell the three apart. A 202 does tell the sender
-  that this recipient takes mail here right now; it says nothing of the
-  recipient having received it.
+- Every forward accepted is new mail, the same one sent again included: it
+  is queued, counted and offered to whoever is listening once more. Telling
+  a repeat from new mail is the recipient's work; the forward's id is not
+  looked at.
+- A recipient nobody here holds and a full queue are one answer, **422**,
+  which does not tell them apart. A 202 does tell the sender that this
+  recipient takes mail here right now; it says nothing of the recipient
+  having received it.
 
 Over a WebSocket there is no status: a refused forward is dropped.
 
@@ -294,10 +289,10 @@ deleted account is `invalid-message`. A listing whose cursor is refused
 begins again from null.
 
 **`replica-remove`** ends the enrollment of the replica `replica_did` names,
-in either form. What waited for that
-replica alone is dropped, mail forwarded to its own DID included, and
-nothing more is queued for it; what other replicas wait for is untouched. A
-reply or a push already on its way when the removal lands may still arrive.
+in either form. Its deliveries end, and mail no other replica waits for goes
+with them, mail forwarded to its own DID included; nothing more is queued
+for it, and what other replicas wait for is untouched. A reply or a push
+already on its way when the removal lands may still arrive.
 The replica stays in the roster as `removed`, and its DID cannot be added
 again while the account exists, so a device that comes back is added as a
 new replica, under a new DID. A removed replica no longer counts against `max_active_replicas`. An account
@@ -327,10 +322,10 @@ exists, as those of `replica-list` do.
 **`recipient-remove`** stops routing the DID. Mail already kept for it stays
 this account's: it still waits for its replicas, is still counted, and
 follows the DID nowhere. The DID is then bound nowhere, so a forward to it
-is refused, a repeat of kept mail included. It can be added again, to this
-account or another, by a proof naming that account and with its long form,
-or enrolled as a replica or an ordinary recipient. A DID the account does
-not hold, a repeat included, gets the same reply and changes nothing.
+is refused. It can be added again, to this account or another, by a proof
+naming that account and with its long form, or enrolled as a replica or an
+ordinary recipient. A DID the account does not hold, a repeat included, gets
+the same reply and changes nothing.
 
 ### Mail
 
@@ -342,12 +337,12 @@ statuses. It is kept once and counted once against its account
 own `expires_time`; one already past is refused. A forward to the account
 DID itself is refused like one to a stranger.
 
-Both limits count what the account still has kept, not what still waits for
-pickup. An envelope forwarded to a shared recipient stays kept, and counted,
-until it lapses, even after every replica acknowledged it, so that a repeat
-of its forward is still recognized; a pickup `message_count` of zero does not
-mean the account has room. An envelope forwarded to one replica is gone when
-that replica acknowledges it.
+Both limits count what the account still has kept. An envelope is kept
+until the last replica it waits for acknowledges it or is removed, whether
+it was forwarded to a shared recipient or to one replica, and is then gone.
+One taken while the account had no active replica waits for no one and stays
+kept, and counted, until it lapses, so a pickup `message_count` of zero does
+not mean the account has room.
 
 An active replica uses messagepickup/3.0 unchanged, authcrypted under its
 own DID. Each replica sees a shared envelope under an attachment id of its
@@ -372,12 +367,12 @@ enrolled can still pick up what waits.
 | `MEDIATOR_CORS_ORIGIN` | `*` | CORS for browser agents |
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
-| `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
+| `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted, on the wire and as a forwarded envelope is queued; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
 | `MEDIATOR_REPLICA_MEDIATION` | `false`; `true` in `wrangler.jsonc` and `compose.yml` | `true` turns on replica-mediation/1.0, which the Estoc app requires of its mediator (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing or a recipient listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may hold at once |
-| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until it lapses even when all of them acknowledged it. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
+| `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until none of them does. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |
 | `MEDIATOR_BLOB_RETAIN_SECONDS` | 30 days | How long one `put` keeps a blob; a repeat `put` by the same mediation renews |

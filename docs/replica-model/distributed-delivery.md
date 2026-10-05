@@ -137,27 +137,22 @@ Before storing a Routing 2.0 `forward`, the mediator MUST require:
    header, the shared unprotected header and the per-recipient header MUST
    have pairwise-disjoint member names, and their union MUST give `alg` and
    `enc` as non-empty strings; and
-7. normalized bytes within the advertised account and message limits.
+7. stored envelope bytes within the advertised account and message limits.
 
 Senders SHOULD set the attachment `media_type`; stock Routing 2.0 wrappers
 leave it out, so receivers apply the same checks either way and reject only a
 declared different type.
 
-No JSON object in the forward plaintext or in the decoded envelope may repeat
-a member name. The rule is the same for `data.json` and `data.base64`, and it
-is judged on the sender's JSON text: a parsed message that has already folded
-repeated names or converted numbers is not a basis for it. `data.base64` MUST
-decode as base64url without ignoring invalid characters and then as
-well-formed UTF-8. Unknown members, numbers included, are kept and take part
-in canonicalization, so both carriers of one envelope normalize to the same
-bytes. The mediator MUST NOT limit the inner `alg` or `enc` to algorithms it
-implements, and MUST NOT re-encode `protected`.
+`data.base64` MUST decode as base64url without ignoring invalid characters
+and then as well-formed UTF-8. Unknown members are kept. The mediator MUST NOT
+limit the inner `alg` or `enc` to algorithms it implements, and MUST NOT
+re-encode `protected`.
 
 Validation is syntactic. The mediator MUST NOT decrypt the inner application
-envelope or possess an application content-decryption key. It RFC-8785-
-canonicalizes the accepted encrypted-message JSON and stores only those exact
-UTF-8 bytes plus the minimum account, recipient, package, retention, pickup and
-transport metadata required for operation. It MUST NOT persist or log unpacked
+envelope or possess an application content-decryption key. It stores the
+accepted encrypted-message JSON, which need not keep the sender's exact text,
+plus the minimum account, recipient, package, retention, pickup and transport
+metadata required for operation. It MUST NOT persist or log unpacked
 application plaintext, content keys, attachment content, decrypted `forward`
 bodies or request bodies. A deployment MAY enable bounded diagnostic logging
 only by explicit operator action; such logging is outside the no-plaintext
@@ -166,15 +161,8 @@ profile and MUST be visibly disclosed, access-controlled and time-bounded.
 The sender's local DASL CID for the normalized envelope is never part of
 Routing 2.0 and MUST NOT be sent merely to deliver the package.
 
-For the phase-1 account-scoped queue, the package idempotency key is:
-
-```text
-(mediation account DID, body.next, forward.id)
-```
-
-Repeating that key with byte-identical normalized inner-envelope bytes is an
-idempotent retry. Reusing it with different bytes is a package conflict; the
-first accepted value remains and the later value MUST NOT replace it.
+Every accepted forward is queued as a new package, a repeated one included;
+the receiver's channel-local deduplication absorbs the copies.
 
 The mediator applies one recipient profile to all communication DIDs.
 Public/private allocation is not sent to it. HTTP or
@@ -185,14 +173,14 @@ Problem Reports supply only local failure diagnostics. They MUST NOT append
 `delivery.failed`. An unsuccessful or uncertain call leaves manual work and
 grants no automatic retry.
 
-The mediator MUST bound normalized envelope size, retained ciphertext bytes,
+The mediator MUST bound stored envelope size, retained ciphertext bytes,
 retained message count, registered recipients, recipient-add rate, pickup
 batch size and retention time. A quota or validation failure MUST NOT leave a
 partially stored package. Anonymous routing responses SHOULD avoid becoming a
-precise account- or recipient-existence oracle: an unknown `body.next`, a full
-queue and a package conflict share one refusal. An acceptance still discloses
-that `body.next` takes mail at this mediator at that moment; that is the cost
-of acceptance meaning `submitted`.
+precise account- or recipient-existence oracle: an unknown `body.next` and a
+full queue share one refusal. An acceptance still discloses that `body.next`
+takes mail at this mediator at that moment; that is the cost of acceptance
+meaning `submitted`.
 
 <a id="4-vault-first-sending-and-commit-boundaries"></a>
 
