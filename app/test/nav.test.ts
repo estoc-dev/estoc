@@ -1,5 +1,5 @@
 import { indexSnapshot } from "@estoc/daemon-api/views";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConversationId, Hold, Invitation, Snapshot } from "../src/core/types.js";
 
@@ -13,7 +13,7 @@ vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => und
 
 const { nextTick } = await import("vue");
 const { state } = await import("../src/core/store.js");
-const { go, screen } = await import("../src/ui/nav.js");
+const { go, screen, swap } = await import("../src/ui/nav.js");
 
 const OLD = "channel:old" as ConversationId;
 const HEAD = "channel:head" as ConversationId;
@@ -87,12 +87,17 @@ describe("an invitation this page was opened with", () => {
     await nextTick();
   };
 
+  beforeEach(async () => {
+    state.pendingInvitation = null;
+    await locked();
+    swap({ kind: "list" });
+  });
+
   afterAll(() => {
     state.pendingInvitation = null;
   });
 
   it("is offered once the vault opens", async () => {
-    await locked();
     await offered("invitation-1");
     expect(screen.value).toEqual({ kind: "list" });
     await open("hold-1", showing("did:key:z6MkOne", {}));
@@ -100,6 +105,8 @@ describe("an invitation this page was opened with", () => {
   });
 
   it("is not offered again by a newer snapshot of the same vault after the person has left it", async () => {
+    await offered("invitation-1");
+    await open("hold-1", showing("did:key:z6MkOne", {}));
     go({ kind: "you" });
     await nextTick();
     pushState.mockClear();
@@ -109,12 +116,18 @@ describe("an invitation this page was opened with", () => {
   });
 
   it("is offered again when the vault opens anew", async () => {
+    await offered("invitation-1");
+    await open("hold-1", showing("did:key:z6MkOne", {}));
+    go({ kind: "you" });
+    await nextTick();
     await locked();
     await open("hold-1", showing("did:key:z6MkOne", {}));
     expect(screen.value).toEqual({ kind: "new" });
   });
 
   it("is offered when another arrives while the vault is open", async () => {
+    await offered("invitation-1");
+    await open("hold-1", showing("did:key:z6MkOne", {}));
     go({ kind: "you" });
     await nextTick();
     await offered("invitation-2");
