@@ -173,9 +173,10 @@ which — a 2xx always means queued mail:
   as non-empty strings; which algorithms they name is the recipient's
   business. `base64` content is base64url (padded or not) of UTF-8 JSON.
   All of these are a **400** too. Members the mediator does not know are
-  kept, and a member name that comes twice in one object, `body.next`
-  included, is read as its last value, whichever way the envelope is
-  carried.
+  kept. In `body` and in the envelope, a member name that comes twice in one
+  object is read as its last value, whichever way the envelope is carried.
+  The forward's own members and the attachment's are read by the DIDComm
+  library first, which can refuse one that comes twice: **400**.
 - What is queued, and what pickup later hands over, is the envelope as the
   mediator read it, written out again as JSON. It is not the sender's text:
   spacing, member order and how a number is written may differ, and the two
@@ -366,7 +367,7 @@ enrolled can still pick up what waits.
 | `MEDIATOR_CORS_ORIGIN` | `*` | CORS for browser agents |
 | `MEDIATOR_MESSAGE_TTL_SECONDS` | 7 days | Unclaimed messages expire |
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
-| `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted on the wire; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
+| `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted, on the wire and as a forwarded envelope is queued; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
 | `MEDIATOR_REPLICA_MEDIATION` | `false`; `true` in `wrangler.jsonc` and `compose.yml` | `true` turns on replica-mediation/1.0, which the Estoc app requires of its mediator (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
 | `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the three limits below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing or a recipient listing |

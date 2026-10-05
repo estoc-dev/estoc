@@ -15,11 +15,11 @@ export interface MediatorPolicy {
   messageTtlSeconds: number;
   maxMessagesPerAccount: number;
   /**
-   * The largest envelope accepted on the wire, in bytes — measured on the
-   * outer JWE as received, before unpacking, so it bounds everything inside
-   * (a forwarded attachment can only be smaller). Larger envelopes get an
-   * HTTP 413 (or are dropped on a socket). Advertised in GET / so clients
-   * can size a message before sending.
+   * The largest envelope accepted, in bytes. It is checked on the outer JWE
+   * as received, before unpacking, and again on a forwarded envelope as
+   * written out to be queued, which can be larger than the sender's text.
+   * Larger envelopes get an HTTP 413 (or are dropped on a socket).
+   * Advertised in GET / so clients can size a message before sending.
    */
   maxMessageBytes: number;
   /**
