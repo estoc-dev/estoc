@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { blockChannels, introduce, rotate, state } from "../core/store.js";
+import { blockChannels, introduce, openIndex, rotate } from "../core/store.js";
 import type { ConversationId, ObservationRecord, ShownChannel } from "../core/types.js";
 import Topbar from "./Topbar.vue";
 import { dispositionOf, labelOf, observationsOf, ownsEnd, shortDid, timeOf, whenOf } from "./util.js";
@@ -14,8 +14,8 @@ import { dispositionOf, labelOf, observationsOf, ownsEnd, shortDid, timeOf, when
  */
 const props = defineProps<{ conversationKey: ConversationId }>();
 
-const conversation = computed(() => state.conversations.find((c) => c.id === props.conversationKey) ?? null);
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const conversation = computed(() => openIndex()?.conversation(props.conversationKey) ?? null);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 
 const busy = ref(false);
 const failure = ref<string | null>(null);
@@ -45,7 +45,7 @@ function flagsOf(channel: ShownChannel): { word: string; tone: string }[] {
   ];
 }
 
-const receivedOf = (channel: ShownChannel): ObservationRecord[] => observationsOf(state.index, channel);
+const receivedOf = (channel: ShownChannel): ObservationRecord[] => observationsOf(openIndex(), channel);
 const admittedOf = (channel: ShownChannel): number => receivedOf(channel).filter(({ disposition }) => disposition.status === "admitted").length;
 
 const observations = computed(() => {
@@ -92,7 +92,7 @@ function lineOf(o: ObservationRecord): string {
             {{ channel.observationIds.length }} received, {{ admittedOf(channel) }} taken in
           </p>
           <div v-if="channel.send.status === 'open'" class="card-actions">
-            <button v-if="ownsEnd(state.snapshot, channel)" class="btn-quiet small" type="button" :disabled="busy || sendsClosed" data-rotate @click="act(() => rotate(channel.channelId))">Rotate my address</button>
+            <button v-if="ownsEnd(openIndex()?.snapshot ?? null, channel)" class="btn-quiet small" type="button" :disabled="busy || sendsClosed" data-rotate @click="act(() => rotate(channel.channelId))">Rotate my address</button>
             <button v-if="channel.profileSubmitted === null" class="btn-quiet small" type="button" :disabled="busy || sendsClosed" @click="act(() => introduce(channel.channelId))">Introduce yourself</button>
             <button class="btn-danger small" type="button" :disabled="busy" @click="act(() => blockChannels([channel.channelId]))">Block this channel</button>
           </div>

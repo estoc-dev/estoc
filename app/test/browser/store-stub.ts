@@ -7,10 +7,12 @@ import { reactive } from "vue";
  */
 export const actions: { name: string; args: unknown[] }[] = [];
 
-export const state = reactive({
-  conversations: [] as unknown[],
-  snapshot: { restoreUnexplained: false, pending: { pendingOutbounds: [] as { messageId: string; entries: string[]; because: string | null }[], missingResponses: [] as unknown[] } },
+export const snapshot = reactive({
+  restoreUnexplained: false,
+  pending: { pendingOutbounds: [] as { messageId: string; entries: string[]; because: string | null }[], missingResponses: [] as unknown[] },
 });
+
+export const openIndex = () => ({ snapshot });
 
 const recorded =
   (name: string) =>

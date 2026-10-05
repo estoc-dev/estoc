@@ -4,7 +4,7 @@ import { computed, ref } from "vue";
 import { chooseLook, look, type Look } from "../core/look.js";
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
-import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useStatus } from "./status.js";
@@ -14,7 +14,7 @@ import { useUnconfirmed } from "./unconfirmed.js";
 import { bytesOf, initialOfName, shortDid, whenOf } from "./util.js";
 
 const version = __APP_VERSION__;
-const snapshot = computed(() => state.snapshot);
+const snapshot = computed(() => openIndex()?.snapshot ?? null);
 const { mediation, lamp, lost, sentence } = useStatus();
 const initial = computed(() => initialOfName(snapshot.value?.label ?? null));
 
@@ -155,7 +155,7 @@ const { busy, attempt, remove } = useUnconfirmed();
 const lockVault = () => attempt("Locking", lock);
 
 function forget() {
-  const hold = state.hold;
+  const hold = state.vault.hold;
   const shown = snapshot.value;
   return remove("Delete this identity from this device? Keys, contacts and messages here are gone for good. Export a backup first if you want them back.", async () => {
     await forgetIdentity(hold);

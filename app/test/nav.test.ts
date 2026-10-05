@@ -1,3 +1,4 @@
+import { indexSnapshot } from "@estoc/daemon-api/views";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationId, Hold, Snapshot } from "../src/core/types.js";
@@ -19,13 +20,20 @@ const HEAD = "channel:head" as ConversationId;
 const showing = (anchor: string, conversations: Record<string, string[]>): Snapshot =>
   ({
     anchor,
-    conversations: Object.entries(conversations).map(([id, channelIds]) => ({ id, channels: channelIds.map((channelId) => ({ channelId, selected: false })) })),
+    channels: [...new Set(Object.values(conversations).flat())].map((channelId) => ({ channelId })),
+    messages: [],
+    observations: [],
+    contacts: [],
+    conversations: Object.entries(conversations).map(([id, channelIds]) => ({
+      id,
+      channels: channelIds.map((channelId) => ({ channelId, selected: false })),
+      messageIds: [],
+      unadmittedObservationIds: [],
+    })),
   }) as unknown as Snapshot;
 
 async function open(hold: string, snapshot: Snapshot) {
-  state.snapshot = snapshot;
-  state.hold = hold as Hold;
-  state.phase = "open";
+  state.vault = { phase: "open", hold: hold as Hold, index: indexSnapshot(snapshot) };
   await nextTick();
 }
 
@@ -34,8 +42,7 @@ describe("where the person is, across snapshots", () => {
     await open("hold-1", showing("did:key:z6MkOne", { [OLD]: ["old"] }));
     go({ kind: "chat", key: OLD });
     await nextTick();
-    state.snapshot = showing("did:key:z6MkOne", { [HEAD]: ["head", "old"] });
-    await nextTick();
+    await open("hold-1", showing("did:key:z6MkOne", { [HEAD]: ["head", "old"] }));
     expect(screen.value).toEqual({ kind: "chat", key: HEAD });
   });
 
@@ -43,8 +50,7 @@ describe("where the person is, across snapshots", () => {
     await open("hold-1", showing("did:key:z6MkOne", { [OLD]: ["old"] }));
     go({ kind: "chat", key: OLD });
     await nextTick();
-    state.snapshot = null;
-    state.phase = "locked";
+    state.vault = { phase: "locked", hold: "hold-1" as Hold, detail: null };
     await nextTick();
     expect(screen.value).toEqual({ kind: "list" });
   });

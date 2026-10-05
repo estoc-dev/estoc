@@ -9,7 +9,7 @@ import { useUnconfirmed } from "./ui/unconfirmed.js";
 
 const { unconfirmed, remove, dismiss } = useUnconfirmed();
 const removeVault = (question: string) => {
-  const hold = state.hold;
+  const hold = state.vault.hold;
   return remove(question, () => forgetIdentity(hold));
 };
 
@@ -19,7 +19,7 @@ const removeDamaged = () => removeVault("Remove the damaged vault from here? It 
 
 const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new URL(state.daemonAt).host));
 /** A daemon over a socket that has never answered this page: nothing to show but that. */
-const unreachable = computed(() => state.phase === "booting" && state.away !== null);
+const unreachable = computed(() => state.vault.phase === "booting" && state.away !== null);
 const incompatible = computed(() => (state.connection.state === "incompatible" ? state.connection.message : null));
 </script>
 
@@ -57,9 +57,9 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
-  <div v-else-if="state.phase === 'booting'" class="hollow"></div>
+  <div v-else-if="state.vault.phase === 'booting'" class="hollow"></div>
 
-  <div v-else-if="state.phase === 'elsewhere'" class="hollow" data-elsewhere>
+  <div v-else-if="state.vault.phase === 'elsewhere'" class="hollow" data-elsewhere>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Open in another tab</h1>
@@ -67,13 +67,13 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
-  <Onboarding v-else-if="state.phase === 'onboarding'" />
+  <Onboarding v-else-if="state.vault.phase === 'onboarding'" />
 
-  <div v-else-if="state.phase === 'foreign'" class="hollow" data-foreign>
+  <div v-else-if="state.vault.phase === 'foreign'" class="hollow" data-foreign>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Vault not readable</h1>
-      <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
+      <p>This version of the app cannot open what is here{{ state.vault.detail === null ? "." : `: ${state.vault.detail}` }}</p>
       <p class="note">
         Nothing has been changed. A vault of the earlier folder format is not converted: export a backup with the version that wrote it if you want to keep
         it<template v-if="state.daemonAt === null">, then <button class="link" type="button" data-start-over @click="startOver">start over</button> with a new identity</template>.
@@ -81,11 +81,11 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
-  <div v-else-if="state.phase === 'unreadable'" class="hollow" data-unreadable>
+  <div v-else-if="state.vault.phase === 'unreadable'" class="hollow" data-unreadable>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>Vault not readable</h1>
-      <p>This version of the app cannot open what is here{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
+      <p>This version of the app cannot open what is here{{ state.vault.detail === null ? "." : `: ${state.vault.detail}` }}</p>
       <p class="note">
         Nothing has been changed. If the vault came from a newer version, update the app. One written by an earlier version is not converted, and nothing of it
         can be exported from here: <button class="link" type="button" data-remove-unreadable @click="removeUnreadable">remove it and start over</button> with a new
@@ -94,11 +94,11 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
-  <div v-else-if="state.phase === 'damaged'" class="hollow" data-damaged>
+  <div v-else-if="state.vault.phase === 'damaged'" class="hollow" data-damaged>
     <div class="hollow-card">
       <div class="eyebrow">Estoc</div>
       <h1>This vault's history is damaged</h1>
-      <p>Part of what this vault recorded no longer reads back as it was written{{ state.phaseDetail === null ? "." : `: ${state.phaseDetail}` }}</p>
+      <p>Part of what this vault recorded no longer reads back as it was written{{ state.vault.detail === null ? "." : `: ${state.vault.detail}` }}</p>
       <p>The vault has stopped: it takes nothing in and sends nothing, rather than build on a history with a hole in it. Nothing here has been changed.</p>
       <p class="note">
         The history comes back one way: by restoring a backup into a new vault. What the backup holds is what returns. The seed is in every backup, and the passphrase
@@ -111,10 +111,10 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
     </div>
   </div>
 
-  <Unlock v-else-if="state.phase === 'locked'" />
+  <Unlock v-else-if="state.vault.phase === 'locked'" />
 
   <!-- keyed by the vault held: another vault in its place gets screens of its own, with nothing entered on the old one's -->
-  <Shell v-else-if="state.snapshot" :key="state.hold ?? ''" />
+  <Shell v-else-if="state.vault.phase === 'open'" :key="state.vault.hold" />
 
   <div v-if="state.applyUpdate" class="update-chip" data-update>
     <span>A new version of Estoc is ready.</span>

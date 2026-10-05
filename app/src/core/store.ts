@@ -12,7 +12,13 @@ import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
-import type { ChannelId, ContactId, Conversation, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, Phase, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
+import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
+
+/**
+ * What the daemon last said stands here, as the screens read it: an open
+ * vault's snapshot comes read by ID, and every other phase as it was said.
+ */
+export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
 
 /**
  * The one store: the vault as the daemon last published it, plus the
@@ -33,15 +39,7 @@ import type { ChannelId, ContactId, Conversation, ConversationId, EventCid, Exec
  */
 
 export const state = shallowReactive({
-  phase: "booting" as Phase,
-  /** what the daemon said with the phase: what stands in the vault's place, or why the vault does not open */
-  phaseDetail: null as string | null,
-  /** the daemon's name for the vault file standing there, to name it by when its removal is asked; null while none stands */
-  hold: null as Hold | null,
-  snapshot: null as Snapshot | null,
-  /** the snapshot read by ID; null with it */
-  index: null as SnapshotIndex | null,
-  conversations: [] as Conversation[],
+  vault: { phase: "booting", hold: null, detail: null } as VaultViewState,
   lines: null as Lines | null,
   /** where the connection to the daemon stands, apart from what the daemon last said */
   connection: { state: "connecting" } as ConnectionState,
@@ -86,12 +84,9 @@ function said(what: string, { outcome, because }: Outcome): void {
   log(because === null ? `${what}: ${outcome}` : `${what}: ${outcome} (${because})`);
 }
 
-function take(snapshot: Snapshot): void {
-  carryDrafts(snapshot);
-  const index = indexSnapshot(snapshot);
-  state.snapshot = snapshot;
-  state.index = index;
-  state.conversations = index.conversations;
+/** The open vault's snapshot read by ID; null while no vault is open. */
+export function openIndex(): SnapshotIndex | null {
+  return state.vault.phase === "open" ? state.vault.index : null;
 }
 
 /** the epoch whose open state is on screen: a vault opened is asked once for what only it knows */
@@ -101,26 +96,19 @@ let turn = 0;
 
 function show(epoch: Epoch, value: StateValue): void {
   if (value.phase === "onboarding") dropDrafts();
-  if (value.hold !== state.hold) {
+  if (value.hold !== state.vault.hold) {
     turn += 1;
     // the links were made for the vault that stood; another in its place has none of them
     state.links = {};
   }
   if (value.phase !== "open") {
     opened = null;
-    state.snapshot = null;
-    state.index = null;
-    state.conversations = [];
     state.lines = null;
-    state.phase = value.phase;
-    state.phaseDetail = value.detail;
-    state.hold = value.hold;
+    state.vault = value;
     return;
   }
-  take(value.snapshot);
-  state.phase = "open";
-  state.phaseDetail = null;
-  state.hold = value.hold;
+  carryDrafts(value.snapshot);
+  state.vault = { phase: "open", hold: value.hold, index: indexSnapshot(value.snapshot) };
   if (opened === epoch) return;
   opened = epoch;
   // the level is the open vault's own local state
@@ -197,11 +185,11 @@ export async function boot(): Promise<void> {
   });
   // A page looked at again is first brought up to what the daemon has committed since.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.phase === "open") void refresh();
+    if (document.visibilityState === "visible" && state.vault.phase === "open") void refresh();
   });
   // The daemon in a worker hears `online` only where the browser tells workers; the page's is passed on as well.
   window.addEventListener("online", () => {
-    if (state.phase === "open") void reconnect().catch(() => undefined);
+    if (state.vault.phase === "open") void reconnect().catch(() => undefined);
   });
   await connectDaemon();
 }
@@ -284,7 +272,7 @@ export async function discardFolderVault(): Promise<void> {
 
 export async function downloadBackup(): Promise<void> {
   const held = heldNow();
-  const anchor = state.snapshot?.anchor ?? null;
+  const anchor = openIndex()?.snapshot.anchor ?? null;
   const { name, bytes } = await call((daemon) => daemon.exportBackup({}));
   if (!held()) {
     log(`${name} was not saved: the vault it backs up is no longer the one here`);
@@ -325,7 +313,7 @@ function linkOf(invitation: Invitation): string {
 export function invitationLink(record: InvitationRecord): string | null {
   const made = state.links[record.oobId];
   if (made !== undefined) return made;
-  const longFormDid = state.snapshot?.dids.find((did) => did.didId === record.didId)?.longFormDid ?? null;
+  const longFormDid = openIndex()?.snapshot.dids.find((did) => did.didId === record.didId)?.longFormDid ?? null;
   return longFormDid === null ? null : linkOf(invitationOf(longFormDid, record.oobId, null));
 }
 
@@ -339,7 +327,7 @@ export async function createInvitation(): Promise<string> {
 
 /** Say who we are: the name this vault goes by, which the peer holds as a claim of ours. */
 async function introduceTo(target: SendTarget): Promise<void> {
-  said("introduction", await call((daemon) => daemon.send({ target, content: profileMessage(state.snapshot?.label ?? "") })));
+  said("introduction", await call((daemon) => daemon.send({ target, content: profileMessage(openIndex()?.snapshot.label ?? "") })));
 }
 
 export const introduce = (channelId: ChannelId): Promise<void> => introduceTo({ channelId });
@@ -362,7 +350,7 @@ async function introduceAfterPing(contactId: ContactId): Promise<void> {
 async function conversationOf(held: () => boolean, contactId: ContactId): Promise<ConversationId | null> {
   await refresh();
   if (!held()) return null;
-  return state.index?.contactConversation(contactId)?.id ?? null;
+  return openIndex()?.contactConversation(contactId)?.id ?? null;
 }
 
 /**

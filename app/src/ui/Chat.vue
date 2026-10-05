@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { draftIn, moveDraft, writeDraft, writtenDrafts } from "../core/drafts.js";
 import { markSeen } from "../core/seen.js";
-import { sendMessage, state } from "../core/store.js";
+import { openIndex, sendMessage } from "../core/store.js";
 import type { ChannelId, ChannelRecord, Conversation, ConversationId } from "../core/types.js";
 import { rendererFor, showsInThread, typeOf } from "../renderers/index.js";
 import Icon from "./Icon.vue";
@@ -15,9 +15,9 @@ import { dayOf, endsOf, initialOf, labelOf, shortDid } from "./util.js";
 
 const props = defineProps<{ conversationKey: ConversationId }>();
 
-const conversation = computed(() => state.conversations.find((c) => c.id === props.conversationKey) ?? null);
+const conversation = computed(() => openIndex()?.conversation(props.conversationKey) ?? null);
 const { mediation } = useStatus();
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 
 // A thread is every message of every channel the conversation shows that
 // its renderer wants shown, under the day it was recorded.
@@ -58,7 +58,7 @@ const sendError = ref("");
 const picked = ref<ChannelId | null>(null);
 const choosing = ref(false);
 
-const channelOf = (channelId: ChannelId): ChannelRecord | null => conversation.value?.channels.find((channel) => channel.channelId === channelId) ?? state.index?.channel(channelId) ?? null;
+const channelOf = (channelId: ChannelId): ChannelRecord | null => conversation.value?.channels.find((channel) => channel.channelId === channelId) ?? openIndex()?.channel(channelId) ?? null;
 
 // The channel this conversation writes in now. A send names it, never
 // the contact: what was written for one pair goes out in that pair, or
@@ -98,7 +98,7 @@ const channelsOf = (c: Conversation): ChannelId[] => [...c.writeTo, ...c.channel
 const draftsElsewhere = computed(() => {
   const c = conversation.value;
   const here = new Set(c === null ? [] : channelsOf(c));
-  const shown = new Set(state.conversations.flatMap(channelsOf));
+  const shown = new Set(openIndex()?.conversations.flatMap(channelsOf));
   const writable = new Set(c?.writeTo ?? []);
   const current = target.value?.channelId ?? null;
   return writtenDrafts().flatMap((draft) => {

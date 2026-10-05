@@ -1,6 +1,6 @@
 import { computed } from "vue";
 
-import { state } from "../core/store.js";
+import { openIndex, state } from "../core/store.js";
 
 /**
  * How this vault is reached, as one lamp and a few words: whether a
@@ -8,7 +8,7 @@ import { state } from "../core/store.js";
  * running agent knows.
  */
 export function useStatus() {
-  const mediation = computed(() => state.snapshot?.mediations.find((m) => m.selected) ?? null);
+  const mediation = computed(() => openIndex()?.snapshot.mediations.find((m) => m.selected) ?? null);
   const line = computed(() => state.lines?.connections.find((c) => c.mediationId === mediation.value?.mediationId) ?? null);
 
   /** The mediator was reached and live delivery is off: the socket went, and the agent is on its way back. */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from "vue";
 
-import { cancel, completeResponse, eraseMessage, retry, state } from "../core/store.js";
+import { cancel, completeResponse, eraseMessage, openIndex, retry } from "../core/store.js";
 import type { MessageRecord } from "../core/types.js";
 import Icon from "../ui/Icon.vue";
 import Sheet from "../ui/Sheet.vue";
@@ -50,8 +50,8 @@ const verification = computed(() => {
   return { status: status.status, word: VERIFICATION[status.status] ?? status.status, because: "because" in status ? status.because : undefined };
 });
 
-const open = computed(() => state.snapshot?.pending.pendingOutbounds.find((outbound) => outbound.messageId === props.message.messageId) ?? null);
-const owed = computed(() => (state.snapshot?.pending.missingResponses ?? []).filter((response) => response.messageId === props.message.messageId && response.entries.includes("completeResponse")));
+const open = computed(() => openIndex()?.snapshot.pending.pendingOutbounds.find((outbound) => outbound.messageId === props.message.messageId) ?? null);
+const owed = computed(() => (openIndex()?.snapshot.pending.missingResponses ?? []).filter((response) => response.messageId === props.message.messageId && response.entries.includes("completeResponse")));
 
 const delivery = computed(() => {
   const { delivery, acknowledged, late, manualAction } = props.message;
@@ -84,7 +84,7 @@ const input = computed(() => {
   return status === null || status.status === "complete" ? null : status;
 });
 
-const sendsClosed = computed(() => state.snapshot?.restoreUnexplained ?? false);
+const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
 const busy = ref(false);
 const failure = ref<string | null>(null);
 
