@@ -130,15 +130,15 @@ receive gate, the private-address policy and retry are code.
 
 ## Evidence and references
 
-The seven documents above are the complete phase-1 contract. No document
+The seven documents above define the current contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
 [vault events section 11](vault-events.md#folds-and-procedures)).
-Several active replicas, network vault synchronization and mutable channel
-DIDs have only [deferred design notes](deferred/README.md). Those notes
-reserve no phase-1 fields, error codes, key names or extension APIs; future
-features will define their schemas when adopted.
+Network vault synchronization and mutable channel DIDs have only
+[deferred design notes](deferred/README.md). Those notes reserve no current
+fields, error codes, key names or extension APIs; future features will define
+their schemas when adopted.
 
 Named anchors support direct links independently of displayed section numbers.
 
