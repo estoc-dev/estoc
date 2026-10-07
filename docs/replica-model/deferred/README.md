@@ -1,6 +1,6 @@
 # Deferred design notes
 
-These drafts are outside the [phase-1 contract](../README.md). They are retained
+These drafts are outside the [current contract](../README.md). They are retained
 as design material, not implementation requirements or commitments to a later
 interface. They reserve no current event types, payload fields, failure codes,
 key names, extension APIs or test cases. Their candidate rules may be incompatible
@@ -11,16 +11,17 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Mutable channel DIDs | [Web channel DIDs](did-web-channels.md) | Current-document authorization, lookup/retry limits, proof recovery and any new failure model |
 | Replica-to-replica synchronization | [Vault sync](vault-sync.md) | Transfer model, transport, reconciliation and catch-up execution policy |
 
-Phase 1 implements immutable `did:peer:4` application channels, one active
-writable runtime, pickup as a replica of a replica-mediation account and portable SQLite recovery.
-Mediator and routing-service DID resolution remains independent of the channel
-method restriction. These drafts will be revisited when their features are
-adopted, together with the owning specifications.
+The current profile implements immutable `did:peer:4` application channels,
+concurrent writable full runtimes as distinct replicas of one replica-mediation
+arrangement, and portable SQLite recovery. Mediator and routing-service DID
+resolution remains independent of the channel method restriction. The drafts
+above will be revisited when their features are adopted, together with the
+owning specifications.
 
 ## Multi-replica design
 
-Phase 1 enrolls every runtime as a replica of its arrangement's
-replica-mediation account. The
+Each runtime enrolls as a replica of its arrangement's replica-mediation
+account. The
 [mediator README](../../../mediator/README.md#replica-mediation) is that
 protocol's wire contract, and
 [`replica.created`](../vault-events.md#replica-created) records an enrollment
@@ -30,7 +31,7 @@ the replicas enrolled when it accepts that mail, so a new replica obtains
 earlier history through portable backup/restore or import.
 
 The client only adds: it enrolls its own replica and adds the communication
-recipients it holds. What remains outside phase 1:
+recipients it holds. What remains outside the current profile:
 
 <a id="replica-administration"></a>
 
@@ -43,8 +44,6 @@ recipients it holds. What remains outside phase 1:
 - **Membership across mediators.** A runtime is a replica of one arrangement.
   Enrollment at one mediator is not enrollment at another, and moving a replica
   to another mediator is not provided.
-- **Several active executors.** Transport membership does not choose an
-  executor; see [concurrent application runtimes](#application-concurrency-adoption).
 - **History synchronization.** See [vault synchronization](#deferred-vault-sync).
 
 <a id="adoption-work"></a>
@@ -76,31 +75,39 @@ that preserves their CIDs; incompatible peers must fail negotiation explicitly.
 
 <a id="application-concurrency-adoption"></a>
 
-### Before enabling concurrent application runtimes
+### Concurrent application runtimes: current boundaries
 
-The following domain work is separate from transport implementation. Before
-claiming support for multiple active application executors, update the owning
-specifications and verify their behavior under independently generated facts:
+Concurrent full runtimes are supported as distinct replicas of one
+replica-mediation arrangement. Their current behavior is defined by
+[the vault model](../vault-events.md#model),
+[admission and merge](../channels.md#application-admission), and
+[automatic-output selection](../distributed-delivery.md#automatic-effects).
+The current rules are:
 
-- Define semantic compatibility for independent observations and effects.
-  Removing receipt ordinals does not make events from different authors and
-  clocks byte-identical. Source-event references must retain their evidence
-  meaning when several observations represent the same logical input.
-- Decide how multiple replicas produce automatic replies, private addresses,
-  rotation choices and prepared packages. The current fixed-package rule
-  treats multiple packages for one message as a conflict. This design does not
-  resolve that by changing cryptographic randomness or silently electing an
-  executor. Stable operation identity, compatible evidence and dispatch/retry
-  behavior must be specified and tested together.
-- Choose the availability/coordination rule for a replica that has not yet
-  learned a rotation or route change. Pull-before-send is useful reconciliation,
-  but cannot prove the absence of a concurrent decision on another replica.
-- Verify contact-edit merges, admission history and erasure/held-root behavior
-  against the same event set in different arrival orders. Preserve atomic
-  import with its required objects under whichever transfer model is adopted.
-- Define the transition from catch-up to permitted application processing.
-  Sync/import and raw shared-mail pickup cannot by themselves authorize
-  historical replies, pending-outbound takeover or exactly-once side effects.
+- Independent observations retain their exact source-event references and
+  evidence. Events from different authors and clocks need not be byte-identical;
+  contradictory admitted claims remain visible conflicts.
+- For a live input picked up through replica mediation, execution registration
+  selects the replica that creates and dispatches its automatic outputs.
+  A direct live input is answered by the runtime that receives it. Every
+  dispatch still requires its committed fixed package and a live action.
+- Each replica may record the local rotation decisions an input selects, the
+  early private address among them. Replicas deciding the same rotation apart
+  name one successor under [the succession query](../../../packages/vault/src/succession.ts),
+  and only the selected replica notifies the peer.
+- Each replica admits against the history it holds. Responder selection does
+  not synchronize rotation knowledge, and independent processing cannot promise
+  immediate knowledge of every concurrent rotation. The owning admission
+  contract states the merge and restore limitations.
+- Current history exchange uses portable restore and import. A future
+  synchronization design must preserve complete-source validation, atomic
+  import with required objects, and the merge and retention contracts, under
+  which one event set gives contact edits, admission history, erasure and held
+  roots one meaning whatever order it arrived in.
+- Import and restore reconstruct history without granting automatic dispatch
+  authority. Historical unfinished work is completed by explicit manual action;
+  responder registration promises neither automatic takeover nor exactly-once
+  business execution.
 
-The domain work must choose these rules explicitly. Neither a mediator's
-membership list nor a synchronization receipt substitutes for that decision.
+Replica administration, membership across mediators and history synchronization
+remain deferred as described above.
