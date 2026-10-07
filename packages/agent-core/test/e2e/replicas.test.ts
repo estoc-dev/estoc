@@ -31,7 +31,6 @@ const seen = (mediator: FakeMediator, type: string): number => mediator.seenType
 
 const replicaOf = async (running: Running): Promise<Did> => (await foldOf(running)).replicas.replicas.get(running.runtime.author)!.did!;
 
-/** The replica each input `running` holds was left to, as its runtime keeps it, null where it was left to none. */
 const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map((executionId) => leftTo(running.runtime.local.options, running.runtime.author, executionId)));
 
 const owed = async (running: Running): Promise<string[]> => (await running.agent.pending()).missingResponses.map(({ effectType }) => effectType);

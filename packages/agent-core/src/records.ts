@@ -352,12 +352,6 @@ export async function recorder(fold: VaultFold, readObject: ReadObject, options:
 
 const inputOf = (fold: VaultFold, source: MissingNotification["source"]): Execution | null => (source === null ? null : fold.inbound.ofSource(source.event.cid));
 
-/**
- * The inputs owed `responses` or `notifications` that this runtime's
- * replica left to another: what they earn is the other's to make, and
- * no work of the user's here. An input the runtime kept no leave of is
- * listed, whatever another replica did.
- */
 async function leftElsewhere(fold: VaultFold, { author, confirmations }: ViewOptions, responses: readonly MissingResponse[], notifications: readonly MissingNotification[]): Promise<Set<ExecutionId>> {
   const left = new Set<ExecutionId>();
   if (author === undefined || confirmations === undefined) return left;
