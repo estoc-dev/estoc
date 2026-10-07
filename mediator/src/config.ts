@@ -46,7 +46,8 @@ export interface MediatorPolicy {
    * How long an execution registration is kept at least once it is created,
    * how many one account may keep, those past their retention and not yet
    * purged included, and how many replicas one may list, the removed ones
-   * included. A change applies to registrations created afterwards.
+   * included. A retention change applies only to registrations created
+   * afterwards.
    */
   executionRetainSeconds: number;
   maxRetainedExecutions: number;

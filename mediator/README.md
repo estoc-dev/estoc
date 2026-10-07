@@ -240,8 +240,8 @@ problem-report whose code is `e.estoc.replica-mediation.` plus one of
 
 **`account-register`** creates the account of the DID that sends it, with no
 replica and no recipient yet. No mediate-request comes before it, and every
-other control answers `unknown-account` until it has succeeded. The sender
-names itself by its long form here, and the body is empty. The account is
+other account control answers `unknown-account` until it has succeeded. The
+sender names itself by its long form here, and the body is empty. The account is
 bound to the mediator DID the request addressed for as long as it exists;
 another name of the same deployment is another mediator.
 The reply's `routing_did` is that mediator DID, where senders forward the
