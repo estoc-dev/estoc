@@ -21,6 +21,9 @@ import type {
   AddReplicaOutcome,
   BlobKeep,
   BlobRow,
+  EpochSeconds,
+  ExecutionRegistration,
+  ExecutionRegistrationId,
   FanOutOutcome,
   KeepOutcome,
   MediationStore,
@@ -28,6 +31,7 @@ import type {
   RecipientPage,
   RecipientPlace,
   RegisterAccountOutcome,
+  RegisterExecutionOutcome,
   RemoveOutcome,
   ReplicaAccount,
   ReplicaAddition,
@@ -161,6 +165,25 @@ const SCHEMA = [
    )`,
   "CREATE INDEX IF NOT EXISTS replica_recipients_account ON replica_recipients(account_did)",
   ...REPLICA_MAIL,
+  // Times here are whole seconds, as the protocol gives them.
+  `CREATE TABLE IF NOT EXISTS replica_executions (
+     registration_id TEXT PRIMARY KEY,
+     account_did     TEXT NOT NULL REFERENCES replica_accounts(did),
+     execution_id    TEXT NOT NULL,
+     created_time    INTEGER NOT NULL,
+     retain_until    INTEGER NOT NULL,
+     UNIQUE (account_did, execution_id)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_executions_retention ON replica_executions(retain_until)",
+  `CREATE TABLE IF NOT EXISTS replica_execution_registrations (
+     registration_id TEXT NOT NULL REFERENCES replica_executions(registration_id) ON DELETE CASCADE,
+     replica_did     TEXT NOT NULL REFERENCES replicas(replica_did),
+     ordinal         INTEGER NOT NULL,
+     PRIMARY KEY (registration_id, replica_did),
+     UNIQUE (registration_id, ordinal)
+   )`,
+  "CREATE INDEX IF NOT EXISTS replica_execution_registrations_replica " +
+    "ON replica_execution_registrations(replica_did)",
   `CREATE TABLE IF NOT EXISTS identity (
      id         INTEGER PRIMARY KEY CHECK (id = 1),
      secrets    TEXT NOT NULL,
@@ -590,8 +613,9 @@ export class SqlStore implements MediationStore {
   }
 
   /*
-   * One transaction, so a fan-out or an enrollment lands wholly before the
-   * deletion, and goes with the account, or finds no account at all.
+   * One transaction, so a fan-out, an enrollment or an execution registration
+   * lands wholly before the deletion, and goes with the account, or finds no
+   * account at all.
    */
   async deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean> {
     const key = [accountDid, mediator];
@@ -612,6 +636,7 @@ export class SqlStore implements MediationStore {
       },
       { sql: `DELETE FROM replica_packages WHERE ${held}`, params: key },
       { sql: `DELETE FROM replica_recipients WHERE ${held}`, params: key },
+      { sql: `DELETE FROM replica_executions WHERE ${held}`, params: key },
       { sql: `DELETE FROM replicas WHERE ${held}`, params: key },
       {
         sql: "DELETE FROM replica_accounts WHERE did = ? AND mediator = ?",
@@ -1070,6 +1095,102 @@ export class SqlStore implements MediationStore {
       },
       { sql: `DELETE FROM replica_deliveries WHERE ${which}`, params },
     ];
+  }
+
+  /*
+   * One transaction, and every write in it holds only while the caller is an
+   * active replica of an account bound to `mediator`. A purge, a removal or
+   * the account's deletion therefore lands wholly before it or after it, and
+   * a registration is never kept without the replica that created it.
+   */
+  async registerExecution({
+    replicaDid,
+    mediator,
+    executionId,
+    policy,
+  }: ExecutionRegistration): Promise<RegisterExecutionOutcome> {
+    const member = [replicaDid, mediator];
+    const account =
+      "(SELECT r.account_did FROM replicas r JOIN replica_accounts a ON a.did = r.account_did " +
+      `WHERE r.replica_did = ? AND r.${ACTIVE} AND a.mediator = ?)`;
+    const listed =
+      "(SELECT COUNT(*) FROM replica_execution_registrations WHERE registration_id = e.registration_id)";
+    const now = Math.floor(Date.now() / 1000);
+
+    const [caller, , , snapshot] = await this.batch([
+      { sql: `SELECT ${account} AS account_did`, params: member },
+      {
+        sql:
+          "INSERT INTO replica_executions " +
+          "(registration_id, account_did, execution_id, created_time, retain_until) " +
+          `SELECT ?, m.account_did, ?, ?, ? FROM (SELECT ${account} AS account_did) AS m ` +
+          "WHERE m.account_did IS NOT NULL " +
+          "AND (SELECT COUNT(*) FROM replica_executions WHERE account_did = m.account_did) < ? " +
+          "ON CONFLICT (account_did, execution_id) DO NOTHING",
+        params: [
+          crypto.randomUUID(),
+          executionId,
+          now,
+          now + policy.retainSeconds,
+          ...member,
+          policy.maxRetained,
+        ],
+      },
+      {
+        sql:
+          "INSERT INTO replica_execution_registrations (registration_id, replica_did, ordinal) " +
+          `SELECT e.registration_id, ?, ${listed} + 1 FROM replica_executions e ` +
+          `WHERE e.account_did = ${account} AND e.execution_id = ? AND ${listed} < ? ` +
+          "ON CONFLICT DO NOTHING",
+        params: [replicaDid, ...member, executionId, policy.maxReplicas],
+      },
+      {
+        sql:
+          "SELECT e.registration_id, e.created_time, e.retain_until, x.replica_did " +
+          "FROM replica_executions e " +
+          "JOIN replica_execution_registrations x ON x.registration_id = e.registration_id " +
+          `WHERE e.account_did = ${account} AND e.execution_id = ? ORDER BY x.ordinal`,
+        params: [...member, executionId],
+      },
+    ]);
+
+    if ((caller.rows as { account_did: string | null }[])[0].account_did === null) {
+      return { outcome: "unknown" };
+    }
+    const rows = snapshot.rows as {
+      registration_id: ExecutionRegistrationId;
+      created_time: EpochSeconds;
+      retain_until: EpochSeconds;
+      replica_did: string;
+    }[];
+    const [first, ...later] = rows;
+    if (first === undefined || !rows.some((row) => row.replica_did === replicaDid)) {
+      return { outcome: "full" };
+    }
+    return {
+      outcome: "registered",
+      registration: {
+        executionId,
+        registrationId: first.registration_id,
+        createdTime: first.created_time,
+        retainUntil: first.retain_until,
+        replicas: [first.replica_did, ...later.map((row) => row.replica_did)],
+      },
+    };
+  }
+
+  /*
+   * D1 counts the rows a cascade deletes among a statement's changes, so the
+   * registrations are counted before they go.
+   */
+  async purgeExecutions(): Promise<number> {
+    const lapsed = "FROM replica_executions WHERE retain_until <= ?";
+    const now = [Math.floor(Date.now() / 1000)];
+    const [found] = await this.batch([
+      { sql: `SELECT COUNT(*) AS n ${lapsed}`, params: now },
+      { sql: `DELETE ${lapsed}`, params: now },
+    ]);
+    return (found.rows as { n: number }[])[0].n;
   }
 
   async storeMessage(ownerDid: string, packed: string): Promise<StoreOutcome> {

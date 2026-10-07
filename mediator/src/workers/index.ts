@@ -80,6 +80,10 @@ export default {
     if (purged > 0) {
       console.log(`purged ${purged} expired messages`);
     }
+    const executions = await store.purgeExecutions();
+    if (executions > 0) {
+      console.log(`purged ${executions} execution registrations past their retention`);
+    }
     // Purging blobs needs no origin: the URL is only for handing out.
     const blobs = blobsFor(env, store, policyFromEnv(env), "");
     if (blobs !== null) {

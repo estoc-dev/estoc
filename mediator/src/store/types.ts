@@ -1,6 +1,7 @@
 /**
  * What a mediator remembers: who it mediates for, which recipient DIDs route
- * to whom, and the messages waiting to be picked up.
+ * to whom, the messages waiting to be picked up, and which replicas
+ * registered under an execution, in what order.
  *
  * An account is a DID that asked for mediation and was granted it — existence
  * of the row is the grant. A keylist entry binds a recipient DID to exactly
@@ -134,6 +135,56 @@ export interface SharedRecipientPage {
   more: boolean;
 }
 
+/** Names one execution among its account's; opaque, and compared as given. */
+export type ExecutionId = string & { readonly __executionId: unique symbol };
+/** Names one registration of an execution: one purged and created again under the same ID has another. */
+export type ExecutionRegistrationId = string & {
+  readonly __executionRegistrationId: unique symbol;
+};
+/** Whole seconds since the Unix epoch, by the mediator's clock. */
+export type EpochSeconds = number & { readonly __epochSeconds: unique symbol };
+
+/** What an execution registration may hold, as configured when it is asked for. */
+export interface ExecutionPolicy {
+  /** How long a registration this request creates is kept at least; one that exists keeps its own. */
+  retainSeconds: number;
+  /** Registrations one account may keep, those past their retention and not yet purged included. */
+  maxRetained: number;
+  /** Replicas one registration may list, the removed ones included. */
+  maxReplicas: number;
+}
+
+/** A replica registering under an execution ID of its account. */
+export interface ExecutionRegistration {
+  /** The authenticated replica DID, in its short form. */
+  replicaDid: string;
+  /** The mediator DID the request addressed, in short form when it is a did:peer:4; the replica's account must be bound to it. */
+  mediator: string;
+  executionId: ExecutionId;
+  policy: ExecutionPolicy;
+}
+
+export interface ExecutionRegistrationSnapshot {
+  executionId: ExecutionId;
+  registrationId: ExecutionRegistrationId;
+  createdTime: EpochSeconds;
+  /** Until when the registration is kept at least; past it, it stands as before until it is purged. */
+  retainUntil: EpochSeconds;
+  /** Every replica that registered, in the order each first did, a removed one in its place. */
+  replicas: [string, ...string[]];
+}
+
+/**
+ * `registered` also answers a replica the registration already lists, with
+ * the registration as it stands. `unknown`: the DID is no active replica of
+ * an account bound to that mediator. `full`: the account keeps as many
+ * registrations as it may, or the registration lists as many replicas as it
+ * may. Only `registered` wrote anything.
+ */
+export type RegisterExecutionOutcome =
+  | { outcome: "registered"; registration: ExecutionRegistrationSnapshot }
+  | { outcome: "unknown" | "full" };
+
 /**
  * What bounds a package beyond the store's own retention and message count:
  * the time its sender set for it to lapse, in milliseconds, when it set one,
@@ -243,16 +294,18 @@ export interface MediationStore {
   registerReplicaAccount(account: ReplicaAccount): Promise<RegisterAccountOutcome>;
   /**
    * Deletes the account with everything kept for it: its replicas, the
-   * removed ones included, its shared recipients and its mail. Every DID it
-   * bound is free again. False, and nothing deleted, without such an
-   * account bound to `mediator`.
+   * removed ones included, its shared recipients, its mail and its execution
+   * registrations, whatever their retention. Every DID it bound is free
+   * again. False, and nothing deleted, without such an account bound to
+   * `mediator`.
    */
   deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean>;
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
    * Ends a replica's enrollment and its deliveries, and with them every
    * package it was the last target of. Its DID stays bound, so it is never
-   * enrolled again while the account exists.
+   * enrolled again while the account exists, and it keeps its place in every
+   * execution registration that lists it.
    */
   removeReplica(accountDid: string, mediator: string, replicaDid: string): Promise<RemoveOutcome>;
   isReplicaAccount(did: string): Promise<boolean>;
@@ -314,6 +367,17 @@ export interface MediationStore {
    * id. A package goes with the last of its deliveries.
    */
   acknowledgeDeliveries(replicaDid: string, ids: string[]): Promise<void>;
+  /**
+   * Lists the replica in its account's registration of the execution,
+   * creating the registration when the account keeps none, and reads it back
+   * whole, all in one transaction. A registration is found whether or not
+   * its retention has passed: only `purgeExecutions` and the account's
+   * deletion end one, and until then its ID, its times and its order stay as
+   * they are. Mail, its acknowledgment and its purge leave registrations alone.
+   */
+  registerExecution(registration: ExecutionRegistration): Promise<RegisterExecutionOutcome>;
+  /** Deletes every execution registration whose retention has passed; how many it deleted. */
+  purgeExecutions(): Promise<number>;
 
   storeMessage(ownerDid: string, packed: string): Promise<StoreOutcome>;
   messageCount(ownerDid: string): Promise<number>;

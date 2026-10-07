@@ -38,6 +38,10 @@ const purger = setInterval(async () => {
   if (purged > 0) {
     console.log(`purged ${purged} expired messages`);
   }
+  const executions = await store.purgeExecutions();
+  if (executions > 0) {
+    console.log(`purged ${executions} execution registrations past their retention`);
+  }
   const gone = await server.purgeBlobs();
   if (gone > 0) {
     console.log(`purged ${gone} expired blobs`);

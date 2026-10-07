@@ -205,10 +205,11 @@ refused.
 Three kinds of DID take part, all did:peer:4, and none of them can also be
 an ordinary (coordinate-mediation) account or recipient here:
 
-- The **account** DID manages the arrangement: it sends the controls below
-  and never picks up mail.
+- The **account** DID manages the arrangement: it sends the controls below,
+  `execution-register` aside, and never picks up mail.
 - A **replica** DID is one device. It picks up, acknowledges and is pushed
-  mail under its own key, and can be forwarded to directly.
+  mail under its own key, can be forwarded to directly, and registers for
+  [executions](#executions).
 - A **recipient** DID is an address the owner gave out. Mail forwarded to it
   waits once for every active replica the account holds at that moment.
 
@@ -218,9 +219,10 @@ form and anything later may use the short one.
 
 ### Controls
 
-A control is authcrypted by the account DID to exactly one mediator DID and
-carries exactly the body members listed. The answer is sealed to the
-account with the request's `id` as `thid`: the reply named here, or a
+A control is authcrypted by its sender to exactly one mediator DID and
+carries exactly the body members listed: the account DID sends those in the
+table below, and a replica `execution-register`. The answer is sealed to the
+sender with the request's `id` as `thid`: the reply named here, or a
 problem-report whose code is `e.estoc.replica-mediation.` plus one of
 `invalid-message`, `invalid-grant`, `invalid-recipient`, `account-refused`,
 `unknown-account`, `unknown-replica`, `identity-conflict`, `quota`.
@@ -249,7 +251,8 @@ repeat answers as the first time did, also where
 answered `account-refused`.
 
 **`account-delete`** deletes the account and everything kept for it: its
-replicas, the removed ones included, its recipients and its mail. The sender
+replicas, the removed ones included, its recipients, its mail and its
+execution registrations. The sender
 names itself by its long form, since the mediator no longer holds it when it
 seals the reply, and the body is empty. The mediator remembers
 nothing of a deleted account. Its DID, its replicas' and its recipients' are
@@ -352,6 +355,53 @@ DID. A request the replica only signed is not answered. The account DID
 asking for pickup is told `e.estoc.replica-mediation.replica-required`, and
 a removed replica `e.estoc.replica-mediation.replica-removed`.
 
+### Executions
+
+The replicas of one account can register under an execution ID, which the
+account's own records name, and so agree on an order among those that took
+the same execution up. The mediator does not know what an execution is: per
+account and execution ID it keeps a registration, the replicas that
+registered in the order they first did.
+
+| Request | Body | Reply | Body |
+| --- | --- | --- | --- |
+| `execution-register` | `execution_id` | `execution-registered` | `execution_id`, `registration_id`, `created_time`, `retain_until`, `replicas` |
+
+**`execution-register`** is authcrypted by an active replica to the mediator
+DID its account registered with. `execution_id` is 1 to
+`max_execution_id_bytes` UTF-8 bytes, compared exactly as given. The first
+replica to name an ID creates its account's registration of it, every other
+one that names it is listed after those before it, and one already listed
+keeps its place. The reply is the registration as the request left it:
+`replicas` is every replica that registered, the sender among them, in that
+order, with a removed one in its place, and `registration_id`,
+`created_time` and `retain_until` are the registration's own, the same in
+every reply for as long as it is kept. The order is the one in which the
+mediator committed the requests, whatever their times say or when they
+arrived. A request still registers when its reply is lost, or has no return
+route, and a repeat is answered as the registration stands.
+
+A registration is kept at least until `retain_until`, which is
+`execution_retention_seconds` after it was created. Once that has passed it
+may be purged at any moment, and until it is it answers and grows as
+before. Nothing extends or shortens it, a later change of the setting
+included. An execution ID whose registration was purged gets a new one, with
+a new `registration_id` and its own retention.
+
+Registrations are apart from mail: a forward, its pickup, acknowledgment or
+lapse touches none, and none says whether anything was executed or
+delivered. A removed replica stays in its place in the registrations that
+list it, and registers no more. Deleting the account deletes its
+registrations whatever their retention.
+
+The account DID, a recipient, a removed replica, a stranger and a request to
+another mediator DID than the account's are all `unknown-replica`. An
+account keeping `max_retained_executions` registrations, those past their
+retention and not yet purged included, creates no other, and a registration
+listing `max_execution_registrations` replicas, the removed ones included,
+takes no other. Both are `quota`, and a replica a registration lists is still
+answered.
+
 Turning the protocol off stops controls and new mail; replicas already
 enrolled can still pick up what waits.
 
@@ -369,10 +419,13 @@ enrolled can still pick up what waits.
 | `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` | `1000` | Inbox quota. Advertised as `maxMessagesPerAccount` in `GET /` |
 | `MEDIATOR_MAX_MESSAGE_BYTES` | `1048576` (1 MiB) | Largest envelope accepted, on the wire and as a forwarded envelope is queued; larger gets HTTP 413 (dropped on a socket). Advertised as `maxMessageBytes` in `GET /` |
 | `MEDIATOR_REPLICA_MEDIATION` | `false`; `true` in `wrangler.jsonc` and `compose.yml` | `true` turns on replica-mediation/1.0, which the Estoc app requires of its mediator (accounts, replica enrollment, shared recipients, and mail queued per replica that each replica picks up, acknowledges and is pushed under its own DID). Off, a forward to one of its recipients or replicas is refused; a replica enrolled earlier can still pick up what was queued |
-| `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the three limits below must be positive integers, or the mediator refuses to start |
+| `MEDIATOR_MAX_ACTIVE_REPLICAS` | `16` | Replicas one replica-mediation account may have enrolled and not removed. This and the six settings below must be positive integers, or the mediator refuses to start |
 | `MEDIATOR_MAX_MEMBERSHIP_PAGE` | `16` | Largest page of a replica listing or a recipient listing |
 | `MEDIATOR_MAX_SHARED_RECIPIENTS` | `10000` | Communication DIDs one replica-mediation account may hold at once |
 | `MEDIATOR_MAX_RETAINED_BYTES` | `67108864` (64 MiB) | Envelope bytes one replica-mediation account may have kept, across shared and private mail; a shared envelope counts once however many replicas it waits for, and until none of them does. `MEDIATOR_MAX_MESSAGES_PER_ACCOUNT` bounds the count the same way |
+| `MEDIATOR_EXECUTION_RETAIN_SECONDS` | `604800` (7 days) | How long an execution registration is kept at least once it is created; a change applies to registrations created afterwards |
+| `MEDIATOR_MAX_RETAINED_EXECUTIONS` | `10000` | Execution registrations one replica-mediation account may keep, those past their retention and not yet purged included |
+| `MEDIATOR_MAX_EXECUTION_REGISTRATIONS` | `64` | Replicas one execution registration may list, the removed ones included |
 | `MEDIATOR_ABUSE_EMAIL` | unset | Abuse contact shown in the invitation page's footer |
 | `MEDIATOR_BLOB_DIR` | `<data dir>/blobs` (Node only) | Where blob-store/1.0 keeps blob bytes; `off` disables blobs. On Workers, blobs are on iff an R2 bucket is bound as `BLOBS` |
 | `MEDIATOR_BLOB_RETAIN_SECONDS` | 30 days | How long one `put` keeps a blob; a repeat `put` by the same mediation renews |

@@ -38,6 +38,9 @@ export interface Env {
   MEDIATOR_MAX_MEMBERSHIP_PAGE?: string;
   MEDIATOR_MAX_SHARED_RECIPIENTS?: string;
   MEDIATOR_MAX_RETAINED_BYTES?: string;
+  MEDIATOR_EXECUTION_RETAIN_SECONDS?: string;
+  MEDIATOR_MAX_RETAINED_EXECUTIONS?: string;
+  MEDIATOR_MAX_EXECUTION_REGISTRATIONS?: string;
   /** Abuse contact for the invitation page's footer; unset = no footer. */
   MEDIATOR_ABUSE_EMAIL?: string;
 }

@@ -3,11 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SqlStore } from "../src/store/sql-store.js";
 import type { SqlDriver, SqlResult, SqlStatement } from "../src/store/sql-store.js";
 import { SqliteStore } from "../src/store/sqlite.js";
+import type {
+  ExecutionId,
+  ExecutionPolicy,
+  ExecutionRegistrationSnapshot,
+  RegisterExecutionOutcome,
+} from "../src/store/types.js";
 
 const REPLICA_TABLES_WITH_REPLICA_IDS = `
   CREATE TABLE replica_accounts (
@@ -571,6 +577,340 @@ describe("two stores that both read tables from before registrations were named"
     expect((await lateRead)?.registration).toBe(given);
     lateStore.close();
     store.close();
+    rmSync(dir, { recursive: true });
+  });
+});
+
+/** Runs each batch as one transaction, in which a statement `fails` picks throws. */
+class FailingDriver implements SqlDriver {
+  private db: Database.Database;
+
+  constructor(
+    path: string,
+    private fails: (sql: string) => boolean
+  ) {
+    this.db = new Database(path);
+    this.db.pragma("foreign_keys = ON");
+  }
+
+  async batch(statements: SqlStatement[]): Promise<SqlResult[]> {
+    return this.db.transaction(() =>
+      statements.map(({ sql, params = [] }) => {
+        if (this.fails(sql)) {
+          throw new Error("the statement fails");
+        }
+        const statement = this.db.prepare(sql);
+        return statement.reader
+          ? { rows: statement.all(...params) as Record<string, unknown>[], changes: 0 }
+          : { rows: [], changes: statement.run(...params).changes };
+      })
+    )();
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+function rowCount(path: string, table: string): number {
+  const opened = new Database(path);
+  const { n } = opened.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+  opened.close();
+  return n;
+}
+
+const MEDIATOR = "did:example:mediator";
+const ACCOUNT = "did:example:account";
+const [A, B, C] = ["did:example:a", "did:example:b", "did:example:c"];
+const T0 = 1_800_000_000;
+const WEEK = 7 * 24 * 3600;
+const EXECUTION_POLICY: ExecutionPolicy = { retainSeconds: WEEK, maxRetained: 2, maxReplicas: 2 };
+
+async function accountWith(store: SqlStore, accountDid: string, replicas: string[]): Promise<void> {
+  await store.registerReplicaAccount({
+    accountDid,
+    accountLongForm: "long",
+    mediator: MEDIATOR,
+    create: true,
+  });
+  for (const replicaDid of replicas) {
+    await store.addReplica({
+      accountDid,
+      mediator: MEDIATOR,
+      replicaDid,
+      replicaLongForm: "long",
+      grant: "grant",
+      maxReplicas: 16,
+    });
+  }
+}
+
+function registerExecution(
+  store: SqlStore,
+  replicaDid: string,
+  executionId: string,
+  policy: Partial<ExecutionPolicy> = {},
+  mediator = MEDIATOR
+): Promise<RegisterExecutionOutcome> {
+  return store.registerExecution({
+    replicaDid,
+    mediator,
+    executionId: executionId as ExecutionId,
+    policy: { ...EXECUTION_POLICY, ...policy },
+  });
+}
+
+function registered(outcome: RegisterExecutionOutcome): ExecutionRegistrationSnapshot {
+  if (outcome.outcome !== "registered") {
+    throw new Error(`not registered: ${outcome.outcome}`);
+  }
+  return outcome.registration;
+}
+
+const at = (seconds: number) => vi.setSystemTime(seconds * 1000);
+
+describe("execution registrations", () => {
+  let dir: string;
+  let path: string;
+  let store: SqliteStore;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    at(T0);
+    dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    path = join(dir, "mediator.db");
+    store = new SqliteStore(path);
+    await accountWith(store, ACCOUNT, [A, B, C]);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true });
+    vi.useRealTimers();
+  });
+
+  it("list the replicas in the order each first registered, under the first ID and times", async () => {
+    const first = registered(await registerExecution(store, A, "execution"));
+    at(T0 + 60);
+    const second = registered(await registerExecution(store, B, "execution"));
+    at(T0 + 120);
+    const repeated = registered(await registerExecution(store, A, "execution"));
+
+    expect(first).toEqual({
+      executionId: "execution",
+      registrationId: expect.any(String),
+      createdTime: T0,
+      retainUntil: T0 + WEEK,
+      replicas: [A],
+    });
+    expect(second).toEqual({ ...first, replicas: [A, B] });
+    expect(repeated).toEqual(second);
+  });
+
+  it("give replicas racing for one execution through two stores a single registration", async () => {
+    const other = new SqliteStore(path);
+
+    const [ofA, ofB] = (
+      await Promise.all([
+        registerExecution(store, A, "execution"),
+        registerExecution(other, B, "execution"),
+      ])
+    ).map(registered);
+    other.close();
+
+    expect(ofB.registrationId).toBe(ofA.registrationId);
+    expect([ofA.replicas, ofB.replicas]).toContainEqual([A, B]);
+    expect(rowCount(path, "replica_executions")).toBe(1);
+  });
+
+  it("keep each account's executions apart under one ID", async () => {
+    await accountWith(store, "did:example:other", ["did:example:other-replica"]);
+
+    const ours = registered(await registerExecution(store, A, "execution"));
+    const theirs = registered(await registerExecution(store, "did:example:other-replica", "execution"));
+
+    expect(theirs.registrationId).not.toBe(ours.registrationId);
+    expect([ours.replicas, theirs.replicas]).toEqual([[A], ["did:example:other-replica"]]);
+  });
+
+  it("tell executions apart by their IDs exactly as given", async () => {
+    const ids = ["execution", "Execution", "execution ", " execution"];
+
+    const registrations = [];
+    for (const id of ids) {
+      registrations.push(registered(await registerExecution(store, A, id, { maxRetained: 4 })));
+    }
+
+    expect(new Set(registrations.map((r) => r.registrationId)).size).toBe(ids.length);
+    expect(registrations.map((r) => r.executionId)).toEqual(ids);
+  });
+
+  it("are made by no account DID, removed replica or replica addressing another mediator", async () => {
+    await store.removeReplica(ACCOUNT, MEDIATOR, C);
+
+    expect(await registerExecution(store, ACCOUNT, "execution")).toEqual({ outcome: "unknown" });
+    expect(await registerExecution(store, C, "execution")).toEqual({ outcome: "unknown" });
+    expect(
+      await registerExecution(store, A, "execution", {}, "did:example:elsewhere")
+    ).toEqual({ outcome: "unknown" });
+    expect(await registerExecution(store, "did:example:stranger", "execution")).toEqual({
+      outcome: "unknown",
+    });
+    expect(rowCount(path, "replica_executions")).toBe(0);
+  });
+
+  it("keep a replica removed afterwards in its place, and list no more of it", async () => {
+    await registerExecution(store, A, "execution", { maxReplicas: 3 });
+    await registerExecution(store, B, "execution", { maxReplicas: 3 });
+
+    await store.removeReplica(ACCOUNT, MEDIATOR, A);
+
+    expect(await registerExecution(store, A, "execution", { maxReplicas: 3 })).toEqual({
+      outcome: "unknown",
+    });
+    expect(
+      registered(await registerExecution(store, C, "execution", { maxReplicas: 3 })).replicas
+    ).toEqual([A, B, C]);
+  });
+
+  it("survive a purge until their retention has passed, and no purge after", async () => {
+    const { retainUntil } = registered(await registerExecution(store, A, "execution"));
+    await registerExecution(store, B, "execution");
+
+    at(retainUntil - 1);
+    expect(await store.purgeExecutions()).toBe(0);
+    expect(rowCount(path, "replica_executions")).toBe(1);
+
+    at(retainUntil);
+    expect(await store.purgeExecutions()).toBe(1);
+    expect(rowCount(path, "replica_executions")).toBe(0);
+    expect(rowCount(path, "replica_execution_registrations")).toBe(0);
+  });
+
+  it("stand as before past their retention until purged, and begin anew after", async () => {
+    const first = registered(await registerExecution(store, A, "execution"));
+
+    at(first.retainUntil + 3600);
+    const grown = registered(await registerExecution(store, B, "execution"));
+    expect(grown).toEqual({ ...first, replicas: [A, B] });
+
+    await store.purgeExecutions();
+    const anew = registered(await registerExecution(store, B, "execution"));
+    expect(anew.registrationId).not.toBe(first.registrationId);
+    expect(anew).toMatchObject({
+      createdTime: first.retainUntil + 3600,
+      retainUntil: first.retainUntil + 3600 + WEEK,
+      replicas: [B],
+    });
+  });
+
+  it("keep the retention they were created with, whatever a later request is configured with", async () => {
+    registered(await registerExecution(store, A, "execution", { retainSeconds: 100 }));
+
+    const repeated = registered(await registerExecution(store, B, "execution", { retainSeconds: 5 }));
+    const another = registered(await registerExecution(store, A, "another", { retainSeconds: 5 }));
+
+    expect(repeated.retainUntil).toBe(T0 + 100);
+    expect(another.retainUntil).toBe(T0 + 5);
+  });
+
+  it("are refused anew at the account's limit, the ones past their retention counted until purged", async () => {
+    registered(await registerExecution(store, A, "first"));
+    registered(await registerExecution(store, A, "second"));
+
+    expect(await registerExecution(store, A, "third")).toEqual({ outcome: "full" });
+    expect(registered(await registerExecution(store, A, "first")).replicas).toEqual([A]);
+    expect(registered(await registerExecution(store, B, "first")).replicas).toEqual([A, B]);
+
+    at(T0 + WEEK);
+    expect(await registerExecution(store, A, "third")).toEqual({ outcome: "full" });
+    expect(await store.purgeExecutions()).toBe(2);
+    expect(registered(await registerExecution(store, A, "third")).replicas).toEqual([A]);
+  });
+
+  it("take no replica past their limit, and still answer the ones they list under a lower one", async () => {
+    await registerExecution(store, A, "execution");
+    await registerExecution(store, B, "execution");
+
+    expect(await registerExecution(store, C, "execution")).toEqual({ outcome: "full" });
+    expect(registered(await registerExecution(store, A, "execution", { maxReplicas: 1 })).replicas).toEqual([
+      A,
+      B,
+    ]);
+    expect(await registerExecution(store, C, "execution", { maxReplicas: 1 })).toEqual({
+      outcome: "full",
+    });
+  });
+
+  it("are untouched by mail, its acknowledgment and its purge", async () => {
+    const first = registered(await registerExecution(store, A, "execution"));
+
+    const fanned = await store.fanOut(A, "mail", { deadline: null, maxRetainedBytes: 1000 });
+    if (fanned.outcome !== "stored") throw new Error(fanned.outcome);
+    await store.acknowledgeDeliveries(A, fanned.deliveries.map((delivery) => delivery.message.id));
+    await store.fanOut(A, "lapsing", { deadline: (T0 + 1) * 1000, maxRetainedBytes: 1000 });
+    at(T0 + 2);
+    expect(await store.purgeExpired()).toBe(1);
+
+    expect(registered(await registerExecution(store, A, "execution"))).toEqual(first);
+  });
+
+  it("go with their account, which registers anew under the same DID in the same second", async () => {
+    const before = registered(await registerExecution(store, A, "execution"));
+
+    expect(await store.deleteReplicaAccount(ACCOUNT, MEDIATOR)).toBe(true);
+    expect(rowCount(path, "replica_executions")).toBe(0);
+    expect(rowCount(path, "replica_execution_registrations")).toBe(0);
+
+    await accountWith(store, ACCOUNT, [A]);
+    const after = registered(await registerExecution(store, A, "execution"));
+    expect(after.registrationId).not.toBe(before.registrationId);
+    expect(after).toMatchObject({ createdTime: before.createdTime, replicas: [A] });
+  });
+
+  it("leave nothing behind when the transaction that would create one fails", async () => {
+    const failing = new SqlStore(
+      new FailingDriver(path, (sql) => sql.startsWith("INSERT INTO replica_execution_registrations"))
+    );
+
+    await expect(registerExecution(failing, A, "execution")).rejects.toThrow("the statement fails");
+    failing.close();
+
+    expect(rowCount(path, "replica_executions")).toBe(0);
+    expect(registered(await registerExecution(store, B, "execution")).replicas).toEqual([B]);
+  });
+
+  it("keep their ID, order and times through a restart", async () => {
+    await registerExecution(store, A, "execution");
+    const before = registered(await registerExecution(store, B, "execution"));
+    store.close();
+
+    at(T0 + 60);
+    store = new SqliteStore(path);
+    expect(registered(await registerExecution(store, A, "execution"))).toEqual(before);
+  });
+});
+
+describe("a database from before execution registrations", () => {
+  it("gains them on first use, beside replicas enrolled under an ID", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const old = new Database(path);
+    old.exec(`
+      ${REPLICA_TABLES_WITH_REPLICA_IDS}
+      INSERT INTO replicas VALUES ('did:example:replica', 'did:example:account', 'r', 1, 'long', 'grant', 1);
+    `);
+    old.close();
+
+    const store = new SqliteStore(path);
+    expect(
+      registered(await registerExecution(store, "did:example:replica", "execution")).replicas
+    ).toEqual(["did:example:replica"]);
+    store.close();
+
+    const opened = new Database(path);
+    expect(opened.pragma("foreign_key_check")).toEqual([]);
+    opened.close();
     rmSync(dir, { recursive: true });
   });
 });

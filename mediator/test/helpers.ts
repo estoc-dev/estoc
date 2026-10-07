@@ -41,6 +41,9 @@ export const TEST_CONFIG: MediatorConfig = {
   maxMembershipPage: 2,
   maxSharedRecipients: 4,
   maxRetainedBytes: 256 * 1024,
+  executionRetainSeconds: 7200,
+  maxRetainedExecutions: 3,
+  maxExecutionRegistrations: 3,
 };
 
 export function memoryStore(): SqliteStore {
