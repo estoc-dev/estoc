@@ -420,6 +420,7 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
   ),
   "message.in": schema(messageIn, contentRoots),
   "message.erased": schema(shape({ messageId: entity<MessageId>(), dropCids: arrayOf(cid, { distinct: true, nonEmpty: true }), because: nonEmpty }), none),
+  "execution.yielded": schema(shape({ executionId: derived<ExecutionId>(), mediationId: idMembers.mediationId, registrationId: nonEmpty, responderDid: channelDid }), none),
 };
 
 export const VAULT_EVENT_TYPES = Object.freeze(Object.keys(SCHEMAS) as VaultEventType[]);

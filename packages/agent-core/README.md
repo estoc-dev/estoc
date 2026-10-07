@@ -39,7 +39,7 @@ races, crashes, restore, closing and a hostile peer.
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
 | What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
-| What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput` |
+| What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
 | How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica`, `transientConfirmations` |
@@ -61,10 +61,11 @@ races, crashes, restore, closing and a hostile peer.
 | What does the vault owe on its own? | `reconcile.ts` | `recordOwed`, `recordOwedUnderLock` |
 | What does a peer's acknowledgement earn? | `acknowledgements.ts` | `recordAcks` |
 | What follows a receipt? | `receive/after.ts` | `afterReceipt` |
-| What does an input earn on its own? | `effects.ts` | `reactTo`, `decideEffects`, `callEffects`, `completeResponse` |
+| Which replica answers a live input? | `responder.ts` | `findResponder`, `registerExecution` |
+| What does an input earn on its own? | `effects.ts` | `reactTo`, `decideEffects`, `callEffects`, `owesEffects`, `completeResponse` |
 | What does a protocol answer? | `handlers/` | `Handler`, `handlerFor`, `BUILT_IN_HANDLERS`, `effectTypesOf` |
-| When does a disclosed address give way? | `privacy.ts` | `privateAddress`, `decidePrivateAddress`, `privacyPolicy` |
-| How is a local DID replaced toward a peer? | `rotate.ts` | `rotate`, `decideRotation`, `completeNotification` |
+| When does a disclosed address give way? | `privacy.ts` | `privateAddress`, `decidePrivateAddress`, `notifyPrivateAddress`, `privacyPolicy` |
+| How is a local DID replaced toward a peer? | `rotate.ts` | `rotate`, `decideRotation`, `selectRotation`, `notifyRotation`, `completeNotification` |
 | What is an application shown, and which manual steps are there? | `records.ts`, `views.ts` | `readRecords`, `manualProcedures`, `recorder` |
 | What did this runtime observe? | `trace.ts` | `AgentTrace`, `tracePolicy` |
 | What is on the wire? | `protocol/` | `unpack`, `parseInvitation`, `invitationUrl`, `resolveMediatorInput`, the type URIs |
@@ -74,7 +75,7 @@ races, crashes, restore, closing and a hostile peer.
 
 1. `action.ts` and `procedure.ts`: what authorizes a transport call, and the shape of every procedure that writes the vault.
 2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, one package and one call; `dispatcher.ts` for the wait in between.
-3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, and what a live input earns.
+3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
 5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`: the mediator side.
 

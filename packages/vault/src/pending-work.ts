@@ -1,7 +1,8 @@
 /**
  * What an open lists for manual action, and dispatches nothing of:
  * the outbounds not yet submitted or terminated, each with the work
- * it still needs; the replies established inputs may still be given;
+ * it still needs; the replies established inputs this runtime owes may
+ * still be given;
  * the rotations the private-address policy would make from a disclosed
  * entry, with what each waits for or is stopped by, until a decision is
  * recorded; the notifications verified decisions still permit; the
@@ -14,7 +15,7 @@ import { canonicalText, compareEvents } from "@estoc/event-store";
 
 import { channelPolicy } from "./channel-policy.js";
 import type { Carrier, Decision, PlacedSource, Source } from "./fold/channels.js";
-import { kindOf, type Execution } from "./fold/inbound.js";
+import { kindOf, owesOutputs, type Execution } from "./fold/inbound.js";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, type Notification, type Outbound } from "./fold/outbound.js";
 import type { VaultFold } from "./fold/vault.js";
 import { channelKey } from "./ids.js";
@@ -92,18 +93,19 @@ export function unfinishedWork(fold: VaultFold): PendingWork {
 }
 
 /**
- * A pure ACK is a candidate for every established input requesting its
- * own receipt, whatever the input's kind, an erased body included: the
- * request is in the headers, and honoring it is policy the completion
- * applies. A Ping reply is a candidate for an established, unerased
- * Ping; whether it asked for a response, and whether it has expired,
- * is in its body and its timing, which the completion reads.
+ * Only an input this runtime owes its outputs has candidates. A pure
+ * ACK is a candidate for every such input requesting its own receipt,
+ * whatever the input's kind, an erased body included: the request is
+ * in the headers, and honoring it is policy the completion applies. A
+ * Ping reply is a candidate for an unerased Ping; whether it asked for
+ * a response, and whether it has expired, is in its body and its
+ * timing, which the completion reads.
  */
 function missingResponses(fold: VaultFold): MissingResponse[] {
   const missing: MissingResponse[] = [];
   const executions = [...fold.inbound.executions.values()].sort((a, b) => cmp(a.messageId, b.messageId));
   for (const execution of executions) {
-    if (execution.status !== "complete") continue;
+    if (!owesOutputs(execution)) continue;
     const { source } = execution.firstWitness;
     const candidates: string[] = [];
     if (fold.outbound.ackTarget(source.event.cid).status === "eligible") candidates.push(PURE_ACK_EFFECT);
@@ -171,7 +173,7 @@ function rotatingPair(fold: VaultFold, sources: readonly PlacedSource[]): Channe
   return pairs.find((pair) => channelPolicy(fold, pair) === null) ?? pairs.find((pair) => !fold.continuity.superseded(pair)) ?? pairs[0]!;
 }
 
-/** A verified decision no intent names yet, while its channel still takes the notification; several intents naming one decision are its conflict. */
+/** A verified decision no intent names yet, while its channel still takes the notification and this runtime owes the input that selected it its outputs; several intents naming one decision are its conflict. */
 function missingNotifications(fold: VaultFold): { notifications: MissingNotification[]; conflicts: NotificationConflict[] } {
   const notifications: MissingNotification[] = [];
   const conflicts: NotificationConflict[] = [];
@@ -180,7 +182,9 @@ function missingNotifications(fold: VaultFold): { notifications: MissingNotifica
     if (notification.status === "conflict") conflicts.push({ decision, notification });
     if (notification.status !== "none") continue;
     const selected = notificationChannel(fold, decision);
-    if (selected.status === "selected") notifications.push({ decision, channel: selected.channel, source: selected.source });
+    if (selected.status !== "selected") continue;
+    const input = selected.source === null ? null : fold.inbound.ofSource(selected.source.event.cid);
+    if (input === null || owesOutputs(input)) notifications.push({ decision, channel: selected.channel, source: selected.source });
   }
   return { notifications, conflicts };
 }

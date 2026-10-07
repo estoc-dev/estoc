@@ -44,7 +44,7 @@ derives are pinned there too.
 | What does each receipt and each rotation establish on its own? | `fold/channels.ts` | `foldChannelEvidence`, `verifyProofs` |
 | Which channel stands where, now? | `fold/continuity.ts` | `foldContinuity`: `head`, `witness`, `status`, `confirmedBy`, `blocked`, `decisionsIn` |
 | Which observations speak for the application? | `admission/model.ts` | `foldAdmissions`, `foldDispositions` |
-| Which inputs are established, through which witness? | `fold/inbound.ts` | `foldInbound` |
+| Which inputs are established, through which witness, and which does this runtime answer? | `fold/inbound.ts` | `foldInbound`, `owesOutputs` |
 | What has an outbound become, and what does it still need? | `fold/outbound.ts` | `foldOutbound` |
 | What must collection keep? | `fold/held.ts` | `heldRoots`, `retainedRoots`, `readState` |
 | May this invitation still be handed out? | `fold/invitations.ts` | `foldInvitations` |

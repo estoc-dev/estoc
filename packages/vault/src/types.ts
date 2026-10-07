@@ -192,6 +192,7 @@ export type VaultData = {
   };
   "message.in": MessageIn;
   "message.erased": { messageId: MessageId; dropCids: Cid[]; because: string };
+  "execution.yielded": { executionId: ExecutionId; mediationId: MediationId; registrationId: string; responderDid: Did };
 };
 
 export type VaultEventType = keyof VaultData;

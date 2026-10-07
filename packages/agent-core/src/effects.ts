@@ -22,14 +22,15 @@
  * clock moved never make a second output. Two operations are the
  * vault's own — the receipt an input requests of itself, given under
  * local policy and naming the carrier alone, and the notification of
- * a rotation, decided with the rotation — and the
+ * a rotation, which the rotation's own procedure makes — and the
  * rest are the protocols', each through its handler. An intent is
- * dispatched only under an action a live input minted, once the lock
- * is released and, over a pickup, off the turn the delivery came in,
- * so that the call holds up no receipt behind it; an input that is not
- * live leaves its unfinished outputs listed, and an explicit
- * completion makes each of them under the same tuple with a manual
- * action.
+ * made only for a live input this runtime answers, and dispatched only
+ * under the action that input minted, once the lock is released and,
+ * over a pickup, off the turn the delivery came in, so that the call
+ * holds up no receipt behind it; an input that is not live, or that no
+ * replica was found to answer, leaves its unfinished outputs listed,
+ * and an explicit completion makes each of them under the same tuple
+ * with a manual action.
  */
 
 import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
@@ -53,7 +54,7 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { LiveAction, initialAction, type LiveInput } from "./action.js";
+import { LiveAction, initialAction, type LiveInput, type Responding } from "./action.js";
 import type { Dispatched } from "./dispatch.js";
 import { UnknownEntity } from "./errors.js";
 import { effectTypesOf, handlerFor, handlersOf, type Handler, type Input, type Response } from "./handlers/index.js";
@@ -108,18 +109,18 @@ export interface DecidedEffects extends Pick<Reacted, "cid" | "executionId" | "b
 }
 
 /**
- * The effects of the input a live observation belongs to: every
- * operation decided under one lock, each new intent committed on its
- * own and then dispatched, in order, under the initial action the
- * input mints for it.
+ * The effects of the input a live observation belongs to, which this
+ * runtime answers: every operation decided under one lock, each new
+ * intent committed on its own and then dispatched, in order, under the
+ * initial action the input mints for it.
  */
-export async function reactTo(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: EffectOptions): Promise<Reacted> {
-  return callEffects(await decideEffects(runtime, keys, live, options), options);
+export async function reactTo(runtime: VaultRuntime, keys: Keys, answering: Responding, options: EffectOptions): Promise<Reacted> {
+  return callEffects(await decideEffects(runtime, keys, answering, options), options);
 }
 
-/** The decisions of `reactTo` alone, under the lock: what a caller records before it makes the calls, or off the turn it holds. */
-export async function decideEffects(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: Omit<EffectOptions, "dispatch">): Promise<DecidedEffects> {
-  const { cid } = live;
+/** The decisions of `reactTo` alone, under the lock: what a caller records before it makes the calls. */
+export async function decideEffects(runtime: VaultRuntime, keys: Keys, answering: Responding, options: Omit<EffectOptions, "dispatch">): Promise<DecidedEffects> {
+  const { cid } = answering;
   return runtime.locked(async (held) => {
     const fold = await scan(held, keys, options);
     const execution = fold.inbound.ofSource(cid);
@@ -137,6 +138,24 @@ export async function callEffects(decided: DecidedEffects, options: Pick<EffectO
   const effects: EffectOutcome[] = [];
   for (const draft of decided.drafted) effects.push(await dispatched(draft, executionId, options));
   return { cid, executionId, because, effects };
+}
+
+/**
+ * Whether a live input is still owed an output: it is established by
+ * the live observation itself, and an operation over it has no intent
+ * yet — the receipt, while local policy and the fold would give it, or
+ * one the input's handler declares, whatever the handler would answer.
+ * Read without the lock, to tell whether who answers the input matters
+ * at all.
+ */
+export function owesEffects(fold: VaultFold, live: LiveInput, options: Pick<EffectOptions, "handlers" | "acknowledge">): boolean {
+  const execution = fold.inbound.ofSource(live.cid);
+  if (execution === null || execution.status !== "complete" || notWitnessing(fold, execution, live.cid) !== null) return false;
+  const { source } = execution.firstWitness;
+  const open = (effectType: string): boolean => automaticIntent(fold, execution, effectType).existing === null;
+  if (open(PURE_ACK_EFFECT) && acknowledgement(fold, source, options.acknowledge ?? true).some((response) => response.content !== null)) return true;
+  const handler = handlerFor(handlersOf(options.handlers), source.event.data.msgType);
+  return handler !== null && handler.effectTypes.some((effectType) => effectType !== PURE_ACK_EFFECT && open(effectType));
 }
 
 /**

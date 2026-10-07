@@ -4,6 +4,7 @@ import { canonicalize, parseStrict, type CommitObject } from "@estoc/event-store
 import { PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, type DidId, type EventReference, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
+import { EXECUTION_REGISTER } from "../../src/protocol/replica-mediation.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { afterNextCommit, newMediator, refuseCommits } from "../helpers.js";
@@ -30,14 +31,19 @@ async function pair(): Promise<{ mediator: FakeMediator; alice: Running; bob: Ru
 }
 
 describe("a process that dies", () => {
-  test("after an input was recorded and before its mediator heard so: the delivery comes again as no live input, the reply it committed is listed and sent only by a retry", { timeout: LONG }, async () => {
+  test("after an input was recorded and before its mediator heard so: the delivery comes again as no live input, and the reply no step had decided by then is listed and sent only by a completion", { timeout: LONG }, async () => {
     const { mediator, alice, bob } = await pair();
     dieAt(alice, "unacknowledged");
+    mediator.intercept = async (msg) => {
+      if (msg.type === EXECUTION_REGISTER) await until("alice died telling the mediator of the delivery", () => alice.dead);
+      return undefined;
+    };
     await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid }, { ...hello("hello"), pleaseAck: [""] }, { messageId: HELLO });
     await until("alice died telling the mediator of the delivery", () => alice.dead);
     expect(queuedFor(mediator, alice)).toBe(1);
 
     const sentBefore = forwardsSeen(mediator);
+    mediator.intercept = null;
     await restart(alice);
     await until("the delivery came again", () => alice.inbounds.some(({ received }) => received.outcome === "received" && !received.live));
     expect(queuedFor(mediator, alice)).toBe(0);
@@ -46,10 +52,10 @@ describe("a process that dies", () => {
     expect(recovered.set.of("message.in")).toHaveLength(2);
     expect(forwardsSeen(mediator)).toBe(sentBefore);
 
-    const open = await alice.agent.outbounds();
-    expect(open.map(({ outbound, waiting }) => [outbound.intents[0]!.data.effectType, outbound.outcome.status, waiting])).toEqual([[PURE_ACK_EFFECT, "prepared", null]]);
-    expect((await alice.agent.pending()).missingResponses).toEqual([]);
-    expect(await alice.agent.manual.retry(open[0]!.outbound.messageId)).toMatchObject({ outcome: "submitted", packageId: open[0]!.outbound.package!.event.data.packageId });
+    expect(await alice.agent.outbounds()).toEqual([]);
+    const owed = (await alice.agent.pending()).missingResponses;
+    expect(owed).toMatchObject([{ effectType: PURE_ACK_EFFECT, entries: ["completeResponse"] }]);
+    expect(await alice.agent.manual.completeResponse(owed[0]!.executionId, PURE_ACK_EFFECT)).toMatchObject({ outcome: "created", action: { kind: "manual" }, dispatched: { outcome: "submitted" } });
     await until("bob has the acknowledgement", () => bob.inbounds.length === 1);
     expect((await foldOf(bob)).outbound.outbounds.get(HELLO)).toMatchObject({ acknowledged: true });
   });

@@ -13,6 +13,8 @@ import {
   ACCOUNT_REGISTERED,
   DELIVERY,
   DELIVERY_REQUEST,
+  EXECUTION_REGISTER,
+  EXECUTION_REGISTERED,
   FORWARD,
   LIVE_DELIVERY_CHANGE,
   MESSAGES_RECEIVED,
@@ -31,8 +33,8 @@ import { didOf } from "../src/protocol/didcomm.js";
  * A mediator that lives inside the test: messagepickup 3.0 (HTTP and a
  * fake WebSocket), routing 2.0 forward, and of replica-mediation the
  * account-register, replica-add and recipient-add controls, the fan-out
- * of a shared address's mail to the account's replicas and each
- * replica's own pickup.
+ * of a shared address's mail to the account's replicas, each replica's
+ * own pickup and its execution-register.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -146,6 +148,8 @@ export class FakeMediator {
   /** recipient DIDs every recipient-add of which is answered `quota` */
   readonly refuseShared = new Set<string>();
   readonly queues = new Map<string, Queued[]>();
+  /** each account's registrations, by account and execution ID: the replicas in the order each first registered */
+  readonly executions = new Map<string, Map<string, { registrationId: string; replicas: string[] }>>();
   private readonly sockets = new Map<string, FakeSocket>();
   /** every plaintext type the mediator handled, in order — for assertions */
   readonly seenTypes: string[] = [];
@@ -323,6 +327,17 @@ export class FakeMediator {
         if ((this.sharedRecipients.get(recipient) ?? account) !== account) return this.refused(from as string, "identity-conflict", msg.id);
         this.sharedRecipients.set(recipient, account);
         return this.reply(RECIPIENT_ADDED, from as string, { recipient_did: recipient, added_time: 1 }, msg.id);
+      }
+      case EXECUTION_REGISTER: {
+        const replica = from === null ? undefined : this.replicas.get(canonicalDid(from));
+        if (replica === undefined) return this.refused(from as string, "unknown-replica", msg.id);
+        const executionId = (msg.body as { execution_id: string }).execution_id;
+        let registrations = this.executions.get(replica.account);
+        if (registrations === undefined) this.executions.set(replica.account, (registrations = new Map()));
+        let registration = registrations.get(executionId);
+        if (registration === undefined) registrations.set(executionId, (registration = { registrationId: crypto.randomUUID(), replicas: [] }));
+        if (!registration.replicas.includes(replica.replicaDid)) registration.replicas.push(replica.replicaDid);
+        return this.reply(EXECUTION_REGISTERED, from as string, { execution_id: executionId, registration_id: registration.registrationId, created_time: 1, retain_until: 2, replicas: [...registration.replicas] }, msg.id);
       }
       case STATUS_REQUEST:
       case DELIVERY_REQUEST:

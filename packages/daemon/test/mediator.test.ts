@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import type { Lines, Snapshot } from "@estoc/daemon-api/contract";
-import { PING_TYPE } from "@estoc/vault";
+import { PING_TYPE, PURE_ACK_EFFECT } from "@estoc/vault";
 
 import { mintIdentity } from "../../../mediator/src/identity-core.js";
 import { buildServer, type MediatorServer } from "../../../mediator/src/server.js";
@@ -113,9 +113,11 @@ async function until(what: string, condition: () => boolean, ms = 30_000): Promi
 
 const reads = ({ snapshot }: Running, content: string): boolean => snapshot().messages.some((message) => message.direction === "in" && message.body.state === "available" && message.body.body["content"] === content);
 const live = ({ lines }: Running): boolean => lines()?.connections.some((connection) => connection.live) === true;
+const receiptsTaken = ({ snapshot }: Running): number => snapshot().messages.filter((message) => message.direction === "in" && message.kind === "pure-ack").length;
+const receiptsMade = ({ snapshot }: Running): number => snapshot().messages.filter((message) => message.direction === "out" && message.effectType === PURE_ACK_EFFECT).length;
 
 test(
-  "two people meet over a replica-mediation arrangement each, and a second runtime of one of them, restored from a backup, is a replica of its own: what is written to her waits for each",
+  "two people meet over a replica-mediation arrangement each, and a second runtime of one of them, restored from a backup, is a replica of its own: what is written to her waits for each, and the receipt it asks for is given once, by the replica that registered it first",
   async () => {
     const at = await mediator();
     const alice = await person(at, "Alice");
@@ -142,13 +144,19 @@ test(
     expect(elsewhere.lines()?.connections).toMatchObject([{ unreachable: null }]);
 
     // What waits for one replica is not the other's to take: the copy of the runtime that is away is still there once the other has acknowledged its own.
+    const taken = receiptsTaken(bob);
+    const made = receiptsMade(elsewhere);
     await elsewhere.daemon.lock();
     for (const content of ["to both", "and again"]) {
-      expect(await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content } })).toMatchObject({ outcome: "submitted" });
+      expect(await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content }, pleaseAck: [""] })).toMatchObject({ outcome: "submitted" });
       await until(`alice reads "${content}" where she was`, () => reads(alice, content));
     }
+    await until("bob has a receipt of each", () => receiptsTaken(bob) === taken + 2);
     await elsewhere.daemon.unlock(PASSPHRASE);
     await until("alice reads both where she restored", () => reads(elsewhere, "to both") && reads(elsewhere, "and again"));
+    const both = (running: Running) => running.snapshot().messages.filter((message) => message.direction === "in" && message.body.state === "available" && ["to both", "and again"].includes(message.body.body["content"] as string));
+    await until("where she restored, both receipts are left to where she was", () => both(elsewhere).length === 2 && both(elsewhere).every((message) => message.manualAction === "none"));
+    expect([receiptsMade(elsewhere), receiptsTaken(bob)]).toEqual([made, taken + 2]);
   },
   120_000
 );

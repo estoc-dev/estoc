@@ -11,14 +11,15 @@
  * first candidate record, whatever verified it since and however many
  * records support it, and selects no second successor and no other
  * notification. The same input on two replicas selects the same
- * successor; what each then records is its own record of one intent.
+ * successor; what each then records is its own record of one intent,
+ * and the notification is the replica's alone that answers the input.
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { channelPolicy, decisionFor, kindOf, scanVault, type Decision, type EventReference, type Keys, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { ROTATION_NOTIFICATION_EFFECT, channelPolicy, decisionFor, kindOf, scanVault, type Decision, type EventReference, type Keys, type VaultEvent, type VaultFold } from "@estoc/vault";
 
-import type { LiveInput } from "./action.js";
-import { callRotation, decideRotation, type RotateOptions, type Rotated, type RotationDecided, type RotationTarget } from "./rotate.js";
+import type { LiveInput, Responding } from "./action.js";
+import { callRotation, notifyRotation, selectRotation, type RotateOptions, type Rotated, type RotationSelected, type RotationTarget } from "./rotate.js";
 
 export type PrivacyPolicy = { status: "rotate"; target: RotationTarget } | { status: "reuse"; decision: Decision } | { status: "none"; because: string };
 
@@ -53,31 +54,42 @@ export type PrivateAddress =
   | { outcome: "none"; because: string };
 
 /**
- * The policy applied to a live input: the rotation it selects is
- * checked again under the writer lock, where the decision and the
- * notification's intent are committed, and the notification's one
- * transport call is made once the lock is released. A decision
- * recorded meanwhile is reused as it is, and so is the successor
- * another replica already created for the same start.
+ * The policy applied to a live input this runtime answers: the rotation
+ * it selects is checked again under the writer lock, where the decision
+ * is committed, then the notification's intent under the next, and the
+ * notification's one transport call is made once the lock is released.
+ * A decision recorded meanwhile is reused as it is, and so is the
+ * successor another replica already created for the same start.
  */
-export async function privateAddress(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: RotateOptions): Promise<PrivateAddress> {
-  return callPrivateAddress(await decidePrivateAddress(runtime, keys, live, options), options);
+export async function privateAddress(runtime: VaultRuntime, keys: Keys, answering: Responding, options: RotateOptions): Promise<PrivateAddress> {
+  return notifyPrivateAddress(runtime, keys, await decidePrivateAddress(runtime, keys, answering.live, options), answering, options);
 }
 
-/** The policy as the lock decided it: nothing, a decision reused, or a rotation recorded with its notification still to call. */
-export type PrivateAddressDecided = Exclude<PrivateAddress, { outcome: "rotated" }> | { outcome: "rotated"; rotation: RotationDecided };
+/** The policy as the lock decided it: nothing, a decision reused, or a rotation recorded with its notification still to make. */
+export type PrivateAddressDecided = Exclude<PrivateAddress, { outcome: "rotated" }> | { outcome: "rotated"; rotation: RotationSelected };
 
-/** The decision of `privateAddress` alone: what a caller records before it makes the call, or off the turn it holds. */
+/**
+ * The decision of `privateAddress` alone, which every replica the live
+ * input came to records at once, in the turn the delivery came in, so
+ * that it opens what the peer writes to the successor from then on.
+ */
 export async function decidePrivateAddress(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: Omit<RotateOptions, "dispatch">): Promise<PrivateAddressDecided> {
   const policy = privacyPolicy(await scanVault(runtime.vault, keys), live.cid);
   if (policy.status === "none") return { outcome: "none", because: policy.because };
   if (policy.status === "reuse") return { outcome: "reused", decision: policy.decision.event };
-  const rotation = await decideRotation(runtime, keys, policy.target, options);
+  const rotation = await selectRotation(runtime, keys, policy.target, options);
   return rotation.existed ? { outcome: "reused", decision: rotation.decision } : { outcome: "rotated", rotation };
 }
 
-/** The call of `privateAddress`: the notification of the rotation decided, if one was. */
-export async function callPrivateAddress(decided: PrivateAddressDecided, options: Pick<RotateOptions, "dispatch" | "trace">): Promise<PrivateAddress> {
+/** The notification of the rotation decided, if one was, made and called by the runtime answering the input. */
+export async function notifyPrivateAddress(runtime: VaultRuntime, keys: Keys, decided: PrivateAddressDecided, answering: Responding, options: RotateOptions): Promise<PrivateAddress> {
   if (decided.outcome !== "rotated") return decided;
-  return { outcome: "rotated", rotation: await callRotation(decided.rotation, options) };
+  return { outcome: "rotated", rotation: await callRotation(await notifyRotation(runtime, keys, decided.rotation, answering, options), options) };
+}
+
+/** The policy as decided, its notification made by no step here: the input is another replica's to answer, or no one's that could be found. */
+export function unannounced(decided: PrivateAddressDecided, because: string): PrivateAddress {
+  if (decided.outcome !== "rotated") return decided;
+  const { decision, records, channel, existed } = decided.rotation;
+  return { outcome: "rotated", rotation: { decision, records, channel, successor: decision.data.toDidId, existed, notification: { effectType: ROTATION_NOTIFICATION_EFFECT, outcome: "none", because } } };
 }

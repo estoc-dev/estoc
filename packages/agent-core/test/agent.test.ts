@@ -532,7 +532,7 @@ describe("a live input", () => {
     expect(forwardsSeen(mediator)).toBe(sentBefore);
   });
 
-  it("takes the later delivery of a batch while the earlier one's automatic output is still on the wire: each receipt and admission in the order the mail came, the mediator told once the batch is handled, and the calls made in that order after", async () => {
+  it("takes the later delivery of a batch while the earlier one's automatic output is still on the wire: each receipt and admission in the order the mail came, the mediator told once the batch is handled, and the outputs decided and called in that order after", async () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
@@ -556,8 +556,8 @@ describe("a live input", () => {
     const taken = await fold(alice);
     expect(taken.set.of("message.in")).toHaveLength(2);
     expect(taken.set.of("message.admitted").map(({ data }) => data.sourceEventCid)).toEqual(taken.set.of("message.in").map(({ cid }) => cid));
-    expect(taken.set.of("message.out")).toHaveLength(2);
     await until("the first receipt is on the wire", () => forwards.length === 1);
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(1);
     expect(inbounds).toEqual([]);
 
     release();

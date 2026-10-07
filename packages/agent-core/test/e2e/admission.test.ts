@@ -4,7 +4,7 @@ import { PURE_ACK_EFFECT, type Did, type DidId, type MessageId, type VaultFold }
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { LiveInput, type ChannelRecord, type MessageRecord } from "../../src/index.js";
+import { EXECUTION_REGISTER, LiveInput, MESSAGES_RECEIVED, canonicalDid, type ChannelRecord, type MessageRecord } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, peerSealer, sealed, type DirectParty, type Sealer } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, imported, restart, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
@@ -26,6 +26,19 @@ const queuedFor = (mediator: FakeMediator, party: Running): number => mediator.q
 const didOf = (fold: VaultFold, didId: DidId): Did => fold.dids.entities.get(didId)!.created!.did;
 
 const eventIds = (fold: VaultFold): string[] => [...fold.set.all()].map((event) => event.cid);
+
+/** Resolves once the party has told the mediator it handled a pickup batch whole; until then the mediator answers none of its execution registrations, so no output of the batch is decided before every delivery of it is folded. */
+function takenWhole(mediator: FakeMediator, party: Running): Promise<void> {
+  let taken = (): void => undefined;
+  const whole = new Promise<void>((resolve) => (taken = resolve));
+  mediator.intercept = async (msg, from) => {
+    if (from === null || canonicalDid(from) !== party.party.replica.did) return undefined;
+    if (msg.type === MESSAGES_RECEIVED) taken();
+    if (msg.type === EXECUTION_REGISTER) await whole;
+    return undefined;
+  };
+  return whole;
+}
 
 const sealerOf = (running: Running, as?: Did): Promise<Sealer> => peerSealer(running.party as unknown as DirectParty, as);
 
@@ -83,7 +96,7 @@ async function converging(alice: Running, snapshot: string, mediator: FakeMediat
 }
 
 describe("one pickup batch holding a message from the address the peer then rotated away from", () => {
-  it("with the message ahead of the rotation: the message is admitted and shown with its content, acknowledged to the address it came from by the call made before the rotation was folded, and the rotation moves the head after it; opened again or merged into another replica, the vault sends nothing again", { timeout: LONG }, async () => {
+  it("with the message ahead of the rotation: the message is admitted and shown with its content, and its receipt, decided once the rotation is folded, goes to no address the peer left; the rotation moves the head after it; opened again or merged into another replica, the vault sends nothing again", { timeout: LONG }, async () => {
     const { mediator, alice, bob, a0, b0, snapshot } = await acquainted();
     await bob.agent.send({ channel: channelOf(b0, a0) }, { ...hello("before I move"), pleaseAck: [""] }, { messageId: THIRD });
     const rotated = await bob.agent.manual.rotate({ localDidId: BOB, peerDid: a0 });
@@ -91,12 +104,14 @@ describe("one pickup batch holding a message from the address the peer then rota
     expect(queuedFor(mediator, alice)).toBe(2);
 
     const forwards = forwardsSeen(mediator);
+    const batch = takenWhole(mediator, alice);
     await restart(alice, { privateAddresses: false });
+    await batch;
     await until("alice has taken the batch", () => alice.inbounds.length === 3);
     await alice.agent.settled();
     expect(alice.inbounds.slice(1)).toMatchObject([
-      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "not-present" }, disposition: { status: "admitted" } }, reacted: { effects: [{ effectType: PURE_ACK_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } },
-      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } } },
+      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "not-present" }, disposition: { status: "admitted" } }, responder: { status: "self" }, reacted: { effects: [{ effectType: PURE_ACK_EFFECT, outcome: "none", because: expect.stringMatching(/the peer has replaced its DID/) }] } },
+      { received: { outcome: "received", live: expect.any(LiveInput) }, after: { proof: { status: "verified" }, disposition: { status: "admitted" } }, responder: { status: "self" }, reacted: { effects: [{ effectType: PURE_ACK_EFFECT, outcome: "created", dispatched: { outcome: "submitted" } }] } },
     ]);
     expect((await foldOf(alice)).continuity.head(channelOf(a0, b0))).toEqual(channelOf(a0, b1));
 
@@ -112,8 +127,8 @@ describe("one pickup batch holding a message from the address the peer then rota
     expect(records.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     const acks = [...(await foldOf(alice)).outbound.outbounds.values()].filter((outbound) => outbound.intent.status === "consistent" && outbound.intent.data.effectType === PURE_ACK_EFFECT);
     const acknowledgedIn = (peer: Did): string[] => acks.filter(({ channel }) => channel !== null && channel.peerDid === peer).map(({ outcome }) => outcome.status);
-    expect([acks.length, acknowledgedIn(b0), acknowledgedIn(b1)]).toEqual([2, ["submitted"], ["submitted"]]);
-    expect(forwardsSeen(mediator)).toBe(forwards + 2);
+    expect([acks.length, acknowledgedIn(b0), acknowledgedIn(b1)]).toEqual([1, [], ["submitted"]]);
+    expect(forwardsSeen(mediator)).toBe(forwards + 1);
 
     await converging(alice, snapshot, mediator);
   });

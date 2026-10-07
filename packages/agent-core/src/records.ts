@@ -25,6 +25,7 @@ import {
   channelKey,
   channelOf,
   compareChannels,
+  owesOutputs,
   readStoredDocument,
   responseChannel,
   sameChannel,
@@ -342,8 +343,9 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
 }
 
 /**
- * The replies an established input may still be given. The receipt is
- * the vault's own candidate. A protocol's reply is a candidate under
+ * The replies an established input this runtime owes its outputs may
+ * still be given; one left to another replica is given none here. The
+ * receipt is the vault's own candidate. A protocol's reply is a candidate under
  * each operation the input's handler declares and no intent records,
  * chosen as a completion chooses it, so that a registered handler
  * replacing a built-in one replaces its candidates too. An erased
@@ -355,7 +357,7 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
 function owedResponses(fold: VaultFold, own: readonly MissingResponse[], handlers: readonly Handler[]): MissingResponse[] {
   const owed = own.filter((response) => response.effectType === PURE_ACK_EFFECT);
   for (const execution of fold.inbound.executions.values()) {
-    if (execution.status !== "complete") continue;
+    if (!owesOutputs(execution)) continue;
     const { source } = execution.firstWitness;
     const handler = handlerFor(handlers, source.event.data.msgType);
     if (handler === null || (handler === trustPing && execution.erased)) continue;

@@ -29,7 +29,7 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
-import { liveInput } from "../src/action.js";
+import { liveInput, responding } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
@@ -37,7 +37,7 @@ import {
   Dispatcher,
   Keyring,
   LiveAction,
-  LiveInput,
+  Responding,
   Receiver,
   createDid,
   dispatch,
@@ -103,17 +103,17 @@ async function reacting(alice: DirectParty, over: Partial<EffectOptions> = {}, a
     return received;
   };
   const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<EventReference<"message.in">> => (await observed(peer, extra, as)).cid;
-  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<LiveInput> => {
+  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string): Promise<Responding> => {
     const received = await observed(peer, extra, as);
     if (received.live === null) throw new Error(`not live: ${received.cid}`);
-    return received.live;
+    return responding(received.live);
   };
   const live = async (peer: DirectParty, extra: Partial<IMessage>): Promise<Reacted> => reactTo(alice.runtime, alice.keys, await arrived(peer, extra), options);
   /** The effects decided under an authority the receipt did not mint, so that the decision's own re-check of the observation is what refuses it. */
   const claimed = async (peer: DirectParty, extra: Partial<IMessage>): Promise<Reacted> => {
     const received = await observed(peer, extra);
     expect(received.live).toBeNull();
-    return reactTo(alice.runtime, alice.keys, liveInput(received.cid), options);
+    return reactTo(alice.runtime, alice.keys, responding(liveInput(received.cid)), options);
   };
   const executionOf = async (cid: EventReference<"message.in">): Promise<ExecutionId> => (await foldOf(alice)).inbound.ofSource(cid)!.id;
   return { receiver, wire, options, effectTypes, arrived, receive, live, claimed, executionOf };
@@ -250,7 +250,7 @@ describe("the automatic effects of a live input", () => {
       const fold = await foldOf(alice);
       const execution = fold.inbound.ofSource(first.cid)!;
       expect([first.first, duplicate.first, fold.admissions.admitted(first.cid), fold.admissions.admitted(duplicate.cid), execution.firstWitness!.source.event.cid]).toEqual([true, false, false, true, duplicate.cid]);
-      const reacted = await reactTo(alice.runtime, alice.keys, liveInput(first.cid), options);
+      const reacted = await reactTo(alice.runtime, alice.keys, responding(liveInput(first.cid)), options);
       expect(reacted).toEqual({ cid: first.cid, executionId: execution.id, because: expect.stringMatching(disposition), effects: [] });
       expect(unfinishedWork(fold).responses.filter((owed) => owed.execution.id === execution.id).map((owed) => owed.effectType)).toEqual([PURE_ACK_EFFECT, PING_RESPONSE_EFFECT]);
       executions.push(execution.id);
@@ -516,7 +516,7 @@ describe("the automatic effects of a live input", () => {
 
     const anonymous = await receiver.receive({ packed: await sealed(null, alice.longFormDid, { type: BASIC_MESSAGE, please_ack: [""] }), source: DIRECT });
     if (anonymous.outcome !== "received") throw new Error(`not received: ${JSON.stringify(anonymous)}`);
-    const reacted = await reactTo(alice.runtime, alice.keys, liveInput(anonymous.cid), options);
+    const reacted = await reactTo(alice.runtime, alice.keys, responding(liveInput(anonymous.cid)), options);
     expect(reacted).toEqual({ cid: anonymous.cid, executionId: null, because: "the observation is anonymous or in no input here", effects: [] });
     await closeAll(alice, bob);
   });

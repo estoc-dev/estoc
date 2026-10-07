@@ -360,7 +360,7 @@ it does not imply that every identifier has the same encoding or scope.
 | Exact content bytes | `Cid` | `bodyCid`, `attachmentCids`, `documentCid`, `envelopeCid`, `dropCids`; generic object APIs use `cid` |
 | Vault keystore name | `KeyName` | `localKeyName`, `me.keyName` |
 | Complete canonical public-key value | `PublicKey` | `peerPublicKey` |
-| DID string / verification-method DID URL | `Did` / `DidUrl` | `did`, `localDid`, `peerDid`, `recipientDid`, `presentedDid`, `longFormDid`, `fromDid`, `toDid` / `authenticationMethodIds`, `keyAgreementMethodIds` |
+| DID string / verification-method DID URL | `Did` / `DidUrl` | `did`, `localDid`, `peerDid`, `recipientDid`, `presentedDid`, `longFormDid`, `fromDid`, `toDid`, `responderDid` / `authenticationMethodIds`, `keyAgreementMethodIds` |
 
 For every payload `*EventCid`, `T` is the target event type fixed by the
 referencing schema. `sourceEventCid` is `EventReference<"message.in">` in
@@ -1707,6 +1707,36 @@ it from another observation. Schema validation rejects additional payload
 fields, wrong reference types, null references and nonempty roots. What an
 admission is worth, and which observation may be admitted now, is
 [the admission model](../../packages/vault/src/admission/model.ts)'s.
+
+<a id="execution-yielded"></a>
+
+### 9.3 `execution.yielded`
+
+```json
+{
+  "type": "execution.yielded",
+  "roots": [],
+  "data": {
+    "executionId": "6a1f3c4e-2b7d-5e9a-8c1b-3d4e5f607182",
+    "mediationId": "1922ce3b-533a-5c75-8cb1-10cdd1f80204",
+    "registrationId": "01J...registration",
+    "responderDid": "did:peer:4zQm...replica"
+  }
+}
+```
+
+A replica records that it leaves an input's automatic outputs to another
+replica of its replica-mediation account, the one the mediator lists first
+in the account's registration of the input's execution. `executionId` is
+the input's execution, `mediationId` the arrangement the input was picked
+up from, `registrationId` the mediator's ID for the registration, and
+`responderDid` the short form of the replica DID the registration lists
+first. The event is rootless, and a replica the registration lists first
+does not record it. An input with one creates no automatic output on this
+replica and lists none as unfinished work, including the notification of a
+rotation it selected; an explicit completion may still make them. Which
+inputs are registered, and when, is decided by
+[distributed-delivery.md](distributed-delivery.md#automatic-effects).
 
 <a id="15-erasure-and-collection"></a>
 

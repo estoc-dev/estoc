@@ -21,17 +21,24 @@
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
  * in the call that recorded it and had it admitted under the receipt's
- * lock as the witness its input speaks through. Such a live input has
- * what the vault owes recorded, then the private-address policy and
- * its automatic effects decided, in that order, so that a reply to
- * the input that selected a successor goes from the successor under
- * its proof, then their calls made; each step stands alone, so that
- * one that fails leaves the others done and the observation recorded
- * all the same. A first observation the receipt
- * left waiting for evidence is not live, and stays so: the evidence,
- * whenever and however it comes, admits the observation, and what the
- * input then earns is listed for the user. Over a pickup, the local
- * steps run in the turn the delivery came in, and the calls off it:
+ * lock as the witness its input speaks through, once this runtime is
+ * found to be the one answering it. Such a live input has what the
+ * vault owes recorded, then the private-address policy decided; then,
+ * when the input is owed an output, who answers it is found, which for
+ * mail picked up at a replica-mediation mediator is the replica the
+ * mediator registered first under the input's execution; and only the
+ * runtime answering it makes the rotation's notification and the
+ * automatic effects, in that order, so that a reply to the input that
+ * selected a successor goes from the successor under its proof, then
+ * their calls. Each step stands alone, so that one that fails leaves
+ * the others done and the observation recorded all the same. A first
+ * observation the receipt left waiting for evidence is not live, and
+ * stays so: the evidence, whenever and however it comes, admits the
+ * observation, and what the input then earns is listed for the user.
+ * Over a pickup, what the vault owes and the rotation's decision are
+ * recorded in the turn the delivery came in, so that the successor is
+ * held before the next delivery is opened; finding the responder, the
+ * outputs and their calls run off it, one delivery after another:
  * neither they nor the acknowledgement to the mediator hold the
  * receipt of the delivery behind. An input the vault already held is
  * no live input when it is delivered again, whether this agent
@@ -47,7 +54,7 @@ import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
 import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
 
-import type { LiveAction } from "./action.js";
+import type { LiveAction, LiveInput } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
@@ -58,11 +65,12 @@ import { Keyring, secretsOf } from "./keyring.js";
 import { MediatorLink } from "./link.js";
 import { mediationOf } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
-import { callPrivateAddress, decidePrivateAddress, type PrivateAddress } from "./privacy.js";
+import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 import { STATUS } from "./protocol/mediation.js";
 import { enroll, transientConfirmations, type Confirmations, type Enrolled } from "./replica-enrollment.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
+import { findResponder, type Found, type Responder } from "./responder.js";
 import { recordOwed, type Owed } from "./reconcile.js";
 import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
@@ -103,10 +111,13 @@ export interface AgentLines {
   discarded: Discarded[];
 }
 
-/** A delivery and what followed it: `after` for every delivery recorded, the other two for a live input alone; each is null where it did not run, or threw. */
+/** A delivery and what followed it: `after` for every delivery recorded, the others for a live input alone; each is null where it did not run, or threw. */
 export interface Inbound {
   received: Received;
   after: AfterReceipt | null;
+  /** who answers the input; null for one owed nothing */
+  responder: Responder | null;
+  /** the automatic effects, made by the runtime answering the input alone */
   reacted: Reacted | null;
   address: PrivateAddress | null;
 }
@@ -596,22 +607,34 @@ export class Agent {
     return (await this.decide(received))();
   }
 
-  /** The calls come back as a closure so that a pickup can finish its local work without waiting on transport. */
+  /** What follows the local work comes back as a closure so that a pickup can finish its turn without waiting on the network. */
   private async decide(received: Received): Promise<Finish> {
-    const inbound: Inbound = { received, after: null, reacted: null, address: null };
+    const inbound: Inbound = { received, after: null, responder: null, reacted: null, address: null };
     if (received.outcome !== "received") return async () => this.tell(inbound);
-    const { handlers, acknowledge, now, trace } = this.options;
+    const { trace, now } = this.options;
     inbound.after = await this.step("what the vault owes", () => afterReceipt(this.runtime, this.keys, received.cid, { trace }));
     const { live } = received;
     if (live === null) return async () => this.tell(inbound);
     const address = (this.options.privateAddresses ?? true) ? await this.step("the private address", () => decidePrivateAddress(this.runtime, this.keys, live, { now, trace })) : null;
-    const effects = await this.step("the automatic effects", () => decideEffects(this.runtime, this.keys, live, { handlers, acknowledge, now, trace }));
+    return async () => this.tell(await this.answer(inbound, live, address));
+  }
+
+  /** The live input answered, when this runtime is found to answer it: the rotation's notification, then the automatic effects, each decided and called. */
+  private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
+    const { handlers, acknowledge, now, trace } = this.options;
+    const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
+    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox }))) ?? { responder: null, answering: null };
+    inbound.responder = found.responder;
+    if (found.answering === null) {
+      if (address !== null) inbound.address = unannounced(address, found.responder === null ? "who answers the input was not found" : found.responder.status === "other" ? "another replica answers the input" : `no replica is known to answer the input: ${found.responder.because}`);
+      return inbound;
+    }
+    const { answering } = found;
     const dispatch = (action: LiveAction): Promise<Dispatched> => this.dispatcher.run(action);
-    return async () => {
-      if (address !== null) inbound.address = await this.step("the notification of the private address", () => callPrivateAddress(address, { dispatch, trace }));
-      if (effects !== null) inbound.reacted = await this.step("the calls of the automatic effects", () => callEffects(effects, { dispatch, trace }));
-      return this.tell(inbound);
-    };
+    if (address !== null) inbound.address = await this.step("the notification of the private address", () => notifyPrivateAddress(this.runtime, this.keys, address, answering, { now, dispatch, trace }));
+    const effects = await this.step("the automatic effects", () => decideEffects(this.runtime, this.keys, answering, { handlers, acknowledge, now, trace }));
+    if (effects !== null) inbound.reacted = await this.step("the calls of the automatic effects", () => callEffects(effects, { dispatch, trace }));
+    return inbound;
   }
 
   /** The calls of a pickup delivery, run off its turn after those of the delivery before; what they throw is logged, since nothing waits for them. */

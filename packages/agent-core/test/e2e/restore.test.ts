@@ -149,6 +149,8 @@ describe("a vault restored from a snapshot", () => {
     const prompting = forwards.find((forward) => canonicalDid((forward.body as { next: string }).next) === a0)!;
     const packed = JSON.stringify((prompting.attachments as unknown as { data: { json: unknown } }[])[0]!.data.json);
 
+    // The mediator keeps no registration of the input any more, as once its retention has passed: the restored replica registers first.
+    mediator.executions.clear();
     const restored = await restoredFrom(alice, snapshot, { liveDelivery: false });
     mediator.queues.set(await replicaOf(restored), [{ id: "again", packed }]);
     await restored.agent.connect();
