@@ -11,6 +11,7 @@ import {
   Agent,
   AgentTrace,
   EntityConflict,
+  LinkClosed,
   MediatorLink,
   RECIPIENT_ADDED,
   Unusable,
@@ -28,7 +29,7 @@ import {
   type IMessage,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { didcomm, freshVault, newMediator, party, reloaded, mediatedRoute } from "./helpers.js";
+import { didcomm, freshVault, newMediator, party, reloaded, mediatedRoute, until } from "./helpers.js";
 
 describe("creating an arrangement", () => {
   it("records the vault's identity toward the mediator before any request, under the ID the mediator's DID derives, and says the same again for the same mediator", async () => {
@@ -208,6 +209,54 @@ describe("the line to the mediator", () => {
     expect(holds(await second, a.minted.did)).toBe(true);
     expect(Date.now() - started).toBeLessThan(2000);
     expect(p.log).toContain("trace not written: the deadline passed while noting");
+    await p.runtime.close();
+  });
+});
+
+describe("the line to a holder that closed", () => {
+  it("sends nothing once its holder closed, however far the request got: the frame is traced as not sent, the ritual fails, and no socket is opened", async () => {
+    const mediator = await newMediator();
+    const p = await party(mediator);
+    let closed = false;
+    const tracing = Object.create(p.trace) as AgentTrace;
+    (tracing as { append: AgentTrace["append"] }).append = (stream, what, data) => {
+      if (stream === "wire" && what === "out") closed = true;
+      return p.trace.append(stream, what, data);
+    };
+    const link = new MediatorLink({ ...p.linkOptions, trace: tracing, closed: () => closed });
+    await expect(link.roundTrip(ACCOUNT_REGISTER, {})).rejects.toBeInstanceOf(LinkClosed);
+    expect(mediator.seenTypes).toEqual([]);
+    expect((await p.trace.read({ type: "wire.error" })).map((entry) => entry.data["error"])).toEqual(["the holder of the link is closed"]);
+    expect(() => link.openSocket(() => undefined)).toThrow(LinkClosed);
+    expect(link.live).toBe(false);
+    await p.runtime.close();
+  });
+
+  it("hands down the frames of the socket it has now alone: one still being opened when the socket was closed is dropped before it is handed over", async () => {
+    const mediator = await newMediator();
+    const p = await party(mediator);
+    const frames: string[] = [];
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let stage: "armed" | "held" | "noted" = "armed";
+    const tracing = Object.create(p.trace) as AgentTrace;
+    (tracing as { append: AgentTrace["append"] }).append = async (stream, what, data) => {
+      if (stage !== "armed" || stream !== "wire" || what !== "in") return p.trace.append(stream, what, data);
+      stage = "held";
+      await held;
+      const seq = await p.trace.append(stream, what, data);
+      stage = "noted";
+      return seq;
+    };
+    const link = new MediatorLink({ ...p.linkOptions, trace: tracing });
+    link.openSocket((opened) => void frames.push(opened.msg.type));
+    await until("the status has come down the socket", () => stage === "held");
+    link.closeSocket();
+    release();
+    await until("the late status is noted", () => stage === "noted");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(frames).toEqual([]);
+    expect(p.log).toContain("a socket frame was dropped: the socket it came down is no longer the line's");
     await p.runtime.close();
   });
 });

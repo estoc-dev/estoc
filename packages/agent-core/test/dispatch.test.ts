@@ -435,6 +435,18 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
+  test("a caller closed before the call makes none, consumes nothing, and the same action calls for a caller still open", async () => {
+    const { alice, bob } = await parties();
+    const wire = posting(accepted);
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, closed: () => true })).toEqual({ outcome: "none", messageId: MESSAGE, because: "closed before the call" });
+    expect(wire.posts).toEqual([]);
+    expect(sent.action.spent).toBe(false);
+    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, closed: () => false }));
+    expect(wire.posts).toHaveLength(1);
+    await closeAll(alice, bob);
+  });
+
   it("cancels an unsubmitted message, before or after preparation, keeping its content and releasing its envelope; a submitted one is not cancelled", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);

@@ -186,7 +186,7 @@ describe("that a replica left an input to another", () => {
 });
 
 describe("a replica closed while it finds who answers its inputs", () => {
-  test("asks for no registration once closed, and leaves the inputs it took to a replica still open, which answers those it did not register for", { timeout: LONG }, async () => {
+  test("asks for no registration once closed and answers nothing, keeping who it found answers each input, and leaves the inputs it took to a replica still open, which answers those it did not register for", { timeout: LONG }, async () => {
     const options = { liveDelivery: false, privateAddresses: false };
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, options);
@@ -209,8 +209,8 @@ describe("a replica closed while it finds who answers its inputs", () => {
     await alice.agent.settled();
     expect(seen(mediator, EXECUTION_REGISTER)).toBe(1);
     expect(alice.inbounds.map(({ responder, reacted }) => [responder, reacted])).toEqual([
-      [null, null],
-      [null, null],
+      [{ status: "self", registration: expect.objectContaining({ replicas: [aliceReplica] }) }, null],
+      [{ status: "unknown", because: "the holder of the link is closed" }, null],
     ]);
     expect([(await foldOf(alice)).set.of("message.out"), await owed(alice)]).toEqual([[], [PURE_ACK_EFFECT, PURE_ACK_EFFECT]]);
 
@@ -242,7 +242,7 @@ describe("a replica closed while it finds who answers its inputs", () => {
     alice.agent.close();
     lose();
     await alice.agent.settled();
-    expect([seen(mediator, EXECUTION_REGISTER), alice.inbounds.map(({ responder, reacted }) => [responder, reacted])]).toEqual([1, [[null, null]]]);
+    expect([seen(mediator, EXECUTION_REGISTER), alice.inbounds.map(({ responder, reacted }) => [responder, reacted])]).toEqual([1, [[{ status: "unknown", because: "the holder of the link is closed" }, null]]]);
     expect(await owed(alice)).toEqual([PING_RESPONSE_EFFECT, PURE_ACK_EFFECT]);
   });
 });

@@ -33,7 +33,7 @@ import { InvalidDidDocument, canonicalDidOf, scanVault, type Did, type Execution
 
 import { responding, type LiveInput, type Responding } from "./action.js";
 import { owesEffects, messageOf, type EffectOptions } from "./effects.js";
-import { MediatorRefused } from "./errors.js";
+import { LinkClosed, MediatorRefused } from "./errors.js";
 import type { MediatorLink } from "./link.js";
 import type { IMessage } from "./protocol/didcomm.js";
 import { EXECUTION_REGISTER, EXECUTION_REGISTERED } from "./protocol/replica-mediation.js";
@@ -63,8 +63,6 @@ export interface ResponderOptions extends Pick<EffectOptions, "handlers" | "ackn
   inbox: (mediationId: MediationId) => MediatorLink | null;
   /** where the runtime keeps what its mediator confirmed, and the inputs its replica left to another with it */
   confirmations: Confirmations;
-  /** called before each request to the mediator, and before this runtime is given the input to answer; what it throws stops the search */
-  proceed: () => void;
 }
 
 /** Who answers the input, with the authority to make its outputs when this runtime does; no responder for an input owed nothing. */
@@ -87,7 +85,6 @@ export async function findResponder(runtime: VaultRuntime, keys: Keys, live: Liv
   const { mediationId } = source.event.data.receivedVia;
   const responder = mediationId === null ? ({ status: "self", registration: null } as const) : await registered(runtime, fold.replicas.replicas.get(runtime.author), mediationId, execution.id, options);
   if (responder.status !== "self") return { responder, answering: null };
-  options.proceed();
   return { responder, answering: responding(live) };
 }
 
@@ -98,7 +95,7 @@ async function registered(runtime: VaultRuntime, replica: Replica | undefined, m
       ? { status: "unknown", because: `this runtime has no replica in the arrangement ${mediationId}` }
       : link === null
         ? { status: "unknown", because: `no line to the mediator of ${mediationId}` }
-        : await registerExecution(link, mediationId, executionId, replica.did, options.proceed);
+        : await registerExecution(link, mediationId, executionId, replica.did);
   if (responder.status === "other") await leave(options.confirmations, runtime.author, responder.registration);
   await note(options.trace ?? null, {
     stream: "diag",
@@ -124,16 +121,13 @@ export async function leftTo(confirmations: Pick<Confirmations, "get">, replicaI
  * The registration of an execution at the link's mediator, as the
  * replica `replicaDid` the link speaks for. A request whose answer is
  * lost is made once more: the mediator answers a repeat as the
- * registration stands, this replica in the place it first took.
- * `proceed` is called before each request; what it throws is thrown.
+ * registration stands, this replica in the place it first took. A
+ * refusal, and a link whose holder closed, are not asked again.
  */
-export async function registerExecution(link: MediatorLink, mediationId: MediationId, executionId: ExecutionId, replicaDid: Did, proceed: () => void = () => {}): Promise<Responder> {
-  const register = (): Promise<IMessage | Error> => {
-    proceed();
-    return control(link, EXECUTION_REGISTER, { execution_id: executionId }, EXECUTION_REGISTERED).catch((err: unknown) => (err instanceof Error ? err : new Error(messageOf(err))));
-  };
+export async function registerExecution(link: MediatorLink, mediationId: MediationId, executionId: ExecutionId, replicaDid: Did): Promise<Responder> {
+  const register = (): Promise<IMessage | Error> => control(link, EXECUTION_REGISTER, { execution_id: executionId }, EXECUTION_REGISTERED).catch((err: unknown) => (err instanceof Error ? err : new Error(messageOf(err))));
   let reply = await register();
-  if (reply instanceof Error && !(reply instanceof MediatorRefused)) reply = await register();
+  if (reply instanceof Error && !(reply instanceof MediatorRefused || reply instanceof LinkClosed)) reply = await register();
   return reply instanceof Error ? { status: "unknown", because: reply.message } : responderOf(reply, mediationId, executionId, replicaDid);
 }
 

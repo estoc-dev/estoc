@@ -146,7 +146,7 @@ export class Dispatcher {
     wait.nextAt = null;
     let result: Dispatched;
     try {
-      result = await dispatch(this.runtime, this.keys, wait.action, this.options);
+      result = await dispatch(this.runtime, this.keys, wait.action, { ...this.options, closed: () => this.closed });
     } catch (err) {
       this.forget(wait);
       throw err;

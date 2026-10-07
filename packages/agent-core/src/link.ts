@@ -22,7 +22,7 @@ import { sameDid } from "@estoc/vault";
 import { ENCRYPTED_MIME, didOf, endpointOf, packEncrypted, plainMessage, secretsResolverFor, unpackMessage, type DidcommApi, type IMessage, type UnpackMetadata } from "./protocol/didcomm.js";
 import { envelopeHeader } from "./protocol/envelope.js";
 import { LIVE_DELIVERY_CHANGE } from "./protocol/mediation.js";
-import { UnverifiedReply } from "./errors.js";
+import { LinkClosed, UnverifiedReply } from "./errors.js";
 import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
 
 export interface LinkOptions {
@@ -43,6 +43,14 @@ export interface LinkOptions {
   timeoutMs?: number;
   /** a line for the human log: a trace that could not be written is reported here, not thrown, and a socket frame that failed */
   log?: (line: string) => void;
+  /**
+   * Whether the holder of the link has closed. Read right before a
+   * request goes on the wire and before a socket is opened, so that a
+   * close during the sealing or the noting of a request still sends
+   * nothing; the request fails with `LinkClosed`. Never closed when
+   * left out.
+   */
+  closed?: () => boolean;
 }
 
 /** An envelope opened: the plaintext and what the envelope itself proves. */
@@ -169,6 +177,7 @@ export class MediatorLink {
   private readonly mediatorDoc: DIDDoc;
   private readonly timeoutMs: number;
   private readonly log: (line: string) => void;
+  private readonly holderClosed: () => boolean;
   readonly mediatorDid: string;
   private socket: WebSocket | null = null;
 
@@ -186,6 +195,7 @@ export class MediatorLink {
     this.mediatorDoc = options.mediatorDoc;
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.log = options.log ?? (() => undefined);
+    this.holderClosed = options.closed ?? (() => false);
   }
 
   /** The mediator's HTTP endpoint; throws when its document lists none. */
@@ -289,8 +299,9 @@ export class MediatorLink {
    * the deadline: `timeoutMs` runs from entry and covers the whole
    * ritual, pack and unpack with their resolutions included. Before
    * the POST every wait fails the ritual at the deadline, nothing
-   * having been sent; once the answer is in hand, only the noting of
-   * it can still lose the race, and it loses alone.
+   * having been sent, and so does the holder closing (`LinkClosed`);
+   * once the answer is in hand, only the noting of it can still lose
+   * the race, and it loses alone.
    */
   async exchange(type: string, body: Record<string, unknown>): Promise<Opened> {
     const signal = AbortSignal.timeout(this.timeoutMs);
@@ -343,16 +354,18 @@ export class MediatorLink {
   /**
    * POST a frame already traced as `out` (`traceOut`) and read what
    * came back: the status, the text, and how long the wire took.
-   * Throws when the line is cut, with `wire.error` written; a status
-   * that is no 2xx is the caller's to judge. `signal` bounds the wait,
-   * and the caller races the whole call too, since an injected fetch
-   * may ignore the signal.
+   * Throws when the line is cut, with `wire.error` written, and before
+   * anything is sent when the holder has closed; a status that is no
+   * 2xx is the caller's to judge. `signal` bounds the wait, and the
+   * caller races the whole call too, since an injected fetch may
+   * ignore the signal.
    */
   async post(endpoint: string, packed: string, out: number | undefined, signal?: AbortSignal): Promise<{ ok: boolean; status: number; text: string; ms: number }> {
     const started = Date.now();
     let response: Response;
     let text: string;
     try {
+      this.refuseClosed();
       response = await this.fetchFn(endpoint, {
         method: "POST",
         headers: { "Content-Type": ENCRYPTED_MIME },
@@ -371,11 +384,17 @@ export class MediatorLink {
    * Open the socket and switch live delivery on: live-delivery-change is
    * the first frame it ever carries. Every frame that comes down is
    * opened, noted, and handed to `onFrame`; one that will not open, or
-   * that `onFrame` threw on, is logged and dropped. `onClose` is told
+   * that `onFrame` threw on, is logged and dropped. So is a frame of a
+   * socket that is no longer the line's, closed or replaced, by the
+   * time it is opened: what it carried was not acknowledged and is
+   * still the mediator's to deliver again. A frame handed to `onFrame`
+   * is the caller's whatever becomes of the socket. `onClose` is told
    * when the socket closed on its own, not when `closeSocket` closed it,
-   * so reconnecting, and when, is the caller's.
+   * so reconnecting, and when, is the caller's. Throws `LinkClosed`
+   * when the holder has closed.
    */
   openSocket(onFrame: (opened: Opened) => Promise<void> | void, onClose?: () => void): void {
+    this.refuseClosed();
     const uri = this.ws();
     this.closeSocket();
     const socket = new this.WebSocketCtor(uri);
@@ -385,6 +404,7 @@ export class MediatorLink {
       try {
         const plain = plainMessage(LIVE_DELIVERY_CHANGE, this.me, this.mediatorDid, { live_delivery: true });
         const { packed, seal } = await this.pack(plain);
+        if (this.socket !== socket || this.holderClosed()) return;
         socket.send(packed);
         await this.traceSeal(seal, await this.traceOut("ws", uri, packed, { type: plain.type }), plain);
       } catch (err) {
@@ -395,6 +415,7 @@ export class MediatorLink {
     };
 
     socket.onmessage = async (event: MessageEvent) => {
+      if (this.socket !== socket) return;
       const text = typeof event.data === "string" ? event.data : await (event.data as Blob).text();
       let opened: Opened;
       try {
@@ -411,6 +432,10 @@ export class MediatorLink {
         return;
       }
       this.noteRitual(opened);
+      if (this.socket !== socket) {
+        this.log("a socket frame was dropped: the socket it came down is no longer the line's");
+        return;
+      }
       try {
         await onFrame(opened);
       } catch (err) {
@@ -430,6 +455,10 @@ export class MediatorLink {
     const socket = this.socket;
     this.socket = null;
     socket?.close();
+  }
+
+  private refuseClosed(): void {
+    if (this.holderClosed()) throw new LinkClosed();
   }
 
   /** A frame going out: its header on `wire`, its bytes on `bytes`; returns the frame's sequence number. */

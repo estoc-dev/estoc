@@ -66,6 +66,14 @@ export class UnverifiedReply extends Error {
   }
 }
 
+/** The holder of the link closed before the request was sent: nothing went out, and nothing is begun over the link again. */
+export class LinkClosed extends Error {
+  constructor() {
+    super("the holder of the link is closed");
+    this.name = "LinkClosed";
+  }
+}
+
 /** The key an observation or a selection names is not one the resolved document authorizes for any use. */
 export class UnauthorizedKey extends Error {
   constructor(did: string, publicKey: string) {

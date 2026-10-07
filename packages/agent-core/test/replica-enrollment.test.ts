@@ -8,6 +8,7 @@ import {
   Agent,
   EntityConflict,
   Keyring,
+  LinkClosed,
   MediatorLink,
   MediatorRefused,
   REPLICA_ADD,
@@ -105,14 +106,12 @@ describe("enrolling", () => {
     await p.runtime.close();
   });
 
-  test("an account registered and the enrollment stopped there is taken up from the grant, the replica recorded before it is added", async () => {
+  test("an account registered and the link's holder closed there is taken up from the grant, the replica recorded before it is added", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     let asked = 0;
-    const stopping = (): void => {
-      if (asked++ > 0) throw new Error("stopped");
-    };
-    await expect(enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId, stopping)).rejects.toThrow("stopped");
+    const link = new MediatorLink({ ...p.linkOptions, closed: () => asked++ > 0 });
+    await expect(enroll(link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
     const left = await fold(p);
     expect(left.mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
     expect(left.replicas.replicas.get(p.runtime.author)?.status).toBe("member");
@@ -229,7 +228,7 @@ describe("an arrangement", () => {
     await answeredOnce;
     agent.close();
     release();
-    await expect(enrolling).rejects.toThrow("the agent is closed");
+    await expect(enrolling).rejects.toBeInstanceOf(LinkClosed);
     expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
     expect((await fold(p)).mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
     await expect(agent.enroll(p.mediationId)).rejects.toThrow("the agent is closed");

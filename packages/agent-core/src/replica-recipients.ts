@@ -62,15 +62,13 @@ export function holds(recipients: RecipientsAdded, did: Did): boolean {
  * names no method to sign a proof under, stops none of the others; a
  * request that gets no answer throws, and leaves what was confirmed
  * before it confirmed. Runs as the account's one procedure at a time.
- * `proceed` is called before each proof is signed and again before its
- * request is begun, and stops the run there by throwing.
  */
-export function addRecipients(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId, proceed: () => void = () => {}): Promise<RecipientsAdded> {
-  return serially(runtime, mediationId, () => addRecipientsNow(link, runtime, keys, confirmations, mediationId, proceed));
+export function addRecipients(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<RecipientsAdded> {
+  return serially(runtime, mediationId, () => addRecipientsNow(link, runtime, keys, confirmations, mediationId));
 }
 
 /** `addRecipients` for a caller that already holds the account's turn. */
-export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId, proceed: () => void = () => {}): Promise<RecipientsAdded> {
+export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<RecipientsAdded> {
   const fold = await scanVault(runtime.vault, keys);
   const mediation = accountOf(fold, mediationId);
   toward(link, mediation);
@@ -86,10 +84,8 @@ export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime
   for (const { didId, created } of addresses) {
     const key = recipientAddedKey(mediationId, didId);
     if (await confirmed(confirmations, key, "recipientDid", created.did)) continue;
-    proceed();
     try {
       const proof = await signRecipientProof(keys, created, mediation.me.did, mediation.mediatorDid);
-      proceed();
       const answer = await control(link, RECIPIENT_ADD, { recipient_did: created.did, resolution_material: created.longFormDid, proof }, RECIPIENT_ADDED);
       if (!echoes(answer, "recipient_did", created.did)) throw new MediatorRefused("recipient-added names another recipient than the one asked for");
     } catch (err) {

@@ -1,6 +1,7 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 
 import { scanVault, type DidId, type MessageId } from "@estoc/vault";
+import type { VaultRuntime } from "@estoc/event-store";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { Dispatcher, LiveAction, send, type Content, type DispatcherOptions } from "../src/index.js";
@@ -136,6 +137,24 @@ describe("Dispatcher", () => {
     expect(s.timers.waits.map((wait) => wait.cleared)).toEqual([true, true]);
     expect(s.dispatcher.waiting()).toEqual([]);
     expect(await s.dispatcher.run(LiveAction.manual(MESSAGE))).toEqual({ outcome: "none", messageId: MESSAGE, because: "the dispatcher is closed" });
+    await s.close();
+  });
+
+  test("a close while the call is being readied leaves the call unmade, the action live and nothing waiting", async () => {
+    const s = await scene();
+    const sent = await toLongForm(s, MESSAGE);
+    const locked = s.alice.runtime.locked.bind(s.alice.runtime);
+    vi.spyOn(s.alice.runtime, "locked").mockImplementation((async (work: Parameters<VaultRuntime["locked"]>[0]) => {
+      const value = await locked(work);
+      s.dispatcher.close();
+      return value;
+    }) as VaultRuntime["locked"]);
+    expect(await s.dispatcher.run(sent.action)).toEqual({ outcome: "none", messageId: MESSAGE, because: "closed before the call" });
+    vi.restoreAllMocks();
+    expect(s.wire.posts).toEqual([]);
+    expect(sent.action.spent).toBe(false);
+    expect(s.dispatcher.waiting()).toEqual([]);
+    expect(s.timers.waits).toEqual([]);
     await s.close();
   });
 });
