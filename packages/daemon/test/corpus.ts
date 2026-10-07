@@ -77,7 +77,7 @@ export async function readCorpus(file = CORPUS_VAULT, passphrase = CORPUS_PASSPH
   try {
     const keys = await Keys.unlock(source.wrapped, passphrase, source.metadata.anchor);
     const fold = await scanVault(source.vault, keys, SCAN);
-    const snapshot = await project(recorder(fold, objectReader(source.vault.objects, MAX_CONTENT_BYTES)), {
+    const snapshot = await project(await recorder(fold, objectReader(source.vault.objects, MAX_CONTENT_BYTES)), {
       anchor: source.metadata.anchor,
       label: fold.label ?? "",
       restoreUnexplained: false,

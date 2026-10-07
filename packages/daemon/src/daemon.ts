@@ -321,10 +321,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }
     );
 
-  /** The records as of one cut: the fold, the content and the local option read under the writer lock, with nothing committed between them. */
+  /** The records as of one cut: the fold, the content and the local options read under the writer lock, with nothing committed between them. */
   async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
     const fold = await scanVault(vault, keys, SCAN);
-    const records = recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author });
+    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, confirmations: runtime.local.options });
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
@@ -384,7 +384,14 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           },
           didcomm: await host.didcomm(),
           trace,
-          confirmations: runtime.local.options,
+          // The records read what the agent keeps here, the inputs its replica left to another among it, so a write is a change to show.
+          confirmations: {
+            get: (key) => runtime.local.options.get(key),
+            set: async (key, value) => {
+              await runtime.local.options.set(key, value);
+              changed();
+            },
+          },
           log: whileAttached(log),
           onLines: tellLines,
         }

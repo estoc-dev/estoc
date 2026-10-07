@@ -4,8 +4,9 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1**. The event vocabulary of one single-seed vault
-executed by exactly one active writable full runtime. The folds over the
+Status: **implemented**. The event vocabulary of one single-seed vault
+executed by its writable full runtimes, one alone or several side by side as
+the replicas of a replica-mediation arrangement. The folds over the
 events and the procedures that append them are code; see
 [section 11](#folds-and-procedures).
 
@@ -72,10 +73,14 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 
 ## 1. Model
 
-A vault is one identity with one seed. Phase 1 permits exactly one active
-writable full vault runtime at a time. That runtime may run in a local
-application or on a server and can derive every vault-controlled
-communication and mediation key.
+A vault is one identity with one seed. It runs one writable full runtime, or
+several side by side as the replicas of one replica-mediation arrangement,
+each writing as its own author; they share
+history only through import and restore, and which of them answers an input
+that reaches them all is
+[distributed-delivery.md](distributed-delivery.md#automatic-effects)'s. A
+runtime may run in a local application or on a server and can derive every
+vault-controlled communication and mediation key.
 
 The local runtime has a `replica_id`, used as its event author. A portable
 restore creates a new author so imported history remains distinguishable from
@@ -196,7 +201,8 @@ event it appends has:
 event.author = local replica_id
 ```
 
-Phase 1 has exactly one active writer. The runtime may execute in an end-user
+Every writable runtime writes as its own author, alone or beside the other
+replicas of the vault. A runtime may execute in an end-user
 application or on a server; its location does not change event semantics.
 Authorship needs no creation event or separate host identity. A
 [`replica.created`](#replica-created) records only that a replica is enrolled
@@ -1935,7 +1941,8 @@ author remain unchanged.
 
 ## 13. Privacy and security boundaries
 
-- Phase 1 has one active full runtime holding the single seed.
+- Every full runtime of the vault, alone or one of several replicas, holds the
+  single seed.
 - A full runtime may run locally or on a server; process location does not
   confer ownership of a DID.
 - `replica_id` and event author are operational provenance, not credentials or

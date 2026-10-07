@@ -4,8 +4,9 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — phase-1 delivery profile for one active full vault
-runtime.
+Status: **implemented** — the delivery profile for the full runtimes of one
+vault, run alone or side by side as the replicas of a replica-mediation
+arrangement.
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 **SHOULD**, **SHOULD NOT**, and **MAY** as described in BCP 14 when they
@@ -48,7 +49,10 @@ appear in all capitals.
 ## 1. What it is for
 
 An Estoc message begins as a durable intent in one fixed oriented channel.
-Phase 1 has one active executor.
+Each intent has one executor: the replica that sends, for the
+user's own message, and for an input's automatic outputs the replica that
+answers the input, the one the mediator registered first under the input's
+execution when the input reached several ([section 11](#automatic-effects)).
 
 Every message transport call uses its committed `message.prepared` package.
 Only the live initial action or a new explicit manual retry may make that call.
@@ -67,7 +71,7 @@ It makes no cross-channel or cross-replica exactly-once business-execution promi
 
 - **Channel** — fixed ordered pair of canonical local and peer DIDs within one vault.
 - **Contact** — local names, preferences and selected channel histories with no protocol authority.
-- **Full replica** — a writable vault incarnation; phase 1 still has one active executor.
+- **Full replica** — a writable vault incarnation; one input picked up at a replica-mediation mediator reaches every replica of the account, and one of them answers it.
 - **Outbound message ID** — one committed intent's entity ID and plaintext `id`.
 - **Inbound message ID** — derived from canonical sender, canonical recipient and wire ID.
 - **Execution ID** — stable identity of one channel-local input; identity alone grants no work.
@@ -195,9 +199,13 @@ Every instruction to append an event in this document means
 `Vault.events` exposes reads only.
 
 A full vault runtime MUST be able to commit a send while DNS, DID resolution
-and every mediator are unavailable. Before network work, commit the content and
-[message.out](vault-events.md#message-out), freezing its ID, channel, headers
-and user or automatic-effect decision.
+and every mediator are unavailable. Before a message's own network work,
+resolving its recipient, preparing its package and submitting it, commit the
+content and [message.out](vault-events.md#message-out), freezing its ID,
+channel, headers and user or automatic-effect decision. Deciding an automatic
+output may wait on the network itself: the replica answering an input picked
+up at a replica-mediation mediator is registered for there before any of the
+input's automatic intents is committed ([section 11](#automatic-effects)).
 
 `createdTime == null` means the DIDComm `created_time` header is absent. A
 preparer MUST NOT invent it. A user-authored message normally freezes commit
@@ -236,7 +244,7 @@ peer ACK or a missing submission event never supplies dispatch authority.
 ### 4.2 Send an ordinary message
 
 A send commits the content and `message.out`, with its channel and headers
-fixed, before any network work; an explicit user send may select a new
+fixed, before the message's own network work; an explicit user send may select a new
 channel, and an automatic output goes where
 [the response policy](../../packages/vault/src/response-policy.ts) says. What follows is code:
 the intent is [`packages/agent-core/src/send.ts`](../../packages/agent-core/src/send.ts), its one
@@ -271,7 +279,12 @@ observation the vault holds of an input and had it admitted under that
 lock as the witness its input speaks through; a retained duplicate, an
 observation admitted later by evidence, an open, an import or a restore
 earns none, and what such an input still earns is listed for manual
-completion. Control types never trigger recursive privacy notifications.
+completion. The rotation such an input selects is decided in the turn
+the delivery came in, on every replica it reached, so that each holds the
+successor before it opens the next delivery; the input's outputs, the
+rotation's notification among them, are made off that turn and only by
+the replica answering the input ([section 11](#automatic-effects)).
+Control types never trigger recursive privacy notifications.
 
 The code: the gate [`packages/agent-core/src/receive/gate.ts`](../../packages/agent-core/src/receive/gate.ts),
 the receiver [`receive/receiver.ts`](../../packages/agent-core/src/receive/receiver.ts) (what waits
@@ -280,7 +293,8 @@ bounded diagnostic it leaves), the receipt
 [`receive/receipt.ts`](../../packages/agent-core/src/receive/receipt.ts), the pass over what the
 vault owes [`reconcile.ts`](../../packages/agent-core/src/reconcile.ts) (admissions in canonical
 event order, then peer acknowledgements), what is reported of the
-observation afterwards [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts), and
+observation afterwards [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts), who
+answers the input [`responder.ts`](../../packages/agent-core/src/responder.ts), and
 the automatic effects [`effects.ts`](../../packages/agent-core/src/effects.ts). The
 [phase-1 adapter](../../packages/agent-core/README.md#didcomm-api)
 preserves any string-valued `from_prior` without verifying it; the vault
@@ -726,15 +740,39 @@ operation pending without blocking another independently eligible operation.
 ACKs and rotation notifications are standalone Empty messages, independent of
 natural protocol responses; arrival, dependency completion and handler order
 never merge their tuples. Only eligible live input creates an initial intent
-on its own; historical unfinished work is completed by hand with the same
+on its own, and only on the replica answering it; historical unfinished work is completed by hand with the same
 tuples under [the live action](../../packages/agent-core/src/action.ts). How each operation is decided,
 committed and dispatched is [`packages/agent-core/src/effects.ts`](../../packages/agent-core/src/effects.ts).
+
+An input posted directly to a runtime reached it alone, and that runtime
+answers it. An input picked up at a replica-mediation mediator reached
+every replica of the account. Each replica that the input still owes an
+output registers under the input's `executionId` at that mediator
+(`execution-register`), and the replica the registration lists first
+answers the input. Every other replica creates no intent for the execution
+and keeps, in its runtime's local state under its replica ID, that it left
+the input to that replica. The vault records neither the registration nor
+the leave, so no snapshot, import or restore carries them. A runtime lists
+an input's outputs as unfinished work unless its current replica keeps a
+leave of the input, whatever another replica did; a missing leave lists
+the outputs again and authorizes no registration, intent or call. A
+replica that cannot read the registration as listing itself, because the
+mediator refused it, the request was lost twice or the reply lists other
+replicas, creates no intent either and keeps no leave, so the outputs are
+listed for manual completion. A closed agent starts no registration and
+answers no input, even one its earlier registration lists first; what the
+inputs it took still owe is listed for manual completion. An input that
+owes no output is not registered. Who answers an input is
+[`packages/agent-core/src/responder.ts`](../../packages/agent-core/src/responder.ts).
 
 Other external effects MUST commit their protocol-defined portable intent
 before execution and use that protocol's idempotency or explicit at-least-once
 contract. The message fold does not validate those payloads.
 
-One active writer does not provide process-level exactly-once execution.
+The registration does not provide process-level exactly-once execution: the
+replica listed first may stop before it answers, and the other replicas,
+keeping their leaves, list none of the input's outputs. An explicit completion
+on any replica may still make them.
 
 <a id="built-in-independent-operations"></a>
 

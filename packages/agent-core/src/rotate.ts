@@ -26,12 +26,17 @@
  * branch and chooses no winner, so a cycle the producer could see
  * coming would leave the whole context without authority for good.
  * The notification announcing the rotation is the decision's own
- * operation, made right after the decision commits under the same
- * lock and called under an initial action once the lock is released.
- * A decision found already recorded makes none: its missing
- * notification, left by a crash between the two commits, is manual
- * work, made only by an explicit completion while the input that
- * selected it still permits one.
+ * operation, called under an initial action once the lock is released.
+ * A manual rotation makes it right after the decision commits, under
+ * the same lock. One a live input selected is made under a later lock,
+ * once the input is known to be this runtime's to answer, while the
+ * decision itself is committed at once: each replica the input came to
+ * holds the successor before it opens mail the peer writes there, and
+ * only the replica answering the input announces it. A decision found
+ * already recorded makes none: its missing notification, left by a
+ * crash between the two commits or by a replica that answered nothing,
+ * is manual work, made only by an explicit completion while the input
+ * that selected it still permits one.
  */
 
 import { v7 as uuidv7 } from "uuid";
@@ -72,7 +77,7 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { LiveAction, initialAction } from "./action.js";
+import { LiveAction, initialAction, type Responding } from "./action.js";
 import { didOf } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
@@ -115,53 +120,80 @@ export async function rotate(runtime: VaultRuntime, keys: Keys, target: Rotation
   return callRotation(await decideRotation(runtime, keys, target, options), options);
 }
 
-/** A rotation as the lock decided it: the decision, and its notification drafted with the action minted for it, before the call. */
-export interface RotationDecided {
+/** A rotation's decision as the lock recorded or found it, its notification not yet made. */
+export interface RotationSelected {
   channel: Channel;
   decision: VaultEvent<"did.rotationSelected">;
   records: readonly VaultEvent<"did.rotationSelected">[];
   existed: boolean;
+}
+
+/** A rotation as the lock decided it: the decision, and its notification drafted with the action minted for it, before the call. */
+export interface RotationDecided extends RotationSelected {
   drafted: Drafted;
   executionId: ExecutionId | null;
 }
 
-/** The decision of `rotate` alone, under the lock: what a caller records before it makes the call, or off the turn it holds. */
+/** The decision of `rotate` alone, under the lock: what a caller records before it makes the call. */
 export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
   return runtime.locked(async (held) => {
-    let fold = await scanVault(held, keys);
-    const predecessor = didOf(fold, target.localDidId);
-    if (predecessor.created === null || predecessor.conflict) throw new Unusable("DID", predecessor.didId, predecessor.faults);
-    const peerDid = canonicalDidOf(target.peerDid) as Did;
-    if (peerDid === predecessor.created.did) throw new Unusable("DID", predecessor.didId, ["the peer is the local DID itself"]);
-    const channel = channelOf(predecessor.created.did, peerDid);
-    const key = channelKey(channel);
-    const sourceEventCid = target.sourceEventCid ?? null;
-    const denied = channelPolicy(fold, channel);
-    if (denied !== null) throw new Unusable("channel", key, [denied]);
-    const existing = decisionFor(fold, channel.localDid, channel.peerDid);
-    if (existing.status === "candidate") {
-      const decision = existing.candidate.event;
-      return { channel, decision, records: existing.group.records.map((record) => record.event), existed: true, drafted: recorded(fold, decision.cid), executionId: null };
-    }
-    if (existing.status !== "none") throw new Unusable("channel", key, [existing.because]);
-    if (sourceEventCid !== null) assertSelectingSource(fold, channel, sourceEventCid);
-    if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) === null) throw new Unusable("channel", key, ["no admitted receipt shows the peer writing to exactly this address"]);
-    const chosen = successorRecipe(fold, channel);
-    if (chosen.status !== "ready") throw new Unusable("channel", key, [`the successor is not decided, ${chosen.status}: ${chosen.because}`]);
-
-    const { drafts, successor } = await materializeSuccessor(fold, keys, runtime.author, predecessor, chosen.recipe);
-    const iat = Math.floor((options.now ?? Date.now)() / 1000);
-    const fromPrior = await signFromPrior(keys, { didId: predecessor.didId, longFormDid: predecessor.created.longFormDid }, successor.longFormDid, iat);
-    drafts.push(vaultDraft("did.rotationSelected", { fromDidId: predecessor.didId, peerDid: channel.peerDid, toDidId: successor.didId, sourceEventCid, fromPrior }));
-    const refusal = await rotationRefusal(held, runtime, keys, fold, drafts);
-    if (refusal !== null) throw new Unusable("DID", successor.didId, [refusal]);
-    const events = (await held.commit([], drafts)).map(readVaultEvent);
-    const decision = events[events.length - 1] as VaultEvent<"did.rotationSelected">;
-    fold = await scanVault(held, keys);
-    const settled = await settleNotification(held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
-    const drafted: Drafted = settled.drafted.outcome === "created" ? { ...settled.drafted, action: initialAction(settled.drafted.messageId) } : settled.drafted;
-    return { channel, decision, records: [decision], existed: false, drafted, executionId: settled.executionId };
+    const { fold, selected } = await select(held, runtime, keys, target, options);
+    if (selected.existed) return { ...selected, drafted: recorded(fold, selected.decision.cid), executionId: null };
+    return { ...selected, ...(await notification(held, keys, selected.decision, options)) };
   });
+}
+
+/** The decision alone, under the lock, its notification left to `notifyRotation`: what a live input selects before who answers it is known. */
+export async function selectRotation(runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationSelected> {
+  return runtime.locked(async (held) => (await select(held, runtime, keys, target, options)).selected);
+}
+
+/**
+ * The notification of a decision a live input selected, made under
+ * the lock by the runtime answering that input: the decision must name
+ * the input as its source.
+ */
+export async function notifyRotation(runtime: VaultRuntime, keys: Keys, selected: RotationSelected, answering: Responding, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
+  if (selected.decision.data.sourceEventCid !== answering.cid) throw new Unusable("rotation", selected.decision.cid, ["the input answered is not the one that selected the rotation"]);
+  return runtime.locked(async (held) => ({ ...selected, ...(await notification(held, keys, selected.decision, options)) }));
+}
+
+/** The decision's notification, settled over the fold read now, a new intent with the initial action minted for it. */
+async function notification(held: Held, keys: Keys, decision: VaultEvent<"did.rotationSelected">, options: Omit<RotateOptions, "dispatch">): Promise<Pick<RotationDecided, "drafted" | "executionId">> {
+  const fold = await scanVault(held, keys);
+  const settled = await settleNotification(held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
+  return { drafted: settled.drafted.outcome === "created" ? { ...settled.drafted, action: initialAction(settled.drafted.messageId) } : settled.drafted, executionId: settled.executionId };
+}
+
+/** The decision under the lock held: the one recorded for the pair already, or made and committed now with its successor. */
+async function select(held: Held, runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<{ fold: VaultFold; selected: RotationSelected }> {
+  const fold = await scanVault(held, keys);
+  const predecessor = didOf(fold, target.localDidId);
+  if (predecessor.created === null || predecessor.conflict) throw new Unusable("DID", predecessor.didId, predecessor.faults);
+  const peerDid = canonicalDidOf(target.peerDid) as Did;
+  if (peerDid === predecessor.created.did) throw new Unusable("DID", predecessor.didId, ["the peer is the local DID itself"]);
+  const channel = channelOf(predecessor.created.did, peerDid);
+  const key = channelKey(channel);
+  const sourceEventCid = target.sourceEventCid ?? null;
+  const denied = channelPolicy(fold, channel);
+  if (denied !== null) throw new Unusable("channel", key, [denied]);
+  const existing = decisionFor(fold, channel.localDid, channel.peerDid);
+  if (existing.status === "candidate") return { fold, selected: { channel, decision: existing.candidate.event, records: existing.group.records.map((record) => record.event), existed: true } };
+  if (existing.status !== "none") throw new Unusable("channel", key, [existing.because]);
+  if (sourceEventCid !== null) assertSelectingSource(fold, channel, sourceEventCid);
+  if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) === null) throw new Unusable("channel", key, ["no admitted receipt shows the peer writing to exactly this address"]);
+  const chosen = successorRecipe(fold, channel);
+  if (chosen.status !== "ready") throw new Unusable("channel", key, [`the successor is not decided, ${chosen.status}: ${chosen.because}`]);
+
+  const { drafts, successor } = await materializeSuccessor(fold, keys, runtime.author, predecessor, chosen.recipe);
+  const iat = Math.floor((options.now ?? Date.now)() / 1000);
+  const fromPrior = await signFromPrior(keys, { didId: predecessor.didId, longFormDid: predecessor.created.longFormDid }, successor.longFormDid, iat);
+  drafts.push(vaultDraft("did.rotationSelected", { fromDidId: predecessor.didId, peerDid: channel.peerDid, toDidId: successor.didId, sourceEventCid, fromPrior }));
+  const refusal = await rotationRefusal(held, runtime, keys, fold, drafts);
+  if (refusal !== null) throw new Unusable("DID", successor.didId, [refusal]);
+  const events = (await held.commit([], drafts)).map(readVaultEvent);
+  const decision = events[events.length - 1] as VaultEvent<"did.rotationSelected">;
+  return { fold, selected: { channel, decision, records: [decision], existed: false } };
 }
 
 /** The call of `rotate`: the notification decided, dispatched under the action minted for it. */

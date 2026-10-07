@@ -162,7 +162,7 @@ describe("a problem the peer reports", () => {
     await until("bob has the report", () => bob.inbounds.length === 1);
     const forwards = forwardsSeen(mediator);
 
-    expect(bob.inbounds[0]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, reacted: { effects: [] } });
+    expect(bob.inbounds[0]).toMatchObject({ received: { outcome: "received", live: expect.any(LiveInput) }, responder: null, reacted: null });
     const shown = await (await bob.agent.records()).channel(toAlice.channel);
     const report = shown.messages.find((message) => message.direction === "in")!;
     expect(report).toMatchObject({ kind: "error", manualAction: "none" });

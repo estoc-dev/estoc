@@ -64,7 +64,10 @@ describe("first contact over a mediator", () => {
     const pinged = ofBob.outbound.outbounds.get(PING)!;
     expect(pinged).toMatchObject({ outcome: { status: "submitted" }, acknowledged: true });
     expect(pinged.acknowledgements.map(({ event }) => event.data.ackMessageId)).toEqual([[...ofBob.inbound.executions.values()].find((execution) => execution.kind === "pure-ack")!.messageId]);
-    expect(bob.inbounds.flatMap((inbound) => inbound.reacted!.effects.filter((effect) => effect.outcome === "created"))).toEqual([]);
+    expect(bob.inbounds.map(({ responder, reacted }) => [responder, reacted])).toEqual([
+      [null, null],
+      [null, null],
+    ]);
 
     const envelope = (forwards[0]!.attachments as unknown as { data: { json: unknown } }[])[0]!.data.json;
     const sentBefore = forwards.length;

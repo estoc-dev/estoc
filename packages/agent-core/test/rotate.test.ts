@@ -30,13 +30,14 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
+import { responding } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
   EntityConflict,
   Keyring,
-  LiveInput,
+  Responding,
   NotificationConflict,
   Receiver,
   UnknownEntity,
@@ -108,10 +109,10 @@ async function rotating(alice: DirectParty, over: Partial<RotateOptions> = {}, a
     return received;
   };
   const receive = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to?: string): Promise<EventReference<"message.in">> => (await observed(peer, extra, as, to)).cid;
-  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to?: string): Promise<LiveInput> => {
+  const arrived = async (peer: DirectParty, extra: Partial<IMessage>, as?: string, to?: string): Promise<Responding> => {
     const received = await observed(peer, extra, as, to);
     if (received.live === null) throw new Error(`not live: ${received.cid}`);
-    return received.live;
+    return responding(received.live);
   };
   const live = async (peer: DirectParty, extra: Partial<IMessage>, to?: string): Promise<Reacted> => reactTo(alice.runtime, alice.keys, await arrived(peer, extra, undefined, to), options);
   return { receiver, wire, options, arrived, receive, live };

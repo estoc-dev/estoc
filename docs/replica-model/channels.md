@@ -1,6 +1,6 @@
 # Channels, continuity and operation evidence
 
-Status: **phase 1, implemented**. This document owns channel identity,
+Status: **implemented**. This document owns channel identity,
 invitations and the payloads of the three channel events: a local rotation
 decision, an application admission and a channel denial. The
 [`@estoc/continuity` API and host contract](../../packages/continuity/README.md)
@@ -250,12 +250,15 @@ its valid admission remains historical evidence after merge; another history's
 local refusal cannot retroactively undo that fact or a reply already sent.
 This does not authorize processing an unadmitted old-peer source after merge.
 
-Phase 1 has one active executor. Future simultaneous replicas must define who
-coordinates admission and dispatch, including rotation knowledge, before being
-enabled. Requiring all replicas to stop as soon as any replica knows a rotation
-requires coordination or suspending application processing while freshness
-cannot be established. Offline independent processing cannot promise that rule.
-Neither mediator fan-out nor deterministic event ordering provides it.
+Full runtimes of one vault may run concurrently as distinct replicas of one
+replica-mediation arrangement. Each admits observations against the history
+it holds; [automatic-output selection](distributed-delivery.md#automatic-effects)
+determines which replica answers a live input delivered to several replicas.
+That selection does not synchronize their rotation knowledge. Requiring all
+replicas to stop as soon as any replica knows a rotation requires coordination
+or suspending application processing while freshness cannot be established.
+Offline independent processing cannot promise that rule. Neither mediator
+fan-out nor deterministic event ordering provides it.
 
 Restore from a snapshot that omits a rotation can lose knowledge of that
 restriction. A fresh author, a seed or an admission event is not an anti-rollback
@@ -281,8 +284,9 @@ and within-channel vectors are in [delivery](distributed-delivery.md#observation
 
 ACK, Ping reply and rotation notification are independent concrete intents
 with distinct deterministic tuples. Each tuple permits one immutable intent.
-Only the single active executor may react automatically to eligible live input;
-the first dispatch of historical work is manual under
+Only the replica [selected to answer](distributed-delivery.md#automatic-effects)
+an eligible live input may react to it automatically; the first dispatch of
+historical work is manual under
 [the live action](../../packages/agent-core/src/action.ts).
 
 <a id="channel-blocked"></a>

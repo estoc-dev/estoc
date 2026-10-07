@@ -46,6 +46,7 @@ describe("the death of a running party", () => {
     expect(mediator.queues.get(inbox)).toHaveLength(1);
     answered.open();
     await connecting;
+    await bob.agent.settled();
     expect([bob.dead, bob.inbounds.length]).toEqual([false, 1]);
 
     await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did) }, hello("and now bob"), { messageId: FROM_BOB });

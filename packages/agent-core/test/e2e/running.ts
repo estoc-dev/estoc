@@ -10,7 +10,7 @@ import { Keys, scanVault, vaultHeldRoots, vaultRetention, type Channel, type Did
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../../src/protocol/didcomm.js";
 import { MESSAGES_RECEIVED } from "../../src/protocol/mediation.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { Agent, AgentTrace, openVault, type AgentOptions, type Inbound, type OpenedVault } from "../../src/index.js";
+import { Agent, AgentTrace, openVault, type AgentOptions, type Inbound, type OpenedVault, type OpenVaultOptions } from "../../src/index.js";
 import { MEDIATOR_HTTP, type FakeMediator } from "../fake-mediator.js";
 import { afterNextCommit, didcomm, mediatedParty, until as untilWithin, type MediatedParty } from "../helpers.js";
 
@@ -132,6 +132,7 @@ async function agentOver(mediator: FakeMediator, self: () => Started, life: Life
     fetch: transportOf(mediator, self, life),
     WebSocket: mediator.WebSocket,
     trace,
+    confirmations: vault.runtime.local.options,
     onInbound: (inbound) => self().inbounds.push(inbound),
     log: (line) => self().log.push(line),
     ...options,
@@ -156,10 +157,10 @@ export async function run(mediator: FakeMediator, fill: number, didId: DidId, op
 }
 
 /** The party's process ended, if it still runs, and another started over the same file once the first has let go of it: nothing but the file is carried over. */
-export async function restart(running: Running, options: Partial<AgentOptions> = {}): Promise<void> {
+export async function restart(running: Running, options: Partial<AgentOptions> = {}, open: Pick<OpenVaultOptions, "resetIdentity"> = {}): Promise<void> {
   const self = running as Started;
   await end(self);
-  const vault = await openVault(openNodeSqlite(self.file, { mode: "readwrite" }), self.party.seedKey);
+  const vault = await openVault(openNodeSqlite(self.file, { mode: "readwrite" }), self.party.seedKey, open);
   const life: Life = { death: null, ended: null };
   self.runtime = vault.runtime;
   self.keys = vault.keys;

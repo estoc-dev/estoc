@@ -13,8 +13,8 @@
  *
  * The constructors are private and each class has a private field, so
  * that an authority is minted and never assembled: `LiveAction.manual`
- * is a host's one entry, and the two functions below are the package's
- * own.
+ * is a host's one entry, and the three functions below are the
+ * package's own.
  */
 
 import type { EventReference, MessageId } from "@estoc/vault";
@@ -24,6 +24,7 @@ export type ActionKind = "initial" | "manual";
 
 let mintInitial: (messageId: MessageId) => LiveAction;
 let mintInput: (cid: EventReference<"message.in">) => LiveInput;
+let mintResponding: (live: LiveInput) => Responding;
 
 export class LiveAction {
   static {
@@ -56,13 +57,11 @@ export class LiveAction {
 }
 
 /**
- * A live input is the authority to decide an input's automatic
- * effects: the receipt that recorded the observation, in the same
- * call chain, still running. Each intent the input decides gets its
- * initial action, and nothing else mints one for them: an observation
- * found by an open, brought by an import or delivered again is not
- * live, and what such an input still earns is listed for manual
- * completion.
+ * A live input is the authority to decide what an input selects and
+ * to find who answers it: the receipt that recorded the observation,
+ * in the same call chain, still running. An observation found by an
+ * open, brought by an import or delivered again is not live, and what
+ * such an input still earns is listed for manual completion.
  */
 export class LiveInput {
   static {
@@ -80,6 +79,34 @@ export class LiveInput {
   }
 }
 
+/**
+ * The authority to make a live input's automatic outputs: the input is
+ * live, and this runtime answers it, being the one it came to or the
+ * replica its mediator registered first. Each intent made under it gets
+ * its initial action, and nothing else mints one for them; a live input
+ * this runtime does not answer makes none, and what it earns is left to
+ * the replica that does.
+ */
+export class Responding {
+  static {
+    mintResponding = (live) => new Responding(live);
+  }
+
+  readonly #live: LiveInput;
+
+  private constructor(live: LiveInput) {
+    this.#live = live;
+  }
+
+  get live(): LiveInput {
+    return this.#live;
+  }
+
+  get cid(): EventReference<"message.in"> {
+    return this.#live.cid;
+  }
+}
+
 /** The initial action of an intent, for the step that decided it under the lock: a send, a rotation's notification, the effects of a live input. */
 export function initialAction(messageId: MessageId): LiveAction {
   return mintInitial(messageId);
@@ -88,4 +115,9 @@ export function initialAction(messageId: MessageId): LiveAction {
 /** The authority of a receipt over the observation it recorded and had admitted as its input's witness, minted under the receipt's lock. */
 export function liveInput(cid: EventReference<"message.in">): LiveInput {
   return mintInput(cid);
+}
+
+/** The authority of a live input this runtime was found to answer, minted where its responder is found. */
+export function responding(live: LiveInput): Responding {
+  return mintResponding(live);
 }

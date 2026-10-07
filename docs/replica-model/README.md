@@ -1,12 +1,13 @@
 # Estoc version 4 specification suite
 
-Status: **version 4, phase 1**. The packages under [`packages/`](../../packages/)
+Status: **version 4**. The packages under [`packages/`](../../packages/)
 implement it and their tests are the evidence; the folds over the vault's
 events and the procedures that append them are specified by that code, see
 [vault events section 11](vault-events.md#folds-and-procedures).
-Phase 1 has one active writable full vault runtime, seven
-specifications. SQLite is the sole persistent vault and portable interchange
-format. This guide is informative; linked specification sections define requirements.
+The suite has seven specifications. A vault may run one writable full runtime
+or several as distinct replicas of one replica-mediation arrangement.
+SQLite is the sole persistent vault and portable interchange format.
+This guide is informative; linked specification sections define requirements.
 The target uses vault version 4 and SQLite schema 2, retaining the version-3
 seed wrapper and existing key/domain-ID derivation. Event identity and references
 use raw CIDs of five-field canonical envelopes.
@@ -129,15 +130,15 @@ receive gate, the private-address policy and retry are code.
 
 ## Evidence and references
 
-The seven documents above are the complete phase-1 contract. No document
+The seven documents above define the current contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
 [vault events section 11](vault-events.md#folds-and-procedures)).
-Several active replicas, network vault synchronization and mutable channel
-DIDs have only [deferred design notes](deferred/README.md). Those notes
-reserve no phase-1 fields, error codes, key names or extension APIs; future
-features will define their schemas when adopted.
+Network vault synchronization and mutable channel DIDs have only
+[deferred design notes](deferred/README.md). Those notes reserve no current
+fields, error codes, key names or extension APIs; future features will define
+their schemas when adopted.
 
 Named anchors support direct links independently of displayed section numbers.
 
