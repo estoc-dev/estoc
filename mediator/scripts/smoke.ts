@@ -19,9 +19,9 @@ import { RECIPIENT_PROOF_TYP, peer4Agent, signedBy, type Peer4Agent } from "../t
  * (asserting text frames, the thing headless clients never catch). Then,
  * under replica-mediation, what the Estoc app does: register an account,
  * add a replica under the account's grant, add a recipient under its own
- * proof, and pick up, acknowledge and be pushed that recipient's mail under
- * the replica's DID. A mediator with replica-mediation off fails here, since
- * the app cannot enroll with it.
+ * proof, pick up, acknowledge and be pushed that recipient's mail under
+ * the replica's DID, and register the replica under an execution. A mediator
+ * with replica-mediation off fails here, since the app cannot enroll with it.
  *
  *   pnpm run smoke http://127.0.0.1:8787
  */
@@ -368,6 +368,18 @@ const replicaLiveAcked = await send(
 );
 check(replicaLiveAcked.body.message_count === 0, "the replica's live message acknowledged over http");
 replicaWs.close();
+
+const executionId = randomUUID();
+const executionRegistered = await send(`${REPLICA}/execution-register`, { execution_id: executionId }, known(replica));
+check(
+  executionRegistered.type === `${REPLICA}/execution-registered` &&
+    executionRegistered.body.execution_id === executionId &&
+    sameJson(executionRegistered.body.replicas, [replica.did]) &&
+    (executionRegistered.body.retain_until as number) > (executionRegistered.body.created_time as number),
+  "the replica registers under an execution"
+);
+const executionRepeated = await send(`${REPLICA}/execution-register`, { execution_id: executionId }, known(replica));
+check(sameJson(executionRepeated.body, executionRegistered.body), "a repeated execution registration answers as the first");
 
 // --- Edges --------------------------------------------------------------
 

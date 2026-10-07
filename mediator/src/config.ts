@@ -43,6 +43,16 @@ export interface MediatorPolicy {
   maxSharedRecipients: number;
   maxRetainedBytes: number;
   /**
+   * How long an execution registration is kept at least once it is created,
+   * how many one account may keep, those past their retention and not yet
+   * purged included, and how many replicas one may list, the removed ones
+   * included. A retention change applies only to registrations created
+   * afterwards.
+   */
+  executionRetainSeconds: number;
+  maxRetainedExecutions: number;
+  maxExecutionRegistrations: number;
+  /**
    * The operator's abuse contact, shown in the footer of the human-facing
    * invitation page. Null means no contact line is rendered.
    */
@@ -111,6 +121,9 @@ export function replicaPolicyFrom(get: (name: string) => string | undefined) {
     maxMembershipPage: limit("MEDIATOR_MAX_MEMBERSHIP_PAGE", 16),
     maxSharedRecipients: limit("MEDIATOR_MAX_SHARED_RECIPIENTS", 10000),
     maxRetainedBytes: limit("MEDIATOR_MAX_RETAINED_BYTES", 64 * 1024 * 1024),
+    executionRetainSeconds: limit("MEDIATOR_EXECUTION_RETAIN_SECONDS", 7 * 24 * 3600),
+    maxRetainedExecutions: limit("MEDIATOR_MAX_RETAINED_EXECUTIONS", 10000),
+    maxExecutionRegistrations: limit("MEDIATOR_MAX_EXECUTION_REGISTRATIONS", 64),
   };
 }
 

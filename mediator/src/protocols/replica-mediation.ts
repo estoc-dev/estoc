@@ -11,7 +11,7 @@ import type { MediatorPolicy } from "../config.js";
 import { isAuthcrypted } from "../didcomm/didcomm.js";
 import type { Unpacked } from "../didcomm/didcomm.js";
 import { isDecodable } from "../didcomm/did-resolver.js";
-import type { RecipientPlace } from "../store/types.js";
+import type { ExecutionId, RecipientPlace } from "../store/types.js";
 import type { Handler, HandlerContext, Reply } from "./types.js";
 import { isMediatorOwnDid } from "./coordinate-mediation.js";
 import { DELIVERY_PAGE_LIMIT } from "./pickup.js";
@@ -30,12 +30,13 @@ import { canonicalDid, provenDid, verifyReplicaGrant } from "./replica-grant.js"
  * DID is one kind or the other, and neither protocol's controls reach the
  * other's state.
  *
- * A control is a request the account DID authcrypts to one mediator DID, with
- * a body of exactly the members its type lists below. Its answer is the
- * matching reply or a problem-report, sealed to the account, with the
- * request's `id` as `thid`. A reply names accounts, replicas and recipients
- * by their short forms; the mediator DID and a grant come back as they were
- * sent.
+ * A control is a request its sender authcrypts to one mediator DID, with a
+ * body of exactly the members its type lists below: the account DID sends
+ * those that manage the arrangement, and a replica `execution-register`. Its
+ * answer is the matching reply or a problem-report, sealed to the sender,
+ * with the request's `id` as `thid`. A reply names accounts, replicas and
+ * recipients by their short forms; the mediator DID and a grant come back as
+ * they were sent.
  */
 
 export const ACCOUNT_REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/account-register`;
@@ -54,6 +55,11 @@ export const RECIPIENT_LIST = `${REPLICA_MEDIATION_PROTOCOL}/recipient-list`;
 export const RECIPIENTS = `${REPLICA_MEDIATION_PROTOCOL}/recipients`;
 export const RECIPIENT_REMOVE = `${REPLICA_MEDIATION_PROTOCOL}/recipient-remove`;
 export const RECIPIENT_REMOVED = `${REPLICA_MEDIATION_PROTOCOL}/recipient-removed`;
+export const EXECUTION_REGISTER = `${REPLICA_MEDIATION_PROTOCOL}/execution-register`;
+export const EXECUTION_REGISTERED = `${REPLICA_MEDIATION_PROTOCOL}/execution-registered`;
+
+/** The longest `execution_id`, in UTF-8 bytes. */
+export const MAX_EXECUTION_ID_BYTES = 256;
 
 /**
  * Creates the account of the sending DID, a did:peer:4 that names itself by
@@ -121,6 +127,13 @@ export interface Limits {
   max_retained_bytes: number;
   max_retained_messages: number;
   max_deliveries_per_request: number;
+  /** How long an execution registration created now is kept at least. */
+  execution_retention_seconds: number;
+  /** Execution registrations the account may keep, those past their retention and not yet purged included. */
+  max_retained_executions: number;
+  /** Replicas one execution registration may list, the removed ones included. */
+  max_execution_registrations: number;
+  max_execution_id_bytes: number;
 }
 
 /** Asks for the replicas the account ever added, in the order it added them. */
@@ -218,6 +231,37 @@ export interface RecipientRemovedBody {
   recipient_did: string;
 }
 
+/**
+ * Sent by a replica, not by its account: lists the sender in the account's
+ * registration of the execution, after every replica that registered before
+ * it. The first replica to name an execution creates its registration.
+ */
+export interface ExecutionRegisterBody {
+  /** Opaque to the mediator and compared as given: from 1 to `max_execution_id_bytes` UTF-8 bytes. */
+  execution_id: string;
+}
+
+/**
+ * The registration as the request left it. A repeat changes nothing and
+ * answers with the registration as it stands: for as long as it is kept, its
+ * ID and its times stay the first ones and its replicas only grow.
+ */
+export interface ExecutionRegisteredBody {
+  execution_id: string;
+  /** One registration purged and created again under the same `execution_id` has another. */
+  registration_id: string;
+  /** When the registration was created, not when this reply was. */
+  created_time: number;
+  /**
+   * Until when the registration is kept at least. Past it, the registration
+   * may be purged at any moment, and until it is it answers and grows as
+   * before; nothing extends it.
+   */
+  retain_until: number;
+  /** Every replica that registered, the sender among them, in the order each first did; a removed one keeps its place. */
+  replicas: string[];
+}
+
 /** How a control is refused: a problem-report with code `e.estoc.replica-mediation.<this>`. */
 type Problem =
   /** Not authcrypt by the DID it names to exactly one mediator DID, or not exactly the control's body. */
@@ -230,7 +274,11 @@ type Problem =
   | "account-refused"
   /** No account of the sender is bound to the mediator DID it addressed. */
   | "unknown-account"
-  /** The account added no replica with that DID. */
+  /**
+   * The account added no replica with that DID, or the sender of an
+   * `execution-register` is no active replica of an account bound to the
+   * mediator DID it addressed.
+   */
   | "unknown-replica"
   /** A DID in the request is already bound otherwise, here or under ordinary mediation. */
   | "identity-conflict"
@@ -238,7 +286,10 @@ type Problem =
   | "replica-required"
   /** Pickup asked by a replica its account removed. */
   | "replica-removed"
-  /** The account is at its replica or recipient limit. */
+  /**
+   * The account is at its replica, recipient or execution registration
+   * limit, or the execution registration at its replica limit.
+   */
   | "quota";
 
 const problemCode = (problem: Problem) => `e.estoc.replica-mediation.${problem}`;
@@ -257,12 +308,17 @@ export function replicaLimits(policy: MediatorPolicy): Limits {
     max_retained_bytes: policy.maxRetainedBytes,
     max_retained_messages: policy.maxMessagesPerAccount,
     max_deliveries_per_request: DELIVERY_PAGE_LIMIT,
+    execution_retention_seconds: policy.executionRetainSeconds,
+    max_retained_executions: policy.maxRetainedExecutions,
+    max_execution_registrations: policy.maxExecutionRegistrations,
+    max_execution_id_bytes: MAX_EXECUTION_ID_BYTES,
   };
 }
 
+/** What a control proved; what its sender may do there is the store's to decide. */
 interface Control<Body> {
-  /** The authenticated account DID, in its short form when it is a did:peer:4. */
-  account: string;
+  /** The authenticated sender DID, in its short form when it is a did:peer:4. */
+  sender: string;
   /** The one mediator DID the request named and was sealed to, as it spelled it. */
   addressed: string;
   /** That DID in its short form when it is a did:peer:4. */
@@ -308,7 +364,7 @@ function controlOf<Body>(
     return null;
   }
   return {
-    account: canonicalDid(sender),
+    sender: canonicalDid(sender),
     addressed: addressedTo,
     mediator: canonicalDid(addressedTo),
     body: message.body as Record<keyof Body, unknown>,
@@ -327,18 +383,17 @@ export async function accountRegister(
   if (control === null) {
     return replicaProblem("invalid-message");
   }
-  if (isMediatorOwnDid(control.account, ctx.dids)) {
+  if (isMediatorOwnDid(control.sender, ctx.dids)) {
     return replicaProblem("identity-conflict");
   }
 
-  const accountLongForm =
-    sender === control.account ? await store.resolutionMaterial(sender) : sender;
+  const accountLongForm = isLongForm(sender) ? sender : await store.resolutionMaterial(sender);
   if (!isPeerDID4(sender) || accountLongForm === null) {
     return replicaProblem("account-refused");
   }
 
   const registration = await store.registerReplicaAccount({
-    accountDid: control.account,
+    accountDid: control.sender,
     accountLongForm,
     mediator: control.mediator,
     create: config.openRegistration,
@@ -353,7 +408,7 @@ export async function accountRegister(
       return {
         type: ACCOUNT_REGISTERED,
         body: {
-          account: control.account,
+          account: control.sender,
           routing_did: control.addressed,
           registered_time: registration.registeredTime,
           limits: replicaLimits(config),
@@ -375,12 +430,12 @@ export async function accountDelete(
     return replicaProblem("invalid-message");
   }
 
-  if (!(await store.deleteReplicaAccount(control.account, control.mediator))) {
+  if (!(await store.deleteReplicaAccount(control.sender, control.mediator))) {
     return replicaProblem("unknown-account");
   }
   return {
     type: ACCOUNT_DELETED,
-    body: { account: control.account } satisfies AccountDeletedBody,
+    body: { account: control.sender } satisfies AccountDeletedBody,
   };
 }
 
@@ -402,7 +457,7 @@ export async function replicaAdd(
   const grant = accountDoc === null ? null : await verifyReplicaGrant(control.body.grant, accountDoc);
   if (
     grant === null ||
-    grant.account !== control.account ||
+    grant.account !== control.sender ||
     grant.mediator !== control.mediator ||
     isMediatorOwnDid(grant.replicaDid, ctx.dids)
   ) {
@@ -498,7 +553,7 @@ export async function replicaList(
   const { cursor: written, limit } = control.body;
   const cursor = typeof written === "string" ? readCursor(written) : null;
   if (
-    (written !== null && (cursor === null || cursor.account !== control.account)) ||
+    (written !== null && (cursor === null || cursor.account !== control.sender)) ||
     !Number.isSafeInteger(limit) ||
     (limit as number) < 1 ||
     (limit as number) > config.maxMembershipPage
@@ -507,7 +562,7 @@ export async function replicaList(
   }
 
   const roster = await store.replicaRoster(
-    control.account,
+    control.sender,
     control.mediator,
     cursor?.after ?? 0,
     cursor?.through ?? null,
@@ -533,7 +588,7 @@ export async function replicaList(
       })),
       next_cursor:
         last < through
-          ? writeCursor([control.account, roster.registration, through, last])
+          ? writeCursor([control.sender, roster.registration, through, last])
           : null,
     } satisfies ReplicasBody,
   };
@@ -553,7 +608,7 @@ export async function replicaRemove(
   }
 
   const replica_did = canonicalDid(control.body.replica_did);
-  const removal = await store.removeReplica(control.account, control.mediator, replica_did);
+  const removal = await store.removeReplica(control.sender, control.mediator, replica_did);
   switch (removal.outcome) {
     case "unknown":
       return replicaProblem("unknown-account");
@@ -624,7 +679,7 @@ export async function recipientAdd(
   if (
     recipient === null ||
     proven === null ||
-    proven.account !== control.account ||
+    proven.account !== control.sender ||
     proven.mediator !== control.mediator
   ) {
     return replicaProblem("invalid-recipient");
@@ -634,7 +689,7 @@ export async function recipientAdd(
   }
 
   const addition = await store.addSharedRecipient({
-    accountDid: control.account,
+    accountDid: control.sender,
     mediator: control.mediator,
     recipientDid: recipient.did,
     recipientLongForm: recipient.longForm,
@@ -699,7 +754,7 @@ export async function recipientList(
   const { cursor: written, limit } = control.body;
   const cursor = typeof written === "string" ? readRecipientCursor(written) : null;
   if (
-    (written !== null && (cursor === null || cursor.account !== control.account)) ||
+    (written !== null && (cursor === null || cursor.account !== control.sender)) ||
     !Number.isSafeInteger(limit) ||
     (limit as number) < 1 ||
     (limit as number) > config.maxMembershipPage
@@ -708,7 +763,7 @@ export async function recipientList(
   }
 
   const page = await store.listSharedRecipients(
-    control.account,
+    control.sender,
     control.mediator,
     cursor?.after ?? null,
     limit as number
@@ -729,7 +784,7 @@ export async function recipientList(
       })),
       next_cursor:
         page.more && last !== undefined
-          ? writeCursor([control.account, page.registration, last.addedAt, last.did])
+          ? writeCursor([control.sender, page.registration, last.addedAt, last.did])
           : null,
     } satisfies RecipientsBody,
   };
@@ -749,11 +804,65 @@ export async function recipientRemove(
   }
 
   const did = canonicalDid(control.body.recipient_did);
-  const outcome = await store.removeSharedRecipient(control.account, control.mediator, did);
+  const outcome = await store.removeSharedRecipient(control.sender, control.mediator, did);
   if (outcome === "unknown") {
     return replicaProblem("unknown-account");
   }
   return { type: RECIPIENT_REMOVED, body: { recipient_did: did } satisfies RecipientRemovedBody };
+}
+
+function executionIdOf(value: unknown): ExecutionId | null {
+  return typeof value === "string" &&
+    value !== "" &&
+    new TextEncoder().encode(value).byteLength <= MAX_EXECUTION_ID_BYTES
+    ? (value as ExecutionId)
+    : null;
+}
+
+export async function executionRegister(
+  incoming: Unpacked,
+  context: HandlerContext
+): Promise<Reply | null> {
+  const { store, config, sender } = context;
+  if (sender === null) {
+    return null;
+  }
+  const control = controlOf<ExecutionRegisterBody>(incoming, context, ["execution_id"]);
+  const executionId = control === null ? null : executionIdOf(control.body.execution_id);
+  if (control === null || executionId === null) {
+    return replicaProblem("invalid-message");
+  }
+
+  const registration = await store.registerExecution({
+    replicaDid: control.sender,
+    mediator: control.mediator,
+    executionId,
+    policy: {
+      retainSeconds: config.executionRetainSeconds,
+      maxRetained: config.maxRetainedExecutions,
+      maxReplicas: config.maxExecutionRegistrations,
+    },
+  });
+
+  switch (registration.outcome) {
+    case "unknown":
+      return replicaProblem("unknown-replica");
+    case "full":
+      return replicaProblem("quota");
+    case "registered": {
+      const kept = registration.registration;
+      return {
+        type: EXECUTION_REGISTERED,
+        body: {
+          execution_id: kept.executionId,
+          registration_id: kept.registrationId,
+          created_time: kept.createdTime,
+          retain_until: kept.retainUntil,
+          replicas: kept.replicas,
+        } satisfies ExecutionRegisteredBody,
+      };
+    }
+  }
 }
 
 export const REPLICA_CONTROLS: Record<string, Handler> = {
@@ -765,4 +874,5 @@ export const REPLICA_CONTROLS: Record<string, Handler> = {
   [RECIPIENT_ADD]: recipientAdd,
   [RECIPIENT_LIST]: recipientList,
   [RECIPIENT_REMOVE]: recipientRemove,
+  [EXECUTION_REGISTER]: executionRegister,
 };

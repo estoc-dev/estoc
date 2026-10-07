@@ -41,7 +41,8 @@
       "database_id": "e57679e6-e700-46e9-abbf-a9b529a5a67d"
     }
   ],
-  // Hourly purge of expired messages.
+  // Hourly purge of expired messages and blobs, and of execution
+  // registrations past their retention.
   "triggers": { "crons": ["17 * * * *"] },
   "observability": { "enabled": true },
   // This deployment's own settings, deployed with `wrangler deploy --env

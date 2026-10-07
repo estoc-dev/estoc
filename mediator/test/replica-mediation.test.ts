@@ -51,6 +51,8 @@ const RECIPIENT_LIST = `${PROTOCOL}/recipient-list`;
 const RECIPIENT_REMOVE = `${PROTOCOL}/recipient-remove`;
 const RECIPIENT_REMOVED = `${PROTOCOL}/recipient-removed`;
 const RECIPIENTS = `${PROTOCOL}/recipients`;
+const EXECUTION_REGISTER = `${PROTOCOL}/execution-register`;
+const EXECUTION_REGISTERED = `${PROTOCOL}/execution-registered`;
 const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
 const MEDIATE_REQUEST = "https://didcomm.org/coordinate-mediation/3.0/mediate-request";
 const MEDIATE_GRANT = "https://didcomm.org/coordinate-mediation/3.0/mediate-grant";
@@ -198,6 +200,10 @@ describe("account-register", () => {
         max_retained_bytes: TEST_CONFIG.maxRetainedBytes,
         max_retained_messages: TEST_CONFIG.maxMessagesPerAccount,
         max_deliveries_per_request: 10,
+        execution_retention_seconds: TEST_CONFIG.executionRetainSeconds,
+        max_retained_executions: TEST_CONFIG.maxRetainedExecutions,
+        max_execution_registrations: TEST_CONFIG.maxExecutionRegistrations,
+        max_execution_id_bytes: 256,
       },
     });
     expect((await roster())?.body).toEqual({ entries: [], next_cursor: null });
@@ -811,6 +817,42 @@ describe("the replica limits a deployment sets", () => {
       expect(set(value)).toThrow("MEDIATOR_MAX_ACTIVE_REPLICAS");
     }
     expect(set("4")().maxActiveReplicas).toBe(4);
+  });
+
+  it("include execution registrations, kept a week by default, under the same rule", () => {
+    expect(replicaPolicyFrom(() => undefined)).toMatchObject({
+      executionRetainSeconds: 7 * 24 * 3600,
+      maxRetainedExecutions: 10000,
+      maxExecutionRegistrations: 64,
+    });
+    for (const name of [
+      "MEDIATOR_EXECUTION_RETAIN_SECONDS",
+      "MEDIATOR_MAX_RETAINED_EXECUTIONS",
+      "MEDIATOR_MAX_EXECUTION_REGISTRATIONS",
+    ]) {
+      for (const value of ["0", "-1", "1.5", "many"]) {
+        expect(() => replicaPolicyFrom((asked) => (asked === name ? value : undefined))).toThrow(name);
+      }
+    }
+  });
+
+  it("are read from a Workers environment as from Node's", async () => {
+    const { policyFromEnv } = await import("../src/workers/env.js");
+    const settings = {
+      MEDIATOR_EXECUTION_RETAIN_SECONDS: "60",
+      MEDIATOR_MAX_RETAINED_EXECUTIONS: "7",
+      MEDIATOR_MAX_EXECUTION_REGISTRATIONS: "5",
+    };
+
+    const onWorkers = policyFromEnv(settings as unknown as Parameters<typeof policyFromEnv>[0]);
+    const onNode = replicaPolicyFrom((name) => settings[name as keyof typeof settings]);
+
+    expect(onWorkers).toMatchObject(onNode);
+    expect(onNode).toMatchObject({
+      executionRetainSeconds: 60,
+      maxRetainedExecutions: 7,
+      maxExecutionRegistrations: 5,
+    });
   });
 });
 
@@ -2751,6 +2793,246 @@ describe("account-delete", () => {
     expect((await roster(known(other)))?.body.entries).toHaveLength(1);
     expect((await recipients(known(other)))?.body.entries).toHaveLength(1);
     expect(await waiting(beside)).toHaveLength(1);
+  });
+});
+
+describe("execution-register", () => {
+  let first: Enrollment;
+  let second: Enrollment;
+
+  beforeEach(async () => {
+    first = await enrollment();
+    second = await enrollment();
+    await enroll(first.grant);
+    await enroll(second.grant);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const register = (
+    speaker: Speaker,
+    body: Record<string, unknown> = { execution_id: "execution" },
+    overrides: Partial<IMessage> = {}
+  ) => send(speaker, EXECUTION_REGISTER, body, overrides);
+
+  const removeReplica = (replica: Enrollment) =>
+    send(known(account), REPLICA_REMOVE, { replica_did: replica.replica.did });
+
+  it("lists the sending replica in a new registration, kept as long as the limits promise", async () => {
+    const request = { id: randomUUID() };
+
+    const reply = await register(known(first.replica), undefined, request);
+
+    expect(reply?.type).toBe(EXECUTION_REGISTERED);
+    expect(reply?.thid).toBe(request.id);
+    const createdTime = reply?.body.created_time as number;
+    expect(reply?.body).toEqual({
+      execution_id: "execution",
+      registration_id: expect.any(String),
+      created_time: expect.any(Number),
+      retain_until: createdTime + TEST_CONFIG.executionRetainSeconds,
+      replicas: [first.replica.did],
+    });
+  });
+
+  it("lists each further replica after those before it, and answers a repeat as the registration stands", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const created = await register(known(first.replica));
+    vi.setSystemTime(Date.now() + 60_000);
+
+    const joined = await register(known(second.replica));
+    const repeated = await register(known(first.replica));
+
+    expect(joined?.body).toEqual({
+      ...created?.body,
+      replicas: [first.replica.did, second.replica.did],
+    });
+    expect(repeated?.body).toEqual(joined?.body);
+  });
+
+  it("takes a replica in either spelling of its DID as one replica", async () => {
+    await register(firstContact(first.replica));
+
+    expect((await register(known(first.replica)))?.body.replicas).toEqual([first.replica.did]);
+  });
+
+  it("keeps one registration per account under an execution ID", async () => {
+    const other = await peer4Agent(null);
+    const beside = await enrollment(other);
+    await enroll(beside.grant, firstContact(other));
+
+    const ours = await register(known(first.replica));
+    const theirs = await register(known(beside.replica));
+
+    expect(theirs?.body.registration_id).not.toBe(ours?.body.registration_id);
+    expect(theirs?.body.replicas).toEqual([beside.replica.did]);
+  });
+
+  it("takes an execution ID of as many UTF-8 bytes as the limits allow", async () => {
+    const executionId = "é".repeat(128);
+
+    const reply = await register(known(first.replica), { execution_id: executionId });
+
+    expect(reply?.type).toBe(EXECUTION_REGISTERED);
+    expect(reply?.body.execution_id).toBe(executionId);
+  });
+
+  it("refuses a body that is not exactly one execution ID within the limit, and registers nothing", async () => {
+    for (const body of [
+      {},
+      { execution_id: "" },
+      { execution_id: `${"é".repeat(128)}x` },
+      { execution_id: 1 },
+      { execution_id: null },
+      { execution_id: "execution", replica_did: first.replica.did },
+      { execution_id: "execution", retain_until: 0 },
+    ]) {
+      await expectProblem(await register(known(first.replica), body), "invalid-message");
+    }
+
+    expect((await register(known(second.replica)))?.body.replicas).toEqual([second.replica.did]);
+  });
+
+  it("is refused to any DID but an active replica, and registers nothing", async () => {
+    const added = await addition();
+    await add(added);
+    const stranger = await peer4Agent(mediator.did);
+    await removeReplica(second);
+
+    for (const speaker of [
+      known(account),
+      firstContact(added.recipient),
+      known(second.replica),
+      firstContact(stranger),
+    ]) {
+      await expectProblem(await register(speaker), "unknown-replica");
+    }
+
+    expect((await register(known(first.replica)))?.body.replicas).toEqual([first.replica.did]);
+  });
+
+  it("is refused when addressed to another name of the same deployment", async () => {
+    mediator = await mintIdentity(TEST_CONFIG.publicUrl, ["peer2", "peer4"]);
+    store = memoryStore();
+    app = serve();
+    const member = await enrollment();
+    await enroll(member.grant);
+
+    await expectProblem(
+      await register(known(member.replica), undefined, { to: [mediator.aliases[0].did] }),
+      "unknown-replica"
+    );
+
+    expect((await register(known(member.replica)))?.body.replicas).toEqual([member.replica.did]);
+  });
+
+  it("says nothing to a sender it cannot name", async () => {
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": ENCRYPTED },
+      body: await packAnonymous(plaintext(EXECUTION_REGISTER, { execution_id: "execution" }), mediator.did),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe("");
+  });
+
+  it("registers a request without a return route all the same", async () => {
+    expect(await register(known(second.replica), undefined, { return_route: undefined })).toBeNull();
+
+    expect((await register(known(first.replica)))?.body.replicas).toEqual([
+      second.replica.did,
+      first.replica.did,
+    ]);
+  });
+
+  it("keeps the place of a replica removed afterwards, which registers no more", async () => {
+    await register(known(first.replica));
+    await removeReplica(first);
+
+    await expectProblem(await register(known(first.replica)), "unknown-replica");
+    expect((await register(known(second.replica)))?.body.replicas).toEqual([
+      first.replica.did,
+      second.replica.did,
+    ]);
+  });
+
+  it("lists no more replicas than the limits allow, the removed ones counted, and still answers those it lists", async () => {
+    const third = await enrollment();
+    await addReplica(third.grant);
+    for (const member of [first, second, third]) {
+      await register(known(member.replica));
+    }
+    await removeReplica(first);
+    const fourth = await enrollment();
+    expect((await addReplica(fourth.grant))?.type).toBe(REPLICA_ADDED);
+
+    await expectProblem(await register(known(fourth.replica)), "quota");
+    expect((await register(known(third.replica)))?.body.replicas).toEqual(
+      [first, second, third].map((member) => member.replica.did)
+    );
+  });
+
+  it("creates no registration past the account's limit until one is purged", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const executions = ["first", "second", "third"];
+    for (const execution_id of executions) {
+      await register(known(first.replica), { execution_id });
+    }
+
+    await expectProblem(await register(known(first.replica), { execution_id: "fourth" }), "quota");
+    expect((await register(known(second.replica), { execution_id: "first" }))?.type).toBe(
+      EXECUTION_REGISTERED
+    );
+
+    vi.setSystemTime(Date.now() + TEST_CONFIG.executionRetainSeconds * 1000);
+    await expectProblem(await register(known(first.replica), { execution_id: "fourth" }), "quota");
+    expect(await store.purgeExecutions()).toBe(executions.length);
+    expect((await register(known(first.replica), { execution_id: "fourth" }))?.type).toBe(
+      EXECUTION_REGISTERED
+    );
+  });
+
+  it("is left as it is by mail, its pickup and its acknowledgment", async () => {
+    const created = await register(known(first.replica));
+    await post(forwardOf(first.replica.did, await envelope(first.replica)));
+
+    const delivered = await send(known(first.replica), `${PICKUP}/delivery-request`, { limit: 10 });
+    await send(known(first.replica), `${PICKUP}/messages-received`, {
+      message_id_list: (delivered?.attachments ?? []).map((attachment) => attachment.id),
+    });
+
+    expect(await store.deliveryCount(first.replica.did)).toBe(0);
+    expect((await register(known(first.replica)))?.body).toEqual(created?.body);
+  });
+
+  it("goes with the account, and begins anew once the account registers again", async () => {
+    const before = await register(known(first.replica));
+
+    await send(firstContact(account), ACCOUNT_DELETE, {});
+    await expectProblem(await register(firstContact(first.replica)), "unknown-replica");
+    await registerAccount();
+    await addReplica(first.grant);
+    const after = await register(known(first.replica));
+
+    expect(after?.body.registration_id).not.toBe(before?.body.registration_id);
+    expect(after?.body.replicas).toEqual([first.replica.did]);
+  });
+
+  it("is an unsupported type where replica mediation is off", async () => {
+    const off = serve({ replicaMediation: false });
+
+    const reply = await send(
+      known(first.replica),
+      EXECUTION_REGISTER,
+      { execution_id: "execution" },
+      {},
+      off
+    );
+
+    expect(reply?.body.code).toBe("e.p.msg.unsupported");
   });
 });
 
