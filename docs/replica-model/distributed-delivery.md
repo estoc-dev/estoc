@@ -4,8 +4,8 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — phase-1 delivery profile for the full runtimes
-of one vault, run alone or side by side as the replicas of a replica-mediation
+Status: **implemented** — the delivery profile for the full runtimes of one
+vault, run alone or side by side as the replicas of a replica-mediation
 arrangement.
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
@@ -49,7 +49,7 @@ appear in all capitals.
 ## 1. What it is for
 
 An Estoc message begins as a durable intent in one fixed oriented channel.
-Phase 1 has one executor for each intent: the replica that sends, for the
+Each intent has one executor: the replica that sends, for the
 user's own message, and for an input's automatic outputs the replica that
 answers the input, the one the mediator registered first under the input's
 execution when the input reached several ([section 11](#automatic-effects)).

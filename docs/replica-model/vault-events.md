@@ -73,9 +73,9 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 
 ## 1. Model
 
-A vault is one identity with one seed. Phase 1 runs one writable full vault
-runtime at a time, or several side by side as the replicas of one
-replica-mediation arrangement, each writing as its own author; they share
+A vault is one identity with one seed. It runs one writable full runtime, or
+several side by side as the replicas of one replica-mediation arrangement,
+each writing as its own author; they share
 history only through import and restore, and which of them answers an input
 that reaches them all is
 [distributed-delivery.md](distributed-delivery.md#automatic-effects)'s. A
