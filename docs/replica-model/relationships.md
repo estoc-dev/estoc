@@ -4,11 +4,11 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented**. Ordinary DIDComm channels, discovery and the
-DID profiles for one active writable vault runtime. Phase-1 channel endpoints
-support only `did:peer:4`; mediator DID resolution is independent of that
-restriction. The receive gate, durable receipt, the early private-address
-policy, peer address changes and retry are code, named in
+Status: **implemented**. Ordinary DIDComm channels, discovery and the DID
+profiles for the full runtimes of one vault. Channel endpoints support only
+`did:peer:4`; mediator DID resolution is independent of that restriction.
+The receive gate, durable receipt, the early private-address policy, peer
+address changes and retry are code, named in
 [channels.md section 7](channels.md#folds-and-procedures).
 
 This document uses **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**
@@ -73,7 +73,7 @@ A conforming implementation uses:
 - `distributed-delivery/1.0`; and
 - [vault-events.md](vault-events.md).
 
-Phase 1 uses the mediator's replica-mediation protocol when a mediator is
+A runtime uses the mediator's replica-mediation protocol when a mediator is
 used: one account per arrangement, each runtime a replica picking up under its
 own DID.
 
@@ -101,7 +101,8 @@ Address policy follows [channel identity](channels.md#channel-identity) and
 and dispatch authority their code owns under
 [channels.md section 7](channels.md#folds-and-procedures). Allocation,
 disclosure and contact preferences do not alter those rules. Peers address DIDs;
-phase 1 has one active executor.
+[delivery](distributed-delivery.md#automatic-effects) determines which replica
+answers an input delivered to several replicas.
 
 <a id="10-symmetric-relationship-identity"></a>
 <a id="symmetric-relationship-identity"></a>
@@ -403,5 +404,5 @@ channel-local processing does not promise exactly-once business execution.
 An unconfirmed local successor with a terminal mediation cannot silently branch or
 roll back; explicit new communication is a new channel and new message.
 
-Phase 1 permits one active executor. Import and restore reconstruct state but
-grant no dispatch action for historical intents or automatic responses.
+Import and restore reconstruct state but grant no dispatch action for
+historical intents or automatic responses.

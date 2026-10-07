@@ -4,10 +4,11 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — version-4 content-addressed events. SQLite is the sole persistent vault and interchange
-format for one active writable runtime. This specification defines observable
-store semantics, not SQLite's implementation. Capitalized requirement words
-have their BCP 14 meanings.
+Status: **implemented** — version-4 content-addressed events. SQLite is the
+sole persistent vault and interchange format. Each writable runtime has its
+own local identity and database ownership. This specification defines
+observable store semantics, not SQLite's implementation. Capitalized
+requirement words have their BCP 14 meanings.
 
 [dasl-objects.md](dasl-objects.md) defines object identity;
 [vault-sqlite.md](vault-sqlite.md) owns storage, ownership and recovery procedures;
@@ -55,8 +56,8 @@ an application-admitted message. Folds depend on this event set, never arrival
 or physical row order. An event reference names exact content; it cannot be
 retargeted to another event with similar fields. Content addressing does not
 authenticate the author or the supplied history.
-Authorship is explicit; a replica ID is provenance, not a credential. Phase 1
-has one active writable runtime, and two writable copies cannot share an author.
+Authorship is explicit; a replica ID is provenance, not a credential.
+Two writable copies cannot share an author.
 
 Only explicit event roots retain objects. Local objects and references commit
 atomically. Collection removes only unheld objects, never events or identity
@@ -212,8 +213,9 @@ other generated discriminator is added to the envelope.
 `author` identifies a writable incarnation, not hardware, a person or an
 execution-host key. Creation and portable restore mint a fresh author. Normal
 reopen preserves it; an exact move may preserve it only with the old writer
-permanently stopped. Historical authors are never rewritten. Phase 1 needs no
-replica-creation event or mediator replica registration.
+permanently stopped. Historical authors are never rewritten. An author needs
+no creation event; [`replica.created`](vault-events.md#replica-created) records
+only that a replica is enrolled in a replica-mediation arrangement.
 
 <a id="event-id-and-timestamp"></a>
 
