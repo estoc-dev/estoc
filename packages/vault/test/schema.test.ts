@@ -210,7 +210,6 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   ],
   "message.erased": [{ messageId: OUT, dropCids: [BODY, PHOTO], because: "user" } as Data<"message.erased">, []],
   "message.admitted": [{ sourceEventCid: SOURCE_IN } as Data<"message.admitted">, []],
-  "execution.yielded": [{ executionId: "6a1f3c4e-2b7d-5e9a-8c1b-3d4e5f607182", mediationId: MEDIATION, registrationId: "01J...registration", responderDid: LOCAL } as Data<"execution.yielded">, []],
 };
 
 const OUT_DATA = ALL["message.out"][0] as MessageOut;
@@ -219,7 +218,7 @@ const IN_DATA = ALL["message.in"][0] as MessageIn;
 describe("readVaultEvent", () => {
   it("knows exactly the version-4 types", () => {
     expect([...VAULT_EVENT_TYPES].sort()).toEqual(Object.keys(ALL).sort());
-    expect(VAULT_EVENT_TYPES).toHaveLength(28);
+    expect(VAULT_EVENT_TYPES).toHaveLength(27);
     expect(isVaultEventType("message.out")).toBe(true);
     expect(isVaultEventType("relationship.bound")).toBe(false);
     expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-4 event type/);
@@ -314,12 +313,6 @@ describe("identifiers in payloads", () => {
     rejects("channel.blocked", { ...ALL["channel.blocked"][0], localDid: LONG }, [], /localDid must be a did:peer:4 short form/);
     rejects("channel.blocked", { ...ALL["channel.blocked"][0], peerDid: WEB }, [], /peerDid must be a did:peer:4 short form/);
     rejects("contact.channelsSet", { contactId: CONTACT, channels: [{ localDid: LOCAL, peerDid: WEB }] }, [], /channels\[0\]\.peerDid must be a did:peer:4 short form/);
-  });
-
-  test("a yield names the input by its derived execution ID and the replica answering it by its short form", () => {
-    rejects("execution.yielded", { ...ALL["execution.yielded"][0], executionId: OUT }, [], /executionId must be a canonical UUIDv5/);
-    rejects("execution.yielded", { ...ALL["execution.yielded"][0], responderDid: PEER_LONG }, [], /responderDid must be a did:peer:4 short form/);
-    rejects("execution.yielded", { ...ALL["execution.yielded"][0], registrationId: "" }, [], /registrationId must be a non-empty string/);
   });
 });
 

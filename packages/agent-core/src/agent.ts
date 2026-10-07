@@ -96,7 +96,7 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
   trace: AgentTrace;
-  /** where what a replica-mediation mediator confirmed is kept, the runtime's local options for one; left out, it is kept by this agent alone, and the next one asks again */
+  /** where what a replica-mediation mediator confirmed is kept, with the inputs this runtime's replica left to another: the runtime's local options, for one; left out, it is kept by this agent alone, and the next one asks again and lists what those inputs earn as the user's work */
   confirmations?: Confirmations;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
@@ -325,7 +325,7 @@ export class Agent {
   }
 
   records(): Promise<Recorder> {
-    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses });
+    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses, confirmations: this.confirmations });
   }
 
   /** The work an open leaves to the user. */
@@ -352,9 +352,11 @@ export class Agent {
 
   /**
    * Sockets are closed and waits dropped, and nothing is received or
-   * called after this. A connection under way stops at its next step:
-   * the request it already made is answered first. The runtime stays
-   * open: it is its opener's to close.
+   * called after this. A connection under way stops at its next step,
+   * and so does finding who answers a delivery already taken, whose
+   * outputs are then listed for the user; a request already made is
+   * answered first. The runtime stays open: it is its opener's to
+   * close.
    */
   close(): void {
     if (this.closed) return;
@@ -623,7 +625,8 @@ export class Agent {
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
     const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
-    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox }))) ?? { responder: null, answering: null };
+    const proceed = () => this.refuseClosed();
+    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, confirmations: this.confirmations, proceed }))) ?? { responder: null, answering: null };
     inbound.responder = found.responder;
     if (found.answering === null) {
       if (address !== null) inbound.address = unannounced(address, found.responder === null ? "who answers the input was not found" : found.responder.status === "other" ? "another replica answers the input" : `no replica is known to answer the input: ${found.responder.because}`);

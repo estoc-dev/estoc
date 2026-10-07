@@ -134,7 +134,7 @@ export { recordOwed, recordOwedUnderLock, type Owed } from "./reconcile.js";
 export { afterReceipt, type AfterReceipt, type AfterReceiptOptions } from "./receive/after.js";
 export { callEffects, completeResponse, decideEffects, owesEffects, reactTo, type Called, type DecidedEffects, type EffectOptions, type EffectOutcome, type Reacted } from "./effects.js";
 export { callRotation, completeNotification, decideRotation, notifyRotation, rotate, selectRotation, type RotateOptions, type Rotated, type RotationDecided, type RotationSelected, type RotationTarget } from "./rotate.js";
-export { findResponder, registerExecution, type ExecutionRegistration, type Found, type Responder, type ResponderOptions } from "./responder.js";
+export { findResponder, leftTo, registerExecution, type ExecutionRegistration, type Found, type Responder, type ResponderOptions } from "./responder.js";
 export { materializeSuccessor, successorStanding, type SuccessorStanding } from "./successor.js";
 export { decidePrivateAddress, notifyPrivateAddress, privacyPolicy, privateAddress, unannounced, type PrivacyPolicy, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 export { BUILT_IN_HANDLERS, basicMessage, claimedName, effectTypesOf, empty, handlerFor, handlersOf, reportProblem, reportedProblem, trustPing, userProfile, type Handler, type Input, type Response } from "./handlers/index.js";

@@ -25,7 +25,6 @@ import {
   channelKey,
   channelOf,
   compareChannels,
-  owesOutputs,
   readStoredDocument,
   responseChannel,
   sameChannel,
@@ -49,6 +48,7 @@ import {
   type MessageId,
   type MessageIn,
   type MessageOut,
+  type MissingNotification,
   type MissingResponse,
   type Outbound,
   type Outcome,
@@ -64,6 +64,8 @@ import {
 import { PROFILE } from "./protocol/user-profile.js";
 import type { EffectOptions } from "./effects.js";
 import { claimedName, handlerFor, handlersOf, reportedProblem, trustPing, type Handler } from "./handlers/index.js";
+import type { Confirmations } from "./replica-enrollment.js";
+import { leftTo } from "./responder.js";
 import { successorStanding } from "./successor.js";
 
 export type ViewOptions = Pick<EffectOptions, "handlers"> & {
@@ -71,6 +73,8 @@ export type ViewOptions = Pick<EffectOptions, "handlers"> & {
   privateAddresses?: boolean;
   /** the runtime whose membership of the arrangement routing a mediated predecessor is checked; left out, no runtime is assumed and a rotation is listed as any member of that arrangement could make it */
   author?: ReplicaId;
+  /** where the runtime keeps what its mediator confirmed: with `author`, the outputs of an input that replica left to another replica are no work of the user's here */
+  confirmations?: Pick<Confirmations, "get">;
 };
 
 export type ManualEntry = "eraseMessage" | "deleteContact" | "blockChannels" | "cancel" | "retry" | "completeResponse" | "completeNotification" | "rotate";
@@ -296,9 +300,13 @@ export interface Recorder {
 }
 
 /** `options.handlers` are the ones the runtime's completions run under: the replies their operations still owe are listed with the vault's own. */
-export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewOptions = {}): Recorder {
-  const work = unfinishedWork(fold);
-  const responses = owedResponses(fold, work.responses, handlersOf(options.handlers));
+export async function recorder(fold: VaultFold, readObject: ReadObject, options: ViewOptions = {}): Promise<Recorder> {
+  const unfinished = unfinishedWork(fold);
+  const owed = owedResponses(fold, unfinished.responses, handlersOf(options.handlers));
+  const left = await leftElsewhere(fold, options, owed, unfinished.notifications);
+  const ours = (input: Execution | null): boolean => input === null || !left.has(input.id);
+  const responses = owed.filter(({ execution }) => ours(execution));
+  const work = { ...unfinished, notifications: unfinished.notifications.filter(({ source }) => ours(inputOf(fold, source))) };
   const completes = new Map<MessageId, string[]>();
   for (const { execution, effectType } of responses) completes.set(execution.messageId, [...(completes.get(execution.messageId) ?? []), effectType]);
 
@@ -342,10 +350,25 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
   };
 }
 
+const inputOf = (fold: VaultFold, source: MissingNotification["source"]): Execution | null => (source === null ? null : fold.inbound.ofSource(source.event.cid));
+
 /**
- * The replies an established input this runtime owes its outputs may
- * still be given; one left to another replica is given none here. The
- * receipt is the vault's own candidate. A protocol's reply is a candidate under
+ * The inputs owed `responses` or `notifications` that this runtime's
+ * replica left to another: what they earn is the other's to make, and
+ * no work of the user's here. An input the runtime kept no leave of is
+ * listed, whatever another replica did.
+ */
+async function leftElsewhere(fold: VaultFold, { author, confirmations }: ViewOptions, responses: readonly MissingResponse[], notifications: readonly MissingNotification[]): Promise<Set<ExecutionId>> {
+  const left = new Set<ExecutionId>();
+  if (author === undefined || confirmations === undefined) return left;
+  const inputs = [...responses.map(({ execution }) => execution), ...notifications.map(({ source }) => inputOf(fold, source))];
+  for (const execution of inputs) if (execution !== null && !left.has(execution.id) && (await leftTo(confirmations, author, execution.id)) !== null) left.add(execution.id);
+  return left;
+}
+
+/**
+ * The replies an established input may still be given. The receipt is
+ * the vault's own candidate. A protocol's reply is a candidate under
  * each operation the input's handler declares and no intent records,
  * chosen as a completion chooses it, so that a registered handler
  * replacing a built-in one replaces its candidates too. An erased
@@ -357,7 +380,7 @@ export function recorder(fold: VaultFold, readObject: ReadObject, options: ViewO
 function owedResponses(fold: VaultFold, own: readonly MissingResponse[], handlers: readonly Handler[]): MissingResponse[] {
   const owed = own.filter((response) => response.effectType === PURE_ACK_EFFECT);
   for (const execution of fold.inbound.executions.values()) {
-    if (!owesOutputs(execution)) continue;
+    if (execution.status !== "complete") continue;
     const { source } = execution.firstWitness;
     const handler = handlerFor(handlers, source.event.data.msgType);
     if (handler === null || (handler === trustPing && execution.erased)) continue;

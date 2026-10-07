@@ -19,16 +19,13 @@ import {
   foldVault,
   kindOf,
   unfinishedWork,
-  type Did,
   type MessageId,
   type PendingWork,
 } from "../src/index.js";
-import { AUTHOR2, MEDIATED, MEDIATION, createdDid, expectOrderFree } from "./fold/helpers.js";
+import { MEDIATED, createdDid, expectOrderFree } from "./fold/helpers.js";
 import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const inputOf = (source: { data: { wireMessageId: string } }, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId as never);
-
-const OTHER_REPLICA = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd" as Did;
 
 const workSnapshot = (work: PendingWork) => ({
   outbounds: work.outbounds.map((o) => [o.messageId, o.work.kind]),
@@ -155,32 +152,6 @@ describe("unfinished work", () => {
     blocked(scene, a0, b1);
     vault = await foldScene(scene, keys);
     expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "blocked", because: "the channel is denied" }]]);
-  });
-
-  it("lists none of the replies an input left to another replica lacks, and keeps listing those of an input this runtime answers", async () => {
-    const { scene, keys, a0, b0 } = await vaults();
-    const root = resolved(scene, a0.didId, b0);
-    const ping = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_TYPE, pleaseAck: [""] } });
-    const asking = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
-    const left = scene.add("execution.yielded", { executionId: inputOf(ping, b0, a0), mediationId: MEDIATION, registrationId: "registration-1", responderDid: OTHER_REPLICA });
-    scene.add("execution.yielded", { executionId: inputOf(ping, b0, a0), mediationId: MEDIATION, registrationId: "registration-1", responderDid: OTHER_REPLICA }, { author: AUTHOR2 });
-    const vault = await foldScene(scene, keys);
-    expect(vault.inbound.ofMessage(ping.data.messageId)!.yielded).toEqual(left);
-    expect(vault.inbound.ofMessage(asking.data.messageId)!.yielded).toBeNull();
-    expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[asking.data.messageId, PURE_ACK_EFFECT, channel(a0, b0)]]);
-    expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
-  });
-
-  it("lists no notification of a rotation an input left to another replica selected, and keeps listing a manual one's", async () => {
-    const { scene, keys, a0, a1, b0, b1 } = await vaults();
-    const source = proofFreeReceipt(scene, a0, b0);
-    const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
-    const manual = await rotation(scene, keys, { from: a1, peer: b1, to: a0 });
-    proofFreeReceipt(scene, a1, b1);
-    scene.add("execution.yielded", { executionId: inputOf(source, b0, a0), mediationId: MEDIATION, registrationId: "registration-1", responderDid: OTHER_REPLICA });
-    const vault = await foldScene(scene, keys);
-    expect(vault.continuity.status(decision.cid)).toEqual({ status: "verified" });
-    expect(workSnapshot(unfinishedWork(vault)).notifications).toEqual([[manual.cid, channel(a0, b1), null]]);
   });
 
   it("lists the notification a verified decision permits while its source stays eligible, reuses one already recorded, and reports several as a conflict", async () => {

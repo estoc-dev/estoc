@@ -13,22 +13,18 @@
  * admitted members' witness under the continuity: one admitted
  * complete witness establishes it, and no member withdraws what
  * another established. What an input has produced, or is still owed,
- * is the outbound fold's question; whether this runtime owes it at all
- * is the input's own: a runtime that yielded an input to the replica
- * its mediator registered first under the input's execution makes none
- * of the input's automatic outputs, and lists none as its work.
+ * is the outbound fold's question.
  */
 
 import { compareEvents } from "@estoc/event-store";
 import { storeMessage } from "../document.js";
 import { executionId } from "../ids.js";
-import type { VaultEvent } from "../schema.js";
 import type { Channel, EventCid, ExecutionId, MessageHash, MessageId, MessageIn, WireMessageId } from "../types.js";
 import type { AdmissionFold } from "../admission/model.js";
 import type { ChannelEvidence, PlacedSource, Source } from "./channels.js";
 import type { Continuity, Witness } from "./continuity.js";
 import type { Erasures } from "./held.js";
-import { groupBy, type VaultEventSet } from "./set.js";
+import { groupBy } from "./set.js";
 
 export const EMPTY_MESSAGE_TYPE = "https://didcomm.org/empty/1.0/empty";
 export const PING_RESPONSE_TYPE = "https://didcomm.org/trust-ping/2.0/ping-response";
@@ -99,8 +95,6 @@ export type Execution = {
   readonly contradicting: readonly Member[];
   /** an erasure names the message: its content produces no new work */
   readonly erased: boolean;
-  /** the first record, in canonical event order, of this runtime leaving the input's automatic outputs to another replica; null while they are this runtime's */
-  readonly yielded: VaultEvent<"execution.yielded"> | null;
 } & (
   | { readonly status: "complete"; readonly intentHash: MessageHash; readonly kind: InboundKind; readonly firstWitness: Member }
   | { readonly status: "pending"; readonly because: string; readonly intentHash: MessageHash | null; readonly kind: InboundKind | null; readonly firstWitness: null }
@@ -121,9 +115,8 @@ export interface InboundFold {
   memberOf(sourceEventCid: EventCid): Member | null;
 }
 
-export function foldInbound(set: VaultEventSet, evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): InboundFold {
+export function foldInbound(evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): InboundFold {
   const observed = [...evidence.sources.values()];
-  const yields = groupBy(set.of("execution.yielded"), (event) => event.data.executionId);
   const anonymous = observed.filter((source) => source.status === "anonymous");
   const members = groupBy(observed.filter((source) => source.status === "complete"), messageIdOf);
   const siblings = groupBy(observed.filter((source) => source.status === "incomplete" || source.status === "conflict"), messageIdOf);
@@ -131,7 +124,7 @@ export function foldInbound(set: VaultEventSet, evidence: ChannelEvidence, conti
   const byMessage = new Map<MessageId, Execution>();
   const executions = new Map<ExecutionId, Execution>();
   for (const [messageId, sources] of members) {
-    const execution = executionOf(messageId, sources.sort(byEvent), (siblings.get(messageId) ?? []).sort(byEvent), evidence, continuity, admissions, erasures, yields);
+    const execution = executionOf(messageId, sources.sort(byEvent), (siblings.get(messageId) ?? []).sort(byEvent), evidence, continuity, admissions, erasures);
     byMessage.set(messageId, execution);
     executions.set(execution.id, execution);
   }
@@ -159,24 +152,14 @@ const messageIdOf = (source: Source) => source.event.data.messageId;
  * checked that ID against the observation's own endpoints and wire ID,
  * so they share the channel and the wire ID too.
  */
-function executionOf(
-  messageId: MessageId,
-  sources: readonly PlacedSource[],
-  siblings: readonly Source[],
-  evidence: ChannelEvidence,
-  continuity: Continuity,
-  admissions: AdmissionFold,
-  erasures: Erasures,
-  yields: ReadonlyMap<ExecutionId, readonly VaultEvent<"execution.yielded">[]>
-): Execution {
+function executionOf(messageId: MessageId, sources: readonly PlacedSource[], siblings: readonly Source[], evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): Execution {
   const { channel } = sources[0]!;
   const wireMessageId = sources[0]!.event.data.wireMessageId;
   const members: Member[] = sources.map((source) => ({ source, positive: evidence.positive(source.event.cid), admitted: admissions.admitted(source.event.cid), witness: continuity.witness(source.event.cid) }));
   const admitted = members.filter((member) => member.admitted);
   const intents = new Set<MessageHash>();
   for (const member of admitted) intents.add(member.source.event.data.intentHash);
-  const id = executionId(channel.peerDid, channel.localDid, wireMessageId);
-  const shared = { id, messageId, channel, wireMessageId, members, siblings, erased: erasures.has(messageId), yielded: yields.get(id)?.[0] ?? null };
+  const shared = { id: executionId(channel.peerDid, channel.localDid, wireMessageId), messageId, channel, wireMessageId, members, siblings, erased: erasures.has(messageId) };
   if (intents.size > 1) return { ...shared, contradicting: [], status: "conflict", because: `${intents.size} intents are admitted for one input`, intentHash: null, kind: null, firstWitness: null };
   if (intents.size === 0) return { ...shared, contradicting: [], status: "pending", because: "no observation of the input is admitted", intentHash: null, kind: null, firstWitness: null };
   const intentHash = [...intents][0]!;
@@ -187,9 +170,4 @@ function executionOf(
   const waiting = admitted.find((member) => member.witness.status === "pending") ?? admitted[0]!;
   const because = `no admitted observation is a complete witness: ${(waiting.witness as Exclude<Witness, { status: "complete" }>).because}`;
   return { ...shared, contradicting, status: "pending", because, intentHash, kind, firstWitness: null };
-}
-
-/** Whether this runtime owes an input its automatic outputs: the input is established, and was not left to another replica. */
-export function owesOutputs(execution: Execution): execution is Extract<Execution, { status: "complete" }> {
-  return execution.status === "complete" && execution.yielded === null;
 }

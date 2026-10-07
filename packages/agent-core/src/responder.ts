@@ -6,33 +6,40 @@
  * mediator came to every replica of the account, and each would answer
  * it; so each registers at the mediator under the input's execution,
  * an ID every replica derives alike and the mediator reads nothing
- * from, and the replica the registration lists first answers. Another
- * replica records that it left the input to that one, and lists none
- * of the input's outputs as its work. The mediator keeps a registration
- * for as long as, by default, it keeps the mail it fans out, so a
- * replica that picks the mail up late finds the order the others found.
- * A reply that cannot be read as listing this replica, first or not, a
- * refusal, or a request lost twice leaves the input answered by no
- * automatic step here and its outputs listed for the user: a second
- * answer cannot be taken back, and a missing one can be made by hand.
- * An input owed nothing is registered nowhere.
+ * from, and the replica the registration lists first answers. The
+ * mediator keeps a registration for as long as, by default, it keeps
+ * the mail it fans out, so a replica that picks the mail up late finds
+ * the order the others found. A reply that cannot be read as listing
+ * this replica, first or not, a refusal, or a request lost twice
+ * leaves the input answered by no automatic step here and its outputs
+ * listed for the user: a second answer cannot be taken back, and a
+ * missing one can be made by hand. An input owed nothing is registered
+ * nowhere.
+ *
+ * Another replica answering is this runtime's own knowledge, kept
+ * where what its mediator confirms is: the local options, which
+ * outlive a reopen and every commit and go with no snapshot, so that
+ * the vault holds what was received and sent alone, and the outputs
+ * one replica left to another stay listed on the one answering until
+ * it makes them. It is kept under the replica's ID: a runtime restored
+ * elsewhere, or past an identity reset, finds none and lists the
+ * input's outputs again, and finding none never answers an input,
+ * which only its live receipt may.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
+import { isJsonObject, type VaultRuntime } from "@estoc/event-store";
 import { isPeerDID4 } from "@estoc/did-peer";
-import { InvalidDidDocument, canonicalDidOf, scanVault, vaultDraft, type Did, type ExecutionId, type Keys, type MediationId } from "@estoc/vault";
+import { InvalidDidDocument, canonicalDidOf, scanVault, type Did, type ExecutionId, type Keys, type MediationId, type Replica, type ReplicaId } from "@estoc/vault";
 
 import { responding, type LiveInput, type Responding } from "./action.js";
 import { owesEffects, messageOf, type EffectOptions } from "./effects.js";
 import { MediatorRefused } from "./errors.js";
 import type { MediatorLink } from "./link.js";
-import { decide } from "./procedure.js";
 import type { IMessage } from "./protocol/didcomm.js";
 import { EXECUTION_REGISTER, EXECUTION_REGISTERED } from "./protocol/replica-mediation.js";
-import { control } from "./replica-enrollment.js";
+import { control, type Confirmations } from "./replica-enrollment.js";
 import { note } from "./trace.js";
 
-/** A mediator's registration of an execution, as one reply has it. */
 export interface ExecutionRegistration {
   mediationId: MediationId;
   executionId: ExecutionId;
@@ -54,6 +61,10 @@ export interface ResponderOptions extends Pick<EffectOptions, "handlers" | "ackn
   rotated: boolean;
   /** the link speaking as this runtime's replica at an arrangement's mediator, null while there is none */
   inbox: (mediationId: MediationId) => MediatorLink | null;
+  /** where the runtime keeps what its mediator confirmed, and the inputs its replica left to another with it */
+  confirmations: Confirmations;
+  /** called before each request to the mediator, and before this runtime is given the input to answer; what it throws stops the search */
+  proceed: () => void;
 }
 
 /** Who answers the input, with the authority to make its outputs when this runtime does; no responder for an input owed nothing. */
@@ -65,7 +76,7 @@ export type Found =
 /**
  * The responder of a live input, registered for at the mediator it was
  * picked up from. The registration that lists another replica first is
- * recorded as this runtime leaving the input to it, once.
+ * kept as this runtime's replica leaving the input to it.
  */
 export async function findResponder(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: ResponderOptions): Promise<Found> {
   const fold = await scanVault(runtime.vault, keys);
@@ -74,29 +85,39 @@ export async function findResponder(runtime: VaultRuntime, keys: Keys, live: Liv
   const execution = fold.inbound.ofSource(live.cid);
   if (source === undefined || execution === null) return { responder: null, answering: null };
   const { mediationId } = source.event.data.receivedVia;
-  if (mediationId === null) return { responder: { status: "self", registration: null }, answering: responding(live) };
+  const responder = mediationId === null ? ({ status: "self", registration: null } as const) : await registered(runtime, fold.replicas.replicas.get(runtime.author), mediationId, execution.id, options);
+  if (responder.status !== "self") return { responder, answering: null };
+  options.proceed();
+  return { responder, answering: responding(live) };
+}
 
-  const replica = fold.replicas.replicas.get(runtime.author);
+async function registered(runtime: VaultRuntime, replica: Replica | undefined, mediationId: MediationId, executionId: ExecutionId, options: ResponderOptions): Promise<Responder> {
   const link = options.inbox(mediationId);
   const responder: Responder =
     replica === undefined || replica.mediationId !== mediationId || replica.did === null
       ? { status: "unknown", because: `this runtime has no replica in the arrangement ${mediationId}` }
       : link === null
         ? { status: "unknown", because: `no line to the mediator of ${mediationId}` }
-        : await registerExecution(link, mediationId, execution.id, replica.did);
-  if (responder.status === "other") {
-    const { registrationId, replicas } = responder.registration;
-    await decide(runtime, keys, (fold) => {
-      const current = fold.inbound.executions.get(execution.id);
-      return current !== undefined && current.yielded === null ? [vaultDraft("execution.yielded", { executionId: execution.id, mediationId, registrationId, responderDid: replicas[0]! })] : [];
-    });
-  }
+        : await registerExecution(link, mediationId, executionId, replica.did, options.proceed);
+  if (responder.status === "other") await leave(options.confirmations, runtime.author, responder.registration);
   await note(options.trace ?? null, {
     stream: "diag",
     what: "responder",
-    data: { executionId: execution.id, mediationId, status: responder.status, ...(responder.status === "unknown" ? { because: responder.because } : { responderDid: responder.registration?.replicas[0] }) },
+    data: { executionId, mediationId, status: responder.status, ...(responder.status === "unknown" ? { because: responder.because } : { responderDid: responder.registration?.replicas[0] }) },
   });
-  return responder.status === "self" ? { responder, answering: responding(live) } : { responder, answering: null };
+  return responder;
+}
+
+const leftKey = (replicaId: ReplicaId, executionId: ExecutionId): string => `replica-mediation/execution-left/${replicaId}/${executionId}`;
+
+function leave(confirmations: Confirmations, replicaId: ReplicaId, { mediationId, executionId, registrationId, replicas }: ExecutionRegistration): Promise<void> {
+  return confirmations.set(leftKey(replicaId, executionId), { mediationId, registrationId, responderDid: replicas[0]! });
+}
+
+/** The replica `replicaId` left the execution to, as this runtime kept it; null where it left it to none. */
+export async function leftTo(confirmations: Pick<Confirmations, "get">, replicaId: ReplicaId, executionId: ExecutionId): Promise<Did | null> {
+  const kept = await confirmations.get(leftKey(replicaId, executionId));
+  return isJsonObject(kept) && typeof kept["responderDid"] === "string" ? (kept["responderDid"] as Did) : null;
 }
 
 /**
@@ -104,19 +125,16 @@ export async function findResponder(runtime: VaultRuntime, keys: Keys, live: Liv
  * replica `replicaDid` the link speaks for. A request whose answer is
  * lost is made once more: the mediator answers a repeat as the
  * registration stands, this replica in the place it first took.
+ * `proceed` is called before each request; what it throws is thrown.
  */
-export async function registerExecution(link: MediatorLink, mediationId: MediationId, executionId: ExecutionId, replicaDid: Did): Promise<Responder> {
-  const register = () => control(link, EXECUTION_REGISTER, { execution_id: executionId }, EXECUTION_REGISTERED);
-  let reply: IMessage;
-  try {
-    reply = await register().catch((err: unknown) => {
-      if (err instanceof MediatorRefused) throw err;
-      return register();
-    });
-  } catch (err) {
-    return { status: "unknown", because: messageOf(err) };
-  }
-  return responderOf(reply, mediationId, executionId, replicaDid);
+export async function registerExecution(link: MediatorLink, mediationId: MediationId, executionId: ExecutionId, replicaDid: Did, proceed: () => void = () => {}): Promise<Responder> {
+  const register = (): Promise<IMessage | Error> => {
+    proceed();
+    return control(link, EXECUTION_REGISTER, { execution_id: executionId }, EXECUTION_REGISTERED).catch((err: unknown) => (err instanceof Error ? err : new Error(messageOf(err))));
+  };
+  let reply = await register();
+  if (reply instanceof Error && !(reply instanceof MediatorRefused)) reply = await register();
+  return reply instanceof Error ? { status: "unknown", because: reply.message } : responderOf(reply, mediationId, executionId, replicaDid);
 }
 
 function responderOf(reply: IMessage, mediationId: MediationId, executionId: ExecutionId, replicaDid: Did): Responder {

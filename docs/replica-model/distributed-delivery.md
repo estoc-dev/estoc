@@ -4,8 +4,9 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — phase-1 delivery profile for one active full vault
-runtime.
+Status: **phase 1, implemented** — phase-1 delivery profile for the full runtimes
+of one vault, run alone or side by side as the replicas of a replica-mediation
+arrangement.
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 **SHOULD**, **SHOULD NOT**, and **MAY** as described in BCP 14 when they
@@ -198,9 +199,13 @@ Every instruction to append an event in this document means
 `Vault.events` exposes reads only.
 
 A full vault runtime MUST be able to commit a send while DNS, DID resolution
-and every mediator are unavailable. Before network work, commit the content and
-[message.out](vault-events.md#message-out), freezing its ID, channel, headers
-and user or automatic-effect decision.
+and every mediator are unavailable. Before a message's own network work,
+resolving its recipient, preparing its package and submitting it, commit the
+content and [message.out](vault-events.md#message-out), freezing its ID,
+channel, headers and user or automatic-effect decision. Deciding an automatic
+output may wait on the network itself: the replica answering an input picked
+up at a replica-mediation mediator is registered for there before any of the
+input's automatic intents is committed ([section 11](#automatic-effects)).
 
 `createdTime == null` means the DIDComm `created_time` header is absent. A
 preparer MUST NOT invent it. A user-authored message normally freezes commit
@@ -239,7 +244,7 @@ peer ACK or a missing submission event never supplies dispatch authority.
 ### 4.2 Send an ordinary message
 
 A send commits the content and `message.out`, with its channel and headers
-fixed, before any network work; an explicit user send may select a new
+fixed, before the message's own network work; an explicit user send may select a new
 channel, and an automatic output goes where
 [the response policy](../../packages/vault/src/response-policy.ts) says. What follows is code:
 the intent is [`packages/agent-core/src/send.ts`](../../packages/agent-core/src/send.ts), its one
@@ -744,14 +749,20 @@ answers it. An input picked up at a replica-mediation mediator reached
 every replica of the account. Each replica that the input still owes an
 output registers under the input's `executionId` at that mediator
 (`execution-register`), and the replica the registration lists first
-answers the input. Every other replica records
-[`execution.yielded`](vault-events.md#execution-yielded), creates no intent
-for the execution and lists none of its outputs as unfinished work. A
+answers the input. Every other replica creates no intent for the execution
+and keeps, in its runtime's local state under its replica ID, that it left
+the input to that replica. The vault records neither the registration nor
+the leave, so no snapshot, import or restore carries them. A runtime lists
+an input's outputs as unfinished work unless its current replica keeps a
+leave of the input, whatever another replica did; a missing leave lists
+the outputs again and authorizes no registration, intent or call. A
 replica that cannot read the registration as listing itself, because the
 mediator refused it, the request was lost twice or the reply lists other
-replicas, creates no intent either and records no yield, so the outputs
-are listed for manual completion. An input that owes no output is not
-registered. Who answers an input is
+replicas, creates no intent either and keeps no leave, so the outputs are
+listed for manual completion. A closed agent starts no registration and
+answers no input, even one its earlier registration lists first; what the
+inputs it took still owe is listed for manual completion. An input that
+owes no output is not registered. Who answers an input is
 [`packages/agent-core/src/responder.ts`](../../packages/agent-core/src/responder.ts).
 
 Other external effects MUST commit their protocol-defined portable intent
@@ -759,8 +770,9 @@ before execution and use that protocol's idempotency or explicit at-least-once
 contract. The message fold does not validate those payloads.
 
 The registration does not provide process-level exactly-once execution: the
-replica listed first may stop before it answers, and its outputs are then
-listed only for its own manual completion.
+replica listed first may stop before it answers, and the other replicas,
+keeping their leaves, list none of the input's outputs. An explicit completion
+on any replica may still make them.
 
 <a id="built-in-independent-operations"></a>
 

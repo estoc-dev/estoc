@@ -69,7 +69,7 @@ const refused = (): Response => new Response("no", { status: 500 });
 type Holder = Pick<Fresh, "runtime" | "keys">;
 
 /** The rotations listed off the holder's fold for no runtime in particular. */
-const unassumed = async (holder: Holder) => recorder(await scanVault(holder.runtime.vault, holder.keys), objectReader(holder.runtime.vault.objects)).pending().rotationCandidates;
+const unassumed = async (holder: Holder) => (await recorder(await scanVault(holder.runtime.vault, holder.keys), objectReader(holder.runtime.vault.objects))).pending().rotationCandidates;
 
 async function parties(): Promise<{ alice: DirectParty; bob: DirectParty }> {
   return { alice: await directParty(1, "https://alice.example/didcomm", ALICE), bob: await directParty(2, "https://bob.example/didcomm", BOB) };
@@ -225,7 +225,7 @@ describe("records", () => {
     const whole = await scanVault(alice.runtime.vault, alice.keys);
     const source = whole.channels.sources.get(cid)!;
     const partial = VaultEventSet.of([...whole.set.all()].filter((event) => event.cid !== source.event.data.peerResolutionEventCid));
-    const before = recorder(foldVault(partial, await checkVault(partial, alice.keys, read)), read);
+    const before = await recorder(foldVault(partial, await checkVault(partial, alice.keys, read)), read);
     expect(before.channels()).toEqual([pair]);
     const record = await before.channel(pair);
     expect([record.messages, record.peerName]).toEqual([[], null]);
@@ -395,7 +395,7 @@ describe("records", () => {
       return { ...envelope, cid: eventCidOf(envelope) };
     });
     const set = VaultEventSet.of(retimed);
-    const record = await recorder(foldVault(set, await checkVault(set, alice.keys, read)), read).channel(pair);
+    const record = await (await recorder(foldVault(set, await checkVault(set, alice.keys, read)), read)).channel(pair);
     expect(record.messages.map(({ at, body }) => [at, body.state === "available" ? body.body : body.state])).toEqual([[shownAt, { content: "first" }]]);
     expect(record.observations.map(({ at, disposition }) => [at, disposition.status])).toEqual([
       [earlier, "pending-admission"],

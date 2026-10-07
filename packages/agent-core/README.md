@@ -61,7 +61,7 @@ races, crashes, restore, closing and a hostile peer.
 | What does the vault owe on its own? | `reconcile.ts` | `recordOwed`, `recordOwedUnderLock` |
 | What does a peer's acknowledgement earn? | `acknowledgements.ts` | `recordAcks` |
 | What follows a receipt? | `receive/after.ts` | `afterReceipt` |
-| Which replica answers a live input? | `responder.ts` | `findResponder`, `registerExecution` |
+| Which replica answers a live input, and which inputs did this one leave to another? | `responder.ts` | `findResponder`, `registerExecution`, `leftTo` |
 | What does an input earn on its own? | `effects.ts` | `reactTo`, `decideEffects`, `callEffects`, `owesEffects`, `completeResponse` |
 | What does a protocol answer? | `handlers/` | `Handler`, `handlerFor`, `BUILT_IN_HANDLERS`, `effectTypesOf` |
 | When does a disclosed address give way? | `privacy.ts` | `privateAddress`, `decidePrivateAddress`, `notifyPrivateAddress`, `privacyPolicy` |

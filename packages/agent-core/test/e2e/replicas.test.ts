@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, leftTo, type AgentOptions, type Handler } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
-import { LONG, channelOf, foldOf, restoredFrom, run, snapshotOf, stopAll, until, type Running } from "./running.js";
+import { LONG, channelOf, foldOf, imported, restart, restoredFrom, run, snapshotOf, stopAll, until, type Running } from "./running.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -30,6 +30,11 @@ const ping = { type: PING_TYPE, body: { response_requested: true }, pleaseAck: [
 const seen = (mediator: FakeMediator, type: string): number => mediator.seenTypes.filter((each) => each === type).length;
 
 const replicaOf = async (running: Running): Promise<Did> => (await foldOf(running)).replicas.replicas.get(running.runtime.author)!.did!;
+
+/** The replica each input `running` holds was left to, as its runtime keeps it, null where it was left to none. */
+const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map((executionId) => leftTo(running.runtime.local.options, running.runtime.author, executionId)));
+
+const owed = async (running: Running): Promise<string[]> => (await running.agent.pending()).missingResponses.map(({ effectType }) => effectType);
 
 const toAlice = (alice: Running, bob: Running) => ({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid });
 
@@ -57,7 +62,7 @@ function takenWhole(mediator: FakeMediator, replicaDid: Did): Promise<void> {
 }
 
 describe("the replicas of one account taking the same input", () => {
-  it("leave its automatic outputs to the replica the mediator registered first, whichever picked it up first: the others record that they left it, and list none of its replies as their work", { timeout: LONG }, async () => {
+  it("leave its automatic outputs to the replica the mediator registered first, whichever picked it up first: the others keep that they left it, and list none of its replies as their work", { timeout: LONG }, async () => {
     const { mediator, alice, elsewhere, bob } = await twoReplicas({ privateAddresses: false, handlers: [echo] });
     const first = await replicaOf(elsewhere);
     const second = await replicaOf(alice);
@@ -91,11 +96,11 @@ describe("the replicas of one account taking the same input", () => {
     ]);
     expect([seen(mediator, FORWARD) - forwards, bob.inbounds.length]).toEqual([2 + 3, 3]);
 
-    const left = await foldOf(alice);
-    expect(left.set.of("message.out")).toEqual([]);
-    const byId = ([a]: string[], [b]: string[]) => (a! < b! ? -1 : 1);
-    expect(left.set.of("execution.yielded").map(({ data }) => [data.executionId, data.responderDid]).sort(byId)).toEqual([...left.inbound.executions.values()].map((execution) => [execution.id, first]).sort(byId));
-    expect((await foldOf(elsewhere)).set.of("execution.yielded")).toEqual([]);
+    expect((await foldOf(alice)).set.of("message.out")).toEqual([]);
+    expect([await leftBy(alice), await leftBy(elsewhere)]).toEqual([
+      [first, first],
+      [null, null],
+    ]);
     expect(await alice.agent.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     const shown = await (await alice.agent.records()).channel(channelOf(alice.party.did, bob.party.did));
     expect(shown.messages.filter((message) => message.direction === "in").map(({ manualAction, completes }) => [manualAction, completes])).toEqual([
@@ -147,8 +152,104 @@ describe("the replicas of one account taking the same input", () => {
   });
 });
 
+describe("that a replica left an input to another", () => {
+  test("stays with its runtime, through a restart and a clearing of its caches; no snapshot carries it either way, and a runtime with another replica lists the input's outputs again and makes none of them", { timeout: LONG }, async () => {
+    const down: Handler = { ...echo, respond: async () => Promise.reject(new Error("the echo is down")) };
+    const options = { liveDelivery: false, privateAddresses: false, handlers: [down] };
+    const mediator = await newMediator();
+    const first = await run(mediator, 1, ALICE, options);
+    const second = await restoredFrom(first, await snapshotOf(first), options);
+    const bob = await run(mediator, 2, BOB, { liveDelivery: false, privateAddresses: false });
+
+    await bob.agent.send(toAlice(first, bob), { type: REQUEST, body: { echo: "this" }, pleaseAck: null }, { messageId: REQUESTED });
+    for (const replica of [first, second]) {
+      await replica.agent.connect();
+      await replica.agent.settled();
+    }
+    expect([first, second].map(({ inbounds }) => inbounds.map(({ responder, reacted }) => [responder?.status, reacted?.effects.map((effect) => effect.outcome) ?? null]))).toEqual([[["self", ["refused"]]], [["other", null]]]);
+    expect([await owed(first), await owed(second), await leftBy(second)]).toEqual([[ECHO], [], [await replicaOf(first)]]);
+
+    await imported(first, await snapshotOf(second));
+    await imported(second, await snapshotOf(first));
+    await Promise.all([first.agent.localStateChanged(), second.agent.localStateChanged()]);
+    expect([await owed(first), await owed(second)]).toEqual([[ECHO], []]);
+
+    await restart(second, options);
+    await second.runtime.local.clearCaches();
+    expect(await owed(second)).toEqual([]);
+
+    const registrations = seen(mediator, EXECUTION_REGISTER);
+    const elsewhere = await restoredFrom(second, await snapshotOf(second), options);
+    await restart(second, options, { resetIdentity: true });
+    for (const runtime of [elsewhere, second]) expect([await owed(runtime), await leftBy(runtime), (await foldOf(runtime)).set.of("message.out")]).toEqual([[ECHO], [null], []]);
+    expect(seen(mediator, EXECUTION_REGISTER)).toBe(registrations);
+  });
+});
+
+describe("a replica closed while it finds who answers its inputs", () => {
+  test("asks for no registration once closed, and leaves the inputs it took to a replica still open, which answers those it did not register for", { timeout: LONG }, async () => {
+    const options = { liveDelivery: false, privateAddresses: false };
+    const mediator = await newMediator();
+    const alice = await run(mediator, 1, ALICE, options);
+    const elsewhere = await restoredFrom(alice, await snapshotOf(alice), options);
+    const bob = await run(mediator, 2, BOB, options);
+    const aliceReplica = await replicaOf(alice);
+    let answer = (): void => undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    mediator.intercept = async (msg, from) => {
+      if (msg.type === EXECUTION_REGISTER && from !== null && canonicalDid(from) === aliceReplica) await answered;
+      return undefined;
+    };
+
+    await bob.agent.send(toAlice(alice, bob), { ...hello("first"), pleaseAck: [""] });
+    await bob.agent.send(toAlice(alice, bob), { ...hello("second"), pleaseAck: [""] });
+    expect(await alice.agent.connect()).toMatchObject([{ drained: { acked: 2, ended: "empty" } }]);
+    await until("alice registers for the first", () => seen(mediator, EXECUTION_REGISTER) === 1);
+    alice.agent.close();
+    answer();
+    await alice.agent.settled();
+    expect(seen(mediator, EXECUTION_REGISTER)).toBe(1);
+    expect(alice.inbounds.map(({ responder, reacted }) => [responder, reacted])).toEqual([
+      [null, null],
+      [null, null],
+    ]);
+    expect([(await foldOf(alice)).set.of("message.out"), await owed(alice)]).toEqual([[], [PURE_ACK_EFFECT, PURE_ACK_EFFECT]]);
+
+    await elsewhere.agent.connect();
+    await elsewhere.agent.settled();
+    expect(elsewhere.inbounds.map(({ responder, reacted }) => [responder?.status, reacted?.effects.map((effect) => [effect.effectType, effect.outcome]) ?? null])).toEqual([
+      ["other", null],
+      ["self", [[PURE_ACK_EFFECT, "created"]]],
+    ]);
+    expect(await bob.agent.connect()).toMatchObject([{ drained: { acked: 1, ended: "empty" } }]);
+    await bob.agent.settled();
+    expect(bob.inbounds.map(({ received }) => received.outcome)).toEqual(["received"]);
+  });
+
+  test("asks no more for a registration lost on the way", { timeout: LONG }, async () => {
+    const mediator = await newMediator();
+    const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
+    const bob = await run(mediator, 2, BOB, { privateAddresses: false });
+    let lose = (): void => undefined;
+    const lost = new Promise<void>((resolve) => (lose = resolve));
+    mediator.intercept = async (msg) => {
+      if (msg.type !== EXECUTION_REGISTER) return undefined;
+      await lost;
+      throw new Error("the mediator fell over");
+    };
+
+    await bob.agent.send(toAlice(alice, bob), ping, { messageId: PING });
+    await until("alice registers for the Ping", () => seen(mediator, EXECUTION_REGISTER) === 1);
+    alice.agent.close();
+    lose();
+    await alice.agent.settled();
+    expect([seen(mediator, EXECUTION_REGISTER), alice.inbounds.map(({ responder, reacted }) => [responder, reacted])]).toEqual([1, [[null, null]]]);
+    expect(await owed(alice)).toEqual([PING_RESPONSE_EFFECT, PURE_ACK_EFFECT]);
+  });
+});
+
 describe("a replica that cannot read its registration of an input", () => {
-  test("refused makes none of the input's outputs and records no leave: they are listed for the user, and a completion makes them", { timeout: LONG }, async () => {
+  test("refused makes none of the input's outputs and keeps no leave: they are listed for the user, and a completion makes them", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
     const bob = await run(mediator, 2, BOB, { privateAddresses: false });
@@ -160,8 +261,7 @@ describe("a replica that cannot read its registration of an input", () => {
     await alice.agent.settled();
     expect(alice.inbounds[0]).toMatchObject({ responder: { status: "unknown", because: expect.stringMatching(/quota/) }, reacted: null });
     expect(seen(mediator, EXECUTION_REGISTER)).toBe(1);
-    const fold = await foldOf(alice);
-    expect([fold.set.of("message.out"), fold.set.of("execution.yielded"), seen(mediator, FORWARD) - forwards]).toEqual([[], [], 1]);
+    expect([(await foldOf(alice)).set.of("message.out"), await leftBy(alice), seen(mediator, FORWARD) - forwards]).toEqual([[], [null], 1]);
 
     const owed = (await alice.agent.pending()).missingResponses;
     expect(owed.map(({ effectType }) => effectType)).toEqual([PING_RESPONSE_EFFECT, PURE_ACK_EFFECT]);
@@ -187,7 +287,7 @@ describe("a replica that cannot read its registration of an input", () => {
     expect(seen(mediator, EXECUTION_REGISTER)).toBe(2);
   });
 
-  test("answered with a registration not listing it makes none of the input's outputs and records no leave", { timeout: LONG }, async () => {
+  test("answered with a registration not listing it makes none of the input's outputs and keeps no leave", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
     const bob = await run(mediator, 2, BOB, { privateAddresses: false });
@@ -201,8 +301,7 @@ describe("a replica that cannot read its registration of an input", () => {
     await until("alice has the Ping", () => alice.inbounds.length === 1);
     await alice.agent.settled();
     expect(alice.inbounds[0]).toMatchObject({ responder: { status: "unknown", because: "execution-registered does not list this replica" }, reacted: null });
-    const fold = await foldOf(alice);
-    expect([fold.set.of("message.out"), fold.set.of("execution.yielded"), (await alice.agent.pending()).missingResponses.length]).toEqual([[], [], 2]);
+    expect([(await foldOf(alice)).set.of("message.out"), await leftBy(alice), (await alice.agent.pending()).missingResponses.length]).toEqual([[], [null], 2]);
   });
 });
 
