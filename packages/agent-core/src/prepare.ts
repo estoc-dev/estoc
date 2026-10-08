@@ -1,6 +1,6 @@
 /**
- * Preparing turns a queued intent into the one exact envelope every
- * transport call of it will carry. The intent fixed the channel;
+ * Preparing turns a queued intent into an exact envelope every
+ * transport call of it carries. The intent fixed the channel;
  * preparing chooses nothing about it, only reads what the channel
  * needs on the wire: the sender under its long form until an admitted
  * receipt shows the peer has written to that address and under its
@@ -15,23 +15,22 @@
  * in evidence waits, which is not a key change.
  * Everything is decided under the writer lock over the fold read
  * there, and the envelope object, the resolution evidence and the
- * package are committed in that one lock; the fold holds the package
- * from then on, whatever rotates, confirms or resolves later. A
+ * preparation are committed in that one lock; the fold holds the
+ * preparation from then on, whatever rotates, confirms or resolves
+ * later, and no second one of the message is made beside it. A
  * resolution committed here is evidence an observation may have
  * waited for — the document of the issuer of the proof it carried —
  * so what the vault owes is recorded under the same lock by every
- * preparation of an open message, whether it made the package, found
- * it held already or found the message takes none now, before the
- * package's dispatch or any other work reads the fold. That pass is
- * owed by every preparation, not only the one that committed the
- * resolution: a commit refused after the resolution was durable, the
- * package's or the pass's own, leaves the resolution in the fold and
- * the work over it undone, and the next preparation or dispatch of
- * any message completes it — the very evidence may show the message's
- * own peer replaced, and the package it made stands uncarried.
+ * preparation step of an open message, whether it made a preparation,
+ * found one held already or found the message takes none now, before
+ * any dispatch or other work reads the fold. That pass is owed by
+ * every step, not only the one that committed the resolution: a commit
+ * refused after the resolution was durable, the preparation's or the
+ * pass's own, leaves the resolution in the fold and the work over it
+ * undone, and the next preparation or dispatch of any message
+ * completes it — the very evidence may show the message's own peer
+ * replaced, and the preparation it made stands uncarried.
  */
-
-import { v7 as uuidv7 } from "uuid";
 
 import { isShortForm } from "@estoc/did-peer";
 import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
@@ -63,8 +62,7 @@ import {
   type MessageId,
   type MessageOut,
   type Outbound,
-  type Package,
-  type PackageId,
+  type Preparation,
   type PublicKey,
   type ScanOptions,
   type StoredMessageDocument,
@@ -90,21 +88,21 @@ export interface PrepareOptions {
   didcomm: DidcommApi;
   /** the operations beyond the built-in ones whose intents this runtime produces, as its handlers declare them; an intent of another operation is no work of this runtime's */
   effectTypes?: readonly string[];
-  /** the seal of every package goes to the `envelope` stream */
+  /** the seal of every preparation goes to the `envelope` stream */
   trace?: AgentTrace;
   /** the clock expiry is compared with, in milliseconds since the epoch; `Date.now` when left out */
   now?: () => number;
 }
 
 export type Prepared =
-  | { outcome: "prepared"; messageId: MessageId; packageId: PackageId; prepared: VaultEvent<"message.prepared">; resolved: VaultEvent<"peer.resolved"> }
-  /** the package the fold already holds for the message: no package was written */
-  | { outcome: "reused"; messageId: MessageId; package: Package }
-  /** the fold asks for no package: the message is closed, in conflict, or not the sender's to prepare now */
+  | { outcome: "prepared"; messageId: MessageId; prepared: VaultEvent<"message.prepared">; resolved: VaultEvent<"peer.resolved"> }
+  /** the one valid preparation the fold already holds for the message: none was written */
+  | { outcome: "reused"; messageId: MessageId; preparation: Preparation }
+  /** the fold asks for no preparation, or holds several to choose among: the message is closed, in conflict, or not the sender's to prepare now */
   | { outcome: "none"; messageId: MessageId; because: string }
-  /** the package cannot be made from what is here now, and what is missing may still arrive: the message stays queued */
+  /** the preparation cannot be made from what is here now, and what is missing may still arrive: the message stays queued */
   | { outcome: "pending"; messageId: MessageId; because: string }
-  /** the expiry had come when the message was looked at, whether or not a package was made: the message is terminated */
+  /** the expiry had come when the message was looked at, whether or not a preparation was made: the message is terminated */
   | { outcome: "expired"; messageId: MessageId; failed: VaultEvent<"delivery.failed"> };
 
 /** The key every piece of work on one outbound runs under, serially per runtime (`serially`): its preparation here, its transport call after. */
@@ -125,9 +123,9 @@ export function hasExpired(intent: MessageOut, now: () => number): boolean {
  * Why a message takes no more work whatever holds it up otherwise: its
  * intent is in conflict, it is submitted, or it is terminated. Null
  * while it is open. What makes the message wait — a blocked channel,
- * a package whose evidence is not here — comes after this, and after
+ * a preparation whose evidence is not here — comes after this, and after
  * its expiry: an expiry that has come terminates the intent itself,
- * without a package and whatever else the fold says.
+ * without a preparation and whatever else the fold says.
  */
 export function closedBecause(outbound: Outbound): string | null {
   if (outbound.intent.status === "conflict") return outbound.intent.because;
@@ -136,12 +134,12 @@ export function closedBecause(outbound: Outbound): string | null {
   return null;
 }
 
-/** What the expiry of an open message came before, for the trace: the package it has none of, or the call of the one it has. */
+/** What the expiry of an open message came before, for the trace: the preparation it has none of, or the call of one it has. */
 export function expiryPhase(outbound: Outbound): "preparation" | "dispatch" {
-  return outbound.package === null ? "preparation" : "dispatch";
+  return outbound.preparations.length === 0 ? "preparation" : "dispatch";
 }
 
-/** The package of one queued outbound: made here, or the one the fold already holds. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
+/** The preparation of one queued outbound: made here, or the one valid preparation the fold already holds. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
 export function prepare(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: PrepareOptions): Promise<Prepared> {
   return serially(runtime, outboundWorkKey(messageId), async () => {
     await recordOwedAcceptance(runtime, messageId);
@@ -151,7 +149,7 @@ export function prepare(runtime: VaultRuntime, keys: Keys, messageId: MessageId,
   });
 }
 
-/** Every outbound the fold says needs a package, in message order. */
+/** Every outbound the fold says needs a preparation, in message order. */
 export async function prepareAll(runtime: VaultRuntime, keys: Keys, options: PrepareOptions): Promise<Prepared[]> {
   const fold = await scanVault(runtime.vault, keys, scanOptions(options));
   const results: Prepared[] = [];
@@ -180,17 +178,26 @@ export async function prepareUnderLock(held: Held, keys: Keys, messageId: Messag
   if (closed !== null) return { result: { outcome: "none", messageId, because: closed }, notes: [] };
   const intent = (outbound.intent as { data: MessageOut }).data;
   if (hasExpired(intent, options.now ?? Date.now)) return expireUnderLock(held, messageId, expiryPhase(outbound));
-  const settled = await packageOf(held, keys, fold, outbound, intent, options);
+  const settled = await preparationOf(held, keys, fold, outbound, intent, options);
   settled.notes.push(...(await owedRecorded(held, keys, messageId)));
   return settled;
 }
 
-/** The package of an open message: the one the fold holds, the one made and committed now, or why there is none yet or none at all. */
-async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions): Promise<Settled<Prepared>> {
+/**
+ * The preparation of an open message: the one valid preparation the
+ * fold holds, the one made and committed now, or why there is none yet
+ * or none at all. Several valid ones are no work for this step: which
+ * of them the runtime carries is not the fold's to say.
+ */
+async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions): Promise<Settled<Prepared>> {
   const { messageId, work } = outbound;
   const notes: Note[] = [];
   if (work.kind === "none") return { result: { outcome: "none", messageId, because: work.because }, notes };
-  if (work.kind === "dispatch") return { result: { outcome: "reused", messageId, package: work.package }, notes };
+  if (work.kind === "dispatch") {
+    const [only, ...others] = work.candidates;
+    if (others.length > 0) return { result: { outcome: "none", messageId, because: `${work.candidates.length} valid preparations of the message are here, and which one to carry is to be chosen` }, notes };
+    return { result: { outcome: "reused", messageId, preparation: only! }, notes };
+  }
   const sender = outbound.sender as LocalDidEntity;
   const channel = outbound.channel as Channel;
   const ends = await endsOf(fold, keys, sender, channel, intent.recipientDid);
@@ -201,7 +208,6 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
   const plaintext = wirePlaintext(intentOfOutbound(intent).value, messageId, content.document, { from: ends.from, to: [channel.peerDid], fromPrior: ends.fromPrior }, (root) => content.payloads.get(root) as Uint8Array);
   const packed = await pack(fold, sender, ends, plaintext, options.didcomm);
   const envelope = envelopeOf(packed);
-  const packageId = uuidv7() as PackageId;
   const resolved = await commitResolution(held, { resolution: ends.resolution, localKeyName: sender.keyNames.keyAgreement, peerPublicKey: ends.peerPublicKey });
   const [prepared] = (
     await held.commit(
@@ -209,7 +215,6 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
       [
         vaultDraft("message.prepared", {
           messageId,
-          packageId,
           senderDidId: sender.didId,
           localKeyName: sender.keyNames.keyAgreement,
           recipientDid: channel.peerDid,
@@ -222,8 +227,8 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
       ]
     )
   ).map(readVaultEvent);
-  notes.push({ stream: "envelope", what: "seal", data: { ...sealData(packed, plaintext as unknown as IMessage), messageId, packageId } });
-  return { result: { outcome: "prepared", messageId, packageId, prepared: prepared as VaultEvent<"message.prepared">, resolved }, notes };
+  notes.push({ stream: "envelope", what: "seal", data: { ...sealData(packed, plaintext as unknown as IMessage), messageId, preparationEventCid: prepared!.cid } });
+  return { result: { outcome: "prepared", messageId, prepared: prepared as VaultEvent<"message.prepared">, resolved }, notes };
 }
 
 /**
@@ -257,7 +262,7 @@ interface Ends {
  * document authorizes for key agreement, didcomm can seal to, and on
  * the sender's own curve; the first such in document order. A
  * document authorizing none is not a key change — the document is
- * immutable — but no package to it can be made.
+ * immutable — but no preparation to it can be made.
  */
 async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, channel: Channel, recipientDid: Did): Promise<Ends | { pending: string } | { because: string }> {
   const known = knownLongForms(fold);
@@ -334,7 +339,7 @@ function agrees(key: PublicKey, type: DecodedPublicKey["type"]): boolean {
 
 type Content = { document: StoredMessageDocument; payloads: Map<Cid, Uint8Array> };
 
-/** An object that is missing, damaged or too large for the wire is a reason the package cannot be made now, not a throw. */
+/** An object that is missing, damaged or too large for the wire is a reason the preparation cannot be made now, not a throw. */
 async function readContent(held: Held, intent: MessageOut): Promise<Content | { pending: string }> {
   const read = objectReader(held.objects, MAX_CONTENT_BYTES);
   const bytes = await read(intent.bodyCid);

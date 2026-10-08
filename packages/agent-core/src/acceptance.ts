@@ -5,27 +5,27 @@
  * recorded before anything else is done with its message: no other
  * call, no cancellation, no expired failure in its place. A runtime
  * opened afresh knows nothing of it: the message shows as prepared, and
- * a manual retry may carry the same package again.
+ * a manual retry may carry the same envelope again.
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { VaultEventSet, readVaultEvent, vaultDraft, type MessageId, type PackageId, type VaultEvent } from "@estoc/vault";
+import { VaultEventSet, readVaultEvent, vaultDraft, type EventReference, type MessageId, type VaultEvent } from "@estoc/vault";
 
-const unrecorded = new WeakMap<VaultRuntime, Map<MessageId, PackageId>>();
+const unrecorded = new WeakMap<VaultRuntime, Map<MessageId, EventReference<"message.prepared">>>();
 
-/** `delivery.submitted` for the package the wire accepted, under the lock; one already recording it is returned instead of being repeated. */
-export async function recordAcceptance(runtime: VaultRuntime, messageId: MessageId, packageId: PackageId): Promise<VaultEvent<"delivery.submitted">> {
+/** `delivery.submitted` for the preparation whose envelope the wire accepted, under the lock; one already recording it is returned instead of being repeated. */
+export async function recordAcceptance(runtime: VaultRuntime, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<VaultEvent<"delivery.submitted">> {
   let owed = unrecorded.get(runtime);
   if (owed === undefined) {
     owed = new Map();
     unrecorded.set(runtime, owed);
   }
-  owed.set(messageId, packageId);
+  owed.set(messageId, preparationEventCid);
   const recorded = await runtime.locked(async (held) => {
     const set = await VaultEventSet.from(held.events.scan());
-    const existing = set.of("delivery.submitted").find((event) => event.data.messageId === messageId && event.data.packageId === packageId);
+    const existing = set.of("delivery.submitted").find((event) => event.data.messageId === messageId && event.data.preparationEventCid === preparationEventCid);
     if (existing !== undefined) return existing;
-    const [event] = (await held.commit([], [vaultDraft("delivery.submitted", { messageId, packageId })])).map(readVaultEvent);
+    const [event] = (await held.commit([], [vaultDraft("delivery.submitted", { messageId, preparationEventCid })])).map(readVaultEvent);
     return event as VaultEvent<"delivery.submitted">;
   });
   owed.delete(messageId);
@@ -33,8 +33,8 @@ export async function recordAcceptance(runtime: VaultRuntime, messageId: Message
   return recorded;
 }
 
-/** The acceptance of a package of `messageId` this runtime saw and has not recorded, recorded now; null when there is none. */
+/** The acceptance of a preparation of `messageId` this runtime saw and has not recorded, recorded now; null when there is none. */
 export async function recordOwedAcceptance(runtime: VaultRuntime, messageId: MessageId): Promise<VaultEvent<"delivery.submitted"> | null> {
-  const packageId = unrecorded.get(runtime)?.get(messageId);
-  return packageId === undefined ? null : recordAcceptance(runtime, messageId, packageId);
+  const preparationEventCid = unrecorded.get(runtime)?.get(messageId);
+  return preparationEventCid === undefined ? null : recordAcceptance(runtime, messageId, preparationEventCid);
 }

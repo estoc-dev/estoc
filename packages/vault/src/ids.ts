@@ -19,9 +19,9 @@ import type { FactId } from "@estoc/continuity";
 
 import { InvalidIdentifier } from "./errors.js";
 import { isDerivedId, isDid, isEntityId, isMintedId } from "./syntax.js";
-import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
+import type { Channel, Did, DidId, EffectKey, EventCid, EventReference, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
-export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity"] as const;
+export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity", "forward"] as const;
 
 export type NamespacePurpose = (typeof NAMESPACE_PURPOSES)[number];
 
@@ -176,6 +176,17 @@ export function effectKey(executionId: ExecutionId, effectType: string): EffectK
 /** The message ID, and so the wire ID, of the one response an effect key names. */
 export function automaticMessageId(key: EffectKey): MessageId {
   return derive("automatic-mid", ["v1", nonEmpty(key, "effect key")]) as MessageId;
+}
+
+/**
+ * The Routing 2.0 `forward.id` around one preparation's envelope,
+ * derived from the preparation's event CID: every call carrying that
+ * envelope carries one forward ID, however often the forward is sealed
+ * again, while the mediator, which sees the forward ID, never sees the
+ * event CID it hides.
+ */
+export function forwardId(preparation: EventReference<"message.prepared">): string {
+  return derive("forward", ["v1", nonEmpty(preparation, "preparation event CID")]);
 }
 
 /**

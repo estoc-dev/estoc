@@ -4,21 +4,21 @@ import { v7 as uuidv7 } from "uuid";
 
 import { closeErasures, eraseMessage, erasureClosure, scanVault, type Cid, type MessageId } from "../src/index.js";
 import { cidOf, vaultOf } from "./fold/helpers.js";
-import { intent, packageOf, receipt, resolved, vaults } from "./fold/scene.js";
+import { intent, preparationOf, receipt, resolved, vaults } from "./fold/scene.js";
 
 const encoder = new TextEncoder();
 
 const has = (vault: MemoryVault, cid: Cid) => vault.vault.objects.has(cid);
 
 describe("erasing a message", () => {
-  it("releases every root the message's events and packages still name in one erase, collects what nothing else holds, and erases nothing twice", async () => {
+  it("releases every root the message's events and preparations still name in one erase, collects what nothing else holds, and erases nothing twice", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const attachment = cidOf("attachment");
     const out = intent(scene, a0, b0, { attachmentCids: [attachment] });
-    const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const pkg = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root, envelope: "envelope" });
     const other = intent(scene, a0, b0, { bodyCid: out.data.bodyCid });
-    const vault = await vaultOf(scene, [`body ${out.data.messageId}`, "attachment", `envelope ${pkg.data.packageId}`]);
+    const vault = await vaultOf(scene, [`body ${out.data.messageId}`, "attachment", "envelope"]);
     expect(await has(vault, attachment)).toBe(true);
 
     const { events, collected } = await eraseMessage(vault, keys, out.data.messageId);

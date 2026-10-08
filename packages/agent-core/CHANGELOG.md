@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Preparations are named by their event CID**: `prepare` mints no
+  package ID. `Prepared` of outcome `prepared` carries the committed
+  event, `reused` carries the one valid `preparation` the fold holds, and
+  a message with several valid preparations is `none` until one is
+  chosen: no second preparation is made beside one a merge brought.
+  `Dispatched` carries `preparationEventCid` in place of `packageId`,
+  `delivery.submitted` records it, and the Routing forward's ID is
+  `forwardId(preparationEventCid)`. A new vault is created at
+  `VAULT_VERSION`.
 - **Message events carry CIDs**: `message.out.intentCid`,
   `message.in.intentCid` and `plaintextCid`, and the preparation's
   `intentCid`, `plaintextCid` and `envelopeCid` are the raw CIDs of

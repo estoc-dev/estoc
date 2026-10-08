@@ -23,7 +23,7 @@ import {
   type PendingWork,
 } from "../src/index.js";
 import { MEDIATED, createdDid, expectOrderFree } from "./fold/helpers.js";
-import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, packageOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
+import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, preparationOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const inputOf = (source: { data: { wireMessageId: string } }, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId as never);
 
@@ -42,9 +42,9 @@ describe("unfinished work", () => {
     const root = resolved(scene, a0.didId, b0);
     const queued = intent(scene, a0, b0);
     const prepared = intent(scene, a0, b0);
-    const pkg = packageOf(scene, prepared, { sender: a0.didId, recipient: b0, resolution: root });
+    const pkg = preparationOf(scene, prepared, { sender: a0.didId, recipient: b0, resolution: root });
     const sent = intent(scene, a0, b0);
-    scene.add("delivery.submitted", { messageId: sent.data.messageId, packageId: packageOf(scene, sent, { sender: a0.didId, recipient: b0, resolution: root }).data.packageId });
+    scene.add("delivery.submitted", { messageId: sent.data.messageId, preparationEventCid: ref(preparationOf(scene, sent, { sender: a0.didId, recipient: b0, resolution: root })) });
     const asking = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
     const ping = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_TYPE, pleaseAck: [""] } });
     const answered = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
@@ -72,15 +72,15 @@ describe("unfinished work", () => {
       notificationConflicts: [],
       proofs: [waiting.cid],
     });
-    expect(work.outbounds.find((o) => o.messageId === prepared.data.messageId)!.work).toMatchObject({ kind: "dispatch", package: { event: pkg } });
+    expect(work.outbounds.find((o) => o.messageId === prepared.data.messageId)!.work).toMatchObject({ kind: "dispatch", candidates: [{ event: pkg }] });
     expect(vault.inbound.ofMessage(silent.data.messageId)).not.toBeNull();
     const draft = automaticIntent(vault, vault.inbound.ofMessage(asking.data.messageId)!, PURE_ACK_EFFECT);
-    expect(draft).toMatchObject({ executionId: inputOf(asking, b0, a0), effectType: PURE_ACK_EFFECT, existing: null });
+    expect(draft).toMatchObject({ executionId: inputOf(asking, b0, a0), effectType: PURE_ACK_EFFECT, existing: null, result: { status: "pending" } });
     expect(automaticIntent(vault, vault.inbound.ofMessage(answered.data.messageId)!, PURE_ACK_EFFECT).existing).not.toBeNull();
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });
 
-  it("lists a pure ACK for an input requesting its own receipt, whatever else it names, none for one requesting only another's, and none once the tuple has an intent", async () => {
+  it("lists a pure ACK for an input requesting its own receipt, whatever else it names, none for one requesting only another's, and none once the tuple has an intent or a skip", async () => {
     const { scene, keys, peerKeys, a0, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const first = receipt(scene, { local: a0, peer: b0, resolution: root });
@@ -100,6 +100,12 @@ describe("unfinished work", () => {
     vault = await foldScene(scene, keys);
     expect(vault.outbound.ackTarget(fromSuccessor.cid)).toEqual({ status: "eligible", wireMessageId: fromSuccessor.data.wireMessageId });
     expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[fromSuccessor.data.messageId, PURE_ACK_EFFECT, channel(a0, b1)]]);
+
+    const tuple = { executionId: inputOf(fromSuccessor, b1, a0), effectType: PURE_ACK_EFFECT };
+    scene.add("effect.skipped", { ...tuple, effectKey: effectKey(tuple.executionId, tuple.effectType), sourceEventCid: ref(fromSuccessor), code: "no-receipt-given" });
+    vault = await foldScene(scene, keys);
+    expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([]);
+    expect(automaticIntent(vault, vault.inbound.ofMessage(fromSuccessor.data.messageId)!, PURE_ACK_EFFECT)).toMatchObject({ existing: null, result: { status: "skipped", skips: [{ status: { status: "complete" } }] } });
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });
 

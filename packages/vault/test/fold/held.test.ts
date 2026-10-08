@@ -4,7 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 
 import { foldErasures, foldVault, foldVaultChecked, heldRoots, rawCidOfBytes, readState, retainedRoots, VaultEventSet, type Cid, type MessageId } from "../../src/index.js";
 import { AUTHOR, expectOrderFree, fakeEventCid } from "./helpers.js";
-import { intent, noObjects, packageOf, receipt, resolved, vaults } from "./scene.js";
+import { intent, noObjects, preparationOf, receipt, ref, resolved, vaults } from "./scene.js";
 
 const held = (events: readonly Event[]): Set<Cid> => heldRoots(VaultEventSet.of(events));
 
@@ -51,29 +51,35 @@ describe("held roots", () => {
     expect(held(scene.events)).toEqual(new Set([root.data.documentCid, foreign, broken]));
   });
 
-  it("hold a prepared envelope until its message is submitted, terminated or erased, and hold it under a conflict or a peer's acknowledgement alone", async () => {
+  it("hold every envelope a message's preparations name until a complete submission or a termination releases them all at once, and hold them under a submission still to resolve, a peer's acknowledgement or another event naming the same object", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
-    const first = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const first = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [out.data.messageId] } });
     const heldOf = async () => (await foldVaultChecked(scene.set(), keys, noObjects)).held;
     expect((await heldOf()).has(first.data.envelopeCid)).toBe(true);
 
-    const second = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const second = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const sharing = intent(scene, a0, b0);
+    preparationOf(scene, sharing, { sender: a0.didId, recipient: b0, resolution: root, overrides: { envelopeCid: second.data.envelopeCid } });
     expect([...(await heldOf())].filter((cid) => cid === first.data.envelopeCid || cid === second.data.envelopeCid)).toHaveLength(2);
 
-    scene.add("delivery.submitted", { messageId: out.data.messageId, packageId: first.data.packageId });
+    scene.add("delivery.submitted", { messageId: out.data.messageId, preparationEventCid: fakeEventCid() as never });
+    expect((await heldOf()).has(first.data.envelopeCid)).toBe(true);
+
+    scene.add("delivery.submitted", { messageId: out.data.messageId, preparationEventCid: ref(first) });
     let roots = await heldOf();
     expect(roots.has(first.data.envelopeCid)).toBe(false);
-    expect(roots.has(second.data.envelopeCid)).toBe(false);
+    expect(roots.has(second.data.envelopeCid), "the other message's preparation still names it").toBe(true);
     expect(roots.has(out.data.bodyCid)).toBe(true);
+    expect((await foldVaultChecked(scene.set(), keys, noObjects)).retained.filter((edge) => edge.root === second.data.envelopeCid).map((edge) => edge.cid)).not.toContain(second.cid);
 
     const cancelled = intent(scene, a0, b0);
-    const unsent = packageOf(scene, cancelled, { sender: a0.didId, recipient: b0, resolution: root });
+    const unsent = preparationOf(scene, cancelled, { sender: a0.didId, recipient: b0, resolution: root });
     scene.add("delivery.failed", { messageId: cancelled.data.messageId, code: "cancelled" });
     const never = intent(scene, a0, b0);
-    const waiting = packageOf(scene, never, { sender: a0.didId, recipient: b0, resolution: root });
+    const waiting = preparationOf(scene, never, { sender: a0.didId, recipient: b0, resolution: root });
     scene.add("delivery.failed", { messageId: never.data.messageId, code: "expired" });
     roots = await heldOf();
     expect(roots.has(unsent.data.envelopeCid)).toBe(false);

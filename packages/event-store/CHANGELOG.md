@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Vault version 5** (breaking): `VAULT_VERSION` is exported and is 5.
+  `VaultMetadata.version` is `typeof VAULT_VERSION`, and the SQLite
+  `vault_version` check, creation, open, export, import and restore all
+  take the version from it. A version-4 runtime or snapshot is refused
+  as `NotAVault` before its seed is asked for or an event is read, and
+  its file is left as it was; there is no migration. SQLite schema 2 and
+  the version-3 keystore wrapper are unchanged.
 - **A preparation lives for one commit.** `SqliteObjectStore.prepare()`
   is `preparing(commit)`: `commit` is handed the `SqlitePreparation`
   and publishes it inside the transaction it owns. Once `commit`

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { collectGarbage, rawCidOfBytes, vaultHeldRoots, type Cid } from "../src/index.js";
 import { vaultOf } from "./fold/helpers.js";
-import { intent, packageOf, resolved, vaults } from "./fold/scene.js";
+import { intent, preparationOf, resolved, vaults } from "./fold/scene.js";
 
 const encoder = new TextEncoder();
 
@@ -14,10 +14,10 @@ describe("the retention handed to the event store", () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
-    const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const pkg = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root, envelope: "envelope" });
     scene.add("message.erased", { messageId: out.data.messageId, dropCids: [pkg.data.envelopeCid], because: "user" });
     const stray = rawCidOfBytes(encoder.encode("stray"));
-    const vault = await vaultOf(scene, [`body ${out.data.messageId}`, `envelope ${pkg.data.packageId}`, "stray"]);
+    const vault = await vaultOf(scene, [`body ${out.data.messageId}`, "envelope", "stray"]);
     expect(new Set(await vaultHeldRoots(keys)(vault.vault))).toEqual(new Set([root.data.documentCid, out.data.bodyCid]));
     const collected = await collectGarbage(vault, keys);
     expect(collected.removed.sort()).toEqual([pkg.data.envelopeCid, stray].sort());

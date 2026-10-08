@@ -211,7 +211,7 @@ describe("a mediated address", () => {
     await p.runtime.close();
   });
 
-  it("is held by its account before a package first discloses it as a sender", async () => {
+  it("is held by its account before an envelope first discloses it as a sender", async () => {
     const mediator = await newMediator();
     const alice = await enrolled(mediator);
     const from = await address(alice);

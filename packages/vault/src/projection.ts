@@ -287,7 +287,7 @@ function strings(value: unknown, at: string): string[] {
   return [...(value as string[])];
 }
 
-/** The addressing and proof a package adds to an intent: what the plaintext CID covers beyond it and the own ID. */
+/** The addressing and proof a preparation adds to an intent: what the plaintext CID covers beyond it and the own ID. */
 export type Addressing = { from: Did; to: Did[]; fromPrior: string | null };
 
 /**

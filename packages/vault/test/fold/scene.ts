@@ -2,7 +2,7 @@
  * A scene of two vaults: ours with three communication DIDs on a
  * mediated route, the peer's with four DIDs minted from another seed,
  * and the builders that record resolutions, receipts, proofs either
- * side signs, rotation decisions, intents and packages between them,
+ * side signs, rotation decisions, intents and preparations between them,
  * so a fold over messages can be set up in a few lines.
  */
 import type { ContinuityFact } from "@estoc/continuity";
@@ -22,6 +22,8 @@ import {
   foldVaultChecked,
   inboundMessageId,
   inputDocumentOf,
+  intentOfInbound,
+  intentOfOutbound,
   methodPublicKey,
   mintDid,
   mintMediationDid,
@@ -40,7 +42,6 @@ import {
   type MessageId,
   type MessageIn,
   type MessageOut,
-  type PackageId,
   type PeerResolution,
   type PublicKey,
   type ReadObject,
@@ -49,7 +50,7 @@ import {
   type WireMessageId,
   type EnvelopeCid,
 } from "../../src/index.js";
-import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, INTENT_CID, PLAINTEXT_CID, MEDIATED, MEDIATION, OTHER_SEED, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
+import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, PLAINTEXT_CID, MEDIATED, MEDIATION, OTHER_SEED, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
 
 export const PEER_ID0 = "019b7000-0000-7000-8000-000000000b00" as DidId;
 export const PEER_ID1 = "019b7000-0000-7000-8000-000000000b01" as DidId;
@@ -129,10 +130,13 @@ export function resolved(scene: Scene, local: DidId, peer: Peer, options: Resolv
 
 export const ref = <T extends VaultEvent>(event: T) => event.cid as EventReference<T["type"]>;
 
-/** Any field of an observation, whichever kind of peer it comes from: a test builds the mismatched combinations too. */
-type ObservationOverrides = { [K in keyof MessageIn]?: MessageIn[K] };
-/** Any field of an intent, locally initiated or automatic: a test builds the mismatched combinations too. */
-type IntentOverrides = { [K in keyof MessageOut]?: MessageOut[K] };
+/** Any field of an observation, whichever kind of peer it comes from: a test builds the mismatched combinations too. Its intent CID is the one its fields give. */
+type ObservationOverrides = { [K in Exclude<keyof MessageIn, "intentCid">]?: MessageIn[K] };
+/** Any field of an intent, locally initiated or automatic: a test builds the mismatched combinations too. Its intent CID is the one its fields give. */
+type IntentOverrides = { [K in Exclude<keyof MessageOut, "intentCid">]?: MessageOut[K] };
+
+const observed = (data: Omit<MessageIn, "intentCid">): MessageIn => ({ ...data, intentCid: intentOfInbound(data as MessageIn).cid }) as MessageIn;
+const intended = (data: Omit<MessageOut, "intentCid">): MessageOut => ({ ...data, intentCid: intentOfOutbound(data as MessageOut).cid }) as MessageOut;
 
 export type Receipt = {
   local: Local;
@@ -158,10 +162,9 @@ export function observation(scene: Scene, r: Receipt, options: EventOptions = {}
   const wire = (r.wire ?? uuidv7()) as WireMessageId;
   return scene.add(
     "message.in",
-    {
+    observed({
       messageId: inboundMessageId(r.peer.did, r.local.did, wire),
       wireMessageId: wire,
-      intentCid: INTENT_CID,
       plaintextCid: PLAINTEXT_CID,
       localKeyName: didKeyName(r.local.didId, "key-agreement"),
       msgType: "https://didcomm.org/basicmessage/2.0/message",
@@ -181,7 +184,7 @@ export function observation(scene: Scene, r: Receipt, options: EventOptions = {}
       bytes: 100,
       receivedVia: { mediationId: null, deliveryId: null },
       ...r.overrides,
-    } as MessageIn,
+    } as Omit<MessageIn, "intentCid">),
     options
   );
 }
@@ -257,7 +260,7 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
   const messageId = (overrides.messageId ?? uuidv7()) as MessageId;
   return scene.add(
     "message.out",
-    {
+    intended({
       messageId,
       senderDidId: sender.didId,
       recipientDid: recipient.did,
@@ -271,14 +274,13 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
       headers: {},
       bodyCid: cidOf(`body ${messageId}`),
       attachmentCids: [],
-      intentCid: INTENT_CID,
       executionId: null,
       effectType: null,
       effectKey: null,
       sourceEventCid: null,
       rotationEventCid: null,
       ...overrides,
-    } as MessageOut,
+    } as Omit<MessageOut, "intentCid">),
     options
   );
 }
@@ -289,16 +291,15 @@ export function automatic(scene: Scene, sender: Local, recipient: Peer, source: 
   return intent(scene, sender, recipient, { messageId: automaticMessageId(key), msgType: "https://didcomm.org/empty/1.0/empty", executionId, effectType, effectKey: key, sourceEventCid: ref(source), ...overrides });
 }
 
-export type PackageInput = { sender: DidId; recipient: Peer; resolution: VaultEvent<"peer.resolved">; fromPrior?: string | null; packageId?: PackageId; overrides?: Partial<VaultData["message.prepared"]> };
+/** `envelope` is the text the envelope object holds, so a test can keep its bytes; a fresh one when left out. */
+export type PreparationInput = { sender: DidId; recipient: Peer; resolution: VaultEvent<"peer.resolved">; fromPrior?: string | null; envelope?: string; overrides?: Partial<VaultData["message.prepared"]> };
 
-/** A package of an intent: sent from one of our DIDs to the peer's, under the resolution that selected the peer key. */
-export function packageOf(scene: Scene, out: VaultEvent<"message.out">, input: PackageInput, options: EventOptions = {}): VaultEvent<"message.prepared"> {
-  const packageId = (input.packageId ?? uuidv7()) as PackageId;
+/** A preparation of an intent: sent from one of our DIDs to the peer's, under the resolution that selected the peer key, sealed into an envelope of its own. */
+export function preparationOf(scene: Scene, out: VaultEvent<"message.out">, input: PreparationInput, options: EventOptions = {}): VaultEvent<"message.prepared"> {
   return scene.add(
     "message.prepared",
     {
       messageId: out.data.messageId,
-      packageId,
       senderDidId: input.sender,
       localKeyName: didKeyName(input.sender, "key-agreement"),
       recipientDid: input.recipient.did,
@@ -306,7 +307,7 @@ export function packageOf(scene: Scene, out: VaultEvent<"message.out">, input: P
       fromPrior: input.fromPrior ?? null,
       intentCid: out.data.intentCid,
       plaintextCid: PLAINTEXT_CID,
-      envelopeCid: cidOf(`envelope ${packageId}`) as EnvelopeCid,
+      envelopeCid: cidOf(input.envelope ?? `envelope ${uuidv7()}`) as EnvelopeCid,
       ...input.overrides,
     },
     options

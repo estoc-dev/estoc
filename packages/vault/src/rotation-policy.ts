@@ -10,7 +10,7 @@
  * yet, its predecessor's creation not being here, is kept apart as
  * unresolved rather than dropped, since it may be the very rotation
  * that is waiting. The one reading serves both what a rotation reuses
- * and what a successor's package freezes as its proof: nothing while a
+ * and what a successor's preparation freezes as its proof: nothing while a
  * record is contradicted or the records are several intents, waiting
  * while one is unresolved or none is a candidate yet, and the first
  * candidate otherwise. A record refused for good never enters.

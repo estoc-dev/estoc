@@ -114,7 +114,7 @@ export interface Validated {
 
 /**
  * Checks that the open snapshot `portable` is a complete, sound
- * version-4 snapshot, and says what it holds; `InvalidSnapshot`
+ * snapshot of this vault version, and says what it holds; `InvalidSnapshot`
  * naming every problem found otherwise. In order: SQLite's foreign-key
  * check; the chunks holding no more bytes than the objects declare,
  * from record headers alone; SQLite's integrity check, which nothing

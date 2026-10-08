@@ -60,7 +60,7 @@ describe("a process that dies", () => {
     expect((await foldOf(bob)).outbound.outbounds.get(HELLO)).toMatchObject({ acknowledged: true });
   });
 
-  test("after a package was recorded and before any call was made for it: the action that was to send it is gone with the process, nothing is sent on open, and a retry sends that very package", { timeout: LONG }, async () => {
+  test("after a preparation was recorded and before any call was made for it: the action that was to send it is gone with the process, nothing is sent on open, and a retry sends that very envelope", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { liveDelivery: false });
     const bob = await run(mediator, 2, BOB, { liveDelivery: false });
@@ -75,15 +75,15 @@ describe("a process that dies", () => {
     await restart(bob);
     expect([forwardsSeen(mediator), queuedFor(mediator, alice)]).toEqual([0, 0]);
     const open = await bob.agent.outbounds();
-    expect(open.map(({ outbound, waiting }) => [outbound.messageId, outbound.outcome.status, outbound.package!.event.data.envelopeCid, waiting])).toEqual([[HELLO, "prepared", recorded[0]!.cid, null]]);
+    expect(open.map(({ outbound, waiting }) => [outbound.messageId, outbound.outcome.status, outbound.preparations[0]!.event.data.envelopeCid, waiting])).toEqual([[HELLO, "prepared", recorded[0]!.cid, null]]);
 
-    expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", packageId: open[0]!.outbound.package!.event.data.packageId });
+    expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", preparationEventCid: open[0]!.outbound.preparations[0]!.event.cid });
     const [queued] = mediator.queues.get(alice.party.replica.did)!;
     expect(Buffer.from(canonicalize(parseStrict(queued!.packed))).equals(recorded[0]!.source as Uint8Array)).toBe(true);
     expect(await bob.agent.outbounds()).toEqual([]);
   });
 
-  test("inside the call that was to carry a package, which the mediator never took: nothing is sent on open, and a retry sends that package", { timeout: LONG }, async () => {
+  test("inside the call that was to carry a preparation's envelope, which the mediator never took: nothing is sent on open, and a retry sends that envelope", { timeout: LONG }, async () => {
     const { mediator, alice, bob } = await pair();
     dieAt(bob, "unsent");
     await expect(bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid }, hello("hello"), { messageId: HELLO })).resolves.toMatchObject({ dispatched: { outcome: "uncertain" }, action: { spent: true } });
@@ -96,12 +96,12 @@ describe("a process that dies", () => {
     expect(open.map(({ outbound, waiting }) => [outbound.messageId, outbound.outcome.status, waiting])).toEqual([[HELLO, "prepared", null]]);
     expect(alice.inbounds).toEqual([]);
 
-    expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", packageId: open[0]!.outbound.package!.event.data.packageId });
+    expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", preparationEventCid: open[0]!.outbound.preparations[0]!.event.cid });
     await until("alice has the message", () => alice.inbounds.length === 1);
     expect(await bob.agent.outbounds()).toEqual([]);
   });
 
-  test("after the mediator took a package and before that was recorded: the outbound stays open, and the retry the user makes is observed by the peer as the same input again", { timeout: LONG }, async () => {
+  test("after the mediator took an envelope and before that was recorded: the outbound stays open, and the retry the user makes is observed by the peer as the same input again", { timeout: LONG }, async () => {
     const { alice, bob } = await pair();
     dieAt(bob, "unrecorded");
     await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid }, hello("hello"), { messageId: HELLO });

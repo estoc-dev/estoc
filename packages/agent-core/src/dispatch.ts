@@ -1,12 +1,12 @@
 /**
- * Dispatching makes the one transport call of a prepared package, under
- * a live action that carries exactly one such call. The package goes
- * where the resolution it names says the peer receives: straight to an
- * HTTP endpoint, or inside a Routing 2.0 forward to the mediator a DID
- * there names. What goes on the wire is the envelope stored with the
- * package, every time.
+ * Dispatching makes the one transport call of a preparation, under a
+ * live action that carries exactly one such call. The envelope goes
+ * where the resolution the preparation names says the peer receives:
+ * straight to an HTTP endpoint, or inside a Routing 2.0 forward to the
+ * mediator a DID there names. What goes on the wire is the envelope the
+ * preparation retains, every time.
  * Before the call: the message is prepared when it still needs a
- * package, and what the vault owes is recorded either way, under the
+ * preparation, and what the vault owes is recorded either way, under the
  * lock the preparation runs in; a mediated sender the peer has not
  * written to is made to be held by its mediator so that an answer has
  * somewhere to arrive; and the fold is read again under the lock,
@@ -25,19 +25,20 @@
 
 import { parseStrict, type Held, type VaultRuntime } from "@estoc/event-store";
 import {
+  forwardId,
   objectReader,
   readVaultEvent,
   scanVault,
   vaultDraft,
   type Channel,
   type Did,
+  type EventReference,
   type Keys,
   type LocalDidEntity,
   type MediationId,
   type MessageId,
   type MessageOut,
-  type Package,
-  type PackageId,
+  type Preparation,
   type VaultEvent,
   type VaultFold,
 } from "@estoc/vault";
@@ -64,7 +65,7 @@ export const MAX_ENVELOPE_BYTES = 128 * 1024 * 1024;
 
 export interface DispatchOptions extends ResolverOptions, PrepareOptions {
   /**
-   * The transport a package is carried over, and a `did:web` mediator
+   * The transport an envelope is carried over, and a `did:web` mediator
    * resolved over: the host's, under the contract `WebResolverOptions`
    * states. An endpoint is an address the peer chose, so the host's
    * policy on addresses holds for a call as for a document.
@@ -81,7 +82,7 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
 }
 
 export type Dispatched =
-  | { outcome: "submitted"; messageId: MessageId; packageId: PackageId; submitted: VaultEvent<"delivery.submitted"> }
+  | { outcome: "submitted"; messageId: MessageId; preparationEventCid: EventReference<"message.prepared">; submitted: VaultEvent<"delivery.submitted"> }
   /** the fold asks for no call — the message is closed, in conflict, or not the sender's to send now — or the caller closed before the call */
   | { outcome: "none"; messageId: MessageId; because: string }
   /** nothing was called and the action is still live: a prerequisite is missing and may still come, or the attempt's deadline passed before the call */
@@ -89,9 +90,9 @@ export type Dispatched =
   /** the expiry passed before the call: the message is terminated */
   | { outcome: "expired"; messageId: MessageId; failed: VaultEvent<"delivery.failed"> }
   /** the endpoint answered other than acceptance: traced, the action spent, the message left prepared for a manual retry */
-  | { outcome: "failed"; messageId: MessageId; packageId: PackageId; reason: string }
-  /** no answer came — the line cut, the deadline passed — so whether the package arrived is unknown: traced, the action spent, the message left prepared */
-  | { outcome: "uncertain"; messageId: MessageId; packageId: PackageId; reason: string }
+  | { outcome: "failed"; messageId: MessageId; preparationEventCid: EventReference<"message.prepared">; reason: string }
+  /** no answer came — the line cut, the deadline passed — so whether the envelope arrived is unknown: traced, the action spent, the message left prepared */
+  | { outcome: "uncertain"; messageId: MessageId; preparationEventCid: EventReference<"message.prepared">; reason: string }
   /** the action's one invocation was used already */
   | { outcome: "spent"; messageId: MessageId };
 
@@ -104,15 +105,15 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
   const { messageId } = action;
   const trace = options.trace ?? null;
   const owed = await recordOwedAcceptance(runtime, messageId);
-  if (owed !== null) return { outcome: "submitted", messageId, packageId: owed.data.packageId, submitted: owed };
+  if (owed !== null) return { outcome: "submitted", messageId, preparationEventCid: owed.data.preparationEventCid, submitted: owed };
   if (action.spent) return { outcome: "spent", messageId };
   const readied = await runtime.locked((held) => ready(held, keys, messageId, options));
   await noteAll(trace, readied.notes);
   if ("outcome" in readied.result) return readied.result;
-  const { fold, pkg, envelope, service, registerWith } = readied.result;
-  const { packageId } = pkg.event.data;
+  const { fold, preparation, envelope, service, registerWith } = readied.result;
+  const preparationEventCid = preparation.event.cid as EventReference<"message.prepared">;
   const pending = async (phase: string, reason: string): Promise<Dispatched> => {
-    await note(trace, { stream: "diag", what: "delivery", data: { messageId, packageId, phase, reason } });
+    await note(trace, { stream: "diag", what: "delivery", data: { messageId, preparationEventCid, phase, reason } });
     return { outcome: "pending", messageId, because: reason };
   };
   if (registerWith !== null) {
@@ -120,10 +121,10 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
     if (unregistered !== null) return pending("register", unregistered);
   }
   const deadline = AbortSignal.timeout(options.timeoutMs ?? DISPATCH_TIMEOUT_MS);
-  const carried = await carry(fold, pkg, envelope, service, options, deadline);
+  const carried = await carry(fold, preparation, envelope, service, options, deadline);
   if ("because" in carried) return { outcome: "none", messageId, because: carried.because };
   if ("reason" in carried) return pending("route", carried.reason);
-  const rechecked = await runtime.locked((held) => recheck(held, keys, action, packageId, options));
+  const rechecked = await runtime.locked((held) => recheck(held, keys, action, preparationEventCid, options));
   await noteAll(trace, rechecked.notes);
   if (rechecked.result !== null) return rechecked.result;
   const answer = await call(options, carried, deadline, action);
@@ -132,19 +133,19 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
     if (answer.uncalled === "closed") return { outcome: "none", messageId, because: "closed before the call" };
     return pending("call", "the deadline passed before the call");
   }
-  await noteAttempt(trace, messageId, packageId, carried, answer);
+  await noteAttempt(trace, messageId, preparationEventCid, carried, answer);
   if ("status" in answer && answer.status >= 200 && answer.status < 300) {
-    const submitted = await recordAcceptance(runtime, messageId, packageId);
-    return { outcome: "submitted", messageId, packageId, submitted };
+    const submitted = await recordAcceptance(runtime, messageId, preparationEventCid);
+    return { outcome: "submitted", messageId, preparationEventCid, submitted };
   }
-  if ("status" in answer) return { outcome: "failed", messageId, packageId, reason: `the endpoint answered ${answer.status}` };
-  return { outcome: "uncertain", messageId, packageId, reason: answer.error };
+  if ("status" in answer) return { outcome: "failed", messageId, preparationEventCid, reason: `the endpoint answered ${answer.status}` };
+  return { outcome: "uncertain", messageId, preparationEventCid, reason: answer.error };
 }
 
 /** What the wire needs of a message the fold says is ready for its call. */
 interface Ready {
   fold: VaultFold;
-  pkg: Package;
+  preparation: Preparation;
   envelope: string;
   /** the DIDComm service the recipient's resolved document names */
   service: string | null;
@@ -153,34 +154,36 @@ interface Ready {
 }
 
 /**
- * Under the lock: the message prepared when it still needs a package,
- * which observes its expiry first and records what the vault owes,
- * then what its one package needs for the wire read off the fold as
- * that left it and the object store.
+ * Under the lock: the message prepared when it still needs a
+ * preparation, which observes its expiry first and records what the
+ * vault owes, then what the preparation that step made or found needs
+ * for the wire, read off the fold as that left it and the object store.
  */
 async function ready(held: Held, keys: Keys, messageId: MessageId, options: DispatchOptions): Promise<Settled<Dispatched | Ready>> {
   const { result, notes } = await prepareUnderLock(held, keys, messageId, options);
   const done = (result: Dispatched): Settled<Dispatched | Ready> => ({ result, notes });
   if (result.outcome !== "prepared" && result.outcome !== "reused") return done(result);
+  const chosen = result.outcome === "prepared" ? result.prepared.cid : result.preparation.event.cid;
   const fold = await scanVault(held, keys, scanOptions(options));
   const outbound = fold.outbound.outbounds.get(messageId)!;
   const { work } = outbound;
   if (work.kind === "none") return done({ outcome: "none", messageId, because: work.because });
-  if (work.kind === "prepare") return done({ outcome: "pending", messageId, because: "no package is prepared" });
-  const pkg = work.package;
-  const resolved = fold.set.resolve(pkg.event.data.peerResolutionEventCid, "peer.resolved");
-  if (resolved.status !== "present") return done({ outcome: "pending", messageId, because: "the resolution the package names is not here" });
-  const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(pkg.event.data.envelopeCid);
-  if (bytes === null) return done({ outcome: "pending", messageId, because: `the envelope ${pkg.event.data.envelopeCid} is not here` });
+  if (work.kind === "prepare") return done({ outcome: "pending", messageId, because: "no preparation is here" });
+  const preparation = work.candidates.find((candidate) => candidate.event.cid === chosen);
+  if (preparation === undefined) return done({ outcome: "pending", messageId, because: "the preparation is no valid candidate yet" });
+  const resolved = fold.set.resolve(preparation.event.data.peerResolutionEventCid, "peer.resolved");
+  if (resolved.status !== "present") return done({ outcome: "pending", messageId, because: "the resolution the preparation names is not here" });
+  const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
+  if (bytes === null) return done({ outcome: "pending", messageId, because: `the envelope ${preparation.event.data.envelopeCid} is not here` });
   const registerWith = unconfirmedMediatedSender(fold, outbound.sender as LocalDidEntity, outbound.channel as Channel);
-  return { result: { fold, pkg, envelope: new TextDecoder().decode(bytes), service: resolved.event.data.service, registerWith }, notes };
+  return { result: { fold, preparation, envelope: new TextDecoder().decode(bytes), service: resolved.event.data.service, registerWith }, notes };
 }
 
 /**
- * A mediated sender's address is to be held by its mediator before a
- * package discloses it. Until an admitted receipt shows the peer has
+ * A mediated sender's address is to be held by its mediator before an
+ * envelope discloses it. Until an admitted receipt shows the peer has
  * written to the address, the peer may be learning it from this
- * package, and an answer to an address the mediator does not hold is
+ * envelope, and an answer to an address the mediator does not hold is
  * lost. A direct sender needs no mediator.
  */
 function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, channel: Channel): Ready["registerWith"] {
@@ -194,7 +197,7 @@ function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, chan
 /** Has the account hold what the vault wants held; why the sender is not held after that, or null once it is. */
 async function confirmRegistration(runtime: VaultRuntime, keys: Keys, { mediationId, did }: NonNullable<Ready["registerWith"]>, options: DispatchOptions): Promise<string | null> {
   const link = options.links?.(mediationId) ?? null;
-  if (link === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before a package discloses it`;
+  if (link === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before an envelope discloses it`;
   try {
     return (await heldByMediator(link, runtime, keys, mediationId, did, options.confirmations)) ? null : `the mediator of ${mediationId} does not hold ${did}`;
   } catch (err) {
@@ -209,13 +212,13 @@ async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: K
 
 /**
  * Under the lock again, right before the call: the message must still
- * be open with its expiry to come, the fold must still say the same
- * package is what it needs, and the action must still carry its
- * invocation. Null when the call may go ahead; the invocation is
+ * be open with its expiry to come, the fold must still hold the same
+ * preparation among those a call may carry, and the action must still
+ * carry its invocation. Null when the call may go ahead; the invocation is
  * consumed at the call itself, not here, so that a deadline passed
  * while this lock was waited for costs the action nothing.
  */
-async function recheck(held: Held, keys: Keys, action: LiveAction, packageId: PackageId, options: DispatchOptions): Promise<Settled<Dispatched | null>> {
+async function recheck(held: Held, keys: Keys, action: LiveAction, preparationEventCid: EventReference<"message.prepared">, options: DispatchOptions): Promise<Settled<Dispatched | null>> {
   const { messageId } = action;
   const outbound = (await scanVault(held, keys, scanOptions(options))).outbound.outbounds.get(messageId)!;
   const closed = closedBecause(outbound);
@@ -223,8 +226,8 @@ async function recheck(held: Held, keys: Keys, action: LiveAction, packageId: Pa
   if (hasExpired((outbound.intent as { data: MessageOut }).data, options.now ?? Date.now)) return expireUnderLock(held, messageId, expiryPhase(outbound));
   const { work } = outbound;
   if (work.kind === "none") return { result: { outcome: "none", messageId, because: work.because }, notes: [] };
-  if (work.kind === "prepare") return { result: { outcome: "pending", messageId, because: "the package is no longer here" }, notes: [] };
-  if (work.package.event.data.packageId !== packageId) return { result: { outcome: "none", messageId, because: `the package is now ${work.package.event.data.packageId}` }, notes: [] };
+  if (work.kind === "prepare") return { result: { outcome: "pending", messageId, because: "the preparation is no longer here" }, notes: [] };
+  if (!work.candidates.some((candidate) => candidate.event.cid === preparationEventCid)) return { result: { outcome: "none", messageId, because: `the preparation ${preparationEventCid} is no longer one a call may carry` }, notes: [] };
   if (action.spent) return { result: { outcome: "spent", messageId }, notes: [] };
   return { result: null, notes: [] };
 }
@@ -238,13 +241,13 @@ interface Carried {
 
 /**
  * To a direct endpoint, the envelope itself. To a mediator, a forward
- * whose ID is the package's and whose `next` is the package's
- * recipient, carrying the envelope as JSON, sealed anonymously to the
- * mediator's key-agreement key and carried to its HTTP endpoint. The
- * mediator's document is resolved for this attempt alone: it is how
- * the package travels, not evidence about the peer.
+ * whose ID the preparation's event CID derives and whose `next` is the
+ * preparation's recipient, carrying the envelope as JSON, sealed
+ * anonymously to the mediator's key-agreement key and carried to its
+ * HTTP endpoint. The mediator's document is resolved for this attempt
+ * alone: it is how the envelope travels, not evidence about the peer.
  */
-async function carry(fold: VaultFold, pkg: Package, envelope: string, service: string | null, options: DispatchOptions, deadline: AbortSignal): Promise<Carried | { because: string } | { reason: string }> {
+async function carry(fold: VaultFold, preparation: Preparation, envelope: string, service: string | null, options: DispatchOptions, deadline: AbortSignal): Promise<Carried | { because: string } | { reason: string }> {
   const hop = hopOf(service);
   if (hop === null) return { because: service === null ? "the recipient's document names no DIDComm service" : `the recipient's service ${service} is nothing this runtime carries to` };
   if (hop.kind === "direct") return { endpoint: hop.endpoint, body: envelope, forward: null };
@@ -261,11 +264,11 @@ async function carry(fold: VaultFold, pkg: Package, envelope: string, service: s
   const endpoint = endpointOf(document, "http");
   if (endpoint === null) return { because: `the mediator ${routingDid} names no HTTP endpoint` };
   const message = {
-    id: pkg.event.data.packageId,
+    id: forwardId(preparation.event.cid as EventReference<"message.prepared">),
     typ: PLAIN_TYP,
     type: FORWARD,
     to: [routingDid],
-    body: { next: pkg.event.data.recipientDid },
+    body: { next: preparation.event.data.recipientDid },
     attachments: [{ media_type: ENCRYPTED_MIME, data: { json: parseStrict(envelope) } }],
   } as unknown as IMessage;
   const resolver = { resolve: async (did: string) => (did === routingDid ? document : null) };
@@ -320,11 +323,11 @@ async function call({ fetch, closed }: DispatchOptions, { endpoint, body }: Carr
 }
 
 /** The call as the trace keeps it: the frame out, the forward sealed inside it when there was one, and the answer or the failure hung on the frame. */
-async function noteAttempt(trace: AgentTrace | null, messageId: MessageId, packageId: PackageId, carried: Carried, answer: Answer): Promise<void> {
+async function noteAttempt(trace: AgentTrace | null, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">, carried: Carried, answer: Answer): Promise<void> {
   if (trace === null) return;
-  const out = await note(trace, { stream: "wire", what: "out", data: { via: "http", endpoint: carried.endpoint, bytes: new TextEncoder().encode(carried.body).length, messageId, packageId } });
+  const out = await note(trace, { stream: "wire", what: "out", data: { via: "http", endpoint: carried.endpoint, bytes: new TextEncoder().encode(carried.body).length, messageId, preparationEventCid } });
   if (trace.enabled("bytes")) await note(trace, { stream: "bytes", what: "out", data: { parent: out, body: carried.body } });
-  if (carried.forward !== null) await note(trace, { stream: "envelope", what: "seal", data: { ...sealData(carried.forward.packed, carried.forward.message), parent: out, messageId, packageId } });
+  if (carried.forward !== null) await note(trace, { stream: "envelope", what: "seal", data: { ...sealData(carried.forward.packed, carried.forward.message), parent: out, messageId, preparationEventCid } });
   await note(trace, "status" in answer ? { stream: "wire", what: "in", data: { via: "http", parent: out, status: answer.status, ms: answer.ms } } : { stream: "wire", what: "error", data: { via: "http", parent: out, ms: answer.ms, error: answer.error } });
 }
 

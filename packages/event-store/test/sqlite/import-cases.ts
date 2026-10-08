@@ -686,7 +686,7 @@ export const importCases: ImportCase[] = [
       assertEqual((await importing).added, 2, "and lands after");
       await vault.close();
       // another vault's snapshot
-      const other = new SqliteVault(createRuntime(await h.open(h.fresh(), "create"), { metadata: { version: 4, anchor: OTHER_ANCHOR }, wrapped: WRAPPED }), { now: c.now });
+      const other = new SqliteVault(createRuntime(await h.open(h.fresh(), "create"), { metadata: { ...META, anchor: OTHER_ANCHOR }, wrapped: WRAPPED }), { now: c.now });
       await other.vault.commit([], [draft([], { other: true })]);
       const foreign = await snapshotOf(h, other);
       await other.close();

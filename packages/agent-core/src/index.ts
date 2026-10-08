@@ -1,7 +1,7 @@
 /**
  * `@estoc/agent-core` — the DIDComm v2 agent over the vault. A
  * message is decided over the fold read under the vault's writer lock
- * and committed as an intent, then as a package, before its one
+ * and committed as an intent, then as a preparation, before its one
  * transport call, which goes under a live action once the lock is
  * released. The protocols themselves — message types and shapes — are
  * under `protocol/`; `unpack` opens an

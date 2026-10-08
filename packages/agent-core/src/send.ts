@@ -3,7 +3,7 @@
  * network work: the content is stored, the control headers are frozen
  * and the channel is fixed — one live local DID of ours, one peer DID
  * in the exact spelling given — in a single commit of the objects and
- * the intent. Resolution, the package and the transport call come
+ * the intent. Resolution, the preparation and the transport call come
  * later, from the intent left behind, and never move it to another
  * channel. Everything the fold answers is read under the writer lock,
  * in the same commit's view, so no rotation, denial or contact change

@@ -1,5 +1,5 @@
 /**
- * The version-4 event store as a map in memory: the reference for the interface's
+ * The event store as a map in memory: the reference for the interface's
  * semantics, what the vault folds are tested on, and the store `eventStoreSuite` is
  * first run against. Nothing persists, so the process-durable half of the store's
  * promise is vacuous here; `damaged()` is empty by construction, as a sound

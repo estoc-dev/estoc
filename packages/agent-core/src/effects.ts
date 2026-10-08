@@ -18,7 +18,7 @@
  * already under it is reused as it is, before the input's body is
  * read or its handler asked anything, so that a fixed output survives
  * a body gone or a handler that would decide otherwise now, and the
- * same input delivered again, a package retried, a body erased or a
+ * same input delivered again, a preparation retried, a body erased or a
  * clock moved never make a second output. Two operations are the
  * vault's own — the receipt an input requests of itself, given under
  * local policy and naming the carrier alone, and the notification of

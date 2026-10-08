@@ -1,5 +1,5 @@
 /**
- * The identifier vocabulary of the version-4 vault and the payload of
+ * The identifier vocabulary of the vault and the payload of
  * each event type. Every kind of value a payload or a runtime interface
  * names is a distinct nominal type over the validated string it
  * serializes as, with no wrapper and no prefix. Nothing here checks a
@@ -20,7 +20,6 @@ export type ContactId = EntityId<"contact">;
 /** A local communication-DID entity, not the DID string. */
 export type DidId = EntityId<"did">;
 export type MediationId = EntityId<"mediation">;
-export type PackageId = EntityId<"package">;
 /** A channel-scoped automatic execution. */
 export type ExecutionId = EntityId<"execution">;
 /** Deferred configuration events only. */
@@ -102,6 +101,13 @@ export type MessageOut = {
   rotationEventCid: EventReference<"did.rotationSelected"> | null;
 } & (LocalSend | AutomaticEffect);
 
+/**
+ * The terminal result of one automatic operation over one input that
+ * owes no output: the tuple, its key, the observation the decision was
+ * read from, and the operation's own code for why.
+ */
+export type EffectSkipped = AutomaticEffect & { code: string };
+
 /** Where an inbound observation arrived: both null for direct transport without them. */
 export type ReceivedVia = { mediationId: MediationId | null; deliveryId: DeliveryId | null };
 
@@ -144,7 +150,7 @@ export type MessageIn = {
   receivedVia: ReceivedVia;
 } & (AnonymousPeer | ResolvedPeer);
 
-/** The payload of each version-4 event type, by type name. */
+/** The payload of each event type of this vault version, by type name. */
 export type VaultData = {
   "identity.label": { name: string };
   "peer.resolved": {
@@ -178,7 +184,6 @@ export type VaultData = {
   "message.out": MessageOut;
   "message.prepared": {
     messageId: MessageId;
-    packageId: PackageId;
     senderDidId: DidId;
     localKeyName: KeyName;
     recipientDid: Did;
@@ -188,7 +193,7 @@ export type VaultData = {
     plaintextCid: PlaintextCid;
     envelopeCid: EnvelopeCid;
   };
-  "delivery.submitted": { messageId: MessageId; packageId: PackageId };
+  "delivery.submitted": { messageId: MessageId; preparationEventCid: EventReference<"message.prepared"> };
   "delivery.failed": { messageId: MessageId; code: DeliveryFailureCode };
   "delivery.acknowledged": {
     messageId: MessageId;
@@ -197,6 +202,7 @@ export type VaultData = {
     ackMessageId: MessageId;
     ackWireMessageId: WireMessageId;
   };
+  "effect.skipped": EffectSkipped;
   "message.in": MessageIn;
   "message.erased": { messageId: MessageId; dropCids: Cid[]; because: string };
 };

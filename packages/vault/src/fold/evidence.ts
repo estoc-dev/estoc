@@ -72,7 +72,7 @@ const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.l
  * document: the method IDs it enumerates are exactly the ones the
  * document authorizes, in document order, and the key it
  * authenticates is one the document authorizes for key agreement and
- * one that agrees keys. A receipt is decrypted and a package encrypted
+ * one that agrees keys. A receipt is decrypted and a preparation encrypted
  * to a key-agreement key alone; the authentication methods sign proofs
  * and never stand in for one. No verdict while the object is not here.
  */

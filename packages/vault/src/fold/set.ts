@@ -1,6 +1,6 @@
 /**
  * The event set a fold reads: every event once, by CID, in whatever
- * order it arrived. Each event of a version-4 type is read against its
+ * order it arrived. Each event of a known type is read against its
  * schema on entry; one that fails stays listed with its fault, and one
  * of a type this version does not name is kept as it is, so both keep
  * holding their roots. A fold asks for a type's events in canonical
@@ -15,7 +15,7 @@ import { InvalidPayload } from "../errors.js";
 import { isVaultEventType, readVaultEvent, type VaultEvent } from "../schema.js";
 import type { EventReference, VaultEventType } from "../types.js";
 
-/** An event of a version-4 type whose payload or roots break that type's schema. */
+/** An event of a known type whose payload or roots break that type's schema. */
 export type InvalidVaultEvent = { event: Event; error: InvalidPayload };
 
 /**

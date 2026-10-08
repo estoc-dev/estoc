@@ -46,7 +46,7 @@ async function pair(): Promise<{ mediator: FakeMediator; alice: Running; bob: Ru
 }
 
 describe("a vault restored from a snapshot", () => {
-  it("runs as another replica, sends nothing as it opens and lists what the snapshot left unfinished: what was submitted stays so, and a retry sends the package the snapshot carried", { timeout: LONG }, async () => {
+  it("runs as another replica, sends nothing as it opens and lists what the snapshot left unfinished: what was submitted stays so, and a retry sends the envelope the snapshot carried", { timeout: LONG }, async () => {
     const { mediator, alice, bob } = await pair();
     const toAlice = { channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid };
     await bob.agent.send(toAlice, hello("hello"), { messageId: FIRST });
@@ -70,7 +70,7 @@ describe("a vault restored from a snapshot", () => {
     expect((await restored.agent.pending()).pendingOutbounds).toMatchObject([{ messageId: SECOND, outcome: "prepared", entries: expect.arrayContaining(["retry", "cancel"]) }]);
 
     const retried = await restored.agent.manual.retry(SECOND);
-    expect(retried).toMatchObject({ outcome: "submitted", packageId: before.outbound.outbounds.get(SECOND)!.package!.event.data.packageId });
+    expect(retried).toMatchObject({ outcome: "submitted", preparationEventCid: before.outbound.outbounds.get(SECOND)!.preparations[0]!.event.cid });
     if (retried.outcome !== "submitted") throw new Error("unreachable");
     expect(retried.submitted.author).toBe(restored.runtime.author);
     await until("alice has the second message", () => alice.inbounds.length === 2);
@@ -104,7 +104,7 @@ describe("a vault restored from a snapshot", () => {
     expect(toLater.dispatched).toMatchObject({ outcome: "submitted" });
     const fromSuccessor = await bob.agent.send({ channel: channelOf(b1, a0) }, hello("from my successor"), { messageId: FOURTH });
     expect(fromSuccessor.dispatched).toMatchObject({ outcome: "submitted" });
-    expect((await foldOf(bob)).outbound.outbounds.get(FOURTH)!.package!.event.data.fromPrior).toBeNull();
+    expect((await foldOf(bob)).outbound.outbounds.get(FOURTH)!.preparations[0]!.event.data.fromPrior).toBeNull();
     await until("both deliveries ended", () => restored.inbounds.length === 2);
     expect(mediator.queues.get(await replicaOf(restored))).toEqual([]);
     expect(restored.inbounds.map(({ received, after }) => [received.outcome, after])).toEqual([

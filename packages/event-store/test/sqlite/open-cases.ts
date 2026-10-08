@@ -7,7 +7,7 @@
  * counterexamples run there alone.
  */
 
-import { createRuntime, createTables, openInspector, openPortable, openRuntime, type OpenMode, type SqliteDriver } from "../../src/index.js";
+import { VAULT_VERSION, createRuntime, createTables, openInspector, openPortable, openRuntime, type OpenMode, type SqliteDriver } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
 import { type Case, assert, assertEqual, assertRejects, assertThrows } from "./driver-cases.js";
 
@@ -32,7 +32,7 @@ export interface OpenCase extends Case {
 export function fillPortable(db: SqliteDriver): void {
   db.exec("PRAGMA application_id = 1163088963; PRAGMA user_version = 2");
   createTables(db, "portable");
-  db.prepare("INSERT INTO vault_meta VALUES (1, 'estoc-sqlite', 4, 'portable', 1, ?)").run(ANCHOR);
+  db.prepare("INSERT INTO vault_meta VALUES (1, 'estoc-sqlite', ?, 'portable', 1, ?)").run(VAULT_VERSION, ANCHOR);
   db.prepare("INSERT INTO keystore VALUES (1, 3, ?)").run(new TextEncoder().encode(WRAPPED.seedJwe));
 }
 

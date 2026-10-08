@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { blockChannels, blockDrafts, compareChannels, deleteContact, deleteContactDrafts, scanVault, type ContactId } from "../src/index.js";
 import { vaultOf } from "./fold/helpers.js";
-import { blocked, channel, foldScene, intent, packageOf, receipt, resolved, vaults } from "./fold/scene.js";
+import { blocked, channel, foldScene, intent, preparationOf, receipt, resolved, vaults } from "./fold/scene.js";
 
 const CONTACT = "019b7100-0000-7000-8000-000000000c01" as ContactId;
 
@@ -14,7 +14,7 @@ describe("denying channels and deleting a contact", () => {
     const root = resolved(scene, a0.didId, b0);
     const inbound = receipt(scene, { local: a0, peer: b0, resolution: root });
     const out = intent(scene, a0, b0);
-    const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const pkg = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root, envelope: "envelope" });
     const elsewhere = intent(scene, a1, b1);
     blocked(scene, a1, b1);
     scene.add("contact.created", { contactId: CONTACT, because: "user" });
@@ -35,7 +35,7 @@ describe("denying channels and deleting a contact", () => {
       ].sort(([, a], [, b]) => ((a as { messageId: string }).messageId < (b as { messageId: string }).messageId ? -1 : 1)),
     ]);
 
-    const memory = await vaultOf(scene, [`body ${out.data.messageId}`, `envelope ${pkg.data.packageId}`]);
+    const memory = await vaultOf(scene, [`body ${out.data.messageId}`, "envelope"]);
     const events = await blockChannels(memory, keys, [channel(a0, b0)], false);
     expect(events.map((e) => e.data)).toEqual([{ localDid: a0.did, peerDid: b0.did, includeSuccessors: false }]);
     expect(await blockChannels(memory, keys, [channel(a0, b0)], false)).toEqual([]);

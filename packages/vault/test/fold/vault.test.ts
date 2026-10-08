@@ -1,10 +1,10 @@
-import { MemoryVault, type Event } from "@estoc/event-store";
+import { MemoryVault, VAULT_VERSION, type Event } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";
 import { describe, expect, it } from "vitest";
 
 import { Keys, checkVault, foldVault, objectReader, rawCidOfBytes, scanVault, VaultEventSet, type VaultChecks, type VaultFold } from "../../src/index.js";
 import { SEED, expectOrderFree } from "./helpers.js";
-import { intent, noObjects, packageOf, receipt, resolved, vaults } from "./scene.js";
+import { intent, noObjects, preparationOf, receipt, resolved, vaults } from "./scene.js";
 
 const encoder = new TextEncoder();
 
@@ -12,7 +12,7 @@ const encoder = new TextEncoder();
 const readable = ({ set, ...fold }: VaultFold) => (expect(set).toBeInstanceOf(VaultEventSet), fold);
 
 async function memoryVault(events: readonly Event[]): Promise<MemoryVault> {
-  const vault = new MemoryVault({ metadata: { version: 4, anchor: await Keys.anchorOf(await importSeed(SEED)) } });
+  const vault = new MemoryVault({ metadata: { version: VAULT_VERSION, anchor: await Keys.anchorOf(await importSeed(SEED)) } });
   await vault.ingest(events);
   return vault;
 }
@@ -24,7 +24,7 @@ describe("the whole fold", () => {
     scene.add("identity.label", { name: "me" });
     const inbound = receipt(scene, { local: a0, peer: b0, resolution: root });
     const out = intent(scene, a0, b0);
-    const pkg = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const pkg = preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     scene.add("message.erased", { messageId: out.data.messageId, dropCids: [pkg.data.envelopeCid], because: "user" });
     const checks = await checkVault(VaultEventSet.of(scene.events), keys, noObjects);
     expect(checks.didKeys.get(a0.didId)).toBe("verified");

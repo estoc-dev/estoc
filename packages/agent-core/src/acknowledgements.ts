@@ -1,8 +1,8 @@
 /**
  * A peer's acknowledgement is an application message of its own,
  * recorded as an observation like any other. What its `ack` earns is
- * read off the fold, which already tells, for every outbound with its
- * one package, the complete witnesses in its channel or in a verified
+ * read off the fold, which already tells, for every outbound with a
+ * complete preparation, the complete witnesses in its channel or in a verified
  * role-preserving successor of it whose `ack` names the message. Each
  * such witness is repeated here as one `delivery.acknowledged`, so
  * that the peer's receipt travels with the outbound as evidence of
@@ -11,7 +11,7 @@
  * for the same. The record says the peer received the message and
  * nothing more; it neither marks the message submitted nor authorizes
  * another transport call. A witness that earns its record only later,
- * once the package or the path to its channel is here, is owed it at
+ * once a preparation or the path to its channel is here, is owed it at
  * every pass over the fold, an open's included.
  */
 

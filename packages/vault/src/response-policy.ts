@@ -9,24 +9,25 @@
 import { channelPolicy, senderGate } from "./channel-policy.js";
 import type { Decision, Source } from "./fold/channels.js";
 import { kindOf, type Execution } from "./fold/inbound.js";
-import type { Outbound } from "./fold/outbound.js";
+import type { EffectResult, Outbound } from "./fold/outbound.js";
 import type { VaultFold } from "./fold/vault.js";
 import { automaticMessageId, channelOf, effectKey, sameChannel } from "./ids.js";
 import type { Channel, EffectKey, EventCid, ExecutionId, MessageId } from "./types.js";
 
-/** An operation's tuple over an input, the message ID it names and the intent already recorded under it, if any. */
+/** An operation's tuple over an input, the message ID it names, the intent already recorded under it, if any, and what the operation came to. */
 export interface AutomaticIntent {
   readonly executionId: ExecutionId;
   readonly effectType: string;
   readonly effectKey: EffectKey;
   readonly messageId: MessageId;
   readonly existing: Outbound | null;
+  readonly result: EffectResult;
 }
 
 export function automaticIntent(fold: VaultFold, execution: Execution, effectType: string): AutomaticIntent {
   const key = effectKey(execution.id, effectType);
   const messageId = automaticMessageId(key);
-  return { executionId: execution.id, effectType, effectKey: key, messageId, existing: fold.outbound.outbounds.get(messageId) ?? null };
+  return { executionId: execution.id, effectType, effectKey: key, messageId, existing: fold.outbound.outbounds.get(messageId) ?? null, result: fold.outbound.effectResult(execution.id, effectType) };
 }
 
 /**

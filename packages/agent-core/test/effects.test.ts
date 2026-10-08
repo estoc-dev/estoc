@@ -21,10 +21,10 @@ import {
   unfinishedWork,
   vaultDraft,
   type DidId,
+  type EventCid,
   type EventReference,
   type ExecutionId,
   type MessageId,
-  type PackageId,
   type VaultFold,
   type WireMessageId,
 } from "@estoc/vault";
@@ -119,7 +119,7 @@ async function reacting(alice: DirectParty, over: Partial<EffectOptions> = {}, a
   return { receiver, wire, options, effectTypes, arrived, receive, live, claimed, executionOf };
 }
 
-const packageOf = async (holder: Holder, messageId: MessageId): Promise<PackageId> => (await foldOf(holder)).outbound.outbounds.get(messageId)!.package!.event.data.packageId;
+const preparationOf = async (holder: Holder, messageId: MessageId): Promise<EventCid> => (await foldOf(holder)).outbound.outbounds.get(messageId)!.preparations[0]!.event.cid;
 const bodyCidOf = async (holder: Holder, executionId: ExecutionId) => (await foldOf(holder)).inbound.executions.get(executionId)!.members[0]!.source.event.data.bodyCid;
 
 const ECHO_TYPE = "https://example.org/echo/1.0/echo";
@@ -140,10 +140,10 @@ function created(effect: EffectOutcome | undefined): Extract<EffectOutcome, { ou
   return effect;
 }
 
-/** The envelope the message's one package names, opened as Bob opens it: with his secrets, the documents each vault holds. */
+/** The envelope the message's one preparation names, opened as Bob opens it: with his secrets, the documents each vault holds. */
 async function openedByBob(bob: DirectParty, alice: DirectParty, messageId: MessageId): Promise<JsonObject> {
   const outbound = (await foldOf(alice)).outbound.outbounds.get(messageId)!;
-  const packed = new TextDecoder().decode((await alice.runtime.vault.objects.read(outbound.package!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
+  const packed = new TextDecoder().decode((await alice.runtime.vault.objects.read(outbound.preparations[0]!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
   const ring = await Keyring.load(bob.keys, await foldOf(bob));
   const his = pinnedResolver(await foldOf(bob));
   const hers = pinnedResolver(await foldOf(alice));
@@ -374,14 +374,14 @@ describe("the automatic effects of a live input", () => {
     await closeAll(alice, bob);
   });
 
-  test("a registered handler's operation is this runtime's work end to end: its intent is prepared and called under the initial action, listed by a dispatcher told of it, retried by hand as the same package, and no work of a scan not told of it", async () => {
+  test("a registered handler's operation is this runtime's work end to end: its intent is prepared and called under the initial action, listed by a dispatcher told of it, retried by hand as the same preparation, and no work of a scan not told of it", async () => {
     const { alice, bob } = await parties();
     const { wire, effectTypes, live } = await reacting(alice, { handlers: [echo] }, refusingFirst());
     const wireId = crypto.randomUUID() as WireMessageId;
     const reacted = await live(bob, { id: wireId, type: BASIC_MESSAGE, body: { content: "hi" } });
     expect(outcomes(reacted.effects)).toEqual([[ECHO_EFFECT, "created", "failed"]]);
     const { messageId } = created(reacted.effects[0]);
-    const packageId = await packageOf(alice, messageId);
+    const preparationEventCid = await preparationOf(alice, messageId);
     expect(wire.posts).toHaveLength(1);
 
     const untold = await dispatch(alice.runtime, alice.keys, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
@@ -389,24 +389,24 @@ describe("the automatic effects of a live input", () => {
     const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, effectTypes });
     expect((await dispatcher.pending()).map((pending) => [pending.outbound.messageId, pending.outbound.work.kind])).toEqual([[messageId, "dispatch"]]);
     const retried = await dispatcher.retry(messageId);
-    expect(retried).toMatchObject({ outcome: "submitted", packageId });
+    expect(retried).toMatchObject({ outcome: "submitted", preparationEventCid });
     expect(wire.posts).toHaveLength(2);
     expect(await openedByBob(bob, alice, messageId)).toMatchObject({ type: ECHO_TYPE, thid: wireId, body: { echoed: wireId } });
     dispatcher.close();
     await closeAll(alice, bob);
   });
 
-  test("an intent already under the tuple is reused before the body is read or the handler asked: a prepared reply goes out by hand as the same package when its handler would now decide otherwise, and when the disk refuses the Ping's body", async () => {
+  test("an intent already under the tuple is reused before the body is read or the handler asked: a prepared reply goes out by hand as the same preparation when its handler would now decide otherwise, and when the disk refuses the Ping's body", async () => {
     const { alice, bob } = await parties();
     const { wire, options, live } = await reacting(alice, {}, refusingFirst());
     const reacted = await live(bob, ping(crypto.randomUUID(), { please_ack: undefined }));
     expect(outcomes(reacted.effects)).toEqual([[PING_RESPONSE_EFFECT, "created", "failed"]]);
     const { messageId } = created(reacted.effects[0]);
-    const packageId = await packageOf(alice, messageId);
+    const preparationEventCid = await preparationOf(alice, messageId);
 
     const otherwise: Handler = { types: [PING_TYPE], effectTypes: [PING_RESPONSE_EFFECT], respond: async () => [] };
     const declined = await completeResponse(alice.runtime, alice.keys, reacted.executionId!, PING_RESPONSE_EFFECT, { ...options, handlers: [otherwise] });
-    expect(declined).toMatchObject({ outcome: "existing", messageId, action: { kind: "manual", spent: true }, dispatched: { outcome: "submitted", packageId } });
+    expect(declined).toMatchObject({ outcome: "existing", messageId, action: { kind: "manual", spent: true }, dispatched: { outcome: "submitted", preparationEventCid } });
 
     refuseReads(alice.runtime, await bodyCidOf(alice, reacted.executionId!));
     const unread = await completeResponse(alice.runtime, alice.keys, reacted.executionId!, PING_RESPONSE_EFFECT, options);

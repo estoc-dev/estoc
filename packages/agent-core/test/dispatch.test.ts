@@ -42,10 +42,10 @@ function submitted(result: Dispatched): Extract<Dispatched, { outcome: "submitte
   return result;
 }
 
-/** The envelope the message's one package names, as the string the transport carries. */
+/** The envelope the message's one preparation names, as the string the transport carries. */
 async function envelopeOf(party: Holder, messageId: MessageId): Promise<string> {
   const outbound = (await fold(party)).outbound.outbounds.get(messageId)!;
-  return new TextDecoder().decode((await party.runtime.vault.objects.read(outbound.package!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
+  return new TextDecoder().decode((await party.runtime.vault.objects.read(outbound.preparations[0]!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
 }
 
 /** The envelope opened as its recipient opens it: with the recipient's secrets, the sender's documents as the sender holds them, and the recipient's own. */
@@ -69,7 +69,7 @@ describe("dispatch to a direct endpoint", () => {
     expect(sent.action).toMatchObject({ messageId: MESSAGE, kind: "initial", spent: false });
 
     const result = submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, trace }));
-    expect(result.submitted.data).toEqual({ messageId: MESSAGE, packageId: result.packageId });
+    expect(result.submitted.data).toEqual({ messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
     expect(sent.action.spent).toBe(true);
     const envelope = await envelopeOf(alice, MESSAGE);
     expect(wire.posts).toHaveLength(1);
@@ -79,13 +79,13 @@ describe("dispatch to a direct endpoint", () => {
     let f = await fold(alice);
     const outbound = f.outbound.outbounds.get(MESSAGE)!;
     expect(outbound).toMatchObject({ submitted: true, outcome: { status: "submitted" }, work: { kind: "none", because: "submitted" }, released: true });
-    expect(outbound.package!.event.data.packageId).toBe(result.packageId);
-    expect(f.held.has(outbound.package!.event.data.envelopeCid)).toBe(false);
+    expect(outbound.preparations.map((preparation) => preparation.event.cid)).toEqual([result.preparationEventCid]);
+    expect(f.held.has(outbound.preparations[0]!.event.data.envelopeCid)).toBe(false);
     expect(f.held.has(sent.intent.data.bodyCid)).toBe(true);
 
     const entries = await trace.read({ stream: "wire" });
     expect(entries.map((entry) => entry.type)).toEqual(["wire.out", "wire.in"]);
-    expect(entries[0]!.data).toMatchObject({ via: "http", endpoint: BOB_ENDPOINT, messageId: MESSAGE, packageId: result.packageId });
+    expect(entries[0]!.data).toMatchObject({ via: "http", endpoint: BOB_ENDPOINT, messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
     expect(entries[1]!.data).toMatchObject({ parent: entries[0]!.seq, status: 202 });
     expect((await trace.traceOf(MESSAGE)).map((entry) => entry.type)).toEqual(["envelope.seal", "wire.out", "wire.in"]);
 
@@ -149,7 +149,7 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  it("records what the vault owes before the call: a carrier the host's evidence left unadmitted is admitted by the manual retry of a package to the carrier's own address, once, and the package goes out as it is", async () => {
+  it("records what the vault owes before the call: a carrier the host's evidence left unadmitted is admitted by the manual retry of a preparation to the carrier's own address, once, and the preparation goes out as it is", async () => {
     const { alice, bob } = await parties();
     const { cid, prior } = await carrierWaitingForIssuer(alice, bob, BOB_PRIOR);
     await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
@@ -167,7 +167,7 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  test("a saved pure ACK whose source no admission names goes out at the first manual dispatch: the intent stands on the source's witness, the pass admits the source before the call, and the package is carried once", async () => {
+  test("a saved pure ACK whose source no admission names goes out at the first manual dispatch: the intent stands on the source's witness, the pass admits the source before the call, and the preparation is carried once", async () => {
     const { alice, bob } = await parties();
     const sourceEventCid = await observed(alice, bob, "wire-1", { type: BASIC_MESSAGE, body: { content: "hi" }, please_ack: [""] });
     let f = await fold(alice);
@@ -216,7 +216,7 @@ describe("dispatch to a direct endpoint", () => {
     return { carrier, fold: f, messageId: drafted.messageId };
   };
 
-  test("a saved pure ACK whose carrier's input is under an intent conflict is carried by no manual dispatch, before or after the replaced peer's ignored observation of the same wire ID arrives: the conflict stands, no package is prepared and nothing is posted", async () => {
+  test("a saved pure ACK whose carrier's input is under an intent conflict is carried by no manual dispatch, before or after the replaced peer's ignored observation of the same wire ID arrives: the conflict stands, no preparation is made and nothing is posted", async () => {
     const { alice, bob } = await parties();
     const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
     const asPrior = { ...bob, didId: prior.didId, did: prior.did, longFormDid: prior.longFormDid };
@@ -232,7 +232,7 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
-  test("a peer address a verified replacement has moved on from is carried to no more: the queued intent gets no package, the prepared package is called by nothing, first or retried, a call already made records its acceptance, and the successor takes a new message", async () => {
+  test("a peer address a verified replacement has moved on from is carried to no more: the queued intent gets no preparation, the prepared one is called by nothing, first or retried, a call already made records its acceptance, and the successor takes a new message", async () => {
     const { alice, bob } = await parties();
     const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
     const toPrior = { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid };
@@ -309,7 +309,7 @@ describe("dispatch to a direct endpoint", () => {
     const result = submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(1);
     const f = await fold(alice);
-    expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: true, package: { event: { data: { packageId: result.packageId } } } });
+    expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: true, preparations: [{ event: { cid: result.preparationEventCid } }] });
     expect(await cancel(alice.runtime, alice.keys, MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
     await closeAll(alice, bob);
   });
@@ -373,7 +373,7 @@ describe("dispatch to a direct endpoint", () => {
 
     const blocked = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, timed, { messageId: MESSAGE });
     await prepare(alice.runtime, alice.keys, MESSAGE, before);
-    const envelopeCid = (await fold(alice)).outbound.outbounds.get(MESSAGE)!.package!.event.data.envelopeCid;
+    const envelopeCid = (await fold(alice)).outbound.outbounds.get(MESSAGE)!.preparations[0]!.event.data.envelopeCid;
     await alice.runtime.vault.commit([], [vaultDraft("channel.blocked", { localDid: alice.did, peerDid: bob.did, includeSuccessors: false })]);
     expect(await dispatch(alice.runtime, alice.keys, blocked.action, before)).toEqual({ outcome: "none", messageId: MESSAGE, because: "the channel is denied" });
     expect(await dispatch(alice.runtime, alice.keys, blocked.action, after)).toMatchObject({ outcome: "expired", messageId: MESSAGE, failed: { data: { code: "expired" } } });
@@ -462,7 +462,7 @@ describe("dispatch to a direct endpoint", () => {
     const second = await send(alice.runtime, alice.keys, target, HELLO, { messageId: SECOND });
     await prepare(alice.runtime, alice.keys, SECOND, { didcomm });
     let f = await fold(alice);
-    const envelopeCid = f.outbound.outbounds.get(SECOND)!.package!.event.data.envelopeCid;
+    const envelopeCid = f.outbound.outbounds.get(SECOND)!.preparations[0]!.event.data.envelopeCid;
     expect(f.held.has(envelopeCid)).toBe(true);
     expect(await cancel(alice.runtime, alice.keys, SECOND)).toMatchObject({ outcome: "cancelled" });
     f = await fold(alice);
@@ -480,7 +480,7 @@ describe("dispatch to a direct endpoint", () => {
 });
 
 describe("dispatch through a mediator", () => {
-  test("a recipient behind a mediator gets the envelope inside a forward sealed to the mediator alone, under the package's ID, and it arrives intact", async () => {
+  test("a recipient behind a mediator gets the envelope inside a forward sealed to the mediator alone, under the ID its preparation's event CID derives, and it arrives intact", async () => {
     const mediator = await newMediator();
     const bob = await mediatedParty(mediator, 2, BOB);
     await holdAddresses(bob);
@@ -499,8 +499,8 @@ describe("dispatch through a mediator", () => {
     const entries = await trace.traceOf(MESSAGE);
     expect(entries.map((entry) => entry.type)).toEqual(["envelope.seal", "wire.out", "envelope.seal", "wire.in"]);
     const [, out, forward, answer] = entries;
-    expect(out!.data).toMatchObject({ via: "http", endpoint: MEDIATOR_HTTP, messageId: MESSAGE, packageId: result.packageId });
-    expect(forward!.data).toMatchObject({ parent: out!.seq, type: FORWARD, messageId: MESSAGE, packageId: result.packageId });
+    expect(out!.data).toMatchObject({ via: "http", endpoint: MEDIATOR_HTTP, messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
+    expect(forward!.data).toMatchObject({ parent: out!.seq, type: FORWARD, messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
     expect(answer!.data).toMatchObject({ parent: out!.seq, status: 202 });
     expect((await fold(alice)).outbound.outbounds.get(MESSAGE)!.submitted).toBe(true);
     await closeAll(alice, bob);

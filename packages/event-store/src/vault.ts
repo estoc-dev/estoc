@@ -1,5 +1,5 @@
 /**
- * The vault, version 4: what a program gets — its metadata, events to
+ * The vault: what a program gets — its metadata, events to
  * read, objects to read, and `commit` — and what the runtime underneath
  * keeps to itself: the vault-wide writer lock, the keystore, `ingest`,
  * and collection, whose keep set is computed only under the lock. The
@@ -577,7 +577,7 @@ export class Runtime implements VaultRuntime {
 // ---- in memory ----------------------------------------------------------
 
 export interface MemoryVaultOptions {
-  /** the vault's identity: version 4 and its anchor DID */
+  /** the vault's identity: its version and anchor DID */
   metadata: VaultMetadata;
   /** the wrapped seed the keystore hands out; a vault given none refuses to read it */
   wrapped?: WrappedSeed;

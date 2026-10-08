@@ -23,7 +23,7 @@ reference names exact content; canonical order `(at, cid)`, the CID as
 text; the `EventStore` interface; and `sampleAt` — `at` from the clock.
 `MemoryEventStore` is the reference the others are measured against,
 with `ForkedAuthor` and `BadToken`, and `eventStoreSuite` in
-`test/suite/` is the conformance suite every version-4 store runs.
+`test/suite/` is the conformance suite every store runs.
 
 The object model: raw DASL objects hashed as they stream, whole-resource
 identity however large, the `ObjectStore` interface, and
@@ -39,8 +39,8 @@ age: no orphan grace, no read latch; a stream open when its object is
 collected or replaced completes with the bytes it opened on, or fails,
 never truncates.
 
-Over both, the vault: `Vault` — its immutable `metadata` (version 4 and
-the anchor DID), events to read, objects to read, and `commit(objects,
+Over both, the vault: `Vault` — its immutable `metadata` (`VAULT_VERSION`,
+5, and the anchor DID), events to read, objects to read, and `commit(objects,
 drafts)`, the one way a local event is written, which refuses a supplied
 object no draft names as a root before reading a byte and publishes its
 objects and events together or not at all — and `VaultRuntime`, what a

@@ -1,5 +1,5 @@
 /**
- * The version-4 vault's SQLite schema, and the check that a database
+ * The vault's SQLite schema, and the check that a database
  * holds exactly it. The check is structural — what the tables are, not
  * the SQL they were spelled with — through SQLite's own pragmas, plus a
  * probe for what the pragmas do not tell: a column's collation. Every
@@ -8,6 +8,7 @@
  */
 
 import { NotAVault, SqliteError } from "../errors.js";
+import { VAULT_VERSION } from "../keystore.js";
 import { decodeText, type SqliteDriver, type SqlRow, type SqlValue } from "./driver.js";
 
 /** `PRAGMA application_id`: the bytes `ESTC`. */
@@ -21,7 +22,7 @@ const COMMON_DDL = [
   `CREATE TABLE vault_meta (
     singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
     format        TEXT NOT NULL CHECK (format = 'estoc-sqlite'),
-    vault_version INTEGER NOT NULL CHECK (vault_version = 4),
+    vault_version INTEGER NOT NULL CHECK (vault_version = ${VAULT_VERSION}),
     kind          TEXT NOT NULL CHECK (kind IN ('runtime', 'portable')),
     ready         INTEGER NOT NULL CHECK (ready IN (0, 1)),
     anchor        TEXT NOT NULL

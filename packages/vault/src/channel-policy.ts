@@ -1,12 +1,12 @@
 /**
  * Whether a channel takes new work now, decided once for every path to
- * the wire — a user send, an automatic reply, a package, a transport
+ * the wire — a user send, an automatic reply, a preparation, a transport
  * call first or retried — whatever the caller. A channel takes none
  * when its local DID cannot send, the pair is denied, its continuity
  * is in conflict, the peer has replaced its DID in that context, or
  * the local DID has been replaced here by a successor, or by a
  * decision still waiting for its evidence. A message a replacement
- * caught queued or prepared keeps its intent, its package and whatever
+ * caught queued or prepared keeps its intent, its preparations and whatever
  * call was made before, and is carried by nothing after.
  */
 

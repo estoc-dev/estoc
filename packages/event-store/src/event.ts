@@ -1,5 +1,5 @@
 /**
- * The version-4 event, its identity, time and order, and the store
+ * The event, its identity, time and order, and the store
  * interface. The model with no store behind it: what a database and
  * a map in memory must both agree on. No event type is
  * known here; what an event means is `@estoc/vault`'s.

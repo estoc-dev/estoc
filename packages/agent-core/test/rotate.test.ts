@@ -133,10 +133,10 @@ function rotated(privacy: Awaited<ReturnType<typeof privateAddress>>): Rotated {
 const successorOf = async (holder: Holder, rotation: Rotated) => (await foldOf(holder)).dids.entities.get(rotation.successor)!.created!;
 const successorRoute = async (holder: Holder, rotation: Rotated) => routeOf((await foldOf(holder)).dids.entities.get(rotation.successor)!);
 
-/** The envelope the message's one package names, opened as Bob opens it: with his secrets, the documents each vault holds. */
+/** The envelope the message's one preparation names, opened as Bob opens it: with his secrets, the documents each vault holds. */
 async function openedByBob(bob: DirectParty, alice: DirectParty, messageId: MessageId): Promise<JsonObject> {
   const outbound = (await foldOf(alice)).outbound.outbounds.get(messageId)!;
-  const packed = new TextDecoder().decode((await alice.runtime.vault.objects.read(outbound.package!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
+  const packed = new TextDecoder().decode((await alice.runtime.vault.objects.read(outbound.preparations[0]!.event.data.envelopeCid, 1 << 20)) as Uint8Array);
   const ring = await Keyring.load(bob.keys, await foldOf(bob));
   const his = pinnedResolver(await foldOf(bob));
   const hers = pinnedResolver(await foldOf(alice));
