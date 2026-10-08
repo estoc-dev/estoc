@@ -4,7 +4,7 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, object profile implemented**. The version-4 vault retains this
+Status: **phase 1, object profile implemented**. The version-5 vault retains this
 unchanged profile and accepts only whole-resource raw
 DASL objects. Capitalized requirement words have their BCP 14 meanings.
 

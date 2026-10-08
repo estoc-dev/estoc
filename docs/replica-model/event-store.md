@@ -1,10 +1,10 @@
-# The Estoc event store, version 4
+# The Estoc event store, version 5
 
 <!-- suite-navigation:start -->
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **implemented** — version-4 content-addressed events. SQLite is the
+Status: **implemented** — version-5 content-addressed events. SQLite is the
 sole persistent vault and interchange format. Each writable runtime has its
 own local identity and database ownership. This specification defines
 observable store semantics, not SQLite's implementation. Capitalized
@@ -447,7 +447,7 @@ and collection semantics. Only the vault runtime computes held roots under
 ### 8.1 Metadata and keystore
 
 ```ts
-type VaultMetadata = Readonly<{ version: 4; anchor: string }>;
+type VaultMetadata = Readonly<{ version: 5; anchor: string }>;
 type WrappedSeed = Readonly<{ version: 3; seedJwe: string }>;
 
 interface KeystoreAccess {
@@ -457,6 +457,9 @@ interface KeystoreAccess {
 ```
 
 The keystore wrapper version is independent of the vault version and remains 3.
+The vault version is one exported constant of the store, from which the
+metadata type, the SQLite check, every read and write validation and the
+creation path take their value; a fixture of a refused version spells its own.
 Metadata is immutable. The unlocked host owns privileged rewrap and verifies
 that the replacement opens to the same seed/anchor. Read returns a detached
 value, not identity authority. `seedJwe` is a compact JWE string. Exact bytes
@@ -602,13 +605,18 @@ browser support.
 
 ## 12. Versioning
 
-Vault version 4 covers envelope, object profile, key derivation and domain folds.
-It adopts the five-field content-addressed event envelope and CID references,
-the continuity integration and durable application admission. DID/key derivation,
-deterministic domain-ID transcripts, the raw object profile and version-3 keystore
-wrapper remain as defined here; the version bump does not rename their purpose strings.
-The target runtime accepts only vault version 4 with SQLite schema version 2.
-No migration or import/restore compatibility with earlier vaults is required.
+Vault version 5 covers envelope, object profile, key derivation and domain folds.
+It keeps version 4's five-field content-addressed event envelope, CID
+references, continuity integration and durable application admission, and
+changes the message events: content identities become the intent, plaintext
+and envelope CIDs, the preparation is named by its event CID, and a user send
+fixes its creation time. DID/key derivation, deterministic domain-ID
+transcripts and their version strings, the raw object profile and the
+version-3 keystore wrapper remain as defined here; the version bump does not
+rename their purpose strings. The target runtime accepts only vault version 5
+with SQLite schema version 2. A version-4 vault is refused before any payload
+is read and is not rewritten; no migration or import/restore compatibility
+with earlier vaults is required.
 SQLite schema versioning is separate. For published versions, compatible
 additions are new event types, optional payload fields with a fixed absent
 meaning, or negotiated capabilities. Changing existing

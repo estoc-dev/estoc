@@ -19,9 +19,9 @@ appear in all capitals.
 
 | Task | Read together |
 | --- | --- |
-| Implement sending | [Commit boundaries](#cross-layer-commit-and-acknowledgment-table) → [Send](#send-an-ordinary-message) → [Prepare](#preparing-a-package) → [Completion and expiry](#submission-completion-and-expiration) |
+| Implement sending | [Commit boundaries](#cross-layer-commit-and-acknowledgment-table) → [Send](#send-an-ordinary-message) → [Prepare](#preparing-a-package) → [Local delivery records](#runtime-local-delivery-records) → [Completion and expiry](#submission-completion-and-expiration) |
 | Implement receiving | [Receive](#receive-a-message) → [Recover](#receive-recovery) → [ACK processing](#durable-end-to-end-acknowledgment) |
-| Implement identity and effects | [Hash projections](#canonical-projections-and-hashes) → [Observation and execution identity](#observation-identity-logical-aliasing-and-execution-identity) → [Automatic effects](#automatic-effects) |
+| Implement identity and effects | [Message layers](#canonical-projections-and-hashes) → [Observation and execution identity](#observation-identity-logical-aliasing-and-execution-identity) → [Automatic effects](#automatic-effects) |
 
 <details>
 <summary>Contents</summary>
@@ -30,8 +30,8 @@ appear in all capitals.
 - [2. Terms](#terms)
 - [3. Addressing layers](#addressing-layers)
 - [4. Vault-first procedures and commit boundaries](#vault-first-procedures-and-commit-boundaries)
-- [5. Canonical projections and hashes](#canonical-projections-and-hashes)
-- [6. Preparing a package](#preparing-a-package)
+- [5. Message layers and their CIDs](#canonical-projections-and-hashes)
+- [6. Preparing a message](#preparing-a-package)
 - [7. Submission completion and termination](#submission-completion-and-expiration)
 - [8. Durable end-to-end acknowledgment](#durable-end-to-end-acknowledgment)
 - [9. Channel-local message and execution identity](#observation-identity-logical-aliasing-and-execution-identity)
@@ -54,16 +54,21 @@ user's own message, and for an input's automatic outputs the replica that
 answers the input, the one the mediator registered first under the input's
 execution when the input reached several ([section 11](#automatic-effects)).
 
-Every message transport call uses its committed `message.prepared` package.
-Only the live initial action or a new explicit manual retry may make that call.
-Transport acceptance commits `delivery.submitted`, permanently completing that
-outbound. A failed/unknown call, missing ACK, process reopen or another replica
-does not automatically retry it. A manual retry preserves the exact committed
-package; selecting another channel means a new message ID.
+Every message transport call carries the envelope of one committed
+`message.prepared`: the preparation this runtime selected for the message and
+keeps in its local state ([section 6.1](#the-selected-preparation)). Only the
+live initial action or a new explicit manual retry may make that call.
+Transport acceptance commits `delivery.submitted` naming that preparation,
+permanently completing the outbound. A failed/unknown call, missing ACK,
+process reopen or another replica does not automatically retry it. A manual
+retry carries the selected preparation's exact envelope; selecting another
+channel means a new message ID.
 
-This profile defines intent/package identity, channel-local deduplication,
-explicit ACK authorization, process-durable receipt and effect ordering.
-It makes no cross-channel or cross-replica exactly-once business-execution promise.
+This profile defines the message layers and their identities
+([section 5](#canonical-projections-and-hashes)), channel-local
+deduplication, explicit ACK authorization, process-durable receipt and effect
+ordering. It makes no cross-channel or cross-replica exactly-once
+business-execution promise.
 
 <a id="terms"></a>
 
@@ -75,13 +80,19 @@ It makes no cross-channel or cross-replica exactly-once business-execution promi
 - **Outbound message ID** — one committed intent's entity ID and plaintext `id`.
 - **Inbound message ID** — derived from canonical sender, canonical recipient and wire ID.
 - **Execution ID** — stable identity of one channel-local input; identity alone grants no work.
-- **Package ID** — exact encrypted inner envelope identity and Routing `forward.id`.
-- **Delivery ID** — mediator pickup identity, separate from message/package IDs.
-- **Prepared** — one committed, fixed package; it records no transport invocation.
-- **Submitted** — recorded transport acceptance; it is not ultimate receipt.
+- **Intent CID** — content identity of one fixed application message
+  ([section 5.2](#intent-projection)); equal content, not one sending.
+- **Plaintext CID** — content identity of one complete DIDComm plaintext as
+  encrypted or decrypted ([section 5.3](#exact-plaintext-hash)); the vault
+  keeps the CID, not the plaintext.
+- **Envelope CID** — raw object CID of one normalized encrypted envelope.
+- **Preparation** — one committed `message.prepared`, named by its event CID;
+  it fixes one envelope and records no transport invocation.
+- **Delivery ID** — mediator pickup identity, separate from message and
+  preparation identities.
+- **Submitted** — recorded transport acceptance of one preparation; it is not
+  ultimate receipt.
 - **Acknowledged** — accepted explicit peer `ack` naming the exact authorized outbound.
-- **Semantic/intent/plaintext hashes** — the projections in section 5; addressing
-  is package evidence but the intent's channel is independently immutable.
 
 <a id="addressing-layers"></a>
 
@@ -200,7 +211,7 @@ Every instruction to append an event in this document means
 
 A full vault runtime MUST be able to commit a send while DNS, DID resolution
 and every mediator are unavailable. Before a message's own network work,
-resolving its recipient, preparing its package and submitting it, commit the
+resolving its recipient, preparing its envelope and submitting it, commit the
 content and [message.out](vault-events.md#message-out), freezing its ID,
 channel, headers and user or automatic-effect decision. Deciding an automatic
 output may wait on the network itself: the replica answering an input picked
@@ -208,9 +219,18 @@ up at a replica-mediation mediator is registered for there before any of the
 input's automatic intents is committed ([section 11](#automatic-effects)).
 
 `createdTime == null` means the DIDComm `created_time` header is absent. A
-preparer MUST NOT invent it. A user-authored message normally freezes commit
-time, while a deterministic response may copy or derive a timestamp under its
-protocol. The value is not a transport-freshness proof.
+preparer MUST NOT invent it. A user send fixes a non-null `createdTime` when
+its intent is first created: the value the caller gives, or, when the caller
+gives none or null, the clock read once at creation in whole seconds since the
+Unix epoch. The intent is committed with it, and every later preparation and
+retry reads it from the intent. A send repeated under an existing message ID
+that gives no time or null reads the committed value before anything is
+compared, so that the repetition agrees; a non-null value it gives must equal
+the committed one. A user message therefore always goes out with
+`created_time`, where it used to go out without one. An automatic output copies
+or derives its time under its operation ([section 11](#automatic-effects)),
+null included, and a manual rotation notification has none. The value is not
+a transport-freshness proof.
 
 A successful vault commit uses the process-durable boundary in
 [event-store.md section 2.1](event-store.md#commit-and-durability-terminology). Correctness MUST NOT depend on an uninterrupted
@@ -227,9 +247,9 @@ when a full vault runtime process-durably appends `message.out`.
 | Boundary | Durable prerequisite | Meaning |
 | --- | --- | --- |
 | Offline send intent | Content and `message.out` with fixed channel/direction | A selected new message, not authority for recovery dispatch |
-| Package preparation | Valid fixed-channel intent, operation resolution and `message.prepared` | One fixed package for this message |
-| Transport invocation | Committed package plus a live initial/manual action | One call using the fixed package; no invocation event is stored |
-| Submission completion | `delivery.submitted` naming that message/package | Stop preparation and sending for this message ID |
+| Preparation | Valid fixed-channel intent, peer resolution and `message.prepared` | One fixed envelope for this message; the message may hold several |
+| Transport invocation | A committed preparation selected in the runtime's local state, plus a live initial/manual action | One call carrying that envelope; no invocation event is stored |
+| Submission completion | `delivery.submitted` naming the message and the preparation carried | Stop preparation and sending for this message ID |
 | Channel receipt | Current authentication, exact resolution, objects and `message.in` | Normal pickup ACK may follow |
 | Proof verification | Exact authenticated carrier with its original JWT and derivable or retained immutable issuer material | Fold computes proof result and continuity status without another event |
 | New source-derived work | Admitted complete source/proof evidence, current policy and any additional evidence required by that consumer | Only the specific eligible operation may proceed |
@@ -247,13 +267,15 @@ A send commits the content and `message.out`, with its channel and headers
 fixed, before the message's own network work; an explicit user send may select a new
 channel, and an automatic output goes where
 [the response policy](../../packages/vault/src/response-policy.ts) says. What follows is code:
-the intent is [`packages/agent-core/src/send.ts`](../../packages/agent-core/src/send.ts), its one
-package [`prepare.ts`](../../packages/agent-core/src/prepare.ts), the one transport call of that
-package [`dispatch.ts`](../../packages/agent-core/src/dispatch.ts) under
+the intent is [`packages/agent-core/src/send.ts`](../../packages/agent-core/src/send.ts), its
+preparation [`prepare.ts`](../../packages/agent-core/src/prepare.ts), the one transport call of the
+selected envelope [`dispatch.ts`](../../packages/agent-core/src/dispatch.ts) under
 [the live action](../../packages/agent-core/src/action.ts), and the wait for a prerequisite
 [`dispatcher.ts`](../../packages/agent-core/src/dispatcher.ts); no vault lock is held across network
 I/O. Transport acceptance is recorded as `delivery.submitted` naming the
-message and package. Every other transport outcome stays in the runtime's
+message and the preparation whose envelope was carried; an acceptance observed
+but not yet recorded is kept in the runtime's local state until it is
+([section 6.2](#runtime-local-delivery-records)). Every other transport outcome stays in the runtime's
 local trace and MUST NOT produce `delivery.failed`, which only explicit
 cancellation and expiry append under
 [termination](vault-events.md#delivery-failed); failure or uncertainty
@@ -313,7 +335,7 @@ immutable issuer material under
 vault owes runs at open and whenever evidence arrives, not only after a
 restart ([`reconcile.ts`](../../packages/agent-core/src/reconcile.ts)). Pending and unconfirmed messages
 are shown for manual action under [the live action](../../packages/agent-core/src/action.ts), with their
-message, execution, package and submission identities preserved; an open, an
+message, execution, preparation and submission identities preserved; an open, an
 import or evidence recovered apart mints no action
 ([`agent.ts`](../../packages/agent-core/src/agent.ts)). A carrier whose predecessor material was missing
 at receipt is no longer live when it arrives, under
@@ -322,163 +344,283 @@ content-derived effect.
 
 <a id="canonical-projections-and-hashes"></a>
 
-## 5. Canonical projections and hashes
+## 5. Message layers and their CIDs
+
+A message has four content identities, one per representation. Each is the
+raw DASL CID of [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over one
+canonical byte string; none is derived from another, and the vault's typed
+fields keep them apart ([vault-events.md section 3.5](vault-events.md#identifier-and-reference-vocabulary)).
+
+| Layer | Field | Bytes named | Equal means |
+| --- | --- | --- | --- |
+| Intent | `intentCid` | the intent projection of [5.2](#intent-projection) | the same fixed application message |
+| Plaintext | `plaintextCid` | the complete DIDComm plaintext of [5.3](#exact-plaintext-hash) | the same complete plaintext, own ID, addressing and proof included |
+| Envelope | `envelopeCid` | the normalized encrypted envelope of [the preparation](vault-events.md#message-prepared) | the same ciphertext; re-encrypting gives another |
+| Event | event `cid` | the canonical event envelope of [event-store.md](event-store.md#the-event) | the same event |
+
+Content equality is not identity. Two independent user sends of equal content
+have different message IDs and may have one intent CID; one intent prepared
+twice has two envelope CIDs; two replicas recording one preparation have two
+event CIDs. A message ID names one sending, an effect key one automatic
+output, a preparation's event CID one envelope. No CID replaces them, and
+none grants admission, dispatch or retry eligibility.
+[message-vectors.md](message-vectors.md) lists fixed inputs with their
+canonical bytes and CIDs.
 
 <a id="semantic-projection"></a>
+<a id="self-references"></a>
 
-### 5.1 Semantic projection
+### 5.1 References to this message
 
-For an innermost plaintext `M`, define:
+The intent projection represents a reference to a message as a JSON string:
+the empty string `""` for the message itself, otherwise the referenced wire
+ID. The self reference is read at the DIDComm boundary with that protocol's ID
+comparison: on the wire, an absent `thid` and a `thid` equal to the message's
+own `id` are both the self thread, and a `please_ack` element `""` and one
+equal to the own `id` both ask for this message's receipt. `pthid` and `ack`
+refer to other messages and are kept as spelled. Nothing is replaced inside
+`body`, attachments or additional headers: an application that writes its own
+wire ID into content changes its intent with the ID, under its own rules.
 
-```json
-{
-  "id": "<M.id>",
-  "type": "<M.type>",
-  "thid": null,
-  "pthid": null,
-  "body": {},
-  "attachments": []
-}
-```
+On the wire a self thread is written by omitting `thid`, and a self ACK
+request as `""`, so that one intent assembles to one plaintext whichever
+spelling it was recorded from.
 
-Values are copied from `M`. Absent thread values are null. Body and attachments
-use the closed normalization in [vault-events.md section 7](vault-events.md#stored-message-document). The semantic
-projection contains no implementation-selected attachment metadata.
-
-It excludes:
-
-```text
-typ, from, to, created_time, expires_time,
-please_ack, ack, from_prior
-```
-
-`return_route` is forbidden in an Estoc vault application plaintext.
-
-This projection is the `semantic` member of the intent projection below. It
-has no separately stored hash.
+A message requests its own ACK when its `please_ack` contains a self
+reference. An absent or empty array does not request it. This profile
+acknowledges one message at a time: a receipt is given to the message that
+asks for it, naming that message alone. A reference to any other message is
+preserved but asks nothing of this vault, so a sender that wants a receipt for
+a message asks for it in that message. The request never changes submission
+completion or retry eligibility.
 
 <a id="intent-projection"></a>
 
-### 5.2 Intent projection
+### 5.2 Intent CID
 
-The intent projection is:
+```text
+intentCid = rawCid(UTF8(RFC8785(["estoc.message.intent", 1, projection])))
+```
+
+The literal kind and version prefix the projection; a change to the
+projection's fields or encoding is a new version. `projection` is the object:
 
 ```json
 {
-  "semantic": {
-    "id": "<wire ID>",
-    "type": "<message type>",
-    "thid": null,
-    "pthid": null,
-    "body": {},
-    "attachments": []
-  },
-  "created_time": null,
+  "type": "https://didcomm.org/basicmessage/2.0/message",
+  "thid": "",
+  "pthid": null,
+  "created_time": 1788442800,
   "expires_time": null,
   "please_ack": [""],
   "ack": [],
+  "document": "bafkreifjsojjektsxjm7ap5cq3oy4uf3vijc4l4yxikxrwclndlsany5me",
   "headers": {}
 }
 ```
 
-`please_ack` is null when the wire header is absent; otherwise it is the exact
-ordered wire array. `""` means the current message, and the current wire ID MAY
-be used instead.
+- `type` is the DIDComm message type.
+- `thid` is the thread reference under 5.1 and never null; `pthid` is null or
+  the parent thread's wire ID.
+- `created_time` and `expires_time` are Epoch-Seconds integers or null. Both
+  are intent: two sends a second apart have different intent CIDs.
+- `please_ack` is null when the header is absent, otherwise the ordered array
+  of references under 5.1, order and repetitions kept; `ack` is the ordered
+  array of wire IDs, `[]` when absent. Neither array is sorted or merged with
+  the absent case.
+- `document` is the CID of the stored message document of
+  [vault-events.md section 7](vault-events.md#stored-message-document): the
+  body and the attachment descriptors in wire order, each with its carrier
+  kind, payload CID or links, `hash` and `jws`. The CID commits to all of it;
+  the content is read from the object the field names.
+- `headers` is every permitted top-level DIDComm field no dedicated field
+  represents, with none of the reserved names
+  [`message.out`](vault-events.md#message-out) lists. A difference in any
+  such field is an intent difference.
 
-A message requests its own ACK when the array contains `""` or its own wire
-ID. An absent or empty array does not request it, while `[""]` and
-`[currentWireId]` do. This profile acknowledges one message at a time: a
-receipt is given to the message that asks for it, naming that message alone.
-A string naming any other message is preserved but asks nothing of this
-vault, so a sender that wants a receipt for a message asks for it in that
-message. This request never changes submission completion or retry
-eligibility.
+Excluded are the message's own `id`, `typ`, `from`, `to`, `from_prior`, the
+effect tuple, the source and rotation references and every preparation field.
+The intent names no channel: one intent CID may be recorded in different
+channels, and a use that needs the sender and recipient carries them beside
+it.
 
-Readers preserve the accepted wire array exactly. Absent `please_ack`
-normalizes to null; absent `ack` normalizes to `[]`; absent `created_time` or
-`expires_time` normalizes to null; absent additional headers normalize to
-`{}`. The producer emits `ack` naming exactly one wire ID, the carrier's,
-under section 8.1; the ordering MUST in
-[DIDComm Messaging v2.1, ACKs](https://identity.foundation/didcomm-messaging/spec/v2.1/#acks)
-is therefore met by every emitted array.
-
-`headers` contains every permitted top-level DIDComm field not represented by
-a dedicated field. The reserved names `typ`, `id`, `type`, `from`, `to`,
-`created_time`, `expires_time`, `thid`, `pthid`, `please_ack`, `ack`,
-`from_prior`, `return_route`, `body` and `attachments` are forbidden. A
-difference in any such field is an intent difference.
-Local effect bookkeeping and package addressing are excluded.
-
-`intentHash` is unpadded base64url SHA-256 of RFC 8785 canonical UTF-8 JSON for
-this projection.
+An outbound intent is computed from the fields of `message.out`, the message
+ID being the own `id`; an inbound one from the accepted plaintext with its
+`id`, once the stored document is derived. Both are deterministic over their
+inputs alone: no clock, randomness or resolver.
 
 <a id="exact-plaintext-hash"></a>
 
-### 5.3 Exact plaintext hash
+### 5.3 Plaintext CID
 
-`plaintextHash` is unpadded base64url SHA-256 of RFC 8785 canonical UTF-8 JSON
-for the normalized innermost DIDComm plaintext of one package or one
-observation. Normalization omits a top-level member whose value is explicitly
-null when its name is one of `from`, `to`, `thid`, `pthid`, `created_time`,
-`expires_time`, `from_prior` or `attachments`; that set is closed and does not
-grow with the headers a library recognizes. Every other present top-level
-member stays in the hash input, including `please_ack: null`, `ack: null` and
-null values in additional headers. `body` is unchanged, nested nulls included.
+```text
+plaintextCid = rawCid(UTF8(RFC8785(plaintext)))
+```
 
-Attachments are normalized as containers, not as JSON values. Each
-descriptor and its `data` object retain only the members the
-[stored attachment profile](vault-events.md#stored-message-document) admits;
-an admitted optional member whose value is null is omitted, and any other
-member is excluded. The JSON value inside a `json` carrier is unchanged,
-nested nulls included, and the ordinary attachment syntax rules still apply,
-including the required non-null `hash` of a `links` carrier.
+`plaintext` is the complete innermost DIDComm plaintext exactly as it was
+encrypted, or as it was decrypted and verified: every member, explicit nulls
+included, with `from`, `to`, `from_prior` and the message's own `id` among
+them. Nothing is omitted or normalized before hashing; an absent member and an
+explicit null give different CIDs, while member order and whitespace do not.
+The plaintext is parsed strictly first: duplicate members and invalid I-JSON
+are rejected, and the attachment carrier rule of
+[the stored document](vault-events.md#stored-message-document) is checked on
+the parsed `data` as received, `json: null` counting as a present carrier.
+The same parsed value then yields the plaintext CID, the stored document and
+the intent projection, and every field the receiver judges, `from` among
+them; no field is read back from another representation of the message.
 
-The single-carrier rule of that profile is checked on the decrypted `data`
-object as received, before it is projected onto a typed carrier and before
-any member is discarded: exactly one of `base64`, `json` and `links` is
-present, counted by presence, so `json: null` is a present carrier. A second
-recognized carrier is not unsupported metadata and is never dropped to make
-the attachment valid. A library that projects attachment data onto one
-carrier must therefore reject an ambiguous object itself, or hand the
-receiver enough of the original to reject it before acceptance.
+The vault keeps the plaintext CID and not the plaintext. The stored document
+drops the own `id`, the addressing, the proof and the members this version
+does not store, so no reader recomputes the CID from what the vault retains:
+the field is validated for its form alone. It records the content encrypted
+or decrypted at that moment, is no object root, and this version makes no
+matching, deduplication or admission decision by it.
 
-The sender hashes the normalized plaintext it encrypts; the receiver
-normalizes the accepted plaintext the same way before hashing. A hash helper
-that hashes its input unchanged requires that normalization to have happened
-before the call.
+A plaintext assembled from an intent under 5.1 and read back parses to the
+same intent and the same intent CID.
 
-An outbound `messageId` has one fixed package. Its intent hash matches the
-intent; its plaintext hash preserves the exact prepared addressing and proof.
+<a id="envelope-and-event-cids"></a>
+
+### 5.4 Envelope and event CIDs
+
+The envelope CID is the raw CID of `UTF8(RFC8785(parsedEncryptedEnvelope))`
+under [the preparation](vault-events.md#message-prepared); the bytes are
+retained as an object and are the event's root. An event CID is
+[event-store.md](event-store.md#the-event)'s. `delivery.submitted` names its
+preparation by event CID and resolves it by that exact CID: an event of equal
+payload under another CID is another preparation, present or not.
+
+<a id="intent-equality"></a>
+
+### 5.5 Equality of recorded intents
+
+Records of one message under one `messageId`, or of one automatic output under
+one `(executionId, effectType)`, are one intent when they agree on
+`intentCid`, `senderDidId`, the canonical recipient, `executionId`,
+`effectType`, `effectKey` and `rotationEventCid`. `sourceEventCid` is
+evidence, not intent: each record's reference is validated on its own against
+the input the execution names, and two records naming different observations
+of that input are one intent. Records that differ in an agreed field are a
+conflict for good, whichever replica wrote them and however many preparations
+or submissions each has. A preparer reads the intent through its projection,
+so which agreeing record it reads makes no difference to the plaintext.
 
 <a id="preparing-a-package"></a>
 
-## 6. Preparing a package
+## 6. Preparing a message
 
-A package is the one exact envelope every transport call of its intent
-carries. Its plaintext is constructed from the immutable intent alone:
-conditional nullable timestamps and threads, exact `pleaseAck`, frozen `ack`,
-supported headers, body and ordered attachments, with `from`, `to`, the exact
-key methods and any frozen proof following the fixed channel's evidence; the
-wire ID equals the outbound message ID. Forbidden `return_route`, duplicate
-JSON members and invalid I-JSON are rejected. The plaintext is canonicalized
-with RFC 8785 and encrypted through maintained DIDComm APIs, and the exact
-normalized envelope, the peer resolution it used under
+A preparation fixes one exact envelope of a message. Its plaintext is
+assembled from the intent under [sections 5.1](#self-references) and
+[5.2](#intent-projection), with the message ID as `id`, and with `from`, `to`,
+the exact key methods and any frozen proof following the fixed channel's
+evidence; forbidden `return_route`, duplicate JSON members and invalid I-JSON
+are rejected. The plaintext is canonicalized with RFC 8785 and encrypted
+through maintained DIDComm APIs, and the normalized envelope object, the peer
+resolution it used under
 [the address profile](relationships.md#recipient-resolution-freshness) and
 `message.prepared` are committed in one lock before transport under
-[the package schema](vault-events.md#message-prepared). That commit freezes
-its plaintext, ciphertext, proof, spelling, package ID and envelope CID for
-the initial call and every retry; later confirmation, rotation, resolution or
-termination cannot replace it, and changing the package requires a new
-message ID. Which spelling and which keys the two ends take, what defers a
-package, and the pass every preparation owes are
+[the preparation schema](vault-events.md#message-prepared), the event carrying
+the intent, plaintext and envelope CIDs with its evidence references. The
+commit freezes that envelope: later confirmation, rotation, resolution or
+termination cannot replace it, and changing the content or the channel
+requires a new message ID.
+
+A message may hold several valid preparations, from two replicas or from one
+that prepared again when its envelope was gone. Each is checked on its own
+against the intent and its own evidence under
+[the outbound fold](../../packages/vault/src/fold/outbound.ts); their number
+is no conflict, and none is sendable by being recorded. Which envelope this
+runtime carries is local ([6.1](#the-selected-preparation)). Which spelling
+and which keys the two ends take, what defers a preparation, and the pass
+every preparation owes are
 [`packages/agent-core/src/prepare.ts`](../../packages/agent-core/src/prepare.ts).
+
+<a id="the-selected-preparation"></a>
+
+### 6.1 The selected preparation
+
+A runtime keeps, for each message, the preparation whose envelope its
+transport calls carry, as a local record under [6.2](#runtime-local-delivery-records).
+A preparation this runtime commits is selected in the same serial turn, right
+after the commit, and handed to dispatch only once the selection is written;
+a selection the local options refuse leaves the message prepared and uncalled.
+Before any call the selection is read back and its event, evidence and
+envelope bytes checked. A selection whose preparation is missing, in conflict
+or erased is replaced by nothing on its own.
+
+A message with no selection and exactly one valid preparation selects it in
+the preparation step, before dispatch. One with several valid preparations is
+listed for the user to choose among; the choice is written as the selection,
+and only then may an explicit manual retry carry it. One with no preparation,
+and whose submissions all resolve, may prepare under the usual gate; a
+preparation that is here with incomplete or contradictory evidence is not
+nothing and does not reopen that gate. A preparation that arrives by import
+or synchronization changes no selection. A restore or an identity reset
+starts with none: another runtime's choice is not known here.
+
+The forward around the envelope is sealed per call, so the outer Routing 2.0
+`forward.id` is derived from the preparation rather than minted:
+
+```text
+forwardId = UUIDv5(
+  estocNamespace("forward"),
+  UTF8(RFC8785(["v1", preparationEventCid]))
+)
+```
+
+Every call of one preparation carries one forward ID, and no mediator-visible
+ID carries an event CID. The namespace derivation and the test vector are in
+[vault-events.md](vault-events.md#entity-ids-and-reproducible-uuidv5-namespaces).
+
+<a id="runtime-local-delivery-records"></a>
+
+### 6.2 Runtime-local delivery records
+
+Three facts about delivery are this runtime's alone and live in its local
+options, never in an event, a snapshot, an export or the trace: the input its
+replica left to another replica ([section 11](#automatic-effects)), the
+preparation it selected ([6.1](#the-selected-preparation)), and a transport
+acceptance it observed and has not yet recorded as `delivery.submitted`. One
+typed adapter writes and reads all three; no caller spells a key. Each key is
+
+```text
+key = RFC8785(["agent-core", 1, replicaId, kind, subjectId])
+```
+
+with `replicaId` the runtime's author, `kind` one of `execution-left`
+(subject: the execution ID), `preparation-selected` and `acceptance-owed`
+(subject: the message ID), and the value a closed JSON object of that kind:
+the registration left to (`mediationId`, `registrationId`, `responderDid`),
+the preparation selected (`preparationEventCid`) or the acceptance owed
+(`preparationEventCid`). The key version is the adapter's, independent of the
+vault version; the trace level stays a host setting beside these records.
+
+The records are keyed by replica ID. A reopen reads them; a restore or an
+identity reset mints another author and reads none, and records of an earlier
+author are never migrated. An acceptance owed is written as soon as the
+acceptance is observed, before the commit that records it, and deleted once
+`delivery.submitted` is committed; a reopen records every acceptance it finds
+owed and calls no transport. An acceptance the runtime saw but could not
+write, like a crash before the write, leaves the outcome unknown: the message
+shows as prepared, and only an explicit manual retry may carry the envelope
+again. A selection is removed by nothing but the user's explicit choice of
+another preparation. The adapter refuses a value of the wrong shape and
+reports a write it could not make; a read that fails is read as no record.
+None of these records, and no trace, decides whether a call may be made: that
+is the live action's, and pruning the trace never makes historical work run.
 
 <a id="submission-completion-and-expiration"></a>
 
 ## 7. Submission completion and termination
 
 Any valid committed submission completes the message and prevents further
-preparation or retry, regardless of ACK policy. Missing submission does not prove
+preparation or retry, regardless of ACK policy; several complete submissions
+of one message, of one preparation or of several, are its completion and no
+conflict. A submission naming a preparation that is not here is unresolved:
+while it may still arrive the message is neither prepared again nor called.
+One naming a preparation that is here but pending or in conflict completes
+nothing and is judged with that preparation. Missing submission does not prove
 nondelivery; pending work follows [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 Expiry, at equality, and explicit cancellation terminate the entire intent
 under [the termination rules](vault-events.md#delivery-failed), without
@@ -487,15 +629,18 @@ complete submission takes precedence, and later ACK evidence reports receipt
 without reopening anything. Known endpoint replacement prohibits preparation
 and transport on the old channel under
 [the continuity fold](../../packages/vault/src/fold/continuity.ts), queued work and manual retries
-included; it never rewrites their packages. When expiry and cancellation are
+included; it never rewrites their preparations. When expiry and cancellation are
 observed, and what each leaves of the content and the envelope, is
 [`packages/agent-core/src/dispatch.ts`](../../packages/agent-core/src/dispatch.ts).
 
 Prepared-envelope retention is owned solely by
-[vault-events.md](vault-events.md#held-roots). A paused/unconfirmed eligible
-package remains retained for possible manual action; waiting is not deletion.
-ACKs have no independent retention contribution. A submitted envelope need not
-be recreated for a duplicate input or manual "send again" with a new ID.
+[vault-events.md](vault-events.md#held-roots): every envelope the message's
+preparations name is held until the message is submitted or terminated under a
+consistent intent, and released then all at once. A paused/unconfirmed
+eligible preparation remains retained for possible manual action; waiting is
+not deletion. ACKs have no independent retention contribution. A submitted
+envelope need not be recreated for a duplicate input or manual "send again"
+with a new ID.
 
 <a id="durable-end-to-end-acknowledgment"></a>
 
@@ -516,7 +661,7 @@ is created, reused or completed by hand is
 
 Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
 A carrier that does not request its own receipt under
-[section 5.2](#intent-projection) creates no requested-ACK work, whatever
+[section 5.1](#self-references) creates no requested-ACK work, whatever
 other messages its request names. Otherwise the one target is the carrier's
 own wire ID, which names its exact source input: the carrier must be the
 admitted complete witness establishing that input, and the input's admitted
@@ -579,7 +724,7 @@ message: peer receipt only, not transport acceptance and no permission to
 send again. Undirected graph connectivity, group membership, threads and
 ordinary responses are insufficient; an ignored old-peer carrier acknowledges
 nothing, while an admission recorded before supersession remains historical
-ACK evidence. The carrier's key need not equal the old package's recipient
+ACK evidence. The carrier's key need not equal the old preparation's recipient
 key. Which witnesses qualify, over which path, is
 [the delivery fold](../../packages/vault/src/fold/outbound.ts) over
 [channel authorization](../../packages/vault/src/fold/continuity.ts); each is recorded once as
@@ -592,7 +737,7 @@ key. Which witnesses qualify, over which path, is
 
 An authenticated duplicate in the same channel is another observation of the
 same input under [the inbound fold](../../packages/vault/src/fold/inbound.ts): it creates no new
-effect, output ID, package, proof or dispatch action. Another channel has
+effect, output ID, preparation, proof or dispatch action. Another channel has
 another input identity and is not a duplicate under this profile.
 
 <a id="observation-identity-logical-aliasing-and-execution-identity"></a>
@@ -731,12 +876,29 @@ The unpadded base64url key determines the outbound message and wire ID under
 stores the tuple and intent and defines their validation; conflicts follow
 [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 
-An intent is looked up by its tuple before anything is frozen, and an
-existing non-conflicted one is reused as it is after submission, source
-erasure, another observation or a changed clock; the exact source and any
-rotation decision are retained directly in the
-[intent](vault-events.md#message-out). Missing evidence or sender leaves that
-operation pending without blocking another independently eligible operation.
+Each tuple has one result, read from the vault before anything is decided
+or frozen, before the input's body is read or its handler asked:
+
+- **produced** — a `message.out` under the tuple. It is reused as it is
+  after submission, source erasure, another observation, a handler that would
+  decide otherwise now or a changed clock; the exact source and any rotation
+  decision are retained directly in the [intent](vault-events.md#message-out).
+- **skipped** — an [`effect.skipped`](vault-events.md#effect-skipped) under
+  the tuple: the operation's own rule, applied to the admitted input, owes it
+  no output, for good. Only a decision that is a function of the input and
+  the operation is recorded so. A receipt not given under local policy, a
+  channel that takes no reply now, evidence not here yet, a paused runtime or
+  a failed write is no skip and is recorded by nothing.
+- **pending** — neither: the output is still to make, by the live input's
+  responder or by hand.
+
+A produced and a skipped result under one tuple are a conflict of that tuple.
+Several skipped records are one result; several produced records are one
+intent or a conflict under [section 5.5](#intent-equality). An input whose
+tuples are all produced or skipped owes no output; a produced output not yet
+submitted is the message's own unfinished work, not the tuple's. Missing
+evidence or sender leaves an operation pending without blocking another
+independently eligible operation.
 ACKs and rotation notifications are standalone Empty messages, independent of
 natural protocol responses; arrival, dependency completion and handler order
 never merge their tuples. Only eligible live input creates an initial intent
@@ -772,7 +934,11 @@ contract. The message fold does not validate those payloads.
 The registration does not provide process-level exactly-once execution: the
 replica listed first may stop before it answers, and the other replicas,
 keeping their leaves, list none of the input's outputs. An explicit completion
-on any replica may still make them.
+on any replica may still make them. Two outputs so made for one tuple are one
+intent when they agree under [section 5.5](#intent-equality), each with its
+own source reference; copying the source's time keeps clocks out of the
+comparison, while another sender, another content or another decision is a
+conflict.
 
 <a id="built-in-independent-operations"></a>
 
@@ -816,7 +982,7 @@ Until exact-successor confirmation, every successor message, the notification
 included, carries a proof selected at preparation time from the first
 candidate record in canonical event order within the same rotation intent; it
 need not be the proof of the record the notification names. The selected proof
-is frozen in each prepared package; notification submission alone is not
+is frozen in each preparation; notification submission alone is not
 confirmation.
 
 A manual rotation with no trigger source uses a locally initiated UUIDv7
@@ -838,9 +1004,10 @@ allocates another successor are
 
 ```text
 message.out                fixed channel and immutable intent
-message.prepared           exact selected envelope
-delivery.submitted         observed transport acceptance of the fixed package
+message.prepared           one exact envelope of the intent, with its evidence
+delivery.submitted         observed transport acceptance of one preparation
 delivery.failed            terminal failure or message cancellation
+effect.skipped             an operation's terminal decision to owe no output
 delivery.acknowledged      exact authorized peer receipt observation
 message.in                 independent authenticated channel receipt
 message.admitted           durable application acceptance of one exact receipt
@@ -859,10 +1026,10 @@ them are owned by the modules those documents link.
 
 - Before intent commit, no message exists. A failed/uncertain commit grants no send.
 - A crash between any two later commits leaves the portable state of the last
-  one: recovery shows manual work, preserves the package and replays nothing,
+  one: recovery shows manual work, preserves every preparation and replays nothing,
   so a retry may deliver duplicate bytes, which channel-local dedup absorbs.
 - After submission or termination commits, no retry is allowed.
-- After rotation, old intents/packages remain in their fixed channels. If that
+- After rotation, old intents and preparations remain in their fixed channels. If that
   channel becomes unusable, a deliberate new send has a new wire ID.
 - After erasure, no new content-derived effect is reconstructed.
 - Mediator expiry/outage may lose an already submitted message. This best-effort
@@ -884,8 +1051,10 @@ what an open lists of the work a crash left unfollowed in
 ## 14. Privacy
 
 Wire IDs, message types and content are visible only inside end-to-end
-encrypted application messages. Package IDs and recipient routing DIDs are
-visible to the mediator. Delivery IDs are visible to the recipient mediator.
+encrypted application messages. Forward IDs and recipient routing DIDs are
+visible to the mediator; a forward ID is a UUIDv5 over the preparation's event
+CID and discloses nothing of the event. Delivery IDs are visible to the
+recipient mediator.
 
 A disclosed rendezvous DID is intentionally correlatable within its audience.
 Pairwise DIDs SHOULD be disclosed only in encrypted messages and use

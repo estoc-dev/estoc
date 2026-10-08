@@ -1,4 +1,4 @@
-# The Estoc vault events, version 4
+# The Estoc vault events, version 5
 
 <!-- suite-navigation:start -->
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
@@ -18,7 +18,7 @@ when, and only when, they appear in all capitals.
 Every example below is the `type`, `roots` and `data` portion of an event
 whose complete envelope is defined by [event-store.md](event-store.md). Object CIDs and
 retention semantics are defined by [dasl-objects.md](dasl-objects.md). A known event
-type has a closed payload schema in version 4. The store itself validates
+type has a closed payload schema in version 5. The store itself validates
 only the envelope; the vault layer validates the payload before append
 and after ingest.
 
@@ -44,7 +44,7 @@ the [suite guide](README.md#rule-ownership). The table is a navigation aid.
 | Mediation and DIDs | [Key evidence and resolved documents](#message-keys-and-peer-evidence); [Mediation and DID events](#mediation-communication-dids-and-routes) | [Mediation](../../packages/vault/src/fold/mediation.ts); [Replicas](../../packages/vault/src/fold/replicas.ts); [DIDs and keys](../../packages/vault/src/fold/dids.ts) | [Establish mediation](../../packages/agent-core/src/mediation.ts); [Enroll a replica](../../packages/agent-core/src/replica-enrollment.ts); [Create and disclose a DID](../../packages/agent-core/src/dids.ts) |
 | Channels and continuity | [Channel identity and payloads](channels.md#channel-identity) | [Channel evidence](../../packages/vault/src/fold/channels.ts); [Continuity](../../packages/vault/src/fold/continuity.ts); [Admission](../../packages/vault/src/admission/model.ts) | [Channel and display policy](relationships.md#symmetric-relationship-identity); [Early privacy policy](../../packages/agent-core/src/privacy.ts); [Rotate local address](../../packages/agent-core/src/rotate.ts) |
 | Contacts | [Contact events](#contacts); [Channel selections](#contact-channelsset) | [Contacts](../../packages/vault/src/fold/contacts.ts); [Channel and contact views](../../packages/vault/src/fold/views.ts) | [Delete contact](../../packages/vault/src/contact-commands.ts) |
-| Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Inbound events](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
+| Messages and delivery | [Stored content](#stored-message-document); [Outbound events](#outbound-message-events); [Effect results](#effect-skipped); [Inbound events](#inbound-message-events) | [Inbound execution](../../packages/vault/src/fold/inbound.ts); [Outbound delivery](../../packages/vault/src/fold/outbound.ts) | [Send](distributed-delivery.md#send-an-ordinary-message); [Receive](distributed-delivery.md#receive-a-message); [Recover receipt](distributed-delivery.md#receive-recovery) |
 | Invitations | [Disclosure](#disclosure) | [Invitation availability](../../packages/vault/src/fold/invitations.ts) | [Discovery](relationships.md#out-of-band-discovery); [Receipt](../../packages/agent-core/src/receive/receipt.ts) |
 | Erasure and retention | [Erasure and held roots](#erasure-and-collection) | [Held roots](../../packages/vault/src/fold/held.ts) | [Erase message](../../packages/vault/src/erasure.ts) |
 
@@ -96,6 +96,11 @@ The event model distinguishes three kinds of durable statement:
 - **materialization** — selected work made durable, such as the exact
   ciphertext named by `message.prepared`.
 
+Which of a message's representations a field names is said by its type: the
+intent, plaintext, envelope and event CIDs of
+[distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes)
+are distinct values, and a payload keeps them in distinct fields.
+
 All current views are folds over immutable events. No portable mutable record
 is authoritative.
 
@@ -115,8 +120,9 @@ is authoritative.
 4. **Mediation and communication keys are vault-scoped.** The active full
    runtime derives them from the vault seed and can have the account hold
    its addresses, receive and expose pending delivery for explicit manual action.
-5. **Stable IDs identify exact manual retries.** A logical message, an encrypted package
-   and a mediator delivery have different IDs and different lifetimes.
+5. **Stable IDs identify exact manual retries.** A logical message, a
+   preparation and a mediator delivery have different identities and
+   different lifetimes.
 6. **Duplicate work is expected.** Manual retry and mailbox redelivery may repeat work; recovery grants
    no automatic dispatch action. Folds and handlers
    must be idempotent.
@@ -168,7 +174,7 @@ In `did/...` names, `<id>` is the DID entity ID: a UUIDv7 minted for a new
 address, or a UUIDv5 derived under the DID entity rules of
 [section 3.4](#entity-ids-and-reproducible-uuidv5-namespaces). In
 `mediation/<id>/me`, `<id>` is the arrangement ID, the UUIDv5 the mediator's
-DID derives under the same section. Version 4 defines exactly one
+DID derives under the same section. This version defines exactly one
 authentication key and one key-agreement key per communication DID entity.
 Key names are never renamed or reused. A `did/...` or `mediation/...`
 name does not encode a contact, replica, domain owner or process location.
@@ -245,6 +251,7 @@ unchanged from version 3:
 | `automatic-mid` | `8847bd57-5907-5bcd-9a71-d1e97cee3199` |
 | `mediation` | `ef3354b7-959d-5de2-a68d-f475ff7a7ab4` |
 | `did-entity` | `47c0b363-2cc9-5e29-8898-0cb3cffa2ac2` |
+| `forward` | `065a85d2-b1e0-5b6f-9030-e2baafb0913d` |
 
 A deterministic entity rule then computes:
 
@@ -340,6 +347,24 @@ Test vectors, over the delivery fixture's DIDs
 `successorDidId(ours)` is `24ae4bcc-e4ee-5111-b600-1674a2300462` and
 `startDidId(ours, peer)` is `4cb0f38a-668b-5472-b82c-509b397c8058`.
 
+<a id="forward-id-rule"></a>
+
+#### Forward ID rule
+
+```text
+forwardId(preparationEventCid) = UUIDv5(
+  estocNamespace("forward"),
+  UTF8(RFC8785(["v1", preparationEventCid]))
+)
+```
+
+The Routing 2.0 `forward.id` around a preparation's envelope, derived from
+the preparation's event CID under
+[distributed-delivery.md section 6.1](distributed-delivery.md#the-selected-preparation).
+Test vector: the preparation event CID
+`bafkreia5n4chkt47rrkgjs65fwyplx7wbnpe6ke3fq6xbjsmgwrmwvhcs4` gives
+`bc21dc07-fd00-54de-9ee6-eba82a332b94`.
+
 <a id="identifier-and-reference-vocabulary"></a>
 
 ### 3.5 Identifier and reference vocabulary
@@ -355,25 +380,28 @@ it does not imply that every identifier has the same encoding or scope.
 | Vault message entity or inbound observation group | `MessageId` | `messageId`, `ackMessageId` |
 | Received DIDComm plaintext ID | `WireMessageId` | `wireMessageId`, `ackWireMessageId` |
 | One exact event envelope | `EventCid` | derived API/row `cid`, outside the envelope |
-| Typed event reference | `EventReference<T>` | payload fields ending in `EventCid` and elements of `*EventCids`, including source, trigger, resolution, disclosure and rotation references |
+| Typed event reference | `EventReference<T>` | payload fields ending in `EventCid` and elements of `*EventCids`, including source, trigger, resolution, disclosure, rotation and preparation references |
 | Contact | `ContactId` | `contactId`, `fromContactId` |
 | Local/peer DID pair | `Channel` | `channels` entries; `localDid` and `peerDid` in selectors |
 | Local DID entity | `DidId` | `didId`, `senderDidId`, `fromDidId`, `toDidId` |
 | Mediation arrangement | `MediationId` | `mediationId` |
-| One prepared package | `PackageId` | `packageId` |
 | Scoped mediator delivery | `DeliveryId` | `deliveryId` |
 | Sender/recipient-scoped automatic execution | `ExecutionId` | `executionId` |
-| Exact content bytes | `Cid` | `bodyCid`, `attachmentCids`, `documentCid`, `envelopeCid`, `dropCids`; generic object APIs use `cid` |
+| Exact content bytes | `Cid` | `bodyCid`, `attachmentCids`, `documentCid`, `dropCids`; generic object APIs use `cid` |
+| One intent projection | `IntentCid` | `intentCid` |
+| One complete plaintext, whose bytes the vault does not retain | `PlaintextCid` | `plaintextCid` |
+| One retained normalized encrypted envelope | `EnvelopeCid` | `envelopeCid` |
 | Vault keystore name | `KeyName` | `localKeyName`, `me.keyName` |
 | Complete canonical public-key value | `PublicKey` | `peerPublicKey` |
 | DID string / verification-method DID URL | `Did` / `DidUrl` | `did`, `localDid`, `peerDid`, `recipientDid`, `presentedDid`, `longFormDid`, `fromDid`, `toDid` / `authenticationMethodIds`, `keyAgreementMethodIds` |
 
 For every payload `*EventCid`, `T` is the target event type fixed by the
 referencing schema. `sourceEventCid` is `EventReference<"message.in">` in
-`did.rotationSelected`, `message.admitted` and `message.out`;
-`fromDidId` and `toDidId` in `did.rotationSelected` name local DID entities;
-`rotationEventCid` in
-`message.out` names `did.rotationSelected`. The referencing schema also owns
+`did.rotationSelected`, `message.admitted`, `message.out` and
+`effect.skipped`; `fromDidId` and `toDidId` in `did.rotationSelected` name
+local DID entities; `rotationEventCid` in `message.out` names
+`did.rotationSelected`; `preparationEventCid` in `delivery.submitted` names
+`message.prepared`. The referencing schema also owns
 presence and nullability; a nullable reference has the same typed non-null
 value. Generic event-store APIs use `EventCid`. Every event reference is a
 canonical raw DASL CID validated against the target's canonical envelope when
@@ -402,7 +430,6 @@ type ContactId = EntityId<"contact">;
 type Channel = { localDid: Did; peerDid: Did };
 type DidId = EntityId<"did">;
 type MediationId = EntityId<"mediation">;
-type PackageId = EntityId<"package">;
 type ExecutionId = EntityId<"execution">;
 type WireMessageId = string & { readonly __wireMessageId: unique symbol };
 type DeliveryId = string & { readonly __deliveryId: unique symbol };
@@ -412,7 +439,18 @@ type Did = string & { readonly __did: unique symbol };
 type DidUrl = string & { readonly __didUrl: unique symbol };
 type EffectKey = string & { readonly __effectKey: unique symbol };
 type EventReference<T extends string> = EventCid & { readonly __eventType: T };
+type RepresentationCid<Role extends string> = Cid & { readonly __representation: Role };
+type IntentCid = RepresentationCid<"intent">;
+type PlaintextCid = RepresentationCid<"plaintext">;
+type EnvelopeCid = RepresentationCid<"envelope">;
 ```
+
+A representation CID is produced only by the constructor or decoder of that
+representation, never by a cast or a generic `hashAs` over caller-supplied
+bytes. The CID text alone does not say which representation it names; the
+field's contract does, and a value loaded under it is checked against the
+representation's own rules, the intent projection's version and shape among
+them. The brand replaces none of those run-time checks.
 
 Identifiers serialize as validated strings without wrapper objects or type
 prefixes. `Channel` serializes as a record of two canonical DID strings. Parsers
@@ -435,10 +473,13 @@ key variants in that channel share one execution. Different channels never
 alias message or execution identities.
 An outbound `messageId` is also its plaintext `id`; no duplicate
 `wireMessageId` field is stored on `message.out`. Inbound wire IDs have the
-sender's scope and are stored separately. `packageId` names a prepared
-package; `envelopeCid` addresses its bytes. `localKeyName`, `peerPublicKey`
-and a verification-method DID URL are separate kinds of value and cannot be
-substituted for one another.
+sender's scope and are stored separately. A preparation is named by its event
+CID; `envelopeCid` addresses its bytes, and there is no package ID. Content
+CIDs say what is equal, not which sending, output or preparation it was:
+two sends may share one `intentCid` under two message IDs, and two
+preparations one `intentCid` under two event CIDs. `localKeyName`,
+`peerPublicKey` and a verification-method DID URL are separate kinds of value
+and cannot be substituted for one another.
 
 This vocabulary applies to vault payloads. The event envelope's `author` and
 `roots`, serialized local-file fields such as `replica_id`, and wire/protocol fields retain their
@@ -484,7 +525,7 @@ It is ordinary LWW metadata and has no key or protocol effect.
 ### 4.1 Key evidence
 
 Each message or resolution retains the keys used for that observation or
-package, directly or through its exact evidence references:
+preparation, directly or through its exact evidence references:
 
 - `localKeyName` is the vault key name that decrypted or authenticated the
   message, or `null` when no local key participated.
@@ -492,7 +533,7 @@ package, directly or through its exact evidence references:
   canonical encoding below, or `null` for an anonymous sender.
 
 Each event schema defines its required fields and nullability. The keys
-provide authentication, decryption and package evidence; they do not assign a
+provide authentication, decryption and preparation evidence; they do not assign a
 contact. Anonymous input and mediator traffic may retain key
 evidence without an application channel.
 
@@ -510,7 +551,7 @@ Every deterministic ID or authorization check that uses a peer key uses this
 exact string.
 
 For an inbound observation it is the key that authenticated the message; for
-an outbound package it is the selected recipient key. A peer resolution records
+a preparation it is the selected recipient key. A peer resolution records
 the key-agreement key used for receipt/preparation. Selection alone is not
 evidence of authenticated inbound traffic or remote receipt.
 
@@ -527,8 +568,8 @@ no `peerPublicKey` payload field. Their peer key is derived as
 `peer.resolved(peerResolutionEventCid).peerPublicKey`. For an anonymous
 inbound only, null `peerResolutionEventCid` yields null `peerPublicKey`; an unavailable or
 invalid reference is deferred or conflicted, never treated as anonymous.
-In this document and the delivery profile, a message or package's `peerPublicKey`
-always means this derived value. `peer.resolved` and ACK observations retain
+In this document and the delivery profile, an observation's or a preparation's
+`peerPublicKey` always means this derived value. `peer.resolved` and ACK observations retain
 their explicit keys. Continuity links derive from exact proof evidence and local decisions.
 
 `message.in.presentedDid` preserves the wire spelling, and
@@ -596,7 +637,7 @@ peer key. `localKeyName` identifies the local communication key/context.
   into an authorization set; and
 - `service` is the selected DIDComm service URI or null.
 
-Receipts and packages retain exact resolution references for the immutable
+Receipts and preparations retain exact resolution references for the immutable
 peer document. The receipt's `peerResolutionEventCid` authenticates the current
 sender only; a predecessor proof is verified against the issuer document
 [the channel evidence fold](../../packages/vault/src/fold/channels.ts) finds
@@ -1176,7 +1217,7 @@ This is a permanent tombstone for exactly the named contact ID.
 ## 7. Stored message document
 
 Message application content is stored as one whole-resource raw DASL object
-containing UTF-8 RFC 8785 canonical JSON. Version 4 uses the following closed
+containing UTF-8 RFC 8785 canonical JSON. Version 5 uses the following closed
 stored representation:
 
 ```json
@@ -1250,7 +1291,12 @@ For `base64`, `root` names the raw DASL object containing decoded bytes. For
 `json`, it names the raw DASL object containing `UTF8(RFC8785(json value))`.
 For `links`, `links` is a non-empty ordered array and `hash` is required.
 Exactly one wire content carrier among `data.base64`, `data.json` and
-`data.links` is accepted. Multiple carriers are ambiguous and rejected.
+`data.links` is accepted. The carriers are counted by presence on the parsed
+`data` object as received, before any member is dropped: `json: null` is a
+present carrier, and a second recognized carrier is never dropped to make the
+attachment valid. A library that projects attachment data onto one carrier
+must therefore reject an ambiguous object itself, or hand the receiver enough
+of the original to reject it before acceptance.
 
 Normalization is deterministic:
 
@@ -1273,10 +1319,11 @@ Normalization is deterministic:
 
 An implementation MAY retain additional raw-wire diagnostics outside the
 portable stored message, but such diagnostics do not affect semantic equality.
-There is no implementation choice about which portable attachment fields are
-hashed.
-
-Canonical projections and message hashes are defined by [distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes).
+There is no implementation choice about which portable attachment fields the
+document commits to: the object's CID commits to the body and to every stored
+descriptor member, and the intent projection of
+[distributed-delivery.md section 5.2](distributed-delivery.md#intent-projection)
+names that CID.
 
 <a id="9-outbound-message-events"></a>
 
@@ -1290,11 +1337,13 @@ Canonical projections and message hashes are defined by [distributed-delivery.md
 
 - `messageId` is both the outbound vault message entity ID and the innermost
   DIDComm plaintext `id`.
-- `packageId` identifies one exact encrypted inner envelope and is Routing
-  2.0 `forward.id`.
+- a preparation is named by its event CID; the Routing 2.0 `forward.id`
+  around its envelope follows [the forward ID rule](#forward-id-rule).
 - mediator `deliveryId` is not stored by outbound events.
 
-A user send mints one UUIDv7 `messageId`. Its package uses it as plaintext `id`.
+A user send mints one UUIDv7 `messageId`. Its preparations use it as plaintext `id`.
+Two user sends of equal content are two messages under two IDs, in the same
+second or not; a send repeated under its ID is the same message.
 Outbound events do not store a second `wireMessageId`. Inbound observations keep
 their scoped message ID and the received wire ID under [distributed-delivery.md section 9](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity); the equality applies only to locally authored outbound messages.
 
@@ -1326,14 +1375,14 @@ therefore identify one logical response.
     "msgType": "https://didcomm.org/basicmessage/2.0/message",
     "thid": null,
     "pthid": null,
-    "createdTime": null,
+    "createdTime": 1788442800,
     "expiresTime": null,
     "pleaseAck": [""],
     "ack": [],
     "headers": {},
     "bodyCid": "bafkrei...body",
     "attachmentCids": ["bafkrei...attachment"],
-    "intentHash": "<base64url-sha256>",
+    "intentCid": "bafkrei...intent-projection",
     "executionId": null,
     "effectType": null,
     "effectKey": null,
@@ -1346,18 +1395,27 @@ therefore identify one logical response.
 `senderDidId` and `recipientDid` are REQUIRED and immutable; their canonical
 pair fixes the channel under [channel identity](channels.md#channel-identity).
 `recipientDid` retains the exact supplied spelling, including a validated Peer
-long form for offline preparation; canonicalize it for channel/package comparison.
+long form for offline preparation; canonicalize it for channel and preparation comparison.
 Which channel an automatic output goes to is
 [the response policy](../../packages/vault/src/response-policy.ts)'s; a contact
 ID is not protocol identity. The fixed address fields are excluded from the
-intent hash and included in full event equality.
+intent CID and compared canonically under
+[intent equality](distributed-delivery.md#intent-equality).
 
 Requirements:
 
 - `createdTime` and `expiresTime` are Epoch-Seconds integers or null;
 - when both are non-null, `expiresTime` is strictly greater than
   `createdTime`;
+- a locally initiated send that names no rotation has non-null `createdTime`,
+  fixed when the intent is first created under
+  [distributed-delivery.md section 4](distributed-delivery.md#vault-first-procedures-and-commit-boundaries);
+  an automatic output and a manual notification follow their operation, null
+  included;
 - null `createdTime` omits the DIDComm `created_time` header;
+- `thid` is null or a wire ID; null, and the message's own ID, both mean the
+  message's own thread under
+  [self references](distributed-delivery.md#self-references);
 - `pleaseAck` is null or the exact ordered wire array; `ack` is `[]`, or,
   for a pure ACK or an explicit ACK another application protocol defines,
   exactly the source carrier's wire ID under
@@ -1368,7 +1426,9 @@ Requirements:
 - `attachmentCids` is the distinct ordered list of object-backed attachment
   payload roots from that document; link-only descriptors add no entry;
 - `roots` is the distinct ordered set of `bodyCid` followed by `attachmentCids`;
-- `intentHash` is computed under [distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes);
+- `intentCid` equals the intent projection's CID under
+  [distributed-delivery.md section 5.2](distributed-delivery.md#intent-projection),
+  computed from this payload's fields with `messageId` as the own ID;
 - `executionId`, `effectType` and `effectKey` are all
   null for a locally initiated send and all non-null for an inbound-derived
   protocol effect, including explicit completion of pending response work;
@@ -1397,17 +1457,21 @@ Requirements:
   its execution ID against the carrier group, its tuple and intent against the
   producing protocol, recomputes its key under [distributed-delivery.md section 11](distributed-delivery.md#automatic-effects), and requires its `messageId` to equal the [section 8.1](#ids) derivation;
 - the three automatic-effect fields and two source/rotation references are portable metadata excluded from
-  the wire and intent hash; they still participate in full event equality;
+  the wire and the intent CID; they are compared under intent equality;
 - `thid`, `pthid`, `expiresTime` and all three automatic-effect
   fields are present with null when unused; and
 - appending this event requires no network, resolver, mediator or socket.
 
-A preparer emits `created_time`, `expires_time`, `thid` and `pthid` only when
-non-null; emits `please_ack` whenever `pleaseAck` is non-null; emits `ack` and
-`attachments` when non-empty; and expands `headers` at plaintext top level.
+A preparer reads the intent through its projection: it emits `created_time`,
+`expires_time` and `pthid` only when non-null; emits `thid` only when the
+thread is another message's; emits `please_ack` whenever `pleaseAck` is
+non-null, a self reference as `""`; emits `ack` and `attachments` when
+non-empty; and expands `headers` at plaintext top level.
 
-More than one `message.out` under one `messageId` is one intent only when
-every field is identical; what [the outbound
+More than one `message.out` under one `messageId` is one intent when the
+records agree under
+[intent equality](distributed-delivery.md#intent-equality), each source
+reference judged on its own; what [the outbound
 fold](../../packages/vault/src/fold/outbound.ts) makes of a difference, or of
 an automatic intent's source, is its own.
 
@@ -1423,60 +1487,66 @@ an automatic intent's source, is its own.
   ],
   "data": {
     "messageId": "019b2a70-e2c8-7fb4-b63f-1aca32152062",
-    "packageId": "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c",
     "senderDidId": "019b2a60-c68e-75bf-b6fb-ae1a41f8d715",
     "localKeyName": "did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement",
     "recipientDid": "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP",
     "peerResolutionEventCid": "bafkreiefyoi7yed7cmfo7woi5kahpw7zu7uq6pj6avn4lgkbfwalkoxl7a",
     "fromPrior": null,
-    "intentHash": "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA",
-    "plaintextHash": "WkPpglZREjLGtviZ1L6c-R3EX1cTHtbe0sJrmhl77LQ",
+    "intentCid": "bafkrei...intent-projection",
+    "plaintextCid": "bafkrei...complete-plaintext",
     "envelopeCid": "bafkrei...encrypted-envelope"
   }
 }
 ```
 
 This event makes one exact normalized encrypted envelope recoverable as data.
+The preparation is named by this event's CID; there is no package ID.
 Importing it grants no dispatch permission to another runtime.
 
 Requirements:
 
 - `senderDidId` equals the fixed sender in `message.out`; retained key/route
   eligibility is checked without replacing it with a later current address;
-- the package matches the exact oriented channel in a valid `message.out` and
+- the preparation matches the exact oriented channel in a valid `message.out` and
   has complete local-key and peer-resolution evidence;
 - `localKeyName` is that entity's key-agreement key and authorizes the plaintext
-  `from` under the exact spelling used by the package;
-- the plaintext `id` equals `message.out.messageId`; its other semantic fields
-  and immutable control headers equal the committed intent;
-- `intentHash` equals the intent value;
-- `plaintextHash` hashes the complete plaintext actually encrypted;
-- `recipientDid` is the package's exact application `to` DID;
+  `from` under the exact spelling the preparation used;
+- the plaintext `id` equals `message.out.messageId`, and the plaintext is the
+  one the committed intent assembles to under
+  [distributed-delivery.md section 6](distributed-delivery.md#preparing-a-package);
+- `intentCid` equals the intent's;
+- `plaintextCid` is the CID of the complete plaintext actually encrypted under
+  [distributed-delivery.md section 5.3](distributed-delivery.md#exact-plaintext-hash).
+  The plaintext is not retained, so validation checks the field's form and
+  nothing recomputes it from the stored document;
+- `recipientDid` is the preparation's exact application `to` DID;
 - the canonical sender and recipient must equal the intent's fixed endpoints
   in the same roles under [channel identity](channels.md#channel-identity);
 - `peerResolutionEventCid` names the exact `peer.resolved` evidence used to select
-  the recipient key; its `peerPublicKey` supplies the package's derived peer key.
-  Its `localKeyName` equals the package's local key and its canonical `did` matches
-  `recipientDid`. It is non-null for every phase-1 package, including a
+  the recipient key; its `peerPublicKey` supplies the preparation's derived peer key.
+  Its `localKeyName` equals the preparation's local key and its canonical `did` matches
+  `recipientDid`. It is non-null for every preparation, including a
   retained numalgo-4 resolution. Local resolution and evidence reuse follow
   [the DID resolution requirements](relationships.md#did-resolution-requirements);
-- `fromPrior` is the exact compact JWT included in the package or null;
+- `fromPrior` is the exact compact JWT included in the plaintext or null;
 - the envelope object contains `UTF8(RFC8785(parsedEncryptedEnvelope))` under
   a raw DASL CID; duplicate members or invalid I-JSON are rejected before
   canonicalization. The `envelopeCid` CID commits to those exact bytes;
-- `packageId` is a UUIDv7 and equals outer `forward.id`; and
-- every retry of this package uses identical envelope bytes.
+- every transport call of this preparation carries identical envelope bytes.
 
 <a id="delivery-attempted"></a>
 
-Committing this event freezes the package for its `messageId`, even before any
-transport call: further `message.prepared` records for that message MUST have
-identical payloads and roots, including `packageId` and exact evidence
-references, and every transport call of the message carries these envelope
-bytes. A package records no transport invocation; call counts and retry
-diagnostics are local trace. What a differing or missing preparation means is
+Committing this event freezes its envelope, even before any transport call. A
+message may hold several preparations, each checked on its own against the
+intent and its own evidence; identical repetitions of one are one, and their
+number is no conflict. A preparation records no transport invocation and
+makes no envelope sendable: which one a runtime carries is its local
+selection under
+[distributed-delivery.md section 6.1](distributed-delivery.md#the-selected-preparation),
+and call counts and retry diagnostics are local trace. What a differing or
+missing preparation means is
 [the outbound fold](../../packages/vault/src/fold/outbound.ts)'s; when the
-package is sent is [dispatch](../../packages/agent-core/src/dispatch.ts)'s.
+envelope is sent is [dispatch](../../packages/agent-core/src/dispatch.ts)'s.
 
 <a id="delivery-submitted"></a>
 
@@ -1488,21 +1558,30 @@ package is sent is [dispatch](../../packages/agent-core/src/dispatch.ts)'s.
   "roots": [],
   "data": {
     "messageId": "019b2a70-e2c8-7fb4-b63f-1aca32152062",
-    "packageId": "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c"
+    "preparationEventCid": "bafkrei...message-prepared"
   }
 }
 ```
 
-This says only that one transport endpoint accepted the package. It does not
+This says only that one transport endpoint accepted the envelope. It does not
 mean route existence, mediator retention, pickup or ultimate durable receipt.
 
-The closed data contains exactly `messageId` and `packageId`; `roots` is empty.
-`packageId` MUST identify the already committed valid `message.prepared` for
-this exact `messageId`. Append this event after observing transport acceptance.
-Its successful commit completes the logical outbound under
-[the outbound fold](../../packages/vault/src/fold/outbound.ts).
-If acceptance happened but this observation did not commit, the outcome remains
-unconfirmed and requires explicit manual retry; recovery never resubmits it.
+The closed data contains exactly `messageId` and `preparationEventCid`;
+`roots` is empty. `preparationEventCid` is
+`EventReference<"message.prepared">` and names, by exact event CID, the
+preparation whose envelope was carried; that event's `messageId` equals this
+one. The reference is resolved by its CID alone: a preparation not here leaves
+the submission unresolved, and while it may still arrive the message is
+neither prepared again nor called; one here but pending or in conflict
+completes nothing. Append this event after observing transport acceptance;
+until it is committed the runtime keeps the acceptance as its own under
+[distributed-delivery.md section 6.2](distributed-delivery.md#runtime-local-delivery-records).
+A complete submission completes the logical outbound under
+[the outbound fold](../../packages/vault/src/fold/outbound.ts); several
+complete submissions of one message are its completion. If acceptance
+happened but this observation did not commit and the runtime's own record of
+it is gone, the outcome remains unconfirmed and requires explicit manual
+retry; recovery never resubmits it.
 
 Transport, endpoint and response status are local trace data. They are not
 fields of this portable event and do not participate in the delivery fold.
@@ -1536,7 +1615,7 @@ terminates nothing.
 
 Both codes terminate the entire message, before or after preparation. They
 stop all preparation and submission, including manual retry. Termination
-requires no package reference or preparation evidence; a preparation imported
+requires no preparation reference or evidence; a preparation imported
 later cannot reopen the intent. Further sending requires a new message ID.
 A termination never proves nondelivery: an earlier unrecorded call may have
 succeeded. Any independently complete submission takes precedence after import.
@@ -1570,13 +1649,47 @@ local trace; `code` is a stable non-secret value.
 ```
 
 This records peer receipt information only: it cannot synthesize submission,
-release a package envelope or authorize a retry. All five data fields are
+release a prepared envelope or authorize a retry. All five data fields are
 required: `messageId` names the outbound; `ackMessageId` and
 `ackWireMessageId` name the carrier's vault and wire IDs; `localKeyName` and
 `peerPublicKey` equal that carrier's local key and derived authenticated peer
 key, every field matched against one complete witness. Which carriers
 acknowledge an outbound, and over which path, is
 [the outbound fold](../../packages/vault/src/fold/outbound.ts)'s.
+
+<a id="effect-skipped"></a>
+
+### 8.7 `effect.skipped`
+
+```json
+{
+  "type": "effect.skipped",
+  "roots": [],
+  "data": {
+    "executionId": "ccee59f0-8c79-5011-8822-dbb14de9cf7d",
+    "effectType": "https://didcomm.org/trust-ping/2.0/ping-response",
+    "effectKey": "Vyjgpd9idT4bb9ejAEdwT5J8dX-kL6FfSniCkFZDB20",
+    "sourceEventCid": "bafkrei...message-in",
+    "code": "no-response-requested"
+  }
+}
+```
+
+The terminal result of one automatic operation over one input: under its own
+rule, applied to the admitted input, the operation owes no output, and no
+later input, retry, completion or clock makes one. It is recorded only for a
+decision that is a function of the input and the operation; what local
+policy, missing evidence, a closed channel, a paused runtime or a failed write
+leaves undone is pending and recorded by nothing
+([distributed-delivery.md section 11](distributed-delivery.md#automatic-effects)).
+
+The closed data contains exactly the five fields; `roots` is empty.
+`executionId`, `effectType`, `effectKey` and `sourceEventCid` are validated as
+`message.out`'s: the source names an already committed `message.in` forming a
+complete witness of the input whose execution ID this is, and the key is
+recomputed. `code` is a stable non-secret value the operation defines. A
+`message.out` and an `effect.skipped` under one tuple are that tuple's
+conflict; several `effect.skipped` under one tuple are one result.
 
 <a id="10-inbound-message-events"></a>
 
@@ -1604,8 +1717,8 @@ See [distributed-delivery.md section 9](distributed-delivery.md#observation-iden
   "data": {
     "messageId": "d2192dcf-cc5c-5f7d-b4f1-46972b7b04de",
     "wireMessageId": "019b2a70-f225-721c-835f-67175be0667e",
-    "intentHash": "855qiA-zQ94SVOPYj2KnooWRNJAe1GB419LMTGLMwAs",
-    "plaintextHash": "dpPwT44Xre48u9xon4fUfvLOEQI6nYxQDzCCFnCJMK8",
+    "intentCid": "bafkrei...intent-projection",
+    "plaintextCid": "bafkrei...complete-plaintext",
     "localKeyName": "did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement",
     "msgType": "https://didcomm.org/basicmessage/2.0/message",
     "peerResolutionEventCid": "bafkreibyv62fswjkyg4ttq2houxa74kghobrly26havhefevacjdud334q",
@@ -1642,7 +1755,13 @@ carried `fromPrior` retains its separate continuity-verification role.
 Requirements:
 
 - `messageId` is the deterministic observation value above;
-- `intentHash` and `plaintextHash` are computed under [distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes);
+- `intentCid` equals the intent projection's CID under
+  [distributed-delivery.md section 5.2](distributed-delivery.md#intent-projection),
+  computed from this payload's fields with `wireMessageId` as the own ID;
+- `plaintextCid` is the CID of the complete plaintext decrypted and verified
+  under [distributed-delivery.md section 5.3](distributed-delivery.md#exact-plaintext-hash),
+  validated for its form alone: the plaintext is not retained and nothing
+  recomputes it from the stored document;
 - `localKeyName` is the exact local key that decrypted the message;
 - `peerResolutionEventCid` is REQUIRED and names the exact `peer.resolved` used to
   authenticate the sender. It is null exactly for an anonymous observation,
@@ -1656,7 +1775,7 @@ Requirements:
   Commit/reuse that event and document first, then use its returned event CID
   in the separate inbound commit; later resolutions cannot replace the
   reference. It is local
-  evidence metadata, excluded from the message hashes;
+  evidence metadata, excluded from the intent CID;
 - for authenticated input, derive the [channel pair](channels.md#channel-identity)
   from the local DID owning `localKeyName` and the authenticated canonical `did`.
   Validate that local DID/key mapping against the exact local key-agreement
@@ -1765,9 +1884,11 @@ computation. Collection may rely on this much:
   every contribution of that message to that root, those learned later
   included, and no later event re-holds that relation; another message's
   contribution still holds the bytes;
-- a prepared envelope is released once its message is submitted or
+- every envelope the preparations of a message name is released, all at
+  once, when the message is submitted by any complete submission or
   terminated under a consistent intent, and by nothing else: not a peer's
-  acknowledgement, a competing package, a conflict or missing evidence;
+  acknowledgement, another preparation, a local selection, a conflict or
+  missing evidence; an object another event still names stays held;
 - a CID embedded in object content is not a retention edge unless it also
   appears in an accepted event's `roots`.
 
@@ -1777,7 +1898,7 @@ computation. Collection may rely on this much:
 
 ### 10.3 No runtime-local eviction event
 
-Version 4 does not represent local body eviction as a portable event. A local
+Version 5 does not represent local body eviction as a portable event. A local
 storage policy that deletes a non-erased retained object makes the phase-1
 vault incomplete. It may be repaired from a verified portable SQLite import or backup.
 Missing bytes never authorize collection of retained roots.
@@ -1871,6 +1992,13 @@ initial or retry dispatch authority, even after an exact local move, and
 shows what it finds unfinished for manual action. The open is
 [`packages/agent-core/src/agent.ts`](../../packages/agent-core/src/agent.ts) over
 [`identity.ts`](../../packages/agent-core/src/identity.ts); local queue state is not a recovery source.
+The restored runtime holds none of the earlier runtime's local delivery
+records under
+[distributed-delivery.md section 6.2](distributed-delivery.md#runtime-local-delivery-records):
+no selected preparation, no acceptance owed and no input left to another
+replica. A message with several preparations therefore waits for the user's
+choice, and one whose acceptance the earlier runtime saw but never recorded
+stays unconfirmed.
 
 A local DID created after the snapshot may be absent after restore. The
 seed alone cannot reconstruct a missing entry, whose UUIDv7 entity ID is
@@ -1978,11 +2106,14 @@ author remain unchanged.
 
 ## 14. Versioning
 
-These event meanings belong to vault version 4. A version-4 reader may
+These event meanings belong to vault version 5. A version-5 reader may
 preserve unknown event types but MUST validate every known type according
-to this document.
+to this document. Version 5 changed the message layers and their fields
+(`intentCid`, `plaintextCid`, the preparation named by event CID, the user
+send's fixed `createdTime`) and added `effect.skipped`; a version-4 vault is
+refused unread and is not migrated.
 
-Compatible additions within version 4 may introduce a new event type or
+Compatible additions within version 5 may introduce a new event type or
 an explicitly optional payload field whose absence has a fixed meaning.
 Changing a published field meaning, fold, deterministic ID, erasure rule or key
 derivation requires a new vault version.
