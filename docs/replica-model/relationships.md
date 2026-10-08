@@ -229,6 +229,7 @@ When no application content is ready, send an ordinary Trust Ping:
 {
   "type": "https://didcomm.org/trust-ping/2.0/ping",
   "id": "019b4d12-090a-7c3b-92f7-ac2c51f50db4",
+  "created_time": 1788442800,
   "from": "did:peer:4zQm...bob-long:z...input",
   "to": ["did:peer:4zQm...alice-short"],
   "body": { "response_requested": true }

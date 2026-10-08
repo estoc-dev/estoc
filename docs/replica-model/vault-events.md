@@ -468,8 +468,9 @@ Message identity has three levels. An event `cid` names one exact envelope;
 identical envelopes are one event. Repeated receipt is a new event under its
 own time and author, so a distinct event CID with one `messageId`; one writer
 recording one envelope twice within a millisecond records one event.
-An inbound `messageId` names the exact sender/recipient/wire-ID input; accepted
-key variants in that channel share one execution. Different channels never
+An inbound `messageId` names the exact sender/recipient/wire-ID input, the
+wire ID taken in its canonical form; accepted key variants in that channel
+share one execution. Different channels never
 alias message or execution identities.
 An outbound `messageId` is also its plaintext `id`; no duplicate
 `wireMessageId` field is stored on `message.out`. Inbound wire IDs have the
@@ -1418,10 +1419,12 @@ Requirements:
   [self references](distributed-delivery.md#self-references);
 - `pleaseAck` is null or the exact ordered wire array; `ack` is `[]`, or,
   for a pure ACK or an explicit ACK another application protocol defines,
-  exactly the source carrier's wire ID under
+  exactly the source carrier's canonical wire ID under
   [distributed-delivery.md section 8.1](distributed-delivery.md#the-ack-target);
 - `headers` contains every otherwise-unmodeled supported top-level DIDComm
-  header and no reserved field, including `return_route`;
+  header and none of the reserved names
+  [distributed-delivery.md section 5.2](distributed-delivery.md#intent-projection)
+  lists, `return_route` among them;
 - `bodyCid` names the canonical stored message document;
 - `attachmentCids` is the distinct ordered list of object-backed attachment
   payload roots from that document; link-only descriptors add no entry;
@@ -1668,7 +1671,7 @@ acknowledge an outbound, and over which path, is
   "data": {
     "executionId": "ccee59f0-8c79-5011-8822-dbb14de9cf7d",
     "effectType": "https://didcomm.org/trust-ping/2.0/ping-response",
-    "effectKey": "Vyjgpd9idT4bb9ejAEdwT5J8dX-kL6FfSniCkFZDB20",
+    "effectKey": "Y1bmEDbk9GuiDYqprS-0GcUrJAXgG0YNiEjZ802BDlQ",
     "sourceEventCid": "bafkrei...message-in",
     "code": "no-response-requested"
   }
@@ -1797,9 +1800,12 @@ Requirements:
   when it is not a valid JWT. Parsing, claim and signature failures belong to
   continuity verification and do not invalidate this authenticated observation;
 - ACK processing reads from `pleaseAck` only whether this message requests its
-  own receipt, by `""` or this `wireMessageId`; stored arrays are not rewritten;
+  own receipt, by `""` or a reference whose canonical wire ID is this
+  `wireMessageId`'s; stored arrays are not rewritten;
 - `headers` contains every otherwise-unmodeled permitted top-level member and
-  MUST NOT contain any reserved field, including `return_route`;
+  none of the reserved names
+  [distributed-delivery.md section 5.2](distributed-delivery.md#intent-projection)
+  lists, `return_route` among them;
 - `thid` and `pthid` are present with null when absent;
 - event `author` identifies the active receiving runtime;
 - mediation and delivery ID are null for direct transport without them;
@@ -1911,7 +1917,11 @@ Missing bytes never authorize collection of retained roots.
 ## 11. Folds and procedures
 
 The folds over these events, and the procedures that decide what to
-append, are specified by their code and its tests, not by this document.
+append, are specified by their code and its tests, not by this document,
+except for the rules version 5 changes: until the packages reach this
+version those are defined by the sections above and the
+[message vectors](message-vectors.md), and a module linked beside one of them
+locates the code to change ([README](README.md#version-5-transition)).
 [`packages/vault/README.md`](../../packages/vault/README.md) lists them,
 one module per question, with each module's entry points; a module's
 leading comment states the rule it implements, and the tests beside it

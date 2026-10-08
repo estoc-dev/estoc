@@ -4,8 +4,10 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — schema 2, CID-keyed events. SQLite is the sole persistent vault and portable
-backup format.
+Status: **version 5** — schema 2, CID-keyed events; the `vault_version`
+check moves to 5 with the packages
+([transition](README.md#version-5-transition)). SQLite is the sole persistent
+vault and portable backup format.
 
 The capitalized requirement words in this document have their BCP 14 meanings.
 [event-store.md](event-store.md) owns the API and event semantics;

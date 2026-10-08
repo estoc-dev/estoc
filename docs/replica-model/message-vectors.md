@@ -129,3 +129,4 @@ The preparation event CID here is an arbitrary raw CID standing in for a
 | the fixture message sent again under its ID | equal | equal |
 | one automatic output made by two replicas from two observations of one input | equal | equal, from the effect key |
 | the fixture intent prepared twice | equal | equal; two envelope CIDs, two preparation event CIDs |
+| the fixture plaintext received with `id` `a1` and again with `id` `A1` | equal | equal: one canonical wire ID, one input, one execution; two plaintext CIDs |

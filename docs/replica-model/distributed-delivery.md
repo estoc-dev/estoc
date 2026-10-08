@@ -78,7 +78,10 @@ business-execution promise.
 - **Contact** — local names, preferences and selected channel histories with no protocol authority.
 - **Full replica** — a writable vault incarnation; one input picked up at a replica-mediation mediator reaches every replica of the account, and one of them answers it.
 - **Outbound message ID** — one committed intent's entity ID and plaintext `id`.
-- **Inbound message ID** — derived from canonical sender, canonical recipient and wire ID.
+- **Canonical wire ID** — a wire ID with its ASCII letters in lower case
+  ([section 5.1](#self-references)); comparisons and ID transcripts use it,
+  stored fields keep the spelling received.
+- **Inbound message ID** — derived from canonical sender, canonical recipient and canonical wire ID.
 - **Execution ID** — stable identity of one channel-local input; identity alone grants no work.
 - **Intent CID** — content identity of one fixed application message
   ([section 5.2](#intent-projection)); equal content, not one sending.
@@ -372,13 +375,24 @@ canonical bytes and CIDs.
 
 ### 5.1 References to this message
 
+DIDComm compares message IDs without regard to case. The canonical wire ID
+of a wire ID is its spelling with the ASCII letters `A`–`Z` replaced by
+`a`–`z`; a DIDComm ID consists of URI unreserved characters, so nothing else
+folds. Wherever one message refers to another, the references are compared
+by canonical wire ID: the self references below, thread membership, the ACK
+target and lookup of [section 8](#durable-end-to-end-acknowledgment), and the
+transcripts of [section 9](#observation-identity-logical-aliasing-and-execution-identity),
+which take the canonical wire ID as their member. A stored field keeps the
+spelling received: `wireMessageId`, the projection's references and the
+plaintext CID differ with case while the identities they name do not.
+
 The intent projection represents a reference to a message as a JSON string:
 the empty string `""` for the message itself, otherwise the referenced wire
-ID. The self reference is read at the DIDComm boundary with that protocol's ID
-comparison: on the wire, an absent `thid` and a `thid` equal to the message's
-own `id` are both the self thread, and a `please_ack` element `""` and one
-equal to the own `id` both ask for this message's receipt. `pthid` and `ack`
-refer to other messages and are kept as spelled. Nothing is replaced inside
+ID as spelled. On the wire, an absent `thid` and a `thid` whose canonical
+wire ID is the message's own are both the self thread, and a `please_ack`
+element `""` and one whose canonical wire ID is the message's own both ask
+for this message's receipt. `pthid` and `ack` refer to other messages and
+are kept as spelled. Nothing is replaced inside
 `body`, attachments or additional headers: an application that writes its own
 wire ID into content changes its intent with the ID, under its own rules.
 
@@ -425,18 +439,19 @@ projection's fields or encoding is a new version. `projection` is the object:
 - `created_time` and `expires_time` are Epoch-Seconds integers or null. Both
   are intent: two sends a second apart have different intent CIDs.
 - `please_ack` is null when the header is absent, otherwise the ordered array
-  of references under 5.1, order and repetitions kept; `ack` is the ordered
-  array of wire IDs, `[]` when absent. Neither array is sorted or merged with
-  the absent case.
+  of references under 5.1, order and repetitions kept: an absent header and
+  an empty array are two intents. `ack` is the ordered array of wire IDs as
+  spelled, `[]` when absent. Neither array is sorted.
 - `document` is the CID of the stored message document of
   [vault-events.md section 7](vault-events.md#stored-message-document): the
   body and the attachment descriptors in wire order, each with its carrier
   kind, payload CID or links, `hash` and `jws`. The CID commits to all of it;
   the content is read from the object the field names.
 - `headers` is every permitted top-level DIDComm field no dedicated field
-  represents, with none of the reserved names
-  [`message.out`](vault-events.md#message-out) lists. A difference in any
-  such field is an intent difference.
+  represents. The reserved names, which never appear in it, are `typ`, `id`,
+  `type`, `from`, `to`, `created_time`, `expires_time`, `thid`, `pthid`,
+  `please_ack`, `ack`, `from_prior`, `return_route`, `body` and
+  `attachments`. A difference in any other field is an intent difference.
 
 Excluded are the message's own `id`, `typ`, `from`, `to`, `from_prior`, the
 effect tuple, the source and rotation references and every preparation field.
@@ -526,8 +541,12 @@ commit freezes that envelope: later confirmation, rotation, resolution or
 termination cannot replace it, and changing the content or the channel
 requires a new message ID.
 
-A message may hold several valid preparations, from two replicas or from one
-that prepared again when its envelope was gone. Each is checked on its own
+A message may hold several valid preparations, made by replicas that had not
+yet seen each other's and brought together by import or synchronization. A
+runtime that holds a preparation of a message makes no second one: envelope
+bytes that are missing or damaged are repaired under their exact CID, from a
+replica that holds them, or the message is cancelled and the content sent
+again under a new ID. Each is checked on its own
 against the intent and its own evidence under
 [the outbound fold](../../packages/vault/src/fold/outbound.ts); their number
 is no conflict, and none is sendable by being recorded. Which envelope this
@@ -554,8 +573,10 @@ the preparation step, before dispatch. One with several valid preparations is
 listed for the user to choose among; the choice is written as the selection,
 and only then may an explicit manual retry carry it. One with no preparation,
 and whose submissions all resolve, may prepare under the usual gate; a
-preparation that is here with incomplete or contradictory evidence is not
-nothing and does not reopen that gate. A preparation that arrives by import
+preparation that is here with incomplete or contradictory evidence, or
+whose envelope bytes are missing or damaged, is not nothing and does not
+reopen that gate: it waits for its evidence, its repair or the message's
+cancellation. A preparation that arrives by import
 or synchronization changes no selection. A restore or an identity reset
 starts with none: another runtime's choice is not known here.
 
@@ -663,19 +684,20 @@ Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
 A carrier that does not request its own receipt under
 [section 5.1](#self-references) creates no requested-ACK work, whatever
 other messages its request names. Otherwise the one target is the carrier's
-own wire ID, which names its exact source input: the carrier must be the
+own canonical wire ID, which names its exact source input: the carrier must be the
 admitted complete witness establishing that input, and the input's admitted
 intents must agree. No other message is ever a target, so no receipt order,
 wire-ID lookup, predecessor-channel search or ambiguity rule enters the
 selection, and later discovery cannot change the saved `ack`.
 
 Validation of a saved pure ACK checks that its `ack` is exactly the carrier's
-wire ID, that the carrier requests its own receipt, and that the carrier's
+canonical wire ID, that the carrier requests its own receipt, and that the carrier's
 input has no independently admitted intent conflict.
 The intent stands on the carrier's complete witness, admitted or not: a
 history rebuilt without the admission revokes no saved intent, while a
 new ACK is created only for an admitted carrier. Generic replies use
-`thid = carrier.thid ?? carrier.wireMessageId`, copy nullable `pthid`, and follow
+`thid = carrier.thid ?? canonicalWireId(carrier.wireMessageId)`, copy
+nullable `pthid`, and follow
 the producing protocol's response rules. No-response errors still do not reply.
 
 The ACK is its own Empty message, under its own tuple, independent of a
@@ -717,7 +739,7 @@ algorithm below.
 
 ### 8.3 Applying `ack`
 
-An explicit `ack` naming an outbound's wire ID, carried by one admitted
+An explicit `ack` whose canonical wire ID is an outbound's message ID, carried by one admitted
 complete source witness whose channel is the outbound's fixed channel or a
 verified role-preserving successor of it, records that the peer received the
 message: peer receipt only, not transport acceptance and no permission to
@@ -749,12 +771,13 @@ another input identity and is not a duplicate under this profile.
 ### Observation IDs and vectors
 
 For authenticated input, canonicalize the authenticated sender and actual local
-recipient, then compute:
+recipient, take the canonical wire ID of the plaintext `id` under
+[section 5.1](#self-references), then compute:
 
 ```text
 messageId = UUIDv5(
   estocNamespace("inbound-message"),
-  RFC8785(["v3", "authenticated", canonicalSenderDid, canonicalRecipientDid, wireMessageId])
+  RFC8785(["v3", "authenticated", canonicalSenderDid, canonicalRecipientDid, canonicalWireId])
 )
 ```
 
@@ -767,7 +790,7 @@ For truly anonymous input, retain the independent observation-only derivation:
 ```text
 messageId = UUIDv5(
   estocNamespace("inbound-message"),
-  RFC8785(["v1", "anonymous", localKeyName, wireMessageId])
+  RFC8785(["v1", "anonymous", localKeyName, canonicalWireId])
 )
 ```
 
@@ -778,8 +801,12 @@ and sender `did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP`, the nami
 | --- | --- | --- |
 | `019b2a70-f225-721c-835f-67175be0667e` | `d2192dcf-cc5c-5f7d-b4f1-46972b7b04de` | `a03249b8-5e3e-5d10-a2e7-46844b38f5ae` |
 | `019b1b61-3444-7190-9db5-1cc9c215eb23` | `9cfaed56-2cb3-5a84-bc56-f8e882784ac8` | `ccee59f0-8c79-5011-8822-dbb14de9cf7d` |
+| `a1` | `50569178-36de-5061-a370-272a02a5036f` | `37686a53-d0bd-568e-b014-95e8ada4408a` |
+| `A1` | `50569178-36de-5061-a370-272a02a5036f` | `37686a53-d0bd-568e-b014-95e8ada4408a` |
 
-These are identifier fixtures, not authentication/proof fixtures.
+These are identifier fixtures, not authentication/proof fixtures. The last
+two rows are one input: `message.in` keeps the `id` as received, the
+transcript takes its canonical form.
 
 <a id="execution-scope-and-commit-prerequisites"></a>
 
@@ -807,12 +834,13 @@ Continuity links never merge inputs from different channels.
 ```text
 executionId = UUIDv5(
   estocNamespace("message-execution"),
-  RFC8785(["v4", {"sender": canonicalSenderDid, "recipient": canonicalRecipientDid}, wireMessageId])
+  RFC8785(["v4", {"sender": canonicalSenderDid, "recipient": canonicalRecipientDid}, canonicalWireId])
 )
 ```
 
 Use the literal transcript members `sender` and `recipient`; RFC 8785 orders
-object members canonically. For inbound work, the peer is the sender and the
+object members canonically. `canonicalWireId` is the canonical wire ID of
+the plaintext `id`. For inbound work, the peer is the sender and the
 local DID is the recipient. Namespace derivation
 is in [vault-events.md](vault-events.md#entity-ids-and-reproducible-uuidv5-namespaces).
 The event schema member names are not substitutes for these transcript tags.
@@ -966,7 +994,7 @@ bypasses the restriction.
 
 A Ping reply requires `response_requested != false` and current protocol/policy
 eligibility. It uses type `https://didcomm.org/trust-ping/2.0/ping-response`,
-`thid = source.wireMessageId`, source `pthid`, `createdTime` and `expiresTime`,
+`thid = canonicalWireId(source.wireMessageId)`, source `pthid`, `createdTime` and `expiresTime`,
 empty body/attachments/headers, `ack == []` and `pleaseAck == null`. An expired
 Ping cannot start a new reply. It is independent of an ACK requested by that Ping.
 
@@ -975,7 +1003,7 @@ record in its intent. It uses that record's trigger source for its execution,
 not a later input that discovers unfinished notification work. Its type is
 `https://didcomm.org/empty/1.0/empty`, body/attachments/headers are empty,
 `ack == []`, `pleaseAck == [""]`, expiry is null, and source `pthid`, nullable
-creation time and `thid ?? wireMessageId` are retained. Its sender is the
+creation time and `thid ?? canonicalWireId(wireMessageId)` are retained. Its sender is the
 record's successor DID and recipient is the record's fixed `peerDid`. Its
 source, when present, belongs to the record's `fromDidId`/`peerDid` channel.
 Until exact-successor confirmation, every successor message, the notification

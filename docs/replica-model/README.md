@@ -1,20 +1,37 @@
 # Estoc version 5 specification suite
 
-Status: **version 5**. The packages under [`packages/`](../../packages/)
-implement it and their tests are the evidence; the folds over the vault's
-events and the procedures that append them are specified by that code, see
-[vault events section 11](vault-events.md#folds-and-procedures).
+Status: **version 5**. The folds over the vault's events and the procedures
+that append them are specified by the code under
+[`packages/`](../../packages/) and its tests, see
+[vault events section 11](vault-events.md#folds-and-procedures), with the
+exception the next paragraph states.
 The suite has seven specifications and one vectors appendix. A vault may run
 one writable full runtime or several as distinct replicas of one
 replica-mediation arrangement. SQLite is the sole persistent vault and portable
 interchange format. This guide is informative; linked specification sections
 define requirements. The target uses vault version 5 and SQLite schema 2,
-retaining the version-3 seed wrapper and existing key/domain-ID derivation.
+retaining the version-3 seed wrapper and existing key/domain-ID derivation;
+the inbound transcripts take the canonical wire ID, under which a lower-case
+ID derives as before.
 Event identity and references use raw CIDs of five-field canonical envelopes;
 a message's intent, plaintext and envelope are named by raw CIDs of their own
 ([message layers](distributed-delivery.md#canonical-projections-and-hashes)).
 Identical envelopes are one event. A version-4 vault is refused; no old-vault
 migration is required.
+
+<a id="version-5-transition"></a>
+
+The packages are at version 4 until one change brings them to this text. For
+the rules version 5 changes, this suite is the definition and the vectors are
+the evidence, whatever a linked module does today: the message layers and
+their CIDs, the equality of recorded intents, the preparation named by its
+event CID and its local selection, the submission resolved by preparation
+event CID, the effect results, the runtime-local delivery records, the user
+send's fixed creation time, the canonical wire ID in comparisons and
+transcripts, and the vault version check. A module linked beside one of those
+rules locates the code that change edits and decides nothing against the
+rule. Every rule this version leaves unchanged stays as its code and tests
+define it.
 
 <a id="model-overview"></a>
 
@@ -107,7 +124,9 @@ domain payloads, while the folds over them and the procedures that append
 them are owned by their code in `packages/vault` and `packages/agent-core`;
 DD owns runtime ordering and message/effect identity;
 RZ owns the DID profiles, local resolution and address/display policy; the
-receive gate, the private-address policy and retry are code.
+receive gate, the private-address policy and retry are code. Until the
+packages reach version 5, a rule listed in
+[the transition](#version-5-transition) is owned by its section alone.
 
 | Rule | Definition | Consumers |
 | --- | --- | --- |
@@ -145,7 +164,9 @@ document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
 [vault events section 11](vault-events.md#folds-and-procedures)). The
 [message vectors](message-vectors.md) are fixed inputs with the bytes and
-CIDs the layers must give; the tests reproduce them.
+CIDs the layers must give; until the packages reach version 5 they are the
+evidence for the rules [the transition](#version-5-transition) lists, and
+the tests then reproduce them.
 Network vault synchronization and mutable channel DIDs have only
 [deferred design notes](deferred/README.md). Those notes reserve no current
 fields, error codes, key names or extension APIs; future features will define
