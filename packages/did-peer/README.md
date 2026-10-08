@@ -67,8 +67,8 @@ frozen document. Copy it to change it.
 
 Resolver composition (did:web, caching, pinning), WASM loading, and secrets
 handling are application policy and stay in the applications. This package is
-the shared lineage of [didcomm-mediator](https://github.com/estoc-net/didcomm-mediator)
-and [didcomm-demo](https://github.com/estoc-net/didcomm-demo), extracted once
+the shared lineage of [didcomm-mediator](https://github.com/estoc-dev/didcomm-mediator)
+and [didcomm-demo](https://github.com/estoc-dev/didcomm-demo), extracted once
 three copies agreed byte-for-byte.
 
 ## Status

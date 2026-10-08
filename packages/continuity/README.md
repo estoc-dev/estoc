@@ -17,11 +17,11 @@ The types and JSDoc of the two entry points define the API. This file
 adds what the API cannot express: the evidence each fact must rest on,
 the profile, and the host contract, which are binding on an integrator
 too. The tests in the repository are the worked examples:
-[`merge.test.ts`](https://github.com/estoc-net/estoc/blob/main/packages/continuity/test/merge.test.ts)
+[`merge.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/merge.test.ts)
 for the merge laws,
-[`model.test.ts`](https://github.com/estoc-net/estoc/blob/main/packages/continuity/test/model.test.ts)
+[`model.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/model.test.ts)
 for what each query answers in each situation, and
-[`from-prior.test.ts`](https://github.com/estoc-net/estoc/blob/main/packages/continuity/test/from-prior.test.ts)
+[`from-prior.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/from-prior.test.ts)
 for verifying, binding and creating proofs with a host-held key.
 
 The repository's [illustrated guide](docs/guide.md) walks through joins,

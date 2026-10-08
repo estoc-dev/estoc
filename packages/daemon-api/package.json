@@ -6,7 +6,7 @@
   "author": "merely",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/estoc-net/estoc.git",
+    "url": "git+https://github.com/estoc-dev/estoc.git",
     "directory": "packages/daemon-api"
   },
   "type": "module",
