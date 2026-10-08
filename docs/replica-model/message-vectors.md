@@ -121,6 +121,43 @@ The preparation event CID here is an arbitrary raw CID standing in for a
 `message.prepared` event's; the rule is in
 [vault-events.md](vault-events.md#forward-id-rule).
 
+## Reply thread and pure ACK
+
+The fixture content received by `ours` from `peer`, with the plaintext `id`
+and `thid` spelled as the rows say. Every row is one input and one carrier
+intent, the self thread projecting to `""`:
+
+```text
+inbound messageId = 50569178-36de-5061-a370-272a02a5036f
+executionId = 37686a53-d0bd-568e-b014-95e8ada4408a
+carrier intentCid = bafkreiem7tcs2b3noyacl5iegvaqpjgy77pptqpgpxhpdfzfvawhb6j7nu
+```
+
+| `id` | `thid` | `replyThread` |
+| --- | --- | --- |
+| `a1` | absent | `a1` |
+| `a1` | `a1` | `a1` |
+| `a1` | `A1` | `a1` |
+| `A1` | absent | `a1` |
+| `A1` | `a1` | `a1` |
+| `A1` | `A1` | `a1` |
+
+The pure ACK each row owes, under the carrier's `please_ack: [""]`:
+
+```text
+effectKey = HH_QvgJGEVcgwTEuVNQPO0NthGnocG3LNmb0pmn2xrA
+messageId = wire id = 48a1f735-5b37-501a-8b69-b56637fb50b0
+{"attachments":[],"body":{}}
+document = bafkreibjtfmb4ccyujuyheuyeejnjpxticpt347cqyzi2w7p5ocsa432ga
+["estoc.message.intent",1,{"ack":["a1"],"created_time":1788442800,"document":"bafkreibjtfmb4ccyujuyheuyeejnjpxticpt347cqyzi2w7p5ocsa432ga","expires_time":null,"headers":{},"please_ack":null,"pthid":null,"thid":"a1","type":"https://didcomm.org/empty/1.0/empty"}]
+ack intentCid = bafkreibqllghqjfnj6fbhuvvsgegqhcjitqtrvf66jrd2oy64duelhgq4q
+```
+
+Two replicas that each saw one row and made the ACK made one intent. A thread
+written `A1` would give `bafkreif5ja4bl5zthmexiwlod6solcaqnzik6uuhrfynhm3x2kyhxvqghe`,
+another intent under the same message ID; the reply-thread rule never writes
+it.
+
 ## Identities the layers do not decide
 
 | Case | Intent CID | Message ID |

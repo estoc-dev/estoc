@@ -4,9 +4,10 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **implemented**. The event vocabulary of one single-seed vault
-executed by its writable full runtimes, one alone or several side by side as
-the replicas of a replica-mediation arrangement. The folds over the
+Status: **version 5**; the packages are at version 4 until they meet this
+text ([transition](README.md#version-5-transition)). The event vocabulary of
+one single-seed vault executed by its writable full runtimes, one alone or
+several side by side as the replicas of a replica-mediation arrangement. The folds over the
 events and the procedures that append them are code; see
 [section 11](#folds-and-procedures).
 

@@ -4,9 +4,10 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **implemented** — the delivery profile for the full runtimes of one
+Status: **version 5** — the delivery profile for the full runtimes of one
 vault, run alone or side by side as the replicas of a replica-mediation
-arrangement.
+arrangement; the packages are at version 4 until they meet this text
+([transition](README.md#version-5-transition)).
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 **SHOULD**, **SHOULD NOT**, and **MAY** as described in BCP 14 when they
@@ -695,9 +696,20 @@ canonical wire ID, that the carrier requests its own receipt, and that the carri
 input has no independently admitted intent conflict.
 The intent stands on the carrier's complete witness, admitted or not: a
 history rebuilt without the admission revokes no saved intent, while a
-new ACK is created only for an admitted carrier. Generic replies use
-`thid = carrier.thid ?? canonicalWireId(carrier.wireMessageId)`, copy
-nullable `pthid`, and follow
+new ACK is created only for an admitted carrier.
+
+The thread of a reply is derived from the carrier's intent projection
+([section 5.2](#intent-projection)), so that every spelling of one input
+gives one reply intent:
+
+```text
+replyThread(carrier) = projection.thid == "" ? canonicalWireId(carrier.wireMessageId) : projection.thid
+```
+
+A carrier in its own thread, by an absent `thid` or one that is its own ID in
+any case, is answered in the thread of its canonical wire ID; one in another
+thread is answered in that thread as the projection recorded it. Generic
+replies use `thid = replyThread(carrier)`, copy nullable `pthid`, and follow
 the producing protocol's response rules. No-response errors still do not reply.
 
 The ACK is its own Empty message, under its own tuple, independent of a
@@ -718,8 +730,11 @@ effectType = https://estoc.dev/distributed-delivery/1.0#pure-ack
 ```
 
 Copy the carrier's normalized nullable creation time; expiry is null. Body is
-`{}`, attachments empty, `pleaseAck` null and `headers` empty. Threads and the
-one ACK target follow section 8.1.
+`{}`, attachments empty, `pleaseAck` null and `headers` empty. The thread is
+`replyThread(carrier)` and the one ACK target follows section 8.1; the six
+spellings of one self-threaded carrier in
+[message-vectors.md](message-vectors.md#reply-thread-and-pure-ack) give one
+ACK intent.
 
 The executable fixture uses recipient
 `did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd`,
@@ -1003,7 +1018,8 @@ record in its intent. It uses that record's trigger source for its execution,
 not a later input that discovers unfinished notification work. Its type is
 `https://didcomm.org/empty/1.0/empty`, body/attachments/headers are empty,
 `ack == []`, `pleaseAck == [""]`, expiry is null, and source `pthid`, nullable
-creation time and `thid ?? canonicalWireId(wireMessageId)` are retained. Its sender is the
+creation time and `thid = replyThread(source)` under
+[section 8.1](#the-ack-target) are retained. Its sender is the
 record's successor DID and recipient is the record's fixed `peerDid`. Its
 source, when present, belongs to the record's `fromDidId`/`peerDid` channel.
 Until exact-successor confirmation, every successor message, the notification
