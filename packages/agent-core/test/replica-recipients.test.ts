@@ -6,6 +6,8 @@ import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type Mess
 import {
   ACCOUNT_REGISTER,
   Agent,
+  LinkClosed,
+  MediatorLink,
   RECIPIENT_ADD,
   REPLICA_ADD,
   STATUS_REQUEST,
@@ -135,23 +137,19 @@ describe("adding recipients", () => {
     await p.runtime.close();
   });
 
-  test("a run given up while a proof is being signed begins no request for it", async () => {
+  test("a run whose link's holder closes while a proof is being signed begins no request for it", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
     const a = await address(p);
-    let signing = false;
-    let givenUp = false;
+    let closed = false;
     const keys = Object.assign(Object.create(p.keys) as typeof p.keys, {
       didKeys: async (didId: DidId) => {
-        if (signing) givenUp = true;
+        closed = true;
         return p.keys.didKeys(didId);
       },
     });
-    const proceed = (): void => {
-      if (givenUp) throw new Error("given up");
-      signing = true;
-    };
-    await expect(addRecipients(p.link, p.runtime, keys, p.confirmations, p.mediationId, proceed)).rejects.toThrow("given up");
+    const link = new MediatorLink({ ...p.linkOptions, closed: () => closed });
+    await expect(addRecipients(link, p.runtime, keys, p.confirmations, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
     expect(mediator.sharedRecipients.size).toBe(0);
     expect((await addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId)).added).toEqual([a.did]);

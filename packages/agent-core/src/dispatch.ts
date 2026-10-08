@@ -76,11 +76,13 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
   confirmations?: Confirmations;
   /** how long one attempt may take, the mediator resolved, the forward sealed and the call answered; `DISPATCH_TIMEOUT_MS` when left out */
   timeoutMs?: number;
+  /** whether the caller has closed: read right before the call, which is then not made and the action not consumed; never closed when left out */
+  closed?: () => boolean;
 }
 
 export type Dispatched =
   | { outcome: "submitted"; messageId: MessageId; packageId: PackageId; submitted: VaultEvent<"delivery.submitted"> }
-  /** the fold asks for no call: the message is closed, in conflict, or not the sender's to send now */
+  /** the fold asks for no call — the message is closed, in conflict, or not the sender's to send now — or the caller closed before the call */
   | { outcome: "none"; messageId: MessageId; because: string }
   /** nothing was called and the action is still live: a prerequisite is missing and may still come, or the attempt's deadline passed before the call */
   | { outcome: "pending"; messageId: MessageId; because: string }
@@ -124,8 +126,12 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
   const rechecked = await runtime.locked((held) => recheck(held, keys, action, packageId, options));
   await noteAll(trace, rechecked.notes);
   if (rechecked.result !== null) return rechecked.result;
-  const answer = await call(options.fetch, carried, deadline, action);
-  if ("uncalled" in answer) return answer.uncalled === "spent" ? { outcome: "spent", messageId } : pending("call", "the deadline passed before the call");
+  const answer = await call(options, carried, deadline, action);
+  if ("uncalled" in answer) {
+    if (answer.uncalled === "spent") return { outcome: "spent", messageId };
+    if (answer.uncalled === "closed") return { outcome: "none", messageId, because: "closed before the call" };
+    return pending("call", "the deadline passed before the call");
+  }
   await noteAttempt(trace, messageId, packageId, carried, answer);
   if ("status" in answer && answer.status >= 200 && answer.status < 300) {
     const submitted = await recordAcceptance(runtime, messageId, packageId);
@@ -287,19 +293,21 @@ function hopOf(service: string | null): Hop | null {
 }
 
 type Answer = { status: number; ms: number } | { error: string; ms: number };
-/** nothing was called: the deadline had passed, or the action had been spent, when the call was about to be made */
-type Uncalled = { uncalled: "deadline" | "spent" };
+/** nothing was called: the deadline had passed, the caller had closed, or the action had been spent, when the call was about to be made */
+type Uncalled = { uncalled: "deadline" | "closed" | "spent" };
 
 /**
  * The body carried as an encrypted DIDComm message, following no
  * redirect and answered from no cache. The status is the answer; the
  * body is not read. The action's invocation is consumed in the same
- * synchronous step that invokes `fetch`, after the deadline is looked
- * at: a deadline passed before this point has cost nothing, and one
- * passing from here on is a call whose outcome is unknown.
+ * synchronous step that invokes `fetch`, after the deadline and the
+ * caller's closing are looked at: a deadline passed, or a close, before
+ * this point has cost nothing, and a deadline passing from here on is a
+ * call whose outcome is unknown.
  */
-async function call(fetch: typeof globalThis.fetch, { endpoint, body }: Carried, deadline: AbortSignal, action: LiveAction): Promise<Answer | Uncalled> {
+async function call({ fetch, closed }: DispatchOptions, { endpoint, body }: Carried, deadline: AbortSignal, action: LiveAction): Promise<Answer | Uncalled> {
   if (deadline.aborted) return { uncalled: "deadline" };
+  if (closed?.()) return { uncalled: "closed" };
   if (!action.consume()) return { uncalled: "spent" };
   const started = Date.now();
   try {

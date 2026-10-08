@@ -178,10 +178,8 @@ export class Agent {
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
   private readonly retries = new Map<MediationId, Retry>();
-  /** The latest connection begun for each arrangement: one begun before it changes nothing once it ends. */
-  private readonly begun = new Map<MediationId, symbol>();
-  /** The socket each arrangement's live delivery is on. */
-  private readonly sockets = new Map<MediationId, symbol>();
+  /** The connection of each arrangement under way, for whoever asks for it meanwhile to share. */
+  private readonly connecting = new Map<MediationId, Promise<Connection>>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -252,27 +250,37 @@ export class Agent {
    * this runtime enrolled, every address held by the account, what
    * waits for the replica picked up, the socket opened. One that
    * cannot be reached stops none of the others and throws nothing: its
-   * connection says why, and connecting again tries it again.
+   * connection says why, and connecting again tries it again. An
+   * arrangement whose connection is under way is shared, not begun
+   * again, and the wait before its next automatic try is dropped: a
+   * failure after this is waited out from the first wait again.
    */
   async connect(): Promise<Connection[]> {
     const fold = await scanVault(this.runtime.vault, this.keys);
     const required = [...requiredReceivingSet(fold.mediations, fold.dids)].sort();
-    return Promise.all(required.map((mediationId) => this.connectTo(mediationId)));
+    return Promise.all(
+      required.map((mediationId) => {
+        this.forgetRetry(mediationId);
+        return this.connectTo(mediationId);
+      })
+    );
   }
 
   /**
    * This runtime enrolled in an arrangement: its
    * account registered when the fold has no grant, its own replica
    * added when no confirmation is kept; then the arrangement's
-   * connection. Throws what `enroll` throws, and begins no request
+   * connection, shared with one under way and taking over its wait as
+   * `connect` does. Throws what `enroll` throws, and begins no request
    * once the agent is closed.
    */
   async enroll(mediationId: MediationId): Promise<Enrolled> {
     this.refuseClosed();
     const { link } = await this.lineOf(mediationId);
-    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, () => this.refuseClosed());
+    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
     this.connectionOf(mediationId).enrolled = enrolled;
     await this.localStateChanged();
+    this.forgetRetry(mediationId);
     await this.connectTo(mediationId);
     return enrolled;
   }
@@ -351,19 +359,19 @@ export class Agent {
   }
 
   /**
-   * Sockets are closed and waits dropped, and nothing is received or
-   * called after this. A connection under way stops at its next step,
-   * and so does finding who answers a delivery already taken, whose
-   * outputs are then listed for the user; a request already made is
-   * answered first. The runtime stays open: it is its opener's to
-   * close.
+   * Sockets are closed and waits dropped, and nothing is sent or
+   * called after this: every line refuses its next request. A
+   * connection under way stops there, and so does finding who answers
+   * a delivery already taken, whose outputs are then listed for the
+   * user; a request already made is answered first, and what its
+   * answer settled is recorded. The runtime stays open: it is its
+   * opener's to close.
    */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const { inbox } of this.wires.values()) inbox?.link.closeSocket();
     for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
-    this.sockets.clear();
     this.dispatcher.close();
     this.receiver.close();
   }
@@ -411,34 +419,31 @@ export class Agent {
     return connection;
   }
 
-  private async connectTo(mediationId: MediationId): Promise<Connection> {
+  /** The arrangement's connection under way, or a new one: whoever asks while one runs shares its result. */
+  private connectTo(mediationId: MediationId): Promise<Connection> {
+    const underWay = this.connecting.get(mediationId);
+    if (underWay !== undefined) return underWay;
+    const connecting = this.connectOnce(mediationId).finally(() => this.connecting.delete(mediationId));
+    this.connecting.set(mediationId, connecting);
+    return connecting;
+  }
+
+  /** One connection of the arrangement, with the wait before its next automatic try cancelled but not forgotten: a failure after this waits the next, longer wait. */
+  private async connectOnce(mediationId: MediationId): Promise<Connection> {
     const connection = this.connectionOf(mediationId);
     this.linesChanged();
     this.cancelRetry(mediationId);
-    const attempt = Symbol();
-    this.begun.set(mediationId, attempt);
-    const stands = (): boolean => !this.closed && this.begun.get(mediationId) === attempt;
     try {
       const line = await this.lineOf(mediationId);
       const { link } = line;
-      const proceed = (): void => {
-        if (!stands()) throw new Error("the connection was given up");
-      };
-      const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId, proceed);
-      if (!stands()) return this.shown(connection);
-      connection.enrolled = enrolled;
-      const recipients = await addRecipients(link, this.runtime, this.keys, this.confirmations, mediationId, proceed);
-      if (!stands()) return this.shown(connection);
-      connection.recipients = recipients;
-      const inbox = await this.pickUpAs(mediationId, line, enrolled.replica);
-      if (!stands()) return this.shown(connection);
-      const drained = await inbox.pickup.drain();
-      if (!stands()) return this.shown(connection);
-      connection.drained = drained;
+      connection.enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
+      connection.recipients = await addRecipients(link, this.runtime, this.keys, this.confirmations, mediationId);
+      const inbox = await this.pickUpAs(mediationId, line, connection.enrolled.replica);
+      connection.drained = await inbox.pickup.drain();
       if (this.keepsLive() && !inbox.link.live) this.openSocket(mediationId, inbox);
       connection.unreachable = null;
     } catch (err) {
-      if (!stands()) return this.shown(connection);
+      if (this.closed) return this.shown(connection);
       connection.unreachable = messageOf(err);
       this.log(`the mediator of ${mediationId} was not reached: ${connection.unreachable}`);
       this.retryLater(mediationId);
@@ -450,21 +455,16 @@ export class Agent {
   /**
    * What reached the mediator between the pickup and live delivery
    * coming on was queued without being pushed: it is picked up once the
-   * mediator says live delivery is on. A frame is handled after it was
-   * opened, which a socket does not wait for before it closes: the
-   * status of a socket that is gone says nothing of the one that
-   * followed it.
+   * mediator says live delivery is on. The link hands down the frames
+   * of the socket it has now alone, so the status is that socket's.
    */
   private openSocket(mediationId: MediationId, { link, pickup }: Inbox): void {
-    const socket = Symbol();
-    this.sockets.set(mediationId, socket);
     link.openSocket(
       (opened) => {
-        if (this.sockets.get(mediationId) === socket && opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) void this.pickUpOnceLive(mediationId, pickup);
+        if (opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) void this.pickUpOnceLive(mediationId, pickup);
         return pickup.onFrame(opened);
       },
       () => {
-        if (this.sockets.get(mediationId) === socket) this.sockets.delete(mediationId);
         this.linesChanged();
         this.log(`live delivery was lost for ${mediationId}`);
         this.retryLater(mediationId);
@@ -516,11 +516,10 @@ export class Agent {
     }, wait);
   }
 
-  /** A connection begun, or live delivery come on, while the vault was being read leaves this try nothing to do. */
+  /** A wait dropped while the vault was being read — live delivery come on, a connection made by hand, the agent closed — leaves this try nothing to do. */
   private async retry(mediationId: MediationId, retry: Retry): Promise<void> {
     if (!this.keepsLive()) return;
-    const latest = this.begun.get(mediationId);
-    const stands = (): boolean => !this.closed && this.begun.get(mediationId) === latest && this.retries.get(mediationId) === retry;
+    const stands = (): boolean => !this.closed && this.retries.get(mediationId) === retry;
     try {
       const fold = await scanVault(this.runtime.vault, this.keys);
       if (!stands()) return;
@@ -566,7 +565,8 @@ export class Agent {
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const { mediatorDid } = mediation;
-    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log });
+    const closed = (): boolean => this.closed;
+    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log, closed });
     const link = linkAs(mediation.me.did, () => this.ring.secrets());
     const line: Line = { link, inbox: null, linkAs };
     const raced = this.wires.get(mediationId);
@@ -621,17 +621,18 @@ export class Agent {
     return async () => this.tell(await this.answer(inbound, live, address));
   }
 
-  /** The live input answered, when this runtime is found to answer it: the rotation's notification, then the automatic effects, each decided and called. */
+  /** The live input answered, when this runtime is found to answer it and is still open: the rotation's notification, then the automatic effects, each decided and called. */
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
     const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
-    const proceed = () => this.refuseClosed();
-    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, confirmations: this.confirmations, proceed }))) ?? { responder: null, answering: null };
+    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, confirmations: this.confirmations }))) ?? { responder: null, answering: null };
     inbound.responder = found.responder;
-    if (found.answering === null) {
-      if (address !== null) inbound.address = unannounced(address, found.responder === null ? "who answers the input was not found" : found.responder.status === "other" ? "another replica answers the input" : `no replica is known to answer the input: ${found.responder.because}`);
+    const unanswered = (because: string): Inbound => {
+      if (address !== null) inbound.address = unannounced(address, because);
       return inbound;
-    }
+    };
+    if (found.answering === null) return unanswered(found.responder === null ? "who answers the input was not found" : found.responder.status === "other" ? "another replica answers the input" : `no replica is known to answer the input: ${found.responder.because}`);
+    if (this.closed) return unanswered("the agent closed before the input was answered");
     const { answering } = found;
     const dispatch = (action: LiveAction): Promise<Dispatched> => this.dispatcher.run(action);
     if (address !== null) inbound.address = await this.step("the notification of the private address", () => notifyPrivateAddress(this.runtime, this.keys, address, answering, { now, dispatch, trace }));

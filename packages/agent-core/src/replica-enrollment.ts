@@ -125,11 +125,11 @@ export interface Enrolled {
  * created toward the link's mediator, neither retired nor in conflict. Only the runtime's
  * own replica is ever added: another member's grant in the vault is
  * that member's to enroll with. Runs as the account's one procedure at
- * a time. `proceed` is called before each request is begun and stops
- * the enrollment there by throwing: what an answered request settled
- * is recorded first.
+ * a time. A link whose holder closes refuses the next request, and the
+ * enrollment stops there: what an answered request settled is recorded
+ * first.
  */
-export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId, proceed: () => void = () => {}): Promise<Enrolled> {
+export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<Enrolled> {
   return serially(runtime, mediationId, async () => {
     const steps: EnrollStep[] = [];
     const replicaId: ReplicaId = runtime.author;
@@ -139,7 +139,6 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
 
     let mediation = accountOf(fold, mediationId);
     if (mediation.routingDid === null) {
-      proceed();
       const registered = await control(link, ACCOUNT_REGISTER, {}, ACCOUNT_REGISTERED);
       if (!echoes(registered, "account", mediation.me.did) || !echoes(registered, "routing_did", mediation.mediatorDid)) {
         throw new MediatorRefused("account-registered names another account or routing DID than the one asked for");
@@ -158,7 +157,6 @@ export function enroll(link: MediatorLink, runtime: VaultRuntime, keys: Keys, co
     const replica = fold.replicas.replicas.get(replicaId);
     if (replica === undefined || replica.status !== "member" || replica.did === null) throw new Unusable("replica", replicaId, replica === undefined ? ["no creation"] : replica.faults.length > 0 ? replica.faults : [replica.status]);
     if (!(await replicaAdded(confirmations, mediationId, replicaId, replica.did))) {
-      proceed();
       const added = await control(link, REPLICA_ADD, { grant: replica.grants[0] as string }, REPLICA_ADDED);
       if (!echoes(added, "replica_did", replica.did) || added.body["state"] !== "active") {
         throw new MediatorRefused("replica-added names another replica than the one asked for, or one that is not active");

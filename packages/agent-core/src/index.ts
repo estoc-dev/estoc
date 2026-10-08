@@ -30,7 +30,7 @@ export {
 export { GOAL_CONNECT, invitationUrl, parseInvitation, type Invitation } from "./protocol/oob.js";
 export { didHost, resolveMediatorInput } from "./protocol/mediator-input.js";
 
-export { AmbiguousTarget, EntityConflict, MediatorRefused, NoTarget, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
+export { AmbiguousTarget, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
 export {
   createVault,
   inspectRuntime,
