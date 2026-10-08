@@ -1,4 +1,4 @@
-import { describe, expect, it, test, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, test, vi } from "vitest";
 
 import { scanVault, type DidId, type MessageId } from "@estoc/vault";
 import type { VaultRuntime } from "@estoc/event-store";
@@ -138,6 +138,10 @@ describe("Dispatcher", () => {
     expect(s.dispatcher.waiting()).toEqual([]);
     expect(await s.dispatcher.run(LiveAction.manual(MESSAGE))).toEqual({ outcome: "none", messageId: MESSAGE, because: "the dispatcher is closed" });
     await s.close();
+  });
+
+  test("a dispatcher's options do not say when it has closed", () => {
+    expectTypeOf<DispatcherOptions>().not.toHaveProperty("closed");
   });
 
   test("a close while the call is being readied leaves the call unmade, the action live and nothing waiting", async () => {

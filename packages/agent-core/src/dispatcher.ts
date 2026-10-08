@@ -44,7 +44,8 @@ export const GLOBAL_TIMERS: Timers = {
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-export interface DispatcherOptions extends DispatchOptions {
+/** The dispatcher reads its own closed state before each call, so the caller does not say when it has closed: `close()` does. */
+export interface DispatcherOptions extends Omit<DispatchOptions, "closed"> {
   retry?: Partial<RetryPolicy>;
   timers?: Timers;
   /** a line for the human log: an attempt that threw, an action given up on */
@@ -129,7 +130,7 @@ export class Dispatcher {
     return [...this.waits.keys()].map((messageId) => this.waitingOn(messageId) as Waiting);
   }
 
-  /** No attempt after the ones running, and no wait kept. */
+  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. */
   close(): void {
     this.closed = true;
     for (const wait of this.waits.values()) this.clear(wait);

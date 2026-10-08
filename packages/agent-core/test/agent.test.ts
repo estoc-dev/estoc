@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import type { VaultRuntime } from "@estoc/event-store";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, scanVault, vaultDraft, type Did, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
@@ -435,6 +435,10 @@ describe("opening an agent", () => {
       events.scan = scan;
     }
     expect((await agentOf(alice, "start")).connections()).toMatchObject([{ unreachable: null }]);
+  });
+
+  it("takes no word from its options on when it has closed", () => {
+    expectTypeOf<AgentOptions>().not.toHaveProperty("closed");
   });
 
   it("is the one agent of its runtime until it is closed", async () => {
