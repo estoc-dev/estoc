@@ -36,6 +36,7 @@ import {
   type Did,
   type DidId,
   type DidKeys,
+  type EpochSeconds,
   type EventReference,
   type ExecutionId,
   type Keys,
@@ -255,6 +256,9 @@ export async function evidenceChecks(events: readonly Event[], readObject: ReadO
   return { resolutionChecks, proofChecks: await verifyProofs(set, resolutionChecks, readObject) };
 }
 
+/** When a locally initiated send is created; a manual notification has no creation time. */
+export const SENT_AT = 1_788_442_800 as EpochSeconds;
+
 /** A locally initiated send in a channel: one intent under a fresh message ID, nothing automatic. */
 export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: IntentOverrides = {}, options: EventOptions = {}): VaultEvent<"message.out"> {
   const messageId = (overrides.messageId ?? uuidv7()) as MessageId;
@@ -267,7 +271,7 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       thid: null,
       pthid: null,
-      createdTime: null,
+      createdTime: overrides.rotationEventCid == null ? SENT_AT : null,
       expiresTime: null,
       pleaseAck: null,
       ack: [],
@@ -285,10 +289,10 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
   );
 }
 
-/** An automatic effect's intent: the tuple, its key and the message ID the key derives, from the source it answers. */
+/** An automatic effect's intent: the tuple, its key and the message ID the key derives, from the source it answers, created when the source was. */
 export function automatic(scene: Scene, sender: Local, recipient: Peer, source: VaultEvent<"message.in">, executionId: ExecutionId, effectType = PURE_ACK, overrides: IntentOverrides = {}): VaultEvent<"message.out"> {
   const key = effectKey(executionId, effectType);
-  return intent(scene, sender, recipient, { messageId: automaticMessageId(key), msgType: "https://didcomm.org/empty/1.0/empty", executionId, effectType, effectKey: key, sourceEventCid: ref(source), ...overrides });
+  return intent(scene, sender, recipient, { messageId: automaticMessageId(key), msgType: "https://didcomm.org/empty/1.0/empty", createdTime: source.data.createdTime, executionId, effectType, effectKey: key, sourceEventCid: ref(source), ...overrides });
 }
 
 /** `envelope` is the text the envelope object holds, so a test can keep its bytes; a fresh one when left out. */

@@ -143,6 +143,15 @@ describe("prepare", () => {
     await closeAll(alice, bob);
   });
 
+  it("seals a user's message with the creation time its send fixed, whatever the clock says at the preparation", async () => {
+    const { alice, bob } = await parties();
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_000 });
+    const result = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ now: () => 1_788_449_999_000 })));
+    const { plaintext } = await opened(alice, bob, (await envelopeOf(alice, result)).packed);
+    expect([sent.intent.data.createdTime, plaintext.created_time]).toEqual([1_788_442_800, 1_788_442_800]);
+    await closeAll(alice, bob);
+  });
+
   it("makes no second preparation beside one a merge brought, and picks none of several valid ones on its own", async () => {
     const { alice, bob } = await parties();
     await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });

@@ -173,7 +173,7 @@ describe("dispatch to a direct endpoint", () => {
     let f = await fold(alice);
     const effect = { execution: f.inbound.ofSource(sourceEventCid)!, source: f.channels.sources.get(sourceEventCid)!, effectType: PURE_ACK_EFFECT, channel: channelOf(alice.did, bob.did) };
     const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "wire-1", ack: ["wire-1"] });
-    if (drafted.existing !== null) throw new Error("recorded already");
+    if (drafted.draft === null) throw new Error("recorded already");
     await alice.runtime.vault.commit(drafted.objects, [drafted.draft]);
     f = await fold(alice);
     const before = f.outbound.outbounds.get(drafted.messageId)!;
@@ -211,7 +211,7 @@ describe("dispatch to a direct endpoint", () => {
     expect([f.dispositions.disposition(carrier).status, f.outbound.ackTarget(carrier)]).toEqual(["admitted", { status: "eligible", wireMessageId: "carrier" }]);
     const effect = { execution: f.inbound.ofSource(carrier)!, source: f.channels.sources.get(carrier)!, effectType: PURE_ACK_EFFECT, channel: channelOf(alice.did, bob.did) };
     const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "carrier", ack: ["carrier"] });
-    if (drafted.existing !== null) throw new Error("recorded already");
+    if (drafted.draft === null) throw new Error("recorded already");
     await alice.runtime.vault.commit(drafted.objects, [drafted.draft]);
     return { carrier, fold: f, messageId: drafted.messageId };
   };

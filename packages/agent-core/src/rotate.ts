@@ -81,7 +81,7 @@ import {
 import { LiveAction, initialAction, type Responding } from "./action.js";
 import { didOf } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
-import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
+import { dispatched, refused, resultOutcome, type Drafted, type EffectOutcome } from "./effects.js";
 import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
 import { materializeSuccessor } from "./successor.js";
@@ -299,7 +299,7 @@ async function settleNotification(held: Held, fold: VaultFold, rotationEventCid:
     if (source === null || execution === null) ({ draft, objects } = manualNotificationDraft(fold, messageId, channel, content, rotationEventCid));
     else {
       const automatic = automaticDraft(fold, { execution, source, effectType, channel, rotationEventCid }, content);
-      if (automatic.existing !== null) return { drafted: { effectType, outcome: "none", because: "the intent under the input's tuple names another rotation" }, executionId };
+      if (automatic.draft === null) return { drafted: automatic.result.status === "produced" ? { effectType, outcome: "none", because: "the intent under the input's tuple names another rotation" } : resultOutcome(automatic), executionId };
       ({ draft, objects } = automatic);
     }
     const [event] = (await held.commit(objects, [draft])).map(readVaultEvent);

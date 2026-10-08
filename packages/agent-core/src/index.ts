@@ -101,7 +101,7 @@ export {
   type PinnedResolverOptions,
   type ResolutionEvidence,
 } from "./evidence.js";
-export { automaticDraft, manualNotificationDraft, send, type AutomaticDraft, type Content, type Effect, type EffectContent, type SendOptions, type Sent, type Target } from "./send.js";
+export { automaticDraft, manualNotificationDraft, send, type AutomaticDraft, type RecordedResult, type Content, type Effect, type EffectContent, type SendOptions, type Sent, type Target } from "./send.js";
 export { MAX_CONTENT_BYTES, hasExpired, outboundWorkKey, prepare, prepareAll, type PrepareOptions, type Prepared } from "./prepare.js";
 export { LiveAction, LiveInput, Responding, type ActionKind } from "./action.js";
 export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, type Cancelled, type DispatchOptions, type Dispatched } from "./dispatch.js";

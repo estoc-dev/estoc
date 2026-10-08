@@ -157,7 +157,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       thid: null,
       pthid: null,
-      createdTime: null,
+      createdTime: 1788442800,
       expiresTime: null,
       pleaseAck: [""],
       ack: [],
@@ -535,7 +535,7 @@ describe("message.out", () => {
       accepts("message.out", spelled, [BODY, PHOTO]);
       expect(out(spelled).intentCid).toBe(OUT_DATA.intentCid);
     }
-    for (const moved of [{ createdTime: 1788442800 }, { pleaseAck: null }, { bodyCid: PHOTO, attachmentCids: [] }, { headers: { lang: "en" } }, { msgType: "https://example.com/other" }]) {
+    for (const moved of [{ createdTime: 1788442801 }, { pleaseAck: null }, { bodyCid: PHOTO, attachmentCids: [] }, { headers: { lang: "en" } }, { msgType: "https://example.com/other" }]) {
       const data = out({ ...OUT_DATA, ...moved });
       expect(data.intentCid).not.toBe(OUT_DATA.intentCid);
       rejects("message.out", { ...data, intentCid: OUT_DATA.intentCid }, vaultDraft("message.out", data as never).roots, new RegExp(`intentCid is the CID of the intent its own fields project, ${data.intentCid}`));
@@ -543,8 +543,11 @@ describe("message.out", () => {
     expect(out({ ...OUT_DATA, recipientDid: PEER_LONG, senderDidId: DID_ID2 }).intentCid, "the addressing is no part of the intent").toBe(OUT_DATA.intentCid);
   });
 
-  test("a locally initiated send mints its ID, derives from no observation and acknowledges nothing; a manual notification names only its rotation", () => {
+  test("a locally initiated send mints its ID, derives from no observation, acknowledges nothing and has a creation time; a manual notification names only its rotation, and it and an automatic effect may have no creation time", () => {
     rejects("message.out", { ...OUT_DATA, ack: [WIRE] }, [BODY, PHOTO], /has ack \[\]/);
+    rejects("message.out", out({ ...OUT_DATA, createdTime: null }), [BODY, PHOTO], /a locally initiated send that names no rotation has a createdTime/);
+    accepts("message.out", out({ ...OUT_DATA, createdTime: null, rotationEventCid: ROTATION, msgType: "https://didcomm.org/empty/1.0/empty", attachmentCids: [] }), [BODY]);
+    accepts("message.out", out({ ...AUTOMATIC, createdTime: null }), [BODY]);
     rejects("message.out", { ...OUT_DATA, messageId: IN }, [BODY, PHOTO], /mints a UUIDv7/);
     rejects("message.out", { ...OUT_DATA, effectType: PURE_ACK }, [BODY, PHOTO], /all null or all present/);
     rejects("message.out", { ...OUT_DATA, sourceEventCid: SOURCE_IN }, [BODY, PHOTO], /sourceEventCid is present exactly for an effect/);

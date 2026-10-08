@@ -154,6 +154,24 @@ describe("send to a channel", () => {
     await closeAll(alice, bob, carol);
   });
 
+  test("a user's message is created at the time its content gives, else at the clock's second when it is first sent; a send repeated under its ID with that time, none or null is the same message whatever the clock says now, another time is another intent, and an expiry not after the creation is refused", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const sent = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_999 });
+    expect(sent.intent.data.createdTime).toBe(1_788_442_800);
+    const later = { messageId: MESSAGE, now: () => 1_788_449_999_000 };
+    for (const createdTime of [undefined, null, 1_788_442_800]) {
+      const again = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime }, later);
+      expect([again.existed, again.intent.cid]).toEqual([true, sent.intent.cid]);
+    }
+    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_788_442_801 }, later)).rejects.toBeInstanceOf(EntityConflict);
+
+    const given = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_000 }, { now: later.now });
+    expect(given.intent.data.createdTime).toBe(1_000);
+    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, expiresTime: 1_788_442_800 }, { now: () => 1_788_442_800_500 })).rejects.toThrow(/expires_time must be later than created_time/);
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
+    await closeAll(alice, bob, carol);
+  });
+
   it("refuses a channel whose local DID is not ours or not live, a denied pair, a recipient that is another DID, and a pair of one DID", async () => {
     const { alice, bob, carol, toBob } = await parties();
     await expect(send(alice.runtime, alice.keys, { channel: channelOf(bob.did, alice.did) }, HELLO)).rejects.toBeInstanceOf(Unusable);
@@ -236,8 +254,8 @@ describe("automatic effects", () => {
     const effect = { execution, source, effectType: PURE_ACK_EFFECT, channel: toBob };
     const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "wire-1", createdTime: 1_000, ack: ["wire-1"] });
     const key = effectKey(execution.id, PURE_ACK_EFFECT);
-    expect(drafted).toMatchObject({ executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, messageId: automaticMessageId(key), existing: null });
-    if (drafted.existing !== null) throw new Error("drafted");
+    expect(drafted).toMatchObject({ executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, messageId: automaticMessageId(key), result: { status: "pending" } });
+    if (drafted.draft === null) throw new Error("drafted");
     expect(drafted.draft.data).toMatchObject({ messageId: automaticMessageId(key), senderDidId: ALICE, recipientDid: bob.did, msgType: EMPTY_MESSAGE_TYPE, thid: "wire-1", pthid: null, createdTime: 1_000, expiresTime: null, pleaseAck: null, ack: ["wire-1"], executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, sourceEventCid, rotationEventCid: null });
     expect(drafted.objects.map((object) => object.cid)).toEqual([drafted.draft.data.bodyCid]);
 
@@ -252,7 +270,7 @@ describe("automatic effects", () => {
     await retireDid(alice.runtime, alice.keys, ALICE, "user");
     f = await fold(alice);
     const again = automaticDraft(f, { ...effect, execution: f.inbound.ofSource(sourceEventCid)!, source: f.channels.sources.get(sourceEventCid)! }, { type: EMPTY_MESSAGE_TYPE, body: { other: true }, ack: ["wire-1"] });
-    expect(again).toMatchObject({ messageId: drafted.messageId, existing: { messageId: drafted.messageId }, draft: null, objects: null });
+    expect(again).toMatchObject({ messageId: drafted.messageId, result: { status: "produced", outbound: { messageId: drafted.messageId } }, draft: null, objects: null });
     await closeAll(alice, bob, carol);
   });
 

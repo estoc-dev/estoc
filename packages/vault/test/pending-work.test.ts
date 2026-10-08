@@ -75,8 +75,8 @@ describe("unfinished work", () => {
     expect(work.outbounds.find((o) => o.messageId === prepared.data.messageId)!.work).toMatchObject({ kind: "dispatch", candidates: [{ event: pkg }] });
     expect(vault.inbound.ofMessage(silent.data.messageId)).not.toBeNull();
     const draft = automaticIntent(vault, vault.inbound.ofMessage(asking.data.messageId)!, PURE_ACK_EFFECT);
-    expect(draft).toMatchObject({ executionId: inputOf(asking, b0, a0), effectType: PURE_ACK_EFFECT, existing: null, result: { status: "pending" } });
-    expect(automaticIntent(vault, vault.inbound.ofMessage(answered.data.messageId)!, PURE_ACK_EFFECT).existing).not.toBeNull();
+    expect(draft).toMatchObject({ executionId: inputOf(asking, b0, a0), effectType: PURE_ACK_EFFECT, result: { status: "pending" } });
+    expect(automaticIntent(vault, vault.inbound.ofMessage(answered.data.messageId)!, PURE_ACK_EFFECT).result.status).toBe("produced");
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });
 
@@ -102,10 +102,10 @@ describe("unfinished work", () => {
     expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([[fromSuccessor.data.messageId, PURE_ACK_EFFECT, channel(a0, b1)]]);
 
     const tuple = { executionId: inputOf(fromSuccessor, b1, a0), effectType: PURE_ACK_EFFECT };
-    scene.add("effect.skipped", { ...tuple, effectKey: effectKey(tuple.executionId, tuple.effectType), sourceEventCid: ref(fromSuccessor), code: "no-receipt-given" });
+    scene.add("effect.skipped", { ...tuple, effectKey: effectKey(tuple.executionId, tuple.effectType), sourceEventCid: ref(fromSuccessor), code: "owes-nothing" });
     vault = await foldScene(scene, keys);
     expect(workSnapshot(unfinishedWork(vault)).responses).toEqual([]);
-    expect(automaticIntent(vault, vault.inbound.ofMessage(fromSuccessor.data.messageId)!, PURE_ACK_EFFECT)).toMatchObject({ existing: null, result: { status: "skipped", skips: [{ status: { status: "complete" } }] } });
+    expect(automaticIntent(vault, vault.inbound.ofMessage(fromSuccessor.data.messageId)!, PURE_ACK_EFFECT)).toMatchObject({ result: { status: "skipped", skips: [{ status: { status: "complete" } }] } });
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))));
   });
 

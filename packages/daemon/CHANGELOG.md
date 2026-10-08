@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Completing an operation the input owes nothing, such as the reply to
+  a Ping that asked for none, answers `none` and names the operation's
+  skip code. A user's message now always goes out with `created_time`;
+  the test corpus is regenerated.
+
 - `@estoc/didcomm-node` moves to `^0.4.1-estoc.4`, the build that hands
   back the plaintext text `@estoc/agent-core` now reads messages from.
 

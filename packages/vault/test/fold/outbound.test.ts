@@ -35,7 +35,7 @@ import {
   type WireMessageId,
 } from "../../src/index.js";
 import { AUTHOR2, OTHER_BODY_CID, Scene, cidOf, expectOrderFree, fakeEventCid } from "./helpers.js";
-import { PEER_ID3, PURE_ACK, admitted, automatic, blocked, channel, intent, noObjects, preparationOf, peerAgreeingOn, peerAgreeingOnBoth, proof, receipt, ref, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
+import { PEER_ID3, PURE_ACK, SENT_AT, admitted, automatic, blocked, channel, intent, noObjects, preparationOf, peerAgreeingOn, peerAgreeingOnBoth, proof, receipt, ref, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
 
@@ -481,7 +481,7 @@ describe("an outbound message", () => {
   it("attributes a receipt to no outbound with no complete preparation here: the acknowledgement waits for one, and conflicts with one that contradicts the intent", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
-    const unprepared = intent(scene, a0, b0, { expiresTime: 1 });
+    const unprepared = intent(scene, a0, b0, { expiresTime: SENT_AT + 1 });
     const unpreparedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [unprepared.data.messageId] } });
     const unpreparedRecord = acknowledged(scene, unprepared, unpreparedCarrier, b0, a0);
     const waiting = intent(scene, a0, b0);

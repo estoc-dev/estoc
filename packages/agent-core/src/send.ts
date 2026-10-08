@@ -7,10 +7,15 @@
  * later, from the intent left behind, and never move it to another
  * channel. Everything the fold answers is read under the writer lock,
  * in the same commit's view, so no rotation, denial or contact change
- * can slip between the decision and the record. The same rules build
- * the intent of an automatic effect — an ACK, a Ping reply, a rotation
- * notification — under the message ID its tuple derives, for the
- * operation that commits it.
+ * can slip between the decision and the record. A message's creation
+ * time is fixed with its intent: a user's message always carries one,
+ * read once from the clock when the caller gives none, and a send
+ * repeated under the message's ID reads it back from the record, so a
+ * clock that moved on never makes the repetition another message. The
+ * same rules build the intent of an automatic effect — an ACK, a Ping
+ * reply, a rotation notification — under the message ID its tuple
+ * derives, for the operation that commits it, with the time the
+ * operation copies from its source, none included.
  */
 
 import { v7 as uuidv7 } from "uuid";
@@ -38,6 +43,7 @@ import {
   type ControlHeaders,
   type Did,
   type DidId,
+  type EffectResult,
   type EpochSeconds,
   type EventReference,
   type Execution,
@@ -65,6 +71,7 @@ export interface Content {
   attachments?: readonly JsonObject[];
   thid?: string | null;
   pthid?: string | null;
+  /** a user's message is created now when this is left out or null; a send repeated under a recorded message ID reads the recorded time instead */
   createdTime?: EpochSeconds | null;
   expiresTime?: EpochSeconds | null;
   /** null omits the wire header; an array is carried exactly, `""` naming this message */
@@ -83,6 +90,8 @@ export type Target = { channel: Channel; recipientDid?: string; contactId?: unde
 export interface SendOptions {
   /** the message ID, for a send repeated after a crash: a fresh UUIDv7 when left out */
   messageId?: MessageId;
+  /** the clock a new message's creation time is read from when its content gives none, in milliseconds since the epoch; `Date.now` when left out */
+  now?: () => number;
 }
 
 export interface Sent {
@@ -100,30 +109,33 @@ type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid" | keyof Loca
 
 /**
  * The intent of `content` committed with its objects, in the channel
- * `target` selects, with networking off. A message ID the vault has
- * already is not selected for again: the same content and a target
- * that names the recorded channel return what was committed, going in
- * again only when an object of it is missing; another intent or
- * target under the same ID is refused.
+ * `target` selects, with networking off. A new message is created at
+ * the time its content gives, else now. A message ID the vault has
+ * already is not selected for again: the same content, its creation
+ * time given as recorded or not at all, and a target that names the
+ * recorded channel return what was committed, going in again only when
+ * an object of it is missing; another intent or target under the same
+ * ID is refused.
  */
 export async function send(runtime: VaultRuntime, keys: Keys, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
   const messageId = options.messageId ?? (uuidv7() as MessageId);
-  const { fields, objects, roots } = fieldsOf(messageId, content, [], null);
   return runtime.locked(async (held) => {
     const fold = await scanVault(held, keys);
     const existing = fold.outbound.outbounds.get(messageId);
-    if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, fields, objects, roots)), action: LiveAction.manual(messageId) };
+    if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, messageId, content)), action: LiveAction.manual(messageId) };
     const { sender, channel, recipientDid } = select(fold, target);
+    const createdTime = content.createdTime ?? (Math.floor((options.now ?? Date.now)() / 1000) as EpochSeconds);
+    const { fields, objects } = fieldsOf(messageId, { ...content, createdTime }, [], null);
     const data: MessageOut = { ...fields, ...LOCAL, senderDidId: sender.didId, recipientDid };
     const [event] = (await held.commit(objects, [vaultDraft("message.out", data)])).map(readVaultEvent);
     return { messageId, channel, senderDidId: sender.didId, intent: event as VaultEvent<"message.out">, existed: false, action: initialAction(messageId) };
   });
 }
 
-async function repeat(held: Held, fold: VaultFold, existing: Outbound, target: Target, fields: IntentFields, objects: CommitObject[], roots: readonly Cid[]): Promise<Omit<Sent, "action">> {
-  const { messageId } = fields;
+async function repeat(held: Held, fold: VaultFold, existing: Outbound, target: Target, messageId: MessageId, content: Content): Promise<Omit<Sent, "action">> {
   if (existing.intent.status === "conflict" || existing.channel === null) throw new EntityConflict("message", messageId, existing.intent.status === "conflict" ? existing.intent.because : "an intent whose sender is not here");
   const { data } = existing.intent;
+  const { fields, objects, roots } = fieldsOf(messageId, { ...content, createdTime: content.createdTime ?? data.createdTime }, [], null);
   if (!samePayload({ ...fields, ...LOCAL, senderDidId: data.senderDidId, recipientDid: data.recipientDid }, data)) throw new EntityConflict("message", messageId, "another intent");
   if (!targetAgrees(fold, target, existing.channel, data.recipientDid)) throw new EntityConflict("message", messageId, "another target");
   const sent = { messageId, channel: existing.channel, senderDidId: data.senderDidId };
@@ -251,23 +263,27 @@ export function manualNotificationDraft(fold: VaultFold, messageId: MessageId, c
   return { draft: vaultDraft("message.out", data), objects };
 }
 
-/** The tuple and its message ID, with the intent already recorded under it, or else the draft and the objects a new one commits. */
-export type AutomaticDraft = Omit<AutomaticIntent, "existing"> & ({ existing: Outbound; draft: null; objects: null } | { existing: null; draft: VaultDraft<"message.out">; objects: CommitObject[] });
+/** An operation's tuple whose result is recorded already: an output, a skip, or both in conflict. */
+export type RecordedResult = Omit<AutomaticIntent, "result"> & { result: Exclude<EffectResult, { status: "pending" }> };
+
+/** The tuple and its message ID with what the operation came to under it; for a pending one, the draft and the objects its output commits. */
+export type AutomaticDraft = (RecordedResult & { draft: null; objects: null }) | (Omit<AutomaticIntent, "result"> & { result: { status: "pending" }; draft: VaultDraft<"message.out">; objects: CommitObject[] });
 
 /**
  * The intent of an automatic effect, drafted over the fold under the
- * lock: the tuple and its message ID first, and the intent already
- * recorded under that ID as it is, whatever the channel or the content
- * would be now; only for a new one the fields frozen under the ID, the
- * recipient being the source's canonical peer. The operation commits
- * the draft with the objects.
+ * lock: the tuple and its message ID first, and what the operation
+ * came to under it as it is — an output recorded whatever the channel
+ * or the content would be now, or a skip; only for a pending one the
+ * fields frozen under the ID, the recipient being the source's
+ * canonical peer. The operation commits the draft with the objects.
  */
 export function automaticDraft(fold: VaultFold, effect: Effect, content: EffectContent): AutomaticDraft {
   const tuple = automaticIntent(fold, effect.execution, effect.effectType);
-  if (tuple.existing !== null) return { ...tuple, existing: tuple.existing, draft: null, objects: null };
+  const { result } = tuple;
+  if (result.status !== "pending") return { ...tuple, result, draft: null, objects: null };
   const sender = senderOf(fold, effect.channel);
   const { fields, objects } = fieldsOf(tuple.messageId, content, content.ack ?? [], effect.rotationEventCid ?? null);
   const origin: AutomaticEffect = { executionId: tuple.executionId, effectType: tuple.effectType, effectKey: tuple.effectKey, sourceEventCid: effect.source.event.cid as EventReference<"message.in"> };
   const data: MessageOut = { ...fields, ...origin, senderDidId: sender.didId, recipientDid: effect.channel.peerDid };
-  return { ...tuple, existing: null, draft: vaultDraft("message.out", data), objects };
+  return { ...tuple, result, draft: vaultDraft("message.out", data), objects };
 }

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **A user's message is created at a fixed time**: `send` records the
+  content's `createdTime`, else the clock's second when the message is
+  first sent (`SendOptions.now`, `Date.now` by default; an `Agent` passes
+  its own `now`), so every user message goes out with `created_time`. A
+  send repeated under a recorded message ID that gives no time or null
+  reads the recorded one before comparing, so a moved clock never makes
+  it another intent; another non-null time is another intent.
+- **Effects are decided by their recorded result**: each operation reads
+  its tuple's result before the body is read or the handler asked. An
+  output recorded is reused, a skip stands, and only a pending operation
+  is decided. A handler may answer an operation with
+  `{ content: null, skipped: code }` when its own rule owes the input no
+  output for good; the agent records it as `effect.skipped` and the
+  outcome is `skipped` with that `code`. The built-in Ping reply skips a
+  Ping that asked for no reply (`no-response-requested`); an expired Ping
+  or a body not here stays pending. A skip the disk refuses is
+  `refused` and records nothing. `automaticDraft` returns the tuple's
+  `result`, with a draft only while it is pending (`RecordedResult`).
 - **Preparations are named by their event CID**: `prepare` mints no
   package ID. `Prepared` of outcome `prepared` carries the committed
   event, `reused` carries the one valid `preparation` the fold holds, and

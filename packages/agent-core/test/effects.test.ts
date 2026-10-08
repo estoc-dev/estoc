@@ -1,11 +1,16 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { SignJWT, importJWK } from "jose";
 
 import type { DIDDoc } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
+import { openNodeSqlite } from "@estoc/event-store/node";
 import {
   AUTHENTICATION_METHOD,
+  EMPTY_CONTENT_CID,
   EMPTY_MESSAGE_TYPE,
   PING_RESPONSE_EFFECT,
   PING_RESPONSE_TYPE,
@@ -43,6 +48,7 @@ import {
   dispatch,
   effectTypesOf,
   handlersOf,
+  openVault,
   pinnedResolver,
   reactTo,
   completeResponse,
@@ -58,7 +64,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
-import { didcomm, directParty, peerSealer, posting, refuseCommits, refuseReads, refuseSubmissions, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
+import { copyOf, didcomm, directParty, peerSealer, posting, refuseCommits, refuseReads, refuseSubmissions, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -133,7 +139,7 @@ const echo: Handler = {
 
 const ping = (wire: string, extra: Partial<IMessage> = {}): Partial<IMessage> => ({ id: wire, type: PING_TYPE, body: { response_requested: true }, please_ack: [""], created_time: CREATED, ...extra });
 
-const outcomes = (effects: readonly EffectOutcome[]) => effects.map((effect) => [effect.effectType, effect.outcome, "because" in effect ? effect.because : effect.dispatched?.outcome ?? null]);
+const outcomes = (effects: readonly EffectOutcome[]) => effects.map((effect) => [effect.effectType, effect.outcome, "because" in effect ? effect.because : "code" in effect ? effect.code : effect.dispatched?.outcome ?? null]);
 
 function created(effect: EffectOutcome | undefined): Extract<EffectOutcome, { outcome: "created" }> {
   if (effect?.outcome !== "created") throw new Error(`not created: ${JSON.stringify(effect)}`);
@@ -234,7 +240,7 @@ describe("the automatic effects of a live input", () => {
     const unanswered = crypto.randomUUID() as WireMessageId;
     const executionId = await executionOf(await receive(bob, ping(unanswered)));
     const later = await receive(bob, ping(unanswered, { body: { response_requested: false } }));
-    expect(outcomes([await completeResponse(alice.runtime, alice.keys, contradicting.executionId!, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "none", "the Ping asked for no reply"]]);
+    expect(outcomes([await completeResponse(alice.runtime, alice.keys, contradicting.executionId!, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "skipped", "no-response-requested"]]);
     expect(outcomes([await completeResponse(alice.runtime, alice.keys, executionId, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "created", "submitted"]]);
 
     const fold = await foldOf(alice);
@@ -243,7 +249,7 @@ describe("the automatic effects of a live input", () => {
       expect([execution.status, execution.members.map(({ admitted }) => admitted), execution.contradicting.map(({ source }) => source.event.cid)]).toEqual(["complete", [true, false], [refused]]);
       expect(fold.dispositions.disposition(refused)).toEqual({ status: "pending-admission", because: "the observation contradicts the intent its input has admitted" });
     }
-    expect([wire.posts.length, fold.set.of("message.out").length, unfinishedWork(fold).responses.map(({ execution, effectType }) => [execution.id, effectType]).sort()]).toEqual([2, 2, [[contradicting.executionId, PING_RESPONSE_EFFECT], [executionId, PURE_ACK_EFFECT]].sort()]);
+    expect([wire.posts.length, fold.set.of("message.out").length, unfinishedWork(fold).responses.map(({ execution, effectType }) => [execution.id, effectType])]).toEqual([2, 2, [[executionId, PURE_ACK_EFFECT]]]);
     expect(fold.outbound.outbounds.get(ack.messageId)).toMatchObject({ messageId: ack.messageId, submitted: true, released: true, effect: { status: "complete" }, work: { kind: "none" } });
     await closeAll(alice, bob);
   });
@@ -285,14 +291,14 @@ describe("the automatic effects of a live input", () => {
     await closeAll(alice, bob);
   });
 
-  test("each operation follows its own policy: a Ping asking for no reply gets its receipt alone, one asking for no receipt its reply alone, chat only what it asks, a pure acknowledgement nothing, an expired Ping no reply, and a request naming only another message no receipt and no operation asked", async () => {
+  test("each operation follows its own policy: a Ping asking for no reply gets its receipt and its reply skipped for good, one asking for no receipt its reply alone, chat only what it asks, a pure acknowledgement nothing, an expired Ping no reply for now, and a request naming only another message no receipt and no operation asked", async () => {
     const { alice, bob } = await parties();
     const { live } = await reacting(alice, { now: () => (CREATED + 100) * 1000 });
 
     const noReply = await live(bob, ping(crypto.randomUUID(), { body: { response_requested: false } }));
     expect(outcomes(noReply.effects)).toEqual([
       [PURE_ACK_EFFECT, "created", "submitted"],
-      [PING_RESPONSE_EFFECT, "none", "the Ping asked for no reply"],
+      [PING_RESPONSE_EFFECT, "skipped", "no-response-requested"],
     ]);
     const noReceipt = await live(bob, ping(crypto.randomUUID(), { please_ack: undefined }));
     expect(outcomes(noReceipt.effects)).toEqual([[PING_RESPONSE_EFFECT, "created", "submitted"]]);
@@ -368,10 +374,82 @@ describe("the automatic effects of a live input", () => {
     ]);
     const ackId = automaticMessageId(effectKey(reacted.executionId!, PURE_ACK_EFFECT));
     expect((await trace.read({ type: "diag.effect" })).map((entry) => entry.data)).toEqual([{ messageId: ackId, executionId: reacted.executionId, effectType: PURE_ACK_EFFECT, reason: "the disk is full for now" }]);
+    const refused = await foldOf(alice);
+    expect([refused.outbound.effectResult(reacted.executionId!, PURE_ACK_EFFECT), refused.outbound.outbounds.has(ackId), await alice.runtime.vault.objects.has(EMPTY_CONTENT_CID)]).toEqual([{ status: "pending" }, false, true]);
     expect(wire.posts).toHaveLength(1);
     const ack = created(await completeResponse(alice.runtime, alice.keys, reacted.executionId!, PURE_ACK_EFFECT, options));
     expect([ack.messageId, ack.action.kind, ack.dispatched.outcome, wire.posts.length]).toEqual([ackId, "manual", "submitted", 2]);
     await closeAll(alice, bob);
+  });
+
+  test("a Ping asking for no reply has the skip of its reply recorded beside its receipt, and the skip stands: completed by hand, its body erased, the vault reopened and merged into another replica, no reply is made or listed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "estoc-effects-"));
+    const file = path.join(dir, "vault.sqlite");
+    try {
+      const alice = await directParty(1, "https://alice.example/didcomm", ALICE, openNodeSqlite(file, { mode: "create", journal: "delete" }));
+      const bob = await directParty(2, BOB_ENDPOINT, BOB);
+      const { wire, options, live } = await reacting(alice);
+      const reacted = await live(bob, ping(crypto.randomUUID(), { body: { response_requested: false } }));
+      expect(outcomes(reacted.effects)).toEqual([
+        [PURE_ACK_EFFECT, "created", "submitted"],
+        [PING_RESPONSE_EFFECT, "skipped", "no-response-requested"],
+      ]);
+      const executionId = reacted.executionId!;
+      let fold = await foldOf(alice);
+      expect(fold.set.of("effect.skipped").map(({ data }) => data)).toEqual([{ executionId, effectType: PING_RESPONSE_EFFECT, effectKey: effectKey(executionId, PING_RESPONSE_EFFECT), sourceEventCid: reacted.cid, code: "no-response-requested" }]);
+      expect(unfinishedWork(fold).responses).toEqual([]);
+
+      await eraseMessage(alice.runtime, alice.keys, fold.inbound.executions.get(executionId)!.messageId);
+      expect(outcomes([await completeResponse(alice.runtime, alice.keys, executionId, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "skipped", "no-response-requested"]]);
+      await alice.runtime.close();
+      const reopened = await openVault(openNodeSqlite(file, { mode: "readwrite" }), alice.seedKey);
+      const replica = await copyOf(1, reopened);
+      for (const holder of [reopened, replica]) {
+        fold = await foldOf(holder);
+        expect([fold.outbound.effectResult(executionId, PING_RESPONSE_EFFECT).status, unfinishedWork(fold).responses]).toEqual(["skipped", []]);
+        expect(outcomes([await completeResponse(holder.runtime, holder.keys, executionId, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "skipped", "no-response-requested"]]);
+      }
+      expect([wire.posts.length, fold.set.of("message.out").length, fold.set.of("effect.skipped").length]).toEqual([1, 1, 1]);
+      await closeAll(reopened, replica, bob);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a skip the disk refuses to record leaves the reply pending and listed, with nothing recorded, and the completion records it", async () => {
+    const { alice, bob } = await parties();
+    const { options, live } = await reacting(alice);
+    refuseCommits(alice.runtime, "effect.skipped", 1);
+    const reacted = await live(bob, ping(crypto.randomUUID(), { please_ack: undefined, body: { response_requested: false } }));
+    expect(outcomes(reacted.effects)).toEqual([[PING_RESPONSE_EFFECT, "refused", "the disk is full for now"]]);
+    const executionId = reacted.executionId!;
+    let fold = await foldOf(alice);
+    expect([fold.outbound.effectResult(executionId, PING_RESPONSE_EFFECT), fold.set.of("effect.skipped"), unfinishedWork(fold).responses.map(({ effectType }) => effectType)]).toEqual([{ status: "pending" }, [], [PING_RESPONSE_EFFECT]]);
+    expect(outcomes([await completeResponse(alice.runtime, alice.keys, executionId, PING_RESPONSE_EFFECT, options)])).toEqual([[PING_RESPONSE_EFFECT, "skipped", "no-response-requested"]]);
+    fold = await foldOf(alice);
+    expect([fold.outbound.effectResult(executionId, PING_RESPONSE_EFFECT).status, unfinishedWork(fold).responses, fold.set.of("message.out")]).toEqual(["skipped", [], []]);
+    await closeAll(alice, bob);
+  });
+
+  test("two replicas each completing an input's outputs before they merge: the receipts, created when the source was, are one intent of two records, and replies of another content under one tuple are that output's conflict", async () => {
+    const { alice, bob } = await parties();
+    const { wire, options, receive, executionOf } = await reacting(alice, { handlers: [echo] });
+    const executionId = await executionOf(await receive(bob, { type: BASIC_MESSAGE, body: { content: "hi" }, please_ack: [""], created_time: CREATED }));
+    const replica = await copyOf(1, alice);
+    const otherwise: Handler = { ...echo, respond: async (input) => [{ effectType: ECHO_EFFECT, content: { type: ECHO_TYPE, body: { echoed: "something else" }, thid: input.source.event.data.wireMessageId, pleaseAck: null, ack: [] } }] };
+    const elsewhere: EffectOptions = { handlers: [otherwise], dispatch: (action) => dispatch(replica.runtime, replica.keys, action, { didcomm, fetch: wire.fetch, effectTypes: [ECHO_EFFECT] }) };
+    for (const effectType of [PURE_ACK_EFFECT, ECHO_EFFECT]) {
+      expect(await completeResponse(alice.runtime, alice.keys, executionId, effectType, options)).toMatchObject({ outcome: "created", dispatched: { outcome: "submitted" } });
+      expect(await completeResponse(replica.runtime, replica.keys, executionId, effectType, elsewhere)).toMatchObject({ outcome: "created", dispatched: { outcome: "submitted" } });
+    }
+    await alice.runtime.ingest([...(await foldOf(replica)).set.all()]);
+    const fold = await foldOf(alice);
+    const receipt = fold.outbound.effectResult(executionId, PURE_ACK_EFFECT);
+    if (receipt.status !== "produced") throw new Error(`not produced: ${receipt.status}`);
+    expect([receipt.outbound.intent.status, receipt.outbound.effect, new Set(receipt.outbound.intents.map(({ author }) => author)).size, receipt.outbound.intents.map(({ data }) => data.createdTime)]).toEqual(["consistent", { status: "complete" }, 2, [CREATED, CREATED]]);
+    expect(fold.outbound.effectResult(executionId, ECHO_EFFECT)).toMatchObject({ status: "produced", outbound: { intent: { status: "conflict" } } });
+    expect(wire.posts).toHaveLength(4);
+    await closeAll(alice, replica, bob);
   });
 
   test("a registered handler's operation is this runtime's work end to end: its intent is prepared and called under the initial action, listed by a dispatcher told of it, retried by hand as the same preparation, and no work of a scan not told of it", async () => {

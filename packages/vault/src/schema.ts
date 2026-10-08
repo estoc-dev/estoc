@@ -270,6 +270,7 @@ const messageOut = checked(
     if (present === 0) {
       if (!isMintedId(data.messageId)) throw new Fault("a locally initiated send mints a UUIDv7 messageId");
       if (data.ack.length > 0) throw new Fault("a locally initiated send has ack []");
+      if (data.rotationEventCid === null && data.createdTime === null) throw new Fault("a locally initiated send that names no rotation has a createdTime");
     } else {
       keyedByTuple(data as { executionId: ExecutionId; effectType: string; effectKey: string });
       const messageId = automaticMessageId(data.effectKey as EffectKey);

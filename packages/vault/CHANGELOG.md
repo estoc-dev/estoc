@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A user's message has a creation time** (breaking): a locally
+  initiated `message.out` that names no rotation records a non-null
+  `createdTime`; a manual notification and an automatic output keep
+  their own rules, null included.
+- **An operation's tuple is read by its result**: `AutomaticIntent`
+  carries `result` alone; `existing` is gone, the output recorded under
+  the tuple being `result.outbound` when it is `produced`.
 - **A preparation is named by its event CID** (breaking):
   `message.prepared` carries no `packageId`, `delivery.submitted` names
   its preparation as `preparationEventCid`

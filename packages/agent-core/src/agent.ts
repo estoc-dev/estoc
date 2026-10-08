@@ -299,7 +299,7 @@ export class Agent {
   /** The intent committed, then its one transport call under the action the send minted. */
   async send(target: Target, content: Content, options: SendOptions = {}): Promise<Submitted> {
     this.refuseClosed();
-    const sent = await send(this.runtime, this.keys, target, content, options);
+    const sent = await send(this.runtime, this.keys, target, content, { now: this.options.now, ...options });
     return { ...sent, dispatched: await this.call(sent.action) };
   }
 

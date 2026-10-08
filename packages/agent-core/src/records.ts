@@ -363,7 +363,7 @@ async function leftElsewhere(fold: VaultFold, { author, confirmations }: ViewOpt
 /**
  * The replies an established input may still be given. The receipt is
  * the vault's own candidate. A protocol's reply is a candidate under
- * each operation the input's handler declares and no intent records,
+ * each operation the input's handler declares and no result records,
  * chosen as a completion chooses it, so that a registered handler
  * replacing a built-in one replaces its candidates too. An erased
  * input keeps the candidates of a registered handler, which may answer
@@ -378,7 +378,7 @@ function owedResponses(fold: VaultFold, own: readonly MissingResponse[], handler
     const { source } = execution.firstWitness;
     const handler = handlerFor(handlers, source.event.data.msgType);
     if (handler === null || (handler === trustPing && execution.erased)) continue;
-    const operations = handler.effectTypes.filter((effectType) => effectType !== PURE_ACK_EFFECT && automaticIntent(fold, execution, effectType).existing === null);
+    const operations = handler.effectTypes.filter((effectType) => effectType !== PURE_ACK_EFFECT && automaticIntent(fold, execution, effectType).result.status === "pending");
     if (operations.length === 0) continue;
     const selected = responseChannel(fold, execution);
     if (selected.status === "none") continue;
