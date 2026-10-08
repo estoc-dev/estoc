@@ -607,6 +607,7 @@ export const exportCases: ExportCase[] = [
   },
   {
     name: "validation refuses what an inspection alone lets through: a broken reference, an object no event holds, a held object missing, a damaged or missing chunk, an altered event, a size that lies; and a file past the bound is refused as it is opened, before a byte of it is handed back",
+    large: true,
     run: async (h) => {
       const alterations: [string, (driver: SqliteDriver, events: Event[]) => void, RegExp, RegExp][] = [
         ["a chunk referencing no object", (d) => d.exec(`PRAGMA foreign_keys = OFF; DELETE FROM objects WHERE cid = '${HELLO_CID}'`), /^object_chunks\/rowid \d+$/, /references a row objects does not have/],
