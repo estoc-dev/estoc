@@ -22,7 +22,26 @@ import {
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, UnknownEntity, createDid, createVault, pinnedResolver, prepare, prepareAll, send, unpack, type Content, type PrepareOptions, type Prepared, type Unpacked, routeOf } from "../src/index.js";
+import {
+  AgentTrace,
+  Keyring,
+  LocalRecords,
+  UnknownEntity,
+  createDid,
+  createVault,
+  pinnedResolver,
+  prepare,
+  prepareAll,
+  selectPreparation,
+  send,
+  transientOptions,
+  unpack,
+  type Content,
+  type PrepareOptions,
+  type Prepared,
+  type Unpacked,
+  routeOf,
+} from "../src/index.js";
 import { after, carrierWaitingForIssuer, didcomm, directParty, memoryDriver, merged, received, refuseCommits, ticking, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
@@ -152,15 +171,47 @@ describe("prepare", () => {
     await closeAll(alice, bob);
   });
 
-  it("makes no second preparation beside one a merge brought, and picks none of several valid ones on its own", async () => {
+  it("selects the preparation it makes, and keeps it selected when a merge brings another; a runtime that selected none picks none of several on its own, and carries the one the user chooses", async () => {
     const { alice, bob } = await parties();
-    await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const made = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
-    const elsewhere = await merged(alice.runtime, "message.prepared", made.prepared.data, after(made.prepared.at, 1));
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const notPrepared = sent.intent.cid as EventReference<"message.prepared">;
+    const local = new LocalRecords(transientOptions(), alice.runtime.author);
+    const made = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local })));
+    expect(await local.selected(MESSAGE)).toBe(made.prepared.cid);
+    const elsewhere = (await merged(alice.runtime, "message.prepared", made.prepared.data, after(made.prepared.at, 1))).cid as EventReference<"message.prepared">;
     const outbound = (await fold(alice)).outbound.outbounds.get(MESSAGE)!;
-    expect(outbound.work).toMatchObject({ kind: "dispatch", candidates: [{ event: { cid: made.prepared.cid } }, { event: { cid: elsewhere.cid } }] });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" });
+    expect(outbound.work).toMatchObject({ kind: "dispatch", candidates: [{ event: { cid: made.prepared.cid } }, { event: { cid: elsewhere } }] });
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made.prepared.cid } } });
+
+    const unselected = options({ local: new LocalRecords(transientOptions(), alice.runtime.author) });
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" });
+    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, notPrepared, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: `the preparation ${notPrepared} is no valid preparation of the message` });
+    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, elsewhere, unselected)).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, unselected)).toMatchObject({ outcome: "reused", preparation: { event: { cid: elsewhere } } });
     expect((await fold(alice)).set.of("message.prepared")).toHaveLength(2);
+    await closeAll(alice, bob);
+  });
+
+  it("leaves a preparation the local options would not select uncarried, and the next step selects it as the one valid preparation; a selection that cannot be carried is replaced by nothing", async () => {
+    const { alice, bob } = await parties();
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const disk = transientOptions();
+    const local = new LocalRecords({ ...disk, set: async () => Promise.reject(new Error("the disk is full for now")) }, alice.runtime.author);
+    const trace = await AgentTrace.open(alice.runtime.local);
+    const refused = await prepare(alice.runtime, alice.keys, MESSAGE, options({ local, trace }));
+    const [made] = (await fold(alice)).set.of("message.prepared");
+    expect(refused).toEqual({ outcome: "none", messageId: MESSAGE, because: `the preparation ${made!.cid} could not be selected: the disk is full for now` });
+    expect((await trace.read({ stream: "diag" })).map((entry) => entry.data)).toContainEqual(expect.objectContaining({ messageId: MESSAGE, preparationEventCid: made!.cid }));
+
+    const kept = new LocalRecords(disk, alice.runtime.author);
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local: kept }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made!.cid } } });
+    expect(await kept.selected(MESSAGE)).toBe(made!.cid);
+    expect((await fold(alice)).set.of("message.prepared")).toHaveLength(1);
+
+    const notPrepared = sent.intent.cid as EventReference<"message.prepared">;
+    await kept.select(MESSAGE, notPrepared);
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local: kept }))).toEqual({ outcome: "none", messageId: MESSAGE, because: `the selected preparation ${notPrepared} is not here` });
+    expect((await fold(alice)).set.of("message.prepared")).toHaveLength(1);
     await closeAll(alice, bob);
   });
 

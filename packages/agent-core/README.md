@@ -4,7 +4,7 @@ The DIDComm v2 agent behind Estoc's clients, over an `.estoc` vault:
 `@estoc/event-store` holds it, `@estoc/vault` says what its events mean,
 and this package is what runs on it. A message is decided over the fold
 read under the vault's writer lock and committed as an intent, then as
-a package, before its one transport call, which goes under a live
+a preparation this runtime selects, before its one transport call, which goes under a live
 action once the lock is released. A delivery passes one gate, is
 recorded as one observation under that same lock, and earns automatic
 work only in the call that recorded it. On the wire: the mediator's
@@ -42,7 +42,7 @@ races, crashes, restore, closing and a hostile peer.
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
-| How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica`, `transientConfirmations` |
+| How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica` |
 | Which addresses does the account hold? | `replica-recipients.ts` | `addRecipients`, `holds` |
 | What is the line to a mediator? | `link.ts` | `MediatorLink`, `ritual`, `bounded` |
 | How is the replica's mail fetched and acknowledged? | `pickup.ts` | `Pickup` |
@@ -51,17 +51,18 @@ races, crashes, restore, closing and a hostile peer.
 | What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `webDidUrl`, `WebResolverOptions` |
 | What is retained of a peer's document, and how does didcomm read it? | `evidence.ts` | `commitResolution`, `readResolution`, `pinnedResolver` |
 | What is a message, before any network work? | `send.ts` | `send`, `automaticDraft`, `manualNotificationDraft` |
-| What goes on the wire for an intent? | `prepare.ts` | `prepare`, `prepareAll`, `hasExpired` |
-| How is the one call made? | `dispatch.ts` | `dispatch`, `cancel` |
+| What goes on the wire for an intent, and which preparation does this runtime carry? | `prepare.ts` | `prepare`, `prepareAll`, `carriage`, `hasExpired` |
+| How is the one call made? | `dispatch.ts` | `dispatch`, `cancel`, `selectPreparation` |
 | What waits for a prerequisite, and for how long? | `dispatcher.ts` | `Dispatcher`, `RETRY_POLICY` |
-| What does an acceptance the disk has not recorded owe? | `acceptance.ts` | `recordAcceptance` |
+| What does an acceptance the disk has not recorded owe? | `acceptance.ts` | `recordAcceptance`, `recordAcceptancesOwed` |
+| What does this runtime alone know of delivery? | `local-records.ts` | `LocalRecords`, `transientOptions` |
 | Which key opens a delivery, and whose is it? | `receive/gate.ts` | `classifyRecipients`, `senderEvidence`, `senderProof` |
 | How does a delivery reach the vault, wait, or end? | `receive/receiver.ts` | `Receiver`, `deliveryKey` |
 | How is a delivery recorded as one observation? | `receive/receipt.ts` | `recordReceipt`, `receiptOf` |
 | What does the vault owe on its own? | `reconcile.ts` | `recordOwed`, `recordOwedUnderLock` |
 | What does a peer's acknowledgement earn? | `acknowledgements.ts` | `recordAcks` |
 | What follows a receipt? | `receive/after.ts` | `afterReceipt` |
-| Which replica answers a live input, and which inputs did this one leave to another? | `responder.ts` | `findResponder`, `registerExecution`, `leftTo` |
+| Which replica answers a live input? | `responder.ts` | `findResponder`, `registerExecution` |
 | What does an input earn on its own? | `effects.ts` | `reactTo`, `decideEffects`, `callEffects`, `owesEffects`, `completeResponse` |
 | What does a protocol answer? | `handlers/` | `Handler`, `handlerFor`, `BUILT_IN_HANDLERS`, `effectTypesOf` |
 | When does a disclosed address give way? | `privacy.ts` | `privateAddress`, `decidePrivateAddress`, `notifyPrivateAddress`, `privacyPolicy` |
@@ -74,7 +75,7 @@ races, crashes, restore, closing and a hostile peer.
 ## Reading order
 
 1. `action.ts` and `procedure.ts`: what authorizes a transport call, and the shape of every procedure that writes the vault.
-2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, one package and one call; `dispatcher.ts` for the wait in between.
+2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
 5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`: the mediator side.

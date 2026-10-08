@@ -5,7 +5,8 @@
  * sends nothing. The fold it reads has already judged every proof and
  * listed every piece of unfinished work; the open records what the
  * vault owes on its own over what a crash may have left behind — an
- * admission, a peer's acknowledgement — and
+ * admission, a peer's acknowledgement, a transport acceptance this
+ * runtime saw and had not recorded — and
  * mints no action: an outbound found waiting, a reply or a
  * notification an earlier input still earns, is listed for the user,
  * who retries, completes or cancels it. Connecting enrolls this
@@ -54,6 +55,7 @@ import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
 import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
 
+import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
@@ -63,11 +65,12 @@ import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { Keyring, secretsOf } from "./keyring.js";
 import { MediatorLink } from "./link.js";
+import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { mediationOf } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 import { STATUS } from "./protocol/mediation.js";
-import { enroll, transientConfirmations, type Confirmations, type Enrolled } from "./replica-enrollment.js";
+import { enroll, type Confirmations, type Enrolled } from "./replica-enrollment.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
@@ -80,7 +83,7 @@ import { send, type Content, type SendOptions, type Sent, type Target } from "./
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
 
-export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
+export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
   /** the socket live delivery comes down; the global one when left out */
   WebSocket?: typeof WebSocket;
   /** whether a connection opens the socket for live delivery, after its pickup; on by default */
@@ -96,8 +99,17 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   privateAddresses?: boolean;
   /** the trace over the runtime's local state, which the host opens with the runtime */
   trace: AgentTrace;
-  /** where what a replica-mediation mediator confirmed is kept, with the inputs this runtime's replica left to another: the runtime's local options, for one; left out, it is kept by this agent alone, and the next one asks again and lists what those inputs earn as the user's work */
-  confirmations?: Confirmations;
+  /**
+   * The runtime's local options: where what a replica-mediation
+   * mediator confirmed is kept, with this runtime's local records — the
+   * inputs its replica left to another, the preparation it selected for
+   * each message, the acceptances it owes the vault. Left out, they are
+   * kept by this agent alone: the next one asks the mediator again,
+   * lists what those inputs earn as the user's work, has the user choose
+   * among several preparations, and knows nothing of an acceptance seen
+   * before it.
+   */
+  localOptions?: LocalStore;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
   /** told the lines, whole, once they changed — a connection made or dropped, a pickup ended, a delivery come to wait or discarded — and once for every change of one turn */
@@ -196,6 +208,7 @@ export class Agent {
     private readonly receiver: Receiver,
     private readonly wires: Map<MediationId, Line>,
     private readonly confirmations: Confirmations,
+    private readonly local: LocalRecords,
     /** what the open recorded of what the vault owed */
     readonly recovered: Owed
   ) {
@@ -205,11 +218,13 @@ export class Agent {
   /** The agent over an open runtime, with networking off; throws `ReceiverInUse` while another agent of the runtime is open. */
   static async open(vault: { runtime: VaultRuntime; keys: Keys }, options: AgentOptions): Promise<Agent> {
     const { runtime, keys } = vault;
+    const confirmations = options.localOptions ?? transientOptions();
+    const local = new LocalRecords(confirmations, runtime.author);
     const recovered = await recordOwed(runtime, keys);
+    await recordAcceptancesOwed(runtime, keys, local);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const confirmations = options.confirmations ?? transientConfirmations();
-    const dispatcher = new Dispatcher(runtime, keys, { ...options, confirmations, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
+    const dispatcher = new Dispatcher(runtime, keys, { ...options, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log } = options;
     let linesChanged = (): void => undefined;
     const receiver = new Receiver(runtime, keys, ring, {
@@ -227,7 +242,7 @@ export class Agent {
       log,
       changed: () => linesChanged(),
     });
-    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, confirmations, recovered);
+    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, confirmations, local, recovered);
     linesChanged = () => agent.linesChanged();
     return agent;
   }
@@ -332,7 +347,7 @@ export class Agent {
   }
 
   records(): Promise<Recorder> {
-    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses, confirmations: this.confirmations });
+    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses, local: this.local });
   }
 
   /** The work an open leaves to the user. */
@@ -624,7 +639,7 @@ export class Agent {
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
     const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
-    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, confirmations: this.confirmations }))) ?? { responder: null, answering: null };
+    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, local: this.local }))) ?? { responder: null, answering: null };
     inbound.responder = found.responder;
     const unanswered = (because: string): Inbound => {
       if (address !== null) inbound.address = unannounced(address, because);

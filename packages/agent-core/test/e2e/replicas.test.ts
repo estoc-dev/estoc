@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, leftTo, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
@@ -31,7 +31,7 @@ const seen = (mediator: FakeMediator, type: string): number => mediator.seenType
 
 const replicaOf = async (running: Running): Promise<Did> => (await foldOf(running)).replicas.replicas.get(running.runtime.author)!.did!;
 
-const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map((executionId) => leftTo(running.runtime.local.options, running.runtime.author, executionId)));
+const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map(async (executionId) => (await new LocalRecords(running.runtime.local.options, running.runtime.author).leftTo(executionId))?.responderDid ?? null));
 
 const owed = async (running: Running): Promise<string[]> => (await running.agent.pending()).missingResponses.map(({ effectType }) => effectType);
 

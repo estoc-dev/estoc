@@ -2,14 +2,54 @@ import { afterEach, describe, expect, it, test, vi } from "vitest";
 
 import type { DIDDoc } from "@estoc/did-peer";
 import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
-import { EMPTY_MESSAGE_TYPE, PURE_ACK_EFFECT, channelOf, scanVault, vaultDraft, type DidId, type MessageId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, PURE_ACK_EFFECT, channelOf, scanVault, vaultDraft, type DidId, type EventReference, type MessageId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { ENCRYPTED_MIME, secretsResolverFor } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import { AgentTrace, Keyring, LiveAction, UnknownEntity, automaticDraft, cancel, completeResponse, createVault, dispatch, pinnedResolver, prepare, send, unpack, type Content, type DispatchOptions, type Dispatched } from "../src/index.js";
+import {
+  AgentTrace,
+  Keyring,
+  LiveAction,
+  LocalRecords,
+  UnknownEntity,
+  automaticDraft,
+  cancel,
+  completeResponse,
+  createVault,
+  dispatch,
+  pinnedResolver,
+  prepare,
+  selectPreparation,
+  send,
+  transientOptions,
+  unpack,
+  type Content,
+  type DispatchOptions,
+  type Dispatched,
+} from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { carrierWaitingForIssuer, delivered, didcomm, directParty, issuerRecovered, mediatedParty, memoryDriver, newMediator, observed, posting, proofOfSuccession, received, refuseSubmissions, ticking, type DirectParty, type MediatedParty, holdAddresses } from "./helpers.js";
+import {
+  after,
+  carrierWaitingForIssuer,
+  delivered,
+  didcomm,
+  directParty,
+  issuerRecovered,
+  mediatedParty,
+  memoryDriver,
+  merged,
+  newMediator,
+  observed,
+  posting,
+  proofOfSuccession,
+  received,
+  refuseSubmissions,
+  ticking,
+  type DirectParty,
+  type MediatedParty,
+  holdAddresses,
+} from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -334,6 +374,49 @@ describe("dispatch to a direct endpoint", () => {
     expect(f.set.of("delivery.submitted")).toHaveLength(1);
     expect(f.set.of("delivery.failed")).toEqual([]);
     expect(wire.posts).toHaveLength(1);
+    await closeAll(alice, bob);
+  });
+
+  test("an acceptance that could be neither kept as owed nor recorded leaves the outcome unknown: the message stays prepared, and only a manual retry carries the envelope again", async () => {
+    const { alice, bob } = await parties();
+    const trace = await AgentTrace.open(alice.runtime.local);
+    const wire = posting(accepted);
+    const disk = transientOptions();
+    let full = false;
+    const local = new LocalRecords({ ...disk, set: async (key, value) => (full ? Promise.reject(new Error("the disk is full for now")) : disk.set(key, value)) }, alice.runtime.author);
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, local });
+    full = true;
+    refuseSubmissions(alice.runtime, 1);
+    await expect(dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, local, trace })).rejects.toThrow(/disk is full/);
+    expect((await trace.read({ stream: "diag" })).map((entry) => entry.data.reason)).toContainEqual("the acceptance could not be kept as owed: the disk is full for now");
+    expect([await local.owedAcceptance(MESSAGE), (await fold(alice)).outbound.outbounds.get(MESSAGE)!.outcome.status, wire.posts.length]).toEqual([null, "prepared", 1]);
+
+    expect(await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, local })).toMatchObject({ outcome: "reused" });
+    submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch, local }));
+    expect(wire.posts.map((post) => post.body)).toEqual([wire.posts[0]!.body, wire.posts[0]!.body]);
+    await closeAll(alice, bob);
+  });
+
+  test("several valid preparations none of which this runtime selected: no action carries one on its own, and once the user chooses, a manual retry carries the choice", async () => {
+    const { alice, bob } = await parties();
+    const wire = posting(accepted);
+    const disk = transientOptions();
+    const options = (set = disk.set): DispatchOptions => ({ didcomm, fetch: wire.fetch, local: new LocalRecords({ ...disk, set }, alice.runtime.author) });
+    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    expect(await dispatch(alice.runtime, alice.keys, sent.action, options(async () => Promise.reject(new Error("the disk is full for now"))))).toMatchObject({ outcome: "none", messageId: MESSAGE });
+    expect([sent.action.spent, wire.posts.length]).toEqual([false, 0]);
+    const [made] = (await fold(alice)).set.of("message.prepared");
+    const elsewhere = (await merged(alice.runtime, "message.prepared", made!.data, after(made!.at, 1))).cid as EventReference<"message.prepared">;
+
+    const choose = { outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" };
+    expect(await dispatch(alice.runtime, alice.keys, sent.action, options())).toEqual(choose);
+    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options())).toEqual(choose);
+    expect([sent.action.spent, wire.posts.length]).toEqual([false, 0]);
+
+    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, elsewhere, options())).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
+    const carried = submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options()));
+    expect([carried.preparationEventCid, carried.submitted.data.preparationEventCid, wire.posts.length]).toEqual([elsewhere, elsewhere, 1]);
     await closeAll(alice, bob);
   });
 

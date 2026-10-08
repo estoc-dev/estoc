@@ -13,10 +13,10 @@
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, unfinishedWork, type Keys, type MessageId, type Outbound } from "@estoc/vault";
+import { scanVault, unfinishedWork, type EventReference, type Keys, type MessageId, type Outbound } from "@estoc/vault";
 
 import { LiveAction, type ActionKind } from "./action.js";
-import { cancel, dispatch, type Cancelled, type DispatchOptions, type Dispatched } from "./dispatch.js";
+import { cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
 import { scanOptions } from "./prepare.js";
 
 export interface RetryPolicy {
@@ -116,7 +116,12 @@ export class Dispatcher {
   /** `cancel`, with the action waiting on the message, if any, dropped first. */
   cancel(messageId: MessageId): Promise<Cancelled> {
     this.drop(messageId);
-    return cancel(this.runtime, this.keys, messageId, { trace: this.options.trace });
+    return cancel(this.runtime, this.keys, messageId, this.options);
+  }
+
+  /** The user's choice of the preparation the message's calls carry; a retry carries it. */
+  select(messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<Selected> {
+    return selectPreparation(this.runtime, this.keys, messageId, preparationEventCid, this.options);
   }
 
   /** Every outbound the fold lists for manual action, in message order, with what this runtime is waiting on for it. */

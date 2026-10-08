@@ -132,7 +132,7 @@ async function agentOver(mediator: FakeMediator, self: () => Started, life: Life
     fetch: transportOf(mediator, self, life),
     WebSocket: mediator.WebSocket,
     trace,
-    confirmations: vault.runtime.local.options,
+    localOptions: vault.runtime.local.options,
     onInbound: (inbound) => self().inbounds.push(inbound),
     log: (line) => self().log.push(line),
     ...options,

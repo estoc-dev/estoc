@@ -67,10 +67,11 @@ describe("a vault restored from a snapshot", () => {
       [SECOND, "prepared"],
     ]);
     expect((await restored.agent.outbounds()).map(({ outbound, waiting }) => [outbound.messageId, waiting])).toEqual([[SECOND, null]]);
-    expect((await restored.agent.pending()).pendingOutbounds).toMatchObject([{ messageId: SECOND, outcome: "prepared", entries: expect.arrayContaining(["retry", "cancel"]) }]);
+    const preparationEventCid = before.outbound.outbounds.get(SECOND)!.preparations[0]!.event.cid;
+    expect((await restored.agent.pending()).pendingOutbounds).toMatchObject([{ messageId: SECOND, outcome: "prepared", candidates: [preparationEventCid], selected: null, entries: ["retry", "cancel"] }]);
 
     const retried = await restored.agent.manual.retry(SECOND);
-    expect(retried).toMatchObject({ outcome: "submitted", preparationEventCid: before.outbound.outbounds.get(SECOND)!.preparations[0]!.event.cid });
+    expect(retried).toMatchObject({ outcome: "submitted", preparationEventCid });
     if (retried.outcome !== "submitted") throw new Error("unreachable");
     expect(retried.submitted.author).toBe(restored.runtime.author);
     await until("alice has the second message", () => alice.inbounds.length === 2);

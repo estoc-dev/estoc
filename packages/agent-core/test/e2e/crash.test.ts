@@ -7,7 +7,7 @@ import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { EXECUTION_REGISTER } from "../../src/protocol/replica-mediation.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
-import { afterNextCommit, newMediator, refuseCommits } from "../helpers.js";
+import { afterNextCommit, newMediator, refuseCommits, refuseSubmissions } from "../helpers.js";
 import { LONG, channelOf, dieAt, foldOf, restart, run, stopAll, until, type Running } from "./running.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -60,7 +60,7 @@ describe("a process that dies", () => {
     expect((await foldOf(bob)).outbound.outbounds.get(HELLO)).toMatchObject({ acknowledged: true });
   });
 
-  test("after a preparation was recorded and before any call was made for it: the action that was to send it is gone with the process, nothing is sent on open, and a retry sends that very envelope", { timeout: LONG }, async () => {
+  test("after a preparation was recorded and before any call was made for it: the action that was to send it is gone with the process, nothing is sent on open, a trace cleared before another open sends nothing either, and a retry sends that very envelope", { timeout: LONG }, async () => {
     const mediator = await newMediator();
     const alice = await run(mediator, 1, ALICE, { liveDelivery: false });
     const bob = await run(mediator, 2, BOB, { liveDelivery: false });
@@ -72,6 +72,9 @@ describe("a process that dies", () => {
     expect(sent.dispatched).toMatchObject({ outcome: "threw" });
     expect([bob.dead, sent.action.spent, bob.calls - calls, recorded.length]).toEqual([true, false, 0, 1]);
 
+    await restart(bob);
+    expect([forwardsSeen(mediator), queuedFor(mediator, alice)]).toEqual([0, 0]);
+    await bob.runtime.local.clearCaches();
     await restart(bob);
     expect([forwardsSeen(mediator), queuedFor(mediator, alice)]).toEqual([0, 0]);
     const open = await bob.agent.outbounds();
@@ -116,6 +119,42 @@ describe("a process that dies", () => {
     const ofAlice = await foldOf(alice);
     expect(ofAlice.set.of("message.in")).toHaveLength(2);
     expect(ofAlice.inbound.executions.size).toBe(1);
+  });
+
+  test("after the mediator took an envelope and the disk would not record that: the acceptance is kept as owed, and the next open records it and sends nothing", { timeout: LONG }, async () => {
+    const { mediator, alice, bob } = await pair();
+    refuseSubmissions(bob.runtime, 1);
+    const sent = await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid }, hello("hello"), { messageId: HELLO });
+    expect(sent.dispatched).toMatchObject({ outcome: "threw" });
+    await until("alice has the message", () => alice.inbounds.length === 1);
+    expect((await foldOf(bob)).outbound.outbounds.get(HELLO)).toMatchObject({ submitted: false, outcome: { status: "prepared" } });
+
+    const sentBefore = forwardsSeen(mediator);
+    await restart(bob);
+    expect(forwardsSeen(mediator)).toBe(sentBefore);
+    const outbound = (await foldOf(bob)).outbound.outbounds.get(HELLO)!;
+    expect(outbound).toMatchObject({ submitted: true, outcome: { status: "submitted" } });
+    expect(outbound.submissions.map(({ event }) => [event.author, event.data.preparationEventCid])).toEqual([[bob.runtime.author, outbound.preparations[0]!.event.cid]]);
+    expect(await bob.agent.outbounds()).toEqual([]);
+    expect(alice.inbounds).toHaveLength(1);
+  });
+
+  test("after the mediator took an envelope and the disk would not record that, then an identity reset: what the old identity kept is not read, the outcome is unknown, and only the user's retry carries the same envelope", { timeout: LONG }, async () => {
+    const { mediator, alice, bob } = await pair();
+    refuseSubmissions(bob.runtime, 1);
+    await bob.agent.send({ channel: channelOf(bob.party.did, alice.party.did), recipientDid: alice.party.longFormDid }, hello("hello"), { messageId: HELLO });
+    await until("alice has the message", () => alice.inbounds.length === 1);
+    const [preparation] = (await foldOf(bob)).outbound.outbounds.get(HELLO)!.preparations;
+
+    const sentBefore = forwardsSeen(mediator);
+    await restart(bob, {}, { resetIdentity: true });
+    expect(forwardsSeen(mediator)).toBe(sentBefore);
+    expect((await bob.agent.outbounds()).map(({ outbound }) => [outbound.messageId, outbound.outcome.status])).toEqual([[HELLO, "prepared"]]);
+    expect((await bob.agent.pending()).pendingOutbounds).toMatchObject([{ messageId: HELLO, candidates: [preparation!.event.cid], selected: null, entries: ["retry", "cancel"] }]);
+
+    expect(await bob.agent.manual.retry(HELLO)).toMatchObject({ outcome: "submitted", preparationEventCid: preparation!.event.cid });
+    await until("alice has it again", () => alice.inbounds.length === 2);
+    expect(alice.inbounds[1]).toMatchObject({ received: { outcome: "received", live: null } });
   });
 
   test("after a rotation was decided and before its notification was recorded: the notification is listed as owed, and completing it announces the successor", { timeout: LONG }, async () => {

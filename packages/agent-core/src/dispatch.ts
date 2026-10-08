@@ -7,7 +7,8 @@
  * preparation retains, every time.
  * Before the call: the message is prepared when it still needs a
  * preparation, and what the vault owes is recorded either way, under the
- * lock the preparation runs in; a mediated sender the peer has not
+ * lock the preparation runs in, and the envelope carried is the one of
+ * the preparation this runtime selected; a mediated sender the peer has not
  * written to is made to be held by its mediator so that an answer has
  * somewhere to arrive; and the fold is read again under the lock,
  * where a message submitted or
@@ -51,6 +52,7 @@ import { routeOf } from "./dids.js";
 import { UnknownEntity } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { bounded, sealData, type MediatorLink } from "./link.js";
+import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipients, holds } from "./replica-recipients.js";
 import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
@@ -98,16 +100,17 @@ export type Dispatched =
 
 /** The one transport call of the message under `action`, serially with every other piece of work on that message. */
 export function dispatch(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
-  return serially(runtime, outboundWorkKey(action.messageId), () => attempt(runtime, keys, action, options));
+  const local = localRecordsOf(runtime, options.local);
+  return serially(runtime, outboundWorkKey(action.messageId), () => attempt(runtime, keys, action, options, local));
 }
 
-async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
+async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions, local: LocalRecords): Promise<Dispatched> {
   const { messageId } = action;
   const trace = options.trace ?? null;
-  const owed = await recordOwedAcceptance(runtime, messageId);
+  const owed = await recordOwedAcceptance(runtime, local, messageId);
   if (owed !== null) return { outcome: "submitted", messageId, preparationEventCid: owed.data.preparationEventCid, submitted: owed };
   if (action.spent) return { outcome: "spent", messageId };
-  const readied = await runtime.locked((held) => ready(held, keys, messageId, options));
+  const readied = await runtime.locked((held) => ready(held, keys, messageId, options, local));
   await noteAll(trace, readied.notes);
   if ("outcome" in readied.result) return readied.result;
   const { fold, preparation, envelope, service, registerWith } = readied.result;
@@ -135,7 +138,7 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
   }
   await noteAttempt(trace, messageId, preparationEventCid, carried, answer);
   if ("status" in answer && answer.status >= 200 && answer.status < 300) {
-    const submitted = await recordAcceptance(runtime, messageId, preparationEventCid);
+    const submitted = await recordAcceptance(runtime, local, messageId, preparationEventCid, trace);
     return { outcome: "submitted", messageId, preparationEventCid, submitted };
   }
   if ("status" in answer) return { outcome: "failed", messageId, preparationEventCid, reason: `the endpoint answered ${answer.status}` };
@@ -155,12 +158,13 @@ interface Ready {
 
 /**
  * Under the lock: the message prepared when it still needs a
- * preparation, which observes its expiry first and records what the
- * vault owes, then what the preparation that step made or found needs
- * for the wire, read off the fold as that left it and the object store.
+ * preparation, which observes its expiry first, records what the vault
+ * owes and selects what is to be carried, then what the preparation
+ * that step made or selected needs for the wire, read off the fold as
+ * that left it and the object store.
  */
-async function ready(held: Held, keys: Keys, messageId: MessageId, options: DispatchOptions): Promise<Settled<Dispatched | Ready>> {
-  const { result, notes } = await prepareUnderLock(held, keys, messageId, options);
+async function ready(held: Held, keys: Keys, messageId: MessageId, options: DispatchOptions, local: LocalRecords): Promise<Settled<Dispatched | Ready>> {
+  const { result, notes } = await prepareUnderLock(held, keys, messageId, options, local);
   const done = (result: Dispatched): Settled<Dispatched | Ready> => ({ result, notes });
   if (result.outcome !== "prepared" && result.outcome !== "reused") return done(result);
   const chosen = result.outcome === "prepared" ? result.prepared.cid : result.preparation.event.cid;
@@ -344,9 +348,10 @@ export type Cancelled =
  * unknown may have arrived. The content stays; the envelope is
  * released.
  */
-export function cancel(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: { trace?: AgentTrace } = {}): Promise<Cancelled> {
+export function cancel(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: Pick<DispatchOptions, "trace" | "local"> = {}): Promise<Cancelled> {
+  const local = localRecordsOf(runtime, options.local);
   return serially(runtime, outboundWorkKey(messageId), async () => {
-    const owed = await recordOwedAcceptance(runtime, messageId);
+    const owed = await recordOwedAcceptance(runtime, local, messageId);
     if (owed !== null) return { outcome: "none", messageId, because: "submitted" };
     const result = await runtime.locked(async (held): Promise<Cancelled> => {
       const outbound = (await scanVault(held, keys)).outbound.outbounds.get(messageId);
@@ -358,6 +363,39 @@ export function cancel(runtime: VaultRuntime, keys: Keys, messageId: MessageId, 
     });
     if (result.outcome === "cancelled") await note(options.trace ?? null, { stream: "diag", what: "delivery", data: { messageId, code: "cancelled", reason: "cancelled by the user" } });
     return result;
+  });
+}
+
+export type Selected =
+  | { outcome: "selected"; messageId: MessageId; preparationEventCid: EventReference<"message.prepared"> }
+  /** nothing selected: the message is closed or takes no call now, the preparation is no valid one of it, or its envelope is not here */
+  | { outcome: "none"; messageId: MessageId; because: string };
+
+/**
+ * The user's choice of the preparation this runtime's calls of the
+ * message carry, in place of any selected before, serially with its
+ * dispatch: the preparation must be a valid one of the open message,
+ * its envelope here, before the choice is written. Choosing calls
+ * nothing; a manual retry carries the choice.
+ */
+export function selectPreparation(runtime: VaultRuntime, keys: Keys, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">, options: Pick<DispatchOptions, "effectTypes" | "local"> = {}): Promise<Selected> {
+  const local = localRecordsOf(runtime, options.local);
+  return serially(runtime, outboundWorkKey(messageId), async () => {
+    const none = (because: string): Selected => ({ outcome: "none", messageId, because });
+    if ((await recordOwedAcceptance(runtime, local, messageId)) !== null) return none("submitted");
+    const because = await runtime.locked(async (held): Promise<string | null> => {
+      const outbound = (await scanVault(held, keys, scanOptions(options))).outbound.outbounds.get(messageId);
+      if (outbound === undefined) throw new UnknownEntity("message", messageId);
+      const { work } = outbound;
+      if (work.kind === "none") return work.because;
+      const preparation = work.kind === "dispatch" ? work.candidates.find((candidate) => candidate.event.cid === preparationEventCid) : undefined;
+      if (preparation === undefined) return `the preparation ${preparationEventCid} is no valid preparation of the message`;
+      const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
+      return bytes === null ? `the envelope ${preparation.event.data.envelopeCid} is not here` : null;
+    });
+    if (because !== null) return none(because);
+    await local.select(messageId, preparationEventCid);
+    return { outcome: "selected", messageId, preparationEventCid };
   });
 }
 

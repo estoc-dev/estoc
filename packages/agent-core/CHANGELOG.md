@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **The preparation a message carries is this runtime's selection**
+  (breaking): the preparation `prepare` commits is selected right after
+  the commit and handed to dispatch only once the selection is written;
+  with none selected, the one valid preparation is selected in the
+  preparation step, and several wait for the user's choice,
+  `selectPreparation` (`Manual.selectPreparation`, `Dispatcher.select`),
+  which a manual retry then carries. A selection that names a
+  preparation not here, erased, waiting or contradicting the intent is
+  replaced by nothing on its own, and one the local options refuse
+  leaves the message prepared and uncalled (`none`). `carriage` says
+  what a call of an open message would carry. `OpenOutbound` lists the
+  valid `candidates` and the `selected` one, with the new manual entry
+  `selectPreparation` while several are valid.
+- **Runtime-local delivery records** (breaking): `LocalRecords` keeps
+  what this runtime alone knows of delivery in its local options, under
+  `RFC8785(["agent-core", 1, replicaId, kind, subjectId])`: the input its
+  replica left to another (`execution-left`), the preparation it selected
+  (`preparation-selected`) and an acceptance it observed and has not
+  recorded (`acceptance-owed`). Values of the wrong shape are refused, a
+  failed write is reported, and a failed read finds no record. An
+  acceptance is kept as owed before its commit and dropped after it, and
+  `Agent.open` records every acceptance it finds owed without a call; a
+  restore or an identity reset starts with none. `AgentOptions.localOptions`
+  (`LocalStore`, with `delete`) replaces `confirmations`, the responder
+  and the records take `local` in its place, `LocalRecords.leftTo`
+  replaces `leftTo`, and `transientOptions` replaces
+  `transientConfirmations`. Records kept under the earlier keys are not
+  read.
 - **A user's message is created at a fixed time**: `send` records the
   content's `createdTime`, else the clock's second when the message is
   first sent (`SendOptions.now`, `Date.now` by default; an `Agent` passes

@@ -310,7 +310,7 @@ describe("the snapshot", () => {
       pending: {
         missingResponses: [{ executionId: "x1" as ExecutionId, messageId: "m1" as MessageId, effectType: "pure-ack", channel: owed, entries: ["completeResponse"] }],
         pendingProofs: [{ sourceEventCid: "o1" as EventCid, messageId: "m2" as MessageId, channel: proof, entries: [] }],
-        pendingOutbounds: [{ messageId: "m3" as MessageId, channel: null, outcome: "queued", because: null, entries: ["retry", "cancel"] }],
+        pendingOutbounds: [{ messageId: "m3" as MessageId, channel: null, outcome: "queued", candidates: [], selected: null, because: null, entries: ["retry", "cancel"] }],
       },
     });
     expect(snapshot.pending).toEqual({

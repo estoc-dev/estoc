@@ -70,7 +70,8 @@ export { Pickup, type Delivered, type Drained, type Fate, type Handle, type Pick
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "@estoc/vault";
 export { createMediation, mediationOf, selectMediation } from "./mediation.js";
-export { createReplica, enroll, transientConfirmations, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
+export { createReplica, enroll, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
+export { LocalRecords, transientOptions, type LeftTo, type LocalStore } from "./local-records.js";
 export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
 export {
   createDid,
@@ -102,9 +103,9 @@ export {
   type ResolutionEvidence,
 } from "./evidence.js";
 export { automaticDraft, manualNotificationDraft, send, type AutomaticDraft, type RecordedResult, type Content, type Effect, type EffectContent, type SendOptions, type Sent, type Target } from "./send.js";
-export { MAX_CONTENT_BYTES, hasExpired, outboundWorkKey, prepare, prepareAll, type PrepareOptions, type Prepared } from "./prepare.js";
+export { MAX_CONTENT_BYTES, carriage, hasExpired, outboundWorkKey, prepare, prepareAll, type Carriage, type PrepareOptions, type Prepared } from "./prepare.js";
 export { LiveAction, LiveInput, Responding, type ActionKind } from "./action.js";
-export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, type Cancelled, type DispatchOptions, type Dispatched } from "./dispatch.js";
+export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
 export { Dispatcher, GLOBAL_TIMERS, LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Timers, type Waiting } from "./dispatcher.js";
 export { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients, type Sealing, type SenderProof } from "./receive/gate.js";
 export {
@@ -134,7 +135,7 @@ export { recordOwed, recordOwedUnderLock, type Owed } from "./reconcile.js";
 export { afterReceipt, type AfterReceipt, type AfterReceiptOptions } from "./receive/after.js";
 export { callEffects, completeResponse, decideEffects, owesEffects, reactTo, type Called, type DecidedEffects, type EffectOptions, type EffectOutcome, type Reacted } from "./effects.js";
 export { callRotation, completeNotification, decideRotation, notifyRotation, rotate, selectRotation, type RotateOptions, type Rotated, type RotationDecided, type RotationSelected, type RotationTarget } from "./rotate.js";
-export { findResponder, leftTo, registerExecution, type ExecutionRegistration, type Found, type Responder, type ResponderOptions } from "./responder.js";
+export { findResponder, registerExecution, type ExecutionRegistration, type Found, type Responder, type ResponderOptions } from "./responder.js";
 export { materializeSuccessor, successorStanding, type SuccessorStanding } from "./successor.js";
 export { decidePrivateAddress, notifyPrivateAddress, privacyPolicy, privateAddress, unannounced, type PrivacyPolicy, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 export { BUILT_IN_HANDLERS, basicMessage, claimedName, effectTypesOf, empty, handlerFor, handlersOf, reportProblem, reportedProblem, trustPing, userProfile, type Handler, type Input, type Response } from "./handlers/index.js";

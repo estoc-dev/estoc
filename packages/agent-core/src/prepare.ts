@@ -17,7 +17,13 @@
  * there, and the envelope object, the resolution evidence and the
  * preparation are committed in that one lock; the fold holds the
  * preparation from then on, whatever rotates, confirms or resolves
- * later, and no second one of the message is made beside it. A
+ * later, and no second one of the message is made beside it. Which
+ * preparation this runtime's calls carry is its own local record: the
+ * one it commits here is selected right after the commit, and handed
+ * on only once the selection is written; a message with none selected
+ * and one valid preparation selects that one; one with several waits
+ * for the user's choice; and a selection is checked before it is used
+ * and replaced by nothing on its own. A
  * resolution committed here is evidence an observation may have
  * waited for — the document of the issuer of the proof it carried —
  * so what the vault owes is recorded under the same lock by every
@@ -56,6 +62,7 @@ import {
   type Did,
   type DidKeys,
   type DidUrl,
+  type EventCid,
   type EventReference,
   type Keys,
   type LocalDidEntity,
@@ -77,6 +84,7 @@ import { authorizedKeys, commitResolution, didcommDocumentOf, pinnedResolver } f
 import { recordOwedUnderLock } from "./reconcile.js";
 import { secretsOf } from "./keyring.js";
 import { sealData } from "./link.js";
+import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import { serially } from "./procedure.js";
 import { knownLongForms, resolve, type Resolution } from "./resolver.js";
 import { noteAll, type AgentTrace, type Note } from "./trace.js";
@@ -92,13 +100,16 @@ export interface PrepareOptions {
   trace?: AgentTrace;
   /** the clock expiry is compared with, in milliseconds since the epoch; `Date.now` when left out */
   now?: () => number;
+  /** where the runtime keeps the preparation it selected for each message and the acceptances it owes the vault: over its local options, for one; left out, they are kept in memory for as long as this process holds the runtime */
+  local?: LocalRecords;
 }
 
 export type Prepared =
+  /** made and committed here, and selected */
   | { outcome: "prepared"; messageId: MessageId; prepared: VaultEvent<"message.prepared">; resolved: VaultEvent<"peer.resolved"> }
-  /** the one valid preparation the fold already holds for the message: none was written */
+  /** the preparation this runtime selected, or the one valid preparation the fold holds, selected now: none was written */
   | { outcome: "reused"; messageId: MessageId; preparation: Preparation }
-  /** the fold asks for no preparation, or holds several to choose among: the message is closed, in conflict, or not the sender's to prepare now */
+  /** nothing is carried now: the message is closed, in conflict or not the sender's to prepare now, its several valid preparations wait for the user's choice, the selection names one that cannot be carried, or a selection could not be written */
   | { outcome: "none"; messageId: MessageId; because: string }
   /** the preparation cannot be made from what is here now, and what is missing may still arrive: the message stays queued */
   | { outcome: "pending"; messageId: MessageId; because: string }
@@ -139,11 +150,12 @@ export function expiryPhase(outbound: Outbound): "preparation" | "dispatch" {
   return outbound.preparations.length === 0 ? "preparation" : "dispatch";
 }
 
-/** The preparation of one queued outbound: made here, or the one valid preparation the fold already holds. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
+/** The preparation of one queued outbound: made here, or the one selected. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
 export function prepare(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: PrepareOptions): Promise<Prepared> {
+  const local = localRecordsOf(runtime, options.local);
   return serially(runtime, outboundWorkKey(messageId), async () => {
-    await recordOwedAcceptance(runtime, messageId);
-    const { result, notes } = await runtime.locked((held) => prepareUnderLock(held, keys, messageId, options));
+    await recordOwedAcceptance(runtime, local, messageId);
+    const { result, notes } = await runtime.locked((held) => prepareUnderLock(held, keys, messageId, options, local));
     await noteAll(options.trace ?? null, notes);
     return result;
   });
@@ -170,7 +182,7 @@ export async function expireUnderLock(held: Held, messageId: MessageId, phase: "
 }
 
 /** `prepare` for a caller that already holds the message's turn and the writer lock. */
-export async function prepareUnderLock(held: Held, keys: Keys, messageId: MessageId, options: PrepareOptions): Promise<Settled<Prepared>> {
+export async function prepareUnderLock(held: Held, keys: Keys, messageId: MessageId, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
   const fold = await scanVault(held, keys, scanOptions(options));
   const outbound = fold.outbound.outbounds.get(messageId);
   if (outbound === undefined) throw new UnknownEntity("message", messageId);
@@ -178,31 +190,81 @@ export async function prepareUnderLock(held: Held, keys: Keys, messageId: Messag
   if (closed !== null) return { result: { outcome: "none", messageId, because: closed }, notes: [] };
   const intent = (outbound.intent as { data: MessageOut }).data;
   if (hasExpired(intent, options.now ?? Date.now)) return expireUnderLock(held, messageId, expiryPhase(outbound));
-  const settled = await preparationOf(held, keys, fold, outbound, intent, options);
+  const settled = await preparationOf(held, keys, fold, outbound, intent, options, local);
   settled.notes.push(...(await owedRecorded(held, keys, messageId)));
   return settled;
 }
 
 /**
- * The preparation of an open message: the one valid preparation the
- * fold holds, the one made and committed now, or why there is none yet
- * or none at all. Several valid ones are no work for this step: which
- * of them the runtime carries is not the fold's to say.
+ * What this runtime's calls of an open message carry, as its selection
+ * and the fold say. With none selected: a preparation still to be
+ * made, the one valid preparation, or the user's choice among several.
+ * With one selected: that preparation, while it is here, valid and its
+ * envelope not erased, and nothing in its place otherwise, so that a
+ * selection that cannot be carried neither reopens the preparation nor
+ * falls to another preparation on its own.
  */
-async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions): Promise<Settled<Prepared>> {
-  const { messageId, work } = outbound;
-  const notes: Note[] = [];
-  if (work.kind === "none") return { result: { outcome: "none", messageId, because: work.because }, notes };
-  if (work.kind === "dispatch") {
+export type Carriage =
+  | { kind: "prepare" }
+  | { kind: "carry"; preparation: Preparation; selected: boolean }
+  | { kind: "choose"; candidates: readonly Preparation[]; because: string }
+  | { kind: "none"; because: string };
+
+export function carriage(outbound: Outbound, selected: EventCid | null): Carriage {
+  const { work } = outbound;
+  if (work.kind === "none") return { kind: "none", because: work.because };
+  if (selected === null) {
+    if (work.kind === "prepare") return { kind: "prepare" };
     const [only, ...others] = work.candidates;
-    if (others.length > 0) return { result: { outcome: "none", messageId, because: `${work.candidates.length} valid preparations of the message are here, and which one to carry is to be chosen` }, notes };
-    return { result: { outcome: "reused", messageId, preparation: only! }, notes };
+    if (others.length === 0) return { kind: "carry", preparation: only!, selected: false };
+    return { kind: "choose", candidates: work.candidates, because: `${work.candidates.length} valid preparations of the message are here, and which one to carry is to be chosen` };
+  }
+  const preparation = outbound.preparations.find((candidate) => candidate.event.cid === selected);
+  const because =
+    preparation === undefined
+      ? "is not here"
+      : preparation.erased
+        ? "has its envelope erased"
+        : preparation.status.status === "complete"
+          ? null
+          : preparation.status.status === "pending"
+            ? `waits: ${preparation.status.because}`
+            : `contradicts the intent: ${preparation.status.because}`;
+  return because === null ? { kind: "carry", preparation: preparation!, selected: true } : { kind: "none", because: `the selected preparation ${selected} ${because}` };
+}
+
+/**
+ * The preparation of an open message: the one selected, the one valid
+ * preparation the fold holds, selected now, the one made, committed and
+ * selected now, or why there is none yet or none at all. A selection
+ * the local options refuse leaves the message uncarried, the
+ * preparation made or found standing for the next step to select.
+ */
+async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
+  const { messageId } = outbound;
+  const notes: Note[] = [];
+  const none = (because: string): Settled<Prepared> => ({ result: { outcome: "none", messageId, because }, notes });
+  const selecting = async (preparationEventCid: EventReference<"message.prepared">): Promise<string | null> => {
+    try {
+      await local.select(messageId, preparationEventCid);
+      return null;
+    } catch (err) {
+      const because = `the preparation ${preparationEventCid} could not be selected: ${err instanceof Error ? err.message : String(err)}`;
+      notes.push({ stream: "diag", what: "delivery", data: { messageId, preparationEventCid, reason: because } });
+      return because;
+    }
+  };
+  const carried = carriage(outbound, await local.selected(messageId));
+  if (carried.kind === "none" || carried.kind === "choose") return none(carried.because);
+  if (carried.kind === "carry") {
+    const refused = carried.selected ? null : await selecting(carried.preparation.event.cid as EventReference<"message.prepared">);
+    return refused === null ? { result: { outcome: "reused", messageId, preparation: carried.preparation }, notes } : none(refused);
   }
   const sender = outbound.sender as LocalDidEntity;
   const channel = outbound.channel as Channel;
   const ends = await endsOf(fold, keys, sender, channel, intent.recipientDid);
   if ("pending" in ends) return { result: { outcome: "pending", messageId, because: ends.pending }, notes };
-  if ("because" in ends) return { result: { outcome: "none", messageId, because: ends.because }, notes };
+  if ("because" in ends) return none(ends.because);
   const content = await readContent(held, intent);
   if ("pending" in content) return { result: { outcome: "pending", messageId, because: content.pending }, notes };
   const plaintext = wirePlaintext(intentOfOutbound(intent).value, messageId, content.document, { from: ends.from, to: [channel.peerDid], fromPrior: ends.fromPrior }, (root) => content.payloads.get(root) as Uint8Array);
@@ -228,6 +290,8 @@ async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: 
     )
   ).map(readVaultEvent);
   notes.push({ stream: "envelope", what: "seal", data: { ...sealData(packed, plaintext as unknown as IMessage), messageId, preparationEventCid: prepared!.cid } });
+  const refused = await selecting(prepared!.cid as EventReference<"message.prepared">);
+  if (refused !== null) return none(refused);
   return { result: { outcome: "prepared", messageId, prepared: prepared as VaultEvent<"message.prepared">, resolved }, notes };
 }
 

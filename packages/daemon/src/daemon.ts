@@ -23,6 +23,7 @@ import {
   Agent,
   AgentTrace,
   BUILT_IN_HANDLERS,
+  LocalRecords,
   MAX_CONTENT_BYTES,
   createDid,
   createMediation,
@@ -325,7 +326,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   /** The records as of one cut: the fold, the content and the local options read under the writer lock, with nothing committed between them. */
   async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
     const fold = await scanVault(vault, keys, SCAN);
-    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, confirmations: runtime.local.options });
+    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, local: new LocalRecords(runtime.local.options, runtime.author) });
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
@@ -385,11 +386,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           },
           didcomm: await host.didcomm(),
           trace,
-          // The records read what the agent keeps here, the inputs its replica left to another among it, so a write is a change to show.
-          confirmations: {
+          // The records read what the agent keeps here, the inputs its replica left to another and the preparations it selected among it, so a write is a change to show.
+          localOptions: {
             get: (key) => runtime.local.options.get(key),
             set: async (key, value) => {
               await runtime.local.options.set(key, value);
+              changed();
+            },
+            delete: async (key) => {
+              await runtime.local.options.delete(key);
               changed();
             },
           },
