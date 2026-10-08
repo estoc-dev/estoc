@@ -220,6 +220,13 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       },
       { messageId: ({ messageId }) => known(messageId) }
     ),
+    selectPreparation: guarded(
+      async ({ messageId, preparationEventCid }) => {
+        const { outcome, because } = await core.selectPreparation(spelled(messageId), preparationEventCid as string as EventReference<"message.prepared">);
+        return { outcome, because };
+      },
+      { messageId: ({ messageId }) => known(messageId) }
+    ),
     completeResponse: guarded(async ({ executionId, effectType }) => completed(await core.completeResponse(spelled(executionId), effectType))),
     completeNotification: guarded(async ({ rotationEventCid }) => completed(await core.completeNotification(rotationEventCid as string as EventReference<"did.rotationSelected">))),
     rotate: guarded(async ({ channelId }) => {

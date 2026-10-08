@@ -94,6 +94,22 @@ describe("initVault", () => {
     expect(await vaultStatus(vault)).toEqual({ anchor: null, label: null, daemon: { at: new URL(url).origin, phase: "damaged", detail: damaged }, damaged });
   });
 
+  it("reads no vault of the earlier version, here or through a daemon, and leaves its file as it is", async () => {
+    const root = path.join(base, "v");
+    const { vault } = await initVault(root, "v", PASSPHRASE);
+    const file = path.join(vault.dir, "vault.sqlite");
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4");
+    db.close();
+    const written = await readFile(file);
+
+    await expect(vaultStatus(vault)).rejects.toThrow("vault version 4 is not 5");
+    await expect(openVaultKey(vault, ANCHOR_KEY_NAME, PASSPHRASE)).rejects.toThrow("vault version 4 is not 5");
+    const { url } = await daemonOn(root);
+    expect(await vaultStatus(vault)).toEqual({ anchor: null, label: null, daemon: { at: new URL(url).origin, phase: "unreadable", detail: "vault version 4 is not 5" }, damaged: null });
+    expect(await readFile(file)).toEqual(written);
+  });
+
   it("writes nothing beside a vault of the folder format", async () => {
     const root = path.join(base, "v");
     await mkdir(path.join(root, ESTOC_DIR), { recursive: true });

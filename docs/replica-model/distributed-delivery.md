@@ -6,8 +6,7 @@
 
 Status: **version 5** — the delivery profile for the full runtimes of one
 vault, run alone or side by side as the replicas of a replica-mediation
-arrangement; the packages are at version 4 until they meet this text
-([transition](README.md#version-5-transition)).
+arrangement.
 
 This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 **SHOULD**, **SHOULD NOT**, and **MAY** as described in BCP 14 when they

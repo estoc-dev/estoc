@@ -201,7 +201,7 @@ const outcomeOf = (called: Called): Outcome<DispatchWord> => ({ outcome: called.
 
 function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
   if (effect.outcome === "none" || effect.outcome === "refused") return { outcome: effect.outcome, because: effect.because, messageId: null };
-  if (effect.outcome === "skipped") return { outcome: "none", because: `the operation owes the input no output: ${effect.code}`, messageId: null };
+  if (effect.outcome === "skipped") return { outcome: "skipped", because: effect.code, messageId: null };
   if (effect.outcome === "created") return outcomeOf(effect.dispatched);
   return effect.dispatched === null ? { outcome: "existing", because: null, messageId: effect.messageId } : outcomeOf(effect.dispatched);
 }
@@ -968,6 +968,12 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       act(async (agent) => {
         const cancelled = await agent.manual.cancel(messageId);
         return { outcome: cancelled.outcome, because: cancelled.outcome === "none" ? cancelled.because : null, messageId: cancelled.messageId };
+      }),
+
+    selectPreparation: (messageId, preparationEventCid) =>
+      act(async (agent) => {
+        const selected = await agent.manual.selectPreparation(messageId, preparationEventCid);
+        return { outcome: selected.outcome, because: selected.outcome === "none" ? selected.because : null, messageId: selected.messageId };
       }),
 
     completeResponse: (executionId, effectType) =>

@@ -1,5 +1,5 @@
 /**
- * The version-4 event store over an open SQLite runtime: the `events`
+ * The event store over an open SQLite runtime: the `events`
  * table, keyed by event CID, and the local control that gives every
  * accepted event a position — what a change token names. The
  * connection is the runtime's, synchronous and owned outright, so a

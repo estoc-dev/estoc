@@ -1,5 +1,5 @@
 /**
- * The version-4 vault over an open SQLite runtime: `SqliteEventStore`
+ * The vault over an open SQLite runtime: `SqliteEventStore`
  * and `SqliteObjectStore` on the runtime's one connection under one
  * `Runtime`, a commit's objects and events published in one
  * transaction, the keystore and the runtime's local state behind the

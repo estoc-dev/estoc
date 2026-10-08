@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
+import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type EventReference, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
 
 import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_ADD, STATUS_REQUEST, decide } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
@@ -272,7 +272,10 @@ describe("the daemon over a folder", () => {
     expect(await readdir(path.join(root, ".estoc"))).toEqual(["config.json"]);
   });
 
-  it("does not open a vault written under another schema version, says which, leaves it as it is, and removes it only when asked", async () => {
+  it.each([
+    ["SQLite schema", "PRAGMA user_version = 1", /^schema version 1 is not supported/],
+    ["vault version, the earlier one", "PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4", /^vault version 4 is not 5$/],
+  ])("does not open a vault written under another %s, says which, leaves it as it is, and removes it only when asked", async (_, change, said) => {
     const root = await folder();
     const first = daemonOver(root);
     await first.daemon.boot();
@@ -280,23 +283,49 @@ describe("the daemon over a folder", () => {
     await first.daemon.close();
     const db = new DatabaseSync(vaultFile(root));
     try {
-      db.exec("PRAGMA user_version = 1");
+      db.exec(change);
     } finally {
       db.close();
     }
-    const writtenBytes = (await stat(vaultFile(root))).size;
+    const written = await readFile(vaultFile(root));
 
     const { daemon, heard } = daemonOver(root);
     await daemon.boot();
-    expect(heard.events).toEqual([["phase", "unreadable", expect.stringMatching(/^schema version 1 is not supported/), expect.any(String)]]);
+    expect(heard.events).toEqual([["phase", "unreadable", expect.stringMatching(said), expect.any(String)]]);
     await expect(daemon.unlock(PASSPHRASE)).rejects.toThrow("nothing to unlock");
     await expect(daemon.createIdentity("Another", PASSPHRASE)).rejects.toThrow("a vault already exists here");
-    expect((await stat(vaultFile(root))).size).toBe(writtenBytes);
+    expect(await readFile(vaultFile(root))).toEqual(written);
 
     await daemon.forgetIdentity(heard.hold()!);
     expect(heard.events.at(-1)).toEqual(["phase", "onboarding", null, null]);
     await daemon.createIdentity("Another", PASSPHRASE);
     expect(heard.snapshot()).toMatchObject({ label: "Another" });
+  });
+
+  it("restores and merges no backup of the earlier vault version, and leaves the vault there is as it is", async () => {
+    const { daemon, heard } = daemonOver(await folder());
+    await daemon.boot();
+    await daemon.createIdentity("Alice", PASSPHRASE);
+    const file = path.join(await folder(), "earlier.sqlite");
+    await writeFile(file, (await daemon.exportBackup()).bytes);
+    const db = new DatabaseSync(file);
+    try {
+      db.exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4");
+    } finally {
+      db.close();
+    }
+    const earlier = await readFile(file);
+
+    const shown = heard.events.length;
+    await expect(daemon.mergeBackup(earlier)).rejects.toThrow(/vault version 4 is not 5/);
+    expect(heard.events.slice(shown).filter(([name]) => name !== "lines" && name !== "log")).toEqual([]);
+
+    const elsewhere = await folder();
+    const other = daemonOver(elsewhere);
+    await other.daemon.boot();
+    await expect(other.daemon.restoreIdentity(earlier, PASSPHRASE)).rejects.toThrow(/vault version 4 is not 5/);
+    expect(other.heard.phases().at(-1)).toBe("onboarding");
+    await expect(stat(vaultFile(elsewhere))).rejects.toThrow();
   });
 
   it("removes the vault a removal names and no other: one confirmed about a vault since removed and remade leaves the new one standing", async () => {
@@ -1023,6 +1052,58 @@ describe("two daemons over a mediator", () => {
         forward.release();
         mediator.intercept = null;
       }
+    },
+    LONG
+  );
+
+  test(
+    "a message whose arrival is unknown waits for the person: a vault restored from it shows its one preparation with none chosen, refuses a choice of what is no preparation of it, and the retry after the choice delivers it once",
+    async () => {
+      const mediator = await newMediator();
+      const { alice, bob, contactId } = await acquainted(mediator);
+      await until("bob's earlier sends are through", () => bob.heard.snapshot().messages.every((message) => message.direction !== "out" || !["queued", "prepared"].includes(message.delivery?.status ?? "")));
+      const snapshot = bob.heard.snapshot();
+      const shown = new Set(snapshot.conversations.filter((conversation) => conversation.contactId === (contactId as string)).flatMap((conversation) => conversation.channels.map((channel) => channel.channelId)));
+      const alices = new Set(snapshot.channels.filter((channel) => shown.has(channel.channelId)).map((channel) => channel.peerDid));
+      let cut = false;
+      mediator.intercept = (message) => {
+        if (cut || message.type !== FORWARD || !alices.has((message.body as { next?: string }).next ?? "")) return undefined;
+        cut = true;
+        throw new Error("the line cut before the mediator answered");
+      };
+      const content = { type: BASIC_MESSAGE, body: { content: "lost on the way" } };
+      let sent: Awaited<ReturnType<DaemonCore["send"]>>;
+      try {
+        sent = await bob.daemon.send({ contactId }, content);
+      } finally {
+        mediator.intercept = null;
+      }
+      expect(sent.outcome).toBe("uncertain");
+      const [prepared] = bob.heard.snapshot().pending.pendingOutbounds;
+      expect(prepared).toEqual({ messageId: sent.messageId, channelId: channelIdOf(sent.channel), outcome: "prepared", candidates: [expect.any(String) as string], selected: prepared!.candidates[0], because: null, entries: ["retry", "cancel"] });
+
+      const backup = await bob.daemon.exportBackup();
+      await bob.daemon.close();
+      const restored = daemonOver(await folder(), mediator);
+      await restored.daemon.boot();
+      await restored.daemon.restoreIdentity(backup.bytes, PASSPHRASE);
+      await restored.daemon.explainedRestore();
+      await until("the restored vault's line is live", () => restored.heard.lines()?.connections[0]?.live === true);
+      expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([{ ...prepared, selected: null }]);
+
+      const received = restored.heard.snapshot().observations[0]!.sourceEventCid as string as EventReference<"message.prepared">;
+      expect(await restored.daemon.selectPreparation(sent.messageId, received)).toEqual({ outcome: "none", because: `the preparation ${received} is no valid preparation of the message`, messageId: sent.messageId });
+      const chosen = prepared!.selected as string as EventReference<"message.prepared">;
+      expect(await restored.daemon.selectPreparation(sent.messageId, chosen)).toEqual({ outcome: "selected", because: null, messageId: sent.messageId });
+      await restored.daemon.refresh();
+      expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([prepared]);
+
+      expect(await restored.daemon.retry(sent.messageId)).toMatchObject({ outcome: "submitted" });
+      const read = () => alice.heard.snapshot().messages.filter((message) => message.direction === "in" && message.body.state === "available" && message.body.body["content"] === "lost on the way");
+      await until("alice reads the message", () => read().length === 1);
+      await restored.daemon.refresh();
+      expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([]);
+      expect(read()).toHaveLength(1);
     },
     LONG
   );

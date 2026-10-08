@@ -1,5 +1,5 @@
 import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
-import type { Called, Cancelled, Content, Invitation, TraceLevel } from "@estoc/agent-core";
+import type { Called, Cancelled, Content, Invitation, Selected, TraceLevel } from "@estoc/agent-core";
 import type { Hold } from "@estoc/daemon-api/contract";
 
 /**
@@ -48,8 +48,8 @@ export interface Outcome<Word extends string = string> {
 /** What a dispatch came to, or that its call threw. */
 export type DispatchWord = Called["outcome"];
 
-/** What a completion came to: a dispatch's word, the intent standing already, or the operation refusing the input. */
-export type CompletionWord = DispatchWord | "existing" | "refused";
+/** What a completion came to: a dispatch's word, the intent standing already, the operation refusing the input, or its recorded decision to owe the input nothing. */
+export type CompletionWord = DispatchWord | "existing" | "refused" | "skipped";
 
 export interface SendResult extends Outcome<DispatchWord> {
   messageId: MessageId;
@@ -98,6 +98,8 @@ export interface Daemon {
   send(target: { channel: Channel } | { contactId: ContactId }, content: Content): Promise<SendResult>;
   retry(messageId: MessageId): Promise<Outcome<DispatchWord>>;
   cancel(messageId: MessageId): Promise<Outcome<Cancelled["outcome"]>>;
+  /** The preparation this runtime's calls of the message carry from now on, chosen by the person; a retry carries it. */
+  selectPreparation(messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<Outcome<Selected["outcome"]>>;
   completeResponse(executionId: ExecutionId, effectType: string): Promise<Outcome<CompletionWord>>;
   completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<Outcome<CompletionWord>>;
   /** The user's own rotation of `localDidId` toward `peerDid`: a fresh successor, and its notification called. */

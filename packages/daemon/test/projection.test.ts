@@ -310,11 +310,17 @@ describe("the snapshot", () => {
       pending: {
         missingResponses: [{ executionId: "x1" as ExecutionId, messageId: "m1" as MessageId, effectType: "pure-ack", channel: owed, entries: ["completeResponse"] }],
         pendingProofs: [{ sourceEventCid: "o1" as EventCid, messageId: "m2" as MessageId, channel: proof, entries: [] }],
-        pendingOutbounds: [{ messageId: "m3" as MessageId, channel: null, outcome: "queued", candidates: [], selected: null, because: null, entries: ["retry", "cancel"] }],
+        pendingOutbounds: [
+          { messageId: "m3" as MessageId, channel: null, outcome: "queued", candidates: [], selected: null, because: null, entries: ["retry", "cancel"] },
+          { messageId: "m4" as MessageId, channel: owed, outcome: "prepared", candidates: ["p1", "p2"] as EventCid[], selected: null, because: "2 valid preparations of the message are here", entries: ["selectPreparation", "cancel"] },
+        ],
       },
     });
     expect(snapshot.pending).toEqual({
-      pendingOutbounds: [{ messageId: "m3", channelId: null, outcome: "queued", because: null, entries: ["retry", "cancel"] }],
+      pendingOutbounds: [
+        { messageId: "m3", channelId: null, outcome: "queued", candidates: [], selected: null, because: null, entries: ["retry", "cancel"] },
+        { messageId: "m4", channelId: idOf("a1", "b1"), outcome: "prepared", candidates: ["p1", "p2"], selected: null, because: "2 valid preparations of the message are here", entries: ["selectPreparation", "cancel"] },
+      ],
       missingResponses: [{ executionId: "x1", messageId: "m1", effectType: "pure-ack", channelId: idOf("a1", "b1"), entries: ["completeResponse"] }],
       rotationCandidates: [],
       missingNotifications: [],

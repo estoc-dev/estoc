@@ -9,29 +9,27 @@
 
 import type * as read from "@estoc/agent-core";
 import type { Channel, StoredAttachment, VaultFold } from "@estoc/vault";
-import {
-  MANUAL_ENTRIES,
-  type AttachmentDescriptor,
-  type BodyRecord,
-  type ChannelId,
-  type ChannelRecord,
-  type ContactId,
-  type ContactRecord,
-  type ConversationId,
-  type ConversationRecord,
-  type Diagnostic,
-  type DisplayTime,
-  type EventCid,
-  type InvitationRecord,
-  type LocalDidRecord,
-  type ManualEntry,
-  type MediationRecord,
-  type MessageId,
-  type MessageRecord,
-  type ObservationRecord,
-  type PendingWork,
-  type Snapshot,
-  type UnplacedRecord,
+import type {
+  AttachmentDescriptor,
+  BodyRecord,
+  ChannelId,
+  ChannelRecord,
+  ContactId,
+  ContactRecord,
+  ConversationId,
+  ConversationRecord,
+  Diagnostic,
+  DisplayTime,
+  EventCid,
+  InvitationRecord,
+  LocalDidRecord,
+  MediationRecord,
+  MessageId,
+  MessageRecord,
+  ObservationRecord,
+  PendingWork,
+  Snapshot,
+  UnplacedRecord,
 } from "@estoc/daemon-api/contract";
 
 import { channelIdOf } from "./channels.js";
@@ -126,17 +124,22 @@ function observationRecord({ sourceEventCid, messageId, channel, at, standing, v
 
 const invitationRecord = ({ disclosureEventCid, oobId, didId, localDid, state }: read.InvitationRecord): InvitationRecord => ({ disclosureEventCid: apiId(disclosureEventCid), oobId, didId: apiId(didId), localDid, state });
 
-/** The steps the API names; a step it does not name is not offered. */
-const offered = (entries: readonly read.ManualEntry[]): ManualEntry[] => entries.filter((entry): entry is ManualEntry => (MANUAL_ENTRIES as readonly string[]).includes(entry));
-
 function pendingWork(pending: read.PendingWork): PendingWork {
   return {
-    pendingOutbounds: pending.pendingOutbounds.map(({ messageId, channel, outcome, because, entries }) => ({ messageId: apiId(messageId), channelId: channelId(channel), outcome, because, entries: offered(entries) })),
-    missingResponses: pending.missingResponses.map(({ executionId, messageId, effectType, channel, entries }) => ({ executionId: apiId(executionId), messageId: apiId(messageId), effectType, channelId: channelIdOf(channel), entries: offered(entries) })),
-    rotationCandidates: pending.rotationCandidates.map(({ channel, sourceEventCids, status, because, entries }) => ({ channelId: channelIdOf(channel), sourceEventCids: sourceEventCids.map((cid) => apiId<EventCid>(cid)), status, because, entries: offered(entries) })),
-    missingNotifications: pending.missingNotifications.map(({ rotationEventCid, channel, sourceEventCid, entries }) => ({ rotationEventCid: apiId(rotationEventCid), channelId: channelIdOf(channel), sourceEventCid: sourceEventCid === null ? null : apiId<EventCid>(sourceEventCid), entries: offered(entries) })),
-    notificationConflicts: pending.notificationConflicts.map(({ rotationEventCid, messageIds, entries }) => ({ rotationEventCid: apiId(rotationEventCid), messageIds: messageIds.map((messageId) => apiId<MessageId>(messageId)), entries: offered(entries) })),
-    pendingProofs: pending.pendingProofs.map(({ sourceEventCid, messageId, channel, entries }) => ({ sourceEventCid: apiId(sourceEventCid), messageId: apiId(messageId), channelId: channelId(channel), entries: offered(entries) })),
+    pendingOutbounds: pending.pendingOutbounds.map(({ messageId, channel, outcome, candidates, selected, because, entries }) => ({
+      messageId: apiId(messageId),
+      channelId: channelId(channel),
+      outcome,
+      candidates: candidates.map((cid) => apiId<EventCid>(cid)),
+      selected: selected === null ? null : apiId<EventCid>(selected),
+      because,
+      entries,
+    })),
+    missingResponses: pending.missingResponses.map(({ executionId, messageId, effectType, channel, entries }) => ({ executionId: apiId(executionId), messageId: apiId(messageId), effectType, channelId: channelIdOf(channel), entries })),
+    rotationCandidates: pending.rotationCandidates.map(({ channel, sourceEventCids, status, because, entries }) => ({ channelId: channelIdOf(channel), sourceEventCids: sourceEventCids.map((cid) => apiId<EventCid>(cid)), status, because, entries })),
+    missingNotifications: pending.missingNotifications.map(({ rotationEventCid, channel, sourceEventCid, entries }) => ({ rotationEventCid: apiId(rotationEventCid), channelId: channelIdOf(channel), sourceEventCid: sourceEventCid === null ? null : apiId<EventCid>(sourceEventCid), entries })),
+    notificationConflicts: pending.notificationConflicts.map(({ rotationEventCid, messageIds, entries }) => ({ rotationEventCid: apiId(rotationEventCid), messageIds: messageIds.map((messageId) => apiId<MessageId>(messageId)), entries })),
+    pendingProofs: pending.pendingProofs.map(({ sourceEventCid, messageId, channel, entries }) => ({ sourceEventCid: apiId(sourceEventCid), messageId: apiId(messageId), channelId: channelId(channel), entries })),
   };
 }
 

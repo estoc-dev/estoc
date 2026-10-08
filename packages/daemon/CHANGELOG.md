@@ -7,12 +7,12 @@
   not yet recorded, beside the inputs its replica left to another, and a
   write or a deletion of one is a change to show. An acceptance the disk
   would not record is recorded when the vault next opens, with no call.
-  The pending work offers only the steps the API names: a message with
-  several valid preparations shows why it waits and offers its
-  cancellation.
+  A pending outbound shows its valid preparations and the one selected,
+  and `selectPreparation` writes the person's choice among them; a
+  restored vault has chosen none.
 
 - Completing an operation the input owes nothing, such as the reply to
-  a Ping that asked for none, answers `none` and names the operation's
+  a Ping that asked for none, answers `skipped` with the operation's
   skip code. A user's message now always goes out with `created_time`;
   the test corpus is regenerated.
 

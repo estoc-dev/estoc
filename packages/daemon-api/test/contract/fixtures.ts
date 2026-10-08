@@ -1,4 +1,4 @@
-import type { ChannelRecord, ContactId, ContactRecord, ConversationRecord, InvitationRecord, Lines, LinesState, LocalDidRecord, MediationRecord, MessageId, MessageRecord, ObservationRecord, PendingWork, Snapshot, State } from "../../src/contract/index.js";
+import type { ChannelRecord, ContactId, ContactRecord, ConversationRecord, EventCid, InvitationRecord, Lines, LinesState, LocalDidRecord, MediationRecord, MessageId, MessageRecord, ObservationRecord, PendingWork, Snapshot, State } from "../../src/contract/index.js";
 
 /** Fixture IDs are spelled as the daemon would spell them; the brand is asserted, not derived. */
 export const as = <Id extends string>(text: string): Id => text as Id;
@@ -136,7 +136,7 @@ export const conversation: ConversationRecord = {
 export const invitation: InvitationRecord = { disclosureEventCid: as("bafydisc"), oobId: "oob-1", didId: as("did-1"), localDid: LOCAL, state: { status: "available" } };
 
 export const pending: PendingWork = {
-  pendingOutbounds: [{ messageId: as("m-out"), channelId: HEAD_CHANNEL, outcome: "prepared", because: null, entries: ["retry", "cancel"] }],
+  pendingOutbounds: [{ messageId: as("m-out"), channelId: HEAD_CHANNEL, outcome: "prepared", candidates: [as("bafyprep"), as("bafyprep2")], selected: as<EventCid>("bafyprep2"), because: null, entries: ["retry", "selectPreparation", "cancel"] }],
   missingResponses: [{ executionId: as("x-1"), messageId: as("m-in"), effectType: "https://didcomm.org/basicmessage/2.0/ack", channelId: HEAD_CHANNEL, entries: ["completeResponse"] }],
   rotationCandidates: [{ channelId: OLD_CHANNEL, sourceEventCids: [as("bafyobs")], status: "ready", because: null, entries: ["rotate"] }],
   missingNotifications: [{ rotationEventCid: as("bafyrot"), channelId: HEAD_CHANNEL, sourceEventCid: null, entries: ["completeNotification"] }],
