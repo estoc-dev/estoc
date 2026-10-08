@@ -1,11 +1,13 @@
-# The Estoc SQLite vault, version 4
+# The Estoc SQLite vault, version 5
 
 <!-- suite-navigation:start -->
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **phase 1, implemented** — schema 2, CID-keyed events. SQLite is the sole persistent vault and portable
-backup format.
+Status: **version 5** — schema 2, CID-keyed events; the `vault_version`
+check moves to 5 with the packages
+([transition](README.md#version-5-transition)). SQLite is the sole persistent
+vault and portable backup format.
 
 The capitalized requirement words in this document have their BCP 14 meanings.
 [event-store.md](event-store.md) owns the API and event semantics;
@@ -56,7 +58,7 @@ PRAGMA application_id = 1163088963; -- 0x45535443, ESTC
 PRAGMA user_version = 2;
 ```
 
-`user_version` identifies the SQLite schema; `vault_meta.vault_version = 4`
+`user_version` identifies the SQLite schema; `vault_meta.vault_version = 5`
 identifies event, object, key and fold semantics. Reject unsupported versions
 before application writes or payload interpretation. Published schema changes
 require a new schema version; semantic changes follow [ES §12](event-store.md#versioning).
@@ -65,9 +67,11 @@ versions accepted for restore and import; runtime migration support alone does
 not imply portable compatibility.
 Any supported migration is application-owned and commits schema and version
 together. A failed migration cannot expose a partly upgraded normal runtime.
-This revision accepts only schema 2 / vault 4 for runtime open, portable
-inspection, restore and import. Earlier formats are rejected; no migration is
-required. The seed wrapper remains version 3 independently of these versions.
+This revision accepts only schema 2 / vault 5 for runtime open, portable
+inspection, restore and import. Earlier formats, vault 4 included, are
+rejected before any payload is read and left unmodified; no migration is
+required, and the user starts over. The seed wrapper remains version 3
+independently of these versions.
 
 <a id="common-schema"></a>
 
@@ -79,7 +83,7 @@ Runtime and portable databases use these five ordinary `STRICT` tables:
 CREATE TABLE vault_meta (
   singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
   format        TEXT NOT NULL CHECK (format = 'estoc-sqlite'),
-  vault_version INTEGER NOT NULL CHECK (vault_version = 4),
+  vault_version INTEGER NOT NULL CHECK (vault_version = 5),
   kind          TEXT NOT NULL CHECK (kind IN ('runtime', 'portable')),
   ready         INTEGER NOT NULL CHECK (ready IN (0, 1)),
   anchor        TEXT NOT NULL
