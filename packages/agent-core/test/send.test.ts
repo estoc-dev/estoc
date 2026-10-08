@@ -126,6 +126,17 @@ describe("send to a channel", () => {
     await closeAll(alice, bob, carol);
   });
 
+  test("two sends of one content are two message IDs under one intent CID", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const first = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    const second = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    expect(first.messageId).not.toBe(second.messageId);
+    expect(second.intent.cid).not.toBe(first.intent.cid);
+    expect(second.intent.data.intentCid).toBe(first.intent.data.intentCid);
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
+    await closeAll(alice, bob, carol);
+  });
+
   test("the same message ID with the same target and content is returned, not repeated; another intent or target under it is refused", async () => {
     const { alice, bob, carol, toBob, toCarol } = await parties();
     const sent = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE });

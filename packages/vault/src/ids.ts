@@ -96,6 +96,11 @@ export function canonicalWireId(wireId: string): string {
   return wireId.replace(/[A-Z]+/g, (letters) => letters.toLowerCase());
 }
 
+/** Do two wire IDs name one message: equal once canonical. */
+export function sameWireId(a: string, b: string): boolean {
+  return a === b || canonicalWireId(a) === canonicalWireId(b);
+}
+
 /**
  * The channel between one of our DIDs and a peer's, an ordered pair:
  * receiving from the peer at the local DID and sending from it to the
@@ -126,27 +131,28 @@ export function compareChannels(a: Channel, b: Channel): number {
 
 /**
  * The observation group of an authenticated inbound message: by the
- * canonical sender and recipient DIDs and the wire ID, so that the same
- * input under another authorized key of the sender's document
- * converges, and the reverse direction under the same wire ID does not.
+ * canonical sender and recipient DIDs and the canonical wire ID, so
+ * that the same input under another authorized key of the sender's
+ * document, or under another spelling of its ID, converges, and the
+ * reverse direction under the same wire ID does not.
  */
 export function inboundMessageId(sender: Did, recipient: Did, wireMessageId: WireMessageId): MessageId {
-  return derive("inbound-message", ["v3", "authenticated", nonEmpty(sender, "sender DID"), nonEmpty(recipient, "recipient DID"), nonEmpty(wireMessageId, "wire message ID")]) as MessageId;
+  return derive("inbound-message", ["v3", "authenticated", nonEmpty(sender, "sender DID"), nonEmpty(recipient, "recipient DID"), canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as MessageId;
 }
 
-/** The observation group of an anonymous inbound message: by the local key that decrypted it and the wire ID. */
+/** The observation group of an anonymous inbound message: by the local key that decrypted it and the canonical wire ID. */
 export function anonymousMessageId(localKeyName: KeyName, wireMessageId: WireMessageId): MessageId {
-  return derive("inbound-message", ["v1", "anonymous", nonEmpty(localKeyName, "local key name"), nonEmpty(wireMessageId, "wire message ID")]) as MessageId;
+  return derive("inbound-message", ["v1", "anonymous", nonEmpty(localKeyName, "local key name"), canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as MessageId;
 }
 
 /**
  * The execution of one carrier in one channel: the peer is the sender,
- * the local DID the recipient. The transcript's members are the literal
- * tags `sender` and `recipient`, which RFC 8785 orders; the payload's
- * member names are no substitute.
+ * the local DID the recipient, the wire ID canonical. The transcript's
+ * members are the literal tags `sender` and `recipient`, which RFC 8785
+ * orders; the payload's member names are no substitute.
  */
 export function executionId(sender: Did, recipient: Did, wireMessageId: WireMessageId): ExecutionId {
-  return derive("message-execution", ["v4", { sender: nonEmpty(sender, "sender DID"), recipient: nonEmpty(recipient, "recipient DID") }, nonEmpty(wireMessageId, "wire message ID")]) as ExecutionId;
+  return derive("message-execution", ["v4", { sender: nonEmpty(sender, "sender DID"), recipient: nonEmpty(recipient, "recipient DID") }, canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as ExecutionId;
 }
 
 const EFFECT_TAG = "estoc/effect/3\0";

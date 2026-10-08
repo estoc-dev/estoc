@@ -1,15 +1,15 @@
 /**
  * trust-ping/2.0 (didcomm.org): a Ping asking whether the line is
  * live is answered with a ping-response, unless it said not to ask, or
- * its own expiry has come. The reply threads on the Ping's wire ID and
- * keeps its parent thread and timing, so that the Ping's expiry is the
+ * its own expiry has come. The reply threads on the Ping's canonical
+ * wire ID and keeps its parent thread and timing, so that the Ping's expiry is the
  * reply's; it carries nothing and requests nothing, the receipt the
  * Ping may have asked for being a separate output of the vault's own.
  * Whether the Ping asked for a reply is in its body, so a Ping whose
  * body is gone earns none.
  */
 
-import { PING_RESPONSE_EFFECT, PING_RESPONSE_TYPE, PING_TYPE } from "@estoc/vault";
+import { PING_RESPONSE_EFFECT, PING_RESPONSE_TYPE, PING_TYPE, canonicalWireId } from "@estoc/vault";
 
 import type { Handler } from "./handler.js";
 
@@ -26,7 +26,7 @@ export const trustPing: Handler = {
     return [
       {
         effectType: PING_RESPONSE_EFFECT,
-        content: { type: PING_RESPONSE_TYPE, body: {}, thid: data.wireMessageId, pthid: data.pthid, createdTime: data.createdTime, expiresTime: data.expiresTime, pleaseAck: null, ack: [] },
+        content: { type: PING_RESPONSE_TYPE, body: {}, thid: canonicalWireId(data.wireMessageId), pthid: data.pthid, createdTime: data.createdTime, expiresTime: data.expiresTime, pleaseAck: null, ack: [] },
       },
     ];
   },

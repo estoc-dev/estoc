@@ -9,6 +9,7 @@ import {
   anonymousMessageId,
   automaticMessageId,
   canonicalDid,
+  canonicalWireId,
   channelKey,
   channelOf,
   compareChannels,
@@ -22,6 +23,7 @@ import {
   mediationKeyName,
   replicaKeyName,
   sameDid,
+  sameWireId,
   startDidId,
   successorDidId,
   sameChannel,
@@ -116,6 +118,17 @@ describe("inboundMessageId and executionId", () => {
     expect(anonymousMessageId(k1, ACK_WIRE)).not.toBe(inboundMessageId(PEER, LOCAL, ACK_WIRE));
   });
 
+  it("take the wire ID in its canonical form: one spelling of the ID in any case is one observation and one execution, and one anonymous observation", () => {
+    const upper = wire(ACK_WIRE.toUpperCase());
+    expect(upper).not.toBe(ACK_WIRE);
+    expect(inboundMessageId(PEER, LOCAL, upper)).toBe(inboundMessageId(PEER, LOCAL, ACK_WIRE));
+    expect(executionId(PEER, LOCAL, upper)).toBe(ACK_EXECUTION);
+    expect(executionId(PEER, LOCAL, upper)).toBe(uuidv5(canonicalize(["v4", { recipient: LOCAL, sender: PEER }, ACK_WIRE]), estocNamespace("message-execution")));
+    const key = "did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement" as KeyName;
+    expect(anonymousMessageId(key, upper)).toBe(anonymousMessageId(key, ACK_WIRE));
+    expect(inboundMessageId(PEER, LOCAL, wire("Not-The-Same-1"))).not.toBe(inboundMessageId(PEER, LOCAL, wire("not-the-same-2")));
+  });
+
   it("refuse an empty wire ID, DID or key name", () => {
     expect(() => inboundMessageId(PEER, LOCAL, wire(""))).toThrow(InvalidIdentifier);
     expect(() => inboundMessageId(did(""), LOCAL, ACK_WIRE)).toThrow(InvalidIdentifier);
@@ -155,6 +168,17 @@ describe("effectKey and automaticMessageId", () => {
     expect(() => effectKey(ACK_EXECUTION, "urn:effect-￿")).toThrow(InvalidIdentifier);
     expect(effectKey(ACK_EXECUTION, "urn:effect-�")).not.toBe(effectKey(ACK_EXECUTION, "urn:effect-\u{10000}"));
     expect(() => automaticMessageId("" as EffectKey)).toThrow(InvalidIdentifier);
+  });
+});
+
+describe("canonicalWireId and sameWireId", () => {
+  it("fold the ASCII letters of a wire ID to lower case and nothing else, and compare two IDs by that spelling", () => {
+    expect(canonicalWireId("019B2A70-E2C8-7fb4-b63f-1ACA32152062")).toBe("019b2a70-e2c8-7fb4-b63f-1aca32152062");
+    expect(canonicalWireId("Ünïcode~Id_1.2-3")).toBe("Ünïcode~id_1.2-3");
+    expect(sameWireId("a1", "A1")).toBe(true);
+    expect(sameWireId("a1", "a1")).toBe(true);
+    expect(sameWireId("a1", "a2")).toBe(false);
+    expect(sameWireId("", "")).toBe(true);
   });
 });
 

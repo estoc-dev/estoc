@@ -15,6 +15,7 @@ import {
   plaintextCidOf,
   rawCidOfBytes,
   readPlaintext,
+  replyThread,
   requestsAck,
   storeMessage,
   wirePlaintext,
@@ -282,19 +283,38 @@ describe("intentOf", () => {
 });
 
 describe("please_ack processing", () => {
-  it("requests the current message's receipt only through the sentinel or its own ID", () => {
+  it("requests the current message's receipt only through the sentinel or its own ID, in any case", () => {
     expect(requestsAck("cur", null)).toBe(false);
     expect(requestsAck("cur", [])).toBe(false);
     expect(requestsAck("cur", ["older"])).toBe(false);
     expect(requestsAck("cur", [""])).toBe(true);
     expect(requestsAck("cur", ["older", "cur"])).toBe(true);
     expect(requestsAck("cur", ["older", ""])).toBe(true);
+    expect(requestsAck("cur", ["CUR"])).toBe(true);
+    expect(requestsAck("Cur", ["cuR"])).toBe(true);
   });
 
   it("leaves the recorded array as it was", () => {
     const read = readPlaintext(PLAINTEXT);
     expect(requestsAck(PLAINTEXT.id, read.control.pleaseAck)).toBe(true);
     expect(read.control.pleaseAck).toEqual(["", "older", ""]);
+  });
+});
+
+describe("replyThread", () => {
+  it("is the carrier's canonical wire ID when the carrier is in its own thread, by no thid or its own ID in any case, and otherwise the thread as spelled", () => {
+    expect(replyThread({ wireMessageId: "Ab-1", thid: null })).toBe("ab-1");
+    expect(replyThread({ wireMessageId: "Ab-1", thid: "aB-1" })).toBe("ab-1");
+    expect(replyThread({ wireMessageId: "ab-1", thid: "ab-1" })).toBe("ab-1");
+    expect(replyThread({ wireMessageId: "Ab-1", thid: "Other" })).toBe("Other");
+  });
+
+  it("agrees with the intent: a self thread in the projection is the canonical wire ID, another thread is the projection's", () => {
+    const stored = storeMessage(PLAINTEXT.body, PLAINTEXT.attachments);
+    for (const control of [CONTROL, { ...CONTROL, thid: "M" }, { ...CONTROL, thid: null }]) {
+      const intent = intentOf("m", control, stored.bodyCid).value;
+      expect(replyThread({ wireMessageId: "m", thid: control.thid })).toBe(intent.thid === "" ? "m" : intent.thid);
+    }
   });
 });
 

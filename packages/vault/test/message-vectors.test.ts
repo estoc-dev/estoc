@@ -1,7 +1,7 @@
 import { canonicalText } from "@estoc/event-store";
 import { describe, expect, test } from "vitest";
 
-import { PLAINTEXT_TYP, intentOf, intentProjection, plaintextCidOf, readPlaintext, storeMessage, wirePlaintext, type Cid, type ControlHeaders, type Did } from "../src/index.js";
+import { PLAINTEXT_TYP, executionId, inboundMessageId, intentOf, intentProjection, plaintextCidOf, readPlaintext, storeMessage, wirePlaintext, type Cid, type ControlHeaders, type Did, type WireMessageId } from "../src/index.js";
 
 const OURS = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd" as Did;
 const PEER = "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP" as Did;
@@ -99,6 +99,21 @@ describe("the message layer vectors", () => {
       expect(read.plaintextCid).toBe(cid);
       expect(read.intent.cid).toBe(INTENT_CID);
     }
+  });
+
+  test("the fixture plaintext received under its ID in two cases is one input and one execution under one intent CID, with two plaintext CIDs; under another ID it is another input", () => {
+    const lower = { typ: PLAINTEXT_TYP, id: "a1", type: BASIC_MESSAGE, from: PEER, to: [OURS], created_time: CREATED, please_ack: [""], body: BODY };
+    const upper = { ...lower, id: "A1" };
+    const other = { ...lower, id: "a2" };
+    const identities = (plaintext: typeof lower) => {
+      const read = readPlaintext(plaintext);
+      const wire = read.id as WireMessageId;
+      return { messageId: inboundMessageId(PEER, OURS, wire), executionId: executionId(PEER, OURS, wire), intentCid: read.intent.cid, plaintextCid: read.plaintextCid };
+    };
+    const [a, b, c] = [identities(lower), identities(upper), identities(other)];
+    expect([b.messageId, b.executionId, b.intentCid]).toEqual([a.messageId, a.executionId, a.intentCid]);
+    expect(b.plaintextCid).not.toBe(a.plaintextCid);
+    expect([c.messageId === a.messageId, c.executionId === a.executionId, c.intentCid]).toEqual([false, false, a.intentCid]);
   });
 
   test("the pure ACK of the fixture carrier is one intent under the carrier's canonical wire ID, and another under a thread spelled otherwise", () => {

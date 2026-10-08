@@ -15,7 +15,7 @@ import { InvalidJson, canonicalText, canonicalize, deepFreeze, isJsonObject, isR
 
 import { documentCidOf, rawCidOfBytes, storeMessage, wireAttachment, type StoredMessage, type StoredMessageDocument } from "./document.js";
 import { InvalidPlaintext } from "./errors.js";
-import { canonicalWireId } from "./ids.js";
+import { canonicalWireId, sameWireId } from "./ids.js";
 import { isDid, isEpochSeconds } from "./syntax.js";
 import type { AdditionalHeaders, Cid, Did, EpochSeconds, Identified, IntentCid, MessageIn, MessageOut, PlaintextCid } from "./types.js";
 
@@ -184,13 +184,24 @@ function copyOf(value: unknown, at: string): JsonValue {
 
 /**
  * Does the message ask for its own acknowledgment? Null and `[]` do
- * not; `""` and its own wire ID do. A receipt is given to the message
- * that asks for it, naming that message alone, so a request for
- * another message asks nothing of this vault; the stored array is
- * never rewritten.
+ * not; `SELF` and its own wire ID, in any case, do. A receipt is given
+ * to the message that asks for it, naming that message alone, so a
+ * request for another message asks nothing of this vault; the stored
+ * array is never rewritten.
  */
 export function requestsAck(currentWireId: string, pleaseAck: readonly string[] | null): boolean {
-  return pleaseAck !== null && pleaseAck.some((target) => target === "" || target === currentWireId);
+  return pleaseAck !== null && pleaseAck.some((target) => target === SELF || sameWireId(target, currentWireId));
+}
+
+/**
+ * The thread a reply to the carrier is on: the carrier's canonical wire
+ * ID when the carrier is in its own thread, by an absent `thid` or one
+ * that is its own ID in any case, otherwise its thread as spelled. The
+ * same thread for every spelling of one input, so that every replica
+ * answering it makes one reply intent.
+ */
+export function replyThread(carrier: { readonly wireMessageId: string; readonly thid: string | null }): string {
+  return carrier.thid === null || sameWireId(carrier.thid, carrier.wireMessageId) ? canonicalWireId(carrier.wireMessageId) : carrier.thid;
 }
 
 type Recorded = Pick<MessageOut, "msgType" | "thid" | "pthid" | "createdTime" | "expiresTime" | "pleaseAck" | "ack" | "headers" | "bodyCid">;

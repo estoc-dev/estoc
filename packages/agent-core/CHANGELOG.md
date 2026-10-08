@@ -11,6 +11,11 @@
   recorded intent under the message ID and keeps the envelope through
   `envelopeOf`, and a receipt records the headers as the wire spelled
   them beside the intent CID. An `Execution` carries `intentCid`.
+- **Replies thread on the canonical wire ID**: a pure ACK and a triggered
+  rotation notification take `replyThread(carrier)` from `@estoc/vault`
+  as their thread and the ACK names the carrier's canonical wire ID; a
+  Ping reply threads on the Ping's canonical wire ID. A Ping spelled in
+  upper case earns the same intents every spelling of it would.
 - **The plaintext is read from its text**: an opened envelope's plaintext
   is the strict parse of the text `@estoc/didcomm` `0.4.1-estoc.4` hands
   back beside the message, never the binding's own view of it. Every

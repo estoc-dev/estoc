@@ -40,6 +40,7 @@ import {
   objectReader,
   readStoredDocument,
   readVaultEvent,
+  replyThread,
   requestsAck,
   automaticIntent,
   responseChannel,
@@ -265,7 +266,7 @@ function acknowledgement(fold: VaultFold, source: Source, acknowledge: boolean):
   if (!acknowledge) return [{ effectType: PURE_ACK_EFFECT, content: null, because: "receipts are not given here" }];
   const target = fold.outbound.ackTarget(source.event.cid);
   if (target.status !== "eligible") return [{ effectType: PURE_ACK_EFFECT, content: null, because: target.because }];
-  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: data.thid ?? data.wireMessageId, pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: [target.wireMessageId] };
+  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: replyThread(data), pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: [target.wireMessageId] };
   return [{ effectType: PURE_ACK_EFFECT, content }];
 }
 

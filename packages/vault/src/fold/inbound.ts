@@ -150,7 +150,8 @@ const messageIdOf = (source: Source) => source.event.data.messageId;
 /**
  * The members share the message ID, and a complete authentication has
  * checked that ID against the observation's own endpoints and wire ID,
- * so they share the channel and the wire ID too.
+ * so they share the channel and the canonical wire ID too; the spelling
+ * kept is the first member's.
  */
 function executionOf(messageId: MessageId, sources: readonly PlacedSource[], siblings: readonly Source[], evidence: ChannelEvidence, continuity: Continuity, admissions: AdmissionFold, erasures: Erasures): Execution {
   const { channel } = sources[0]!;

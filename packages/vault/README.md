@@ -30,10 +30,10 @@ derives are pinned there too.
 | Question | Module | Entry points |
 | --- | --- | --- |
 | What kind of value is this? | `types.ts` | the nominal identifier types, `VaultData` |
-| Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, the key names |
+| Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, `canonicalWireId`, the key names |
 | How is a public key spelled? | `public-key.ts` | `canonicalPublicKey`, `agreementKey` |
 | Does this payload read? | `schema.ts`, `syntax.ts` | `readVaultEvent`, `readVaultDraft`, `vaultDraft` |
-| What does a message store, and what identifies it? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `envelopeOf`, `readPlaintext`, `wirePlaintext`, `intentOf`, `plaintextCidOf` |
+| What does a message store, and what identifies it? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `envelopeOf`, `readPlaintext`, `wirePlaintext`, `intentOf`, `plaintextCidOf`, `requestsAck`, `replyThread` |
 | Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `documentSendsTo` |
 | What does the vault retain of a peer's document? | `peer-document.ts` | `peerResolution`, `canonicalDidOf`, `authorizedMethodIds`, `methodPublicKey` |
 | How is a proof signed, and what is it verified against? | `from-prior.ts`, `replica-grant.ts`, `recipient-proof.ts` | `signFromPrior`, `issuerLongFormOf`, `signReplicaGrant`, `verifyReplicaGrant`, `signRecipientProof` |

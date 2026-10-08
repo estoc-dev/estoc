@@ -38,6 +38,22 @@
   its canonical bytes under their `EnvelopeCid`; `documentCidOf(document)`
   is the CID of a stored document. `canonicalWireId` folds a wire ID's
   ASCII letters to lower case, the spelling references are compared by.
+- **References to a message are compared by canonical wire ID**: DIDComm
+  compares message IDs without regard to case, so `inboundMessageId`,
+  `anonymousMessageId` and `executionId` take the wire ID's canonical
+  spelling into their transcripts, under which a lower-case ID derives as
+  before and two receipts of one ID in two cases are one input and one
+  execution; `requestsAck` reads a request naming the message's own ID in
+  any case; the ACK witnesses of an outbound, the carrier a
+  `delivery.acknowledged` names and the outbound a ping-response or
+  problem report answers are found by canonical wire ID; and a carrier's
+  receipt is its canonical wire ID (`ackTarget`), which a saved pure ACK
+  must name exactly. `replyThread(carrier)` is the thread a reply is on:
+  the carrier's canonical wire ID when the carrier is in its own thread,
+  otherwise its thread as spelled; the fold checks a pure ACK and a
+  triggered notification against it, and a Ping reply against the Ping's
+  canonical wire ID. `sameWireId` compares two IDs. Stored fields keep
+  the spelling received.
 - **A source's standing is its type**: `Source` is its common fields with
   one of four members, told apart by `status`: `complete` with
   `localDidId`, `resolution` and `channel` all present, `incomplete` with

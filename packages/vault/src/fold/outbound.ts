@@ -16,10 +16,10 @@
  */
 
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";
-import { channelOf, sameChannel } from "../ids.js";
+import { canonicalWireId, channelOf, sameChannel, sameWireId } from "../ids.js";
 import { compareEvents } from "@estoc/event-store";
 import { canonicalDidOf } from "../peer-document.js";
-import { requestsAck } from "../projection.js";
+import { replyThread, requestsAck } from "../projection.js";
 import { agreementKey } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
 import { senderGate } from "../channel-policy.js";
@@ -72,9 +72,9 @@ export interface Termination {
 }
 
 /**
- * The receipt a carrier earns: its own wire ID, or none. A pure ACK
- * acknowledges its carrier alone, so what it says never depends on
- * the order inputs were received in.
+ * The receipt a carrier earns: its own canonical wire ID, or none. A
+ * pure ACK acknowledges its carrier alone, so what it says never
+ * depends on the order inputs were received in.
  */
 export type AckTarget = { status: "eligible"; wireMessageId: WireMessageId } | { status: "none"; because: string };
 
@@ -157,13 +157,13 @@ export interface OutboundFold {
   /** the notification intents naming a rotation decision, whatever their form: one selects, several conflict and stop each one's work */
   notificationFor(rotationEventCid: EventCid): Notification;
   /**
-   * The receipt a carrier earns: its own wire ID when its request
-   * names itself and it is the admitted complete witness establishing
-   * an input whose admitted intents agree. A request naming other
-   * messages earns them nothing.
+   * The receipt a carrier earns: its own canonical wire ID when its
+   * request names itself and it is the admitted complete witness
+   * establishing an input whose admitted intents agree. A request
+   * naming other messages earns them nothing.
    */
   ackTarget(sourceEventCid: EventCid): AckTarget;
-  /** the outbound a ping-response or problem report answers, when its thread names one this carrier may answer */
+  /** the outbound a ping-response or problem report answers, when its thread names one this carrier may answer, in any case */
   inReplyTo(sourceEventCid: EventCid): Outbound | null;
 }
 
@@ -243,7 +243,7 @@ export function foldOutbound(
       const { data } = source.event;
       const thread = execution.kind === "ping-response" ? data.thid : execution.kind === "error" ? data.pthid : null;
       if (thread === null) return null;
-      const outbound = outbounds.get(thread as MessageId);
+      const outbound = outbounds.get(canonicalWireId(thread) as MessageId);
       if (outbound?.channel == null || !continuity.ackPath(outbound.channel, source.channel)) return null;
       return outbound;
     },
@@ -266,13 +266,13 @@ function admittedWitness(sourceEventCid: EventCid, inbound: InboundFold): boolea
   return member !== null && member.admitted && member.witness.status === "complete" && inbound.ofSource(sourceEventCid)!.status !== "conflict";
 }
 
-/** The admitted witnesses whose `ack` names each wire ID, in canonical event order. */
+/** The admitted witnesses whose `ack` names each canonical wire ID, in canonical event order. */
 function witnessesByTarget(evidence: ChannelEvidence, inbound: InboundFold): Map<string, PlacedSource[]> {
   const byTarget = new Map<string, PlacedSource[]>();
   const sources = [...evidence.sources.values()].sort((a, b) => compareEvents(a.event, b.event));
   for (const source of sources) {
     if (source.status !== "complete" || source.event.data.ack.length === 0 || !admittedWitness(source.event.cid, inbound)) continue;
-    for (const target of new Set(source.event.data.ack)) {
+    for (const target of new Set(source.event.data.ack.map(canonicalWireId))) {
       const list = byTarget.get(target);
       if (list === undefined) byTarget.set(target, [source]);
       else list.push(source);
@@ -474,7 +474,7 @@ function acknowledgementOf(event: VaultEvent<"delivery.acknowledged">, packaged:
     if (carrier.messageId !== data.ackMessageId) continue;
     known = true;
     if (carriers.some((witness) => witness.source === source)) continue;
-    if (carrier.wireMessageId !== data.ackWireMessageId || carrier.localKeyName !== data.localKeyName || !carrier.ack.includes(data.messageId)) continue;
+    if (carrier.wireMessageId !== data.ackWireMessageId || carrier.localKeyName !== data.localKeyName || !carrier.ack.some((target) => sameWireId(target, data.messageId))) continue;
     if (source.resolution !== null && source.resolution.data.peerPublicKey !== data.peerPublicKey) continue;
     const witness = continuity.witness(source.event.cid);
     if (witness.status === "pending") return pending(`the carrier it names is no complete witness yet: ${witness.because}`);
@@ -562,7 +562,7 @@ function builtInOf(data: MessageOut, source: Source | null, channel: Channel | n
   if (continued?.status === "conflict") return conflict(continued.because);
   if (continued !== null) missing.push(continued.because);
   const empty = data.bodyCid === EMPTY_CONTENT_CID && data.attachmentCids.length === 0 && Object.keys(data.headers).length === 0;
-  const threaded = carried === null || (data.thid === (carried.thid ?? carried.wireMessageId) && data.pthid === carried.pthid);
+  const threaded = carried === null || (data.thid === replyThread(carried) && data.pthid === carried.pthid);
   switch (data.effectType) {
     case PURE_ACK_EFFECT:
       if (data.msgType !== EMPTY_MESSAGE_TYPE || !empty) return conflict("a pure ACK is an Empty message with body {} and nothing else");
@@ -570,15 +570,15 @@ function builtInOf(data: MessageOut, source: Source | null, channel: Channel | n
       if (data.ack.length !== 1) return conflict("a pure ACK names one target, its carrier");
       if (!threaded || (carried !== null && data.createdTime !== carried.createdTime)) return conflict("a pure ACK keeps the carrier's thread and creation time");
       if (carried !== null && carried.msgType === EMPTY_MESSAGE_TYPE && carried.pleaseAck === null) return conflict("a pure ACK answers no pure ACK");
-      if (carried !== null && data.ack[0] !== carried.wireMessageId) return conflict("a pure ACK names its carrier alone");
+      if (carried !== null && data.ack[0] !== canonicalWireId(carried.wireMessageId)) return conflict("a pure ACK names its carrier alone, by its canonical wire ID");
       if (carried !== null && !requestsAck(carried.wireMessageId, carried.pleaseAck)) return conflict("the source requests no receipt of itself");
       return null;
     case PING_RESPONSE_EFFECT:
       if (data.msgType !== PING_RESPONSE_TYPE || !empty) return conflict("a Ping reply is a ping-response with an empty body and nothing else");
       if (data.pleaseAck !== null || data.ack.length > 0) return conflict("a Ping reply neither requests nor carries an ACK");
       if (carried !== null && carried.msgType !== PING_TYPE) return conflict("a Ping reply answers a Ping");
-      if (carried !== null && (data.thid !== carried.wireMessageId || data.pthid !== carried.pthid || data.createdTime !== carried.createdTime || data.expiresTime !== carried.expiresTime)) {
-        return conflict("a Ping reply threads on the Ping's wire ID and keeps its parent thread and timing");
+      if (carried !== null && (data.thid !== canonicalWireId(carried.wireMessageId) || data.pthid !== carried.pthid || data.createdTime !== carried.createdTime || data.expiresTime !== carried.expiresTime)) {
+        return conflict("a Ping reply threads on the Ping's canonical wire ID and keeps its parent thread and timing");
       }
       return null;
     default:
@@ -607,7 +607,7 @@ function notificationOf(data: MessageOut, source: Source | null, channel: Channe
     if (data.thid !== null || data.pthid !== null || data.createdTime !== null) return conflict("a manual notification has no thread and no creation time");
   } else if (source !== null) {
     const carried = source.event.data;
-    if (data.thid !== (carried.thid ?? carried.wireMessageId) || data.pthid !== carried.pthid || data.createdTime !== carried.createdTime) {
+    if (data.thid !== replyThread(carried) || data.pthid !== carried.pthid || data.createdTime !== carried.createdTime) {
       return conflict("a triggered notification keeps its source's thread and creation time");
     }
     if (kindOf(carried) !== "application") return conflict(`a control input triggers no notification: the source is ${kindOf(carried)}`);
@@ -668,5 +668,5 @@ function ackTargetOf(sourceEventCid: EventCid, evidence: ChannelEvidence, inboun
   if (member.witness.status !== "complete") return none(`the carrier is no complete witness: ${member.witness.because}`);
   const execution = inbound.ofSource(sourceEventCid)!;
   if (execution.status === "conflict") return none(`the carrier's input is in conflict: ${execution.because}`);
-  return { status: "eligible", wireMessageId: data.wireMessageId };
+  return { status: "eligible", wireMessageId: canonicalWireId(data.wireMessageId) as WireMessageId };
 }

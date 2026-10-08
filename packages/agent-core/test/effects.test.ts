@@ -201,6 +201,27 @@ describe("the automatic effects of a live input", () => {
     await closeAll(alice, bob);
   });
 
+  test("a Ping whose wire ID is spelled in upper case earns its receipt and reply under the canonical ID, in the canonical thread, and delivered again in lower case it is the same input", async () => {
+    const { alice, bob } = await parties();
+    const { live, claimed } = await reacting(alice);
+    const wireId = crypto.randomUUID().toUpperCase() as WireMessageId;
+    const canonical = wireId.toLowerCase();
+
+    const reacted = await live(bob, ping(wireId, { thid: wireId, please_ack: [wireId] }));
+    expect(outcomes(reacted.effects)).toEqual([
+      [PURE_ACK_EFFECT, "created", "submitted"],
+      [PING_RESPONSE_EFFECT, "created", "submitted"],
+    ]);
+    const [ack, reply] = reacted.effects.map(created);
+    expect(ack!.intent.data).toMatchObject({ msgType: EMPTY_MESSAGE_TYPE, thid: canonical, ack: [canonical], executionId: reacted.executionId });
+    expect(reply!.intent.data).toMatchObject({ msgType: PING_RESPONSE_TYPE, thid: canonical, ack: [] });
+    expect((await foldOf(alice)).inbound.executions.get(reacted.executionId!)!.members[0]!.source.event.data).toMatchObject({ wireMessageId: wireId, thid: wireId, pleaseAck: [wireId] });
+
+    const again = await claimed(bob, ping(canonical));
+    expect([again.executionId, again.because, outcomes(again.effects)]).toEqual([reacted.executionId, "the input is established by another observation", []]);
+    await closeAll(alice, bob);
+  });
+
   test("an observation contradicting the intent its input has admitted is refused admission and listed as the discrepancy it is: the input stays established by the first, earns what the first earned and no more, and the receipt already handed over stays the message it was, handed over", async () => {
     const { alice, bob } = await parties();
     const { wire, options, receive, live, claimed, executionOf } = await reacting(alice);

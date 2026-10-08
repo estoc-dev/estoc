@@ -58,6 +58,7 @@ import {
   notificationChannel,
   objectReader,
   readVaultEvent,
+  replyThread,
   sameChannel,
   scanVault,
   signFromPrior,
@@ -289,7 +290,7 @@ async function settleNotification(held: Held, fold: VaultFold, rotationEventCid:
   if (selected.status === "none") return { drafted: { effectType, outcome: "none", because: selected.because }, executionId };
   const { channel, source } = selected;
   const carried = source?.event.data ?? null;
-  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: carried === null ? null : (carried.thid ?? carried.wireMessageId), pthid: carried?.pthid ?? null, createdTime: carried?.createdTime ?? null, expiresTime: null, pleaseAck: [""], ack: [] };
+  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: carried === null ? null : replyThread(carried), pthid: carried?.pthid ?? null, createdTime: carried?.createdTime ?? null, expiresTime: null, pleaseAck: [""], ack: [] };
   const execution = executionId === null ? null : fold.inbound.executions.get(executionId)!;
   const messageId = execution === null ? (uuidv7() as MessageId) : automaticIntent(fold, execution, effectType).messageId;
   try {

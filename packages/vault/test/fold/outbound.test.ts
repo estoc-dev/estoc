@@ -12,11 +12,13 @@ import {
   PROBLEM_REPORT_TYPE,
   ROTATION_NOTIFICATION_EFFECT,
   canonicalPublicKey,
+  canonicalWireId,
   didKeyName,
   executionId,
   foldVault,
   foldVaultChecked,
   inboundMessageId,
+  replyThread,
   type DidId,
   type Keys,
   type MessageId,
@@ -87,14 +89,14 @@ const acknowledged = (scene: Scene, out: VaultEvent<"message.out">, carrier: Vau
 
 const inputOf = (source: VaultEvent<"message.in">, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId);
 
-/** A pure ACK of a source received at `received`, in its exact shape: Empty, body `{}`, the carrier's thread and creation time, targets in `ack`. */
+/** A pure ACK of a source received at `received`, in its exact shape: Empty, body `{}`, the carrier's thread and creation time, the carrier's canonical wire ID in `ack`. */
 const pureAck = (scene: Scene, sender: Local, recipient: Peer, source: VaultEvent<"message.in">, overrides: Partial<MessageOut> = {}, received = sender) =>
   automatic(scene, sender, recipient, source, inputOf(source, recipient, received), PURE_ACK, {
     bodyCid: EMPTY_CONTENT_CID,
-    thid: source.data.thid ?? source.data.wireMessageId,
+    thid: replyThread(source.data),
     pthid: source.data.pthid,
     createdTime: source.data.createdTime,
-    ack: [source.data.wireMessageId],
+    ack: [canonicalWireId(source.data.wireMessageId)],
     ...overrides,
   });
 
@@ -411,7 +413,7 @@ describe("an outbound message", () => {
       { status: "conflict", because: "a pure ACK requests no ACK and does not expire" },
       { status: "conflict", because: "a pure ACK names one target, its carrier" },
       { status: "conflict", because: "a pure ACK names one target, its carrier" },
-      { status: "conflict", because: "a pure ACK names its carrier alone" },
+      { status: "conflict", because: "a pure ACK names its carrier alone, by its canonical wire ID" },
       { status: "conflict", because: "a pure ACK keeps the carrier's thread and creation time" },
       { status: "pending", because: "the output's channel does not continue the source's yet: no verified rotation to the output's sender is here" },
       { status: "conflict", because: "the output's peer is not the source's" },
@@ -456,13 +458,13 @@ describe("an outbound message", () => {
     const variants = [own, withEarlier, ofEarlier];
     let vault = await fold(scene, keys);
     expect(outboundOf(vault, ackOfSilent).effect).toEqual({ status: "conflict", because: "the source requests no receipt of itself" });
-    expect(outboundOf(vault, ackForEarlier).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone" });
+    expect(outboundOf(vault, ackForEarlier).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone, by its canonical wire ID" });
     expect(vault.outbound.ackTarget(namingEarlier.cid)).toEqual({ status: "none", because: "the carrier requests no receipt of itself" });
     expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "eligible", wireMessageId: source.data.wireMessageId });
     expect(variants.map((event) => variant(scene, vault.checks, event, variants).effect)).toEqual([
       { status: "complete" },
       { status: "conflict", because: "a pure ACK names one target, its carrier" },
-      { status: "conflict", because: "a pure ACK names its carrier alone" },
+      { status: "conflict", because: "a pure ACK names its carrier alone, by its canonical wire ID" },
     ]);
     expect(variant(scene, vault.checks, own, variants).work).toEqual({ kind: "prepare" });
     expectSameOverEveryOrder(scene, vault.checks);
@@ -473,7 +475,7 @@ describe("an outbound message", () => {
     expect(partial.channels.sources.get(source.cid)!.channel).toBeNull();
     expect(partial.outbound.ackTarget(source.cid)).toEqual({ status: "none", because: "the carrier's channel is not known" });
     expect(variant(unplaced, vault.checks, own, variants)).toMatchObject({ effect: { status: "pending", because: expect.stringMatching(/^the source is no complete witness yet: /) }, work: { kind: "none", because: "no communication DID here records the sender" } });
-    expect(variant(unplaced, vault.checks, ofEarlier, variants).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone" });
+    expect(variant(unplaced, vault.checks, ofEarlier, variants).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone, by its canonical wire ID" });
     expectOrderFree(unplaced.events, (set) => picture(foldVault(set, vault.checks)));
 
     const contradicting = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, wire: source.data.wireMessageId, admitted: false, overrides: { intentCid: OTHER_INTENT_CID } });
@@ -816,5 +818,42 @@ describe("an outbound message", () => {
     expect(vault.outbound.inReplyTo(report.cid)?.messageId).toBe(out.data.messageId);
     for (const other of [elsewhere, unthreaded, application]) expect(vault.outbound.inReplyTo(other.cid)).toBeNull();
     expect(vault.outbound.inReplyTo(fakeEventCid())).toBeNull();
+  });
+
+  it("compares every reference by canonical wire ID: a receipt naming the outbound in upper case acknowledges and answers it, two receipts of one wire ID in two cases are one input earning its canonical ID, and an output naming the carrier as spelled contradicts the rules", async () => {
+    const { scene, keys, a0, b0 } = await vaults();
+    const root = resolved(scene, a0.didId, b0);
+    const out = intent(scene, a0, b0, { msgType: PING_TYPE });
+    packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    const upper = out.data.messageId.toUpperCase();
+    const acking = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [upper] } });
+    const recorded = acknowledged(scene, out, acking, b0, a0);
+    const pong = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_RESPONSE_TYPE, thid: upper } });
+    const wire = uuidv7().toUpperCase();
+    const first = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { msgType: PING_TYPE, pleaseAck: [wire], createdTime: 1_700_000_000 } });
+    const second = receipt(scene, { local: a0, peer: b0, resolution: root, wire: wire.toLowerCase(), overrides: { msgType: PING_TYPE, pleaseAck: [wire], createdTime: 1_700_000_000 } });
+    const ack = pureAck(scene, a0, b0, first);
+    const asSpelled = pureAck(scene, a0, b0, first, { ack: [wire] });
+    const threadedAsSpelled = pureAck(scene, a0, b0, first, { thid: wire });
+    const reply = automatic(scene, a0, b0, first, inputOf(first, b0, a0), PING_RESPONSE_EFFECT, { msgType: PING_RESPONSE_TYPE, bodyCid: EMPTY_CONTENT_CID, thid: wire.toLowerCase(), createdTime: 1_700_000_000 });
+    const replyAsSpelled = automatic(scene, a0, b0, first, inputOf(first, b0, a0), PING_RESPONSE_EFFECT, { msgType: PING_RESPONSE_TYPE, bodyCid: EMPTY_CONTENT_CID, thid: wire, createdTime: 1_700_000_000 });
+    const vault = await fold(scene, keys);
+    expect(outboundOf(vault, out)).toMatchObject({ acknowledged: true, ackWitnesses: [{ source: { event: { cid: acking.cid } } }], acknowledgements: [{ event: { cid: recorded.cid }, status: { status: "complete" } }] });
+    expect(vault.outbound.inReplyTo(pong.cid)?.messageId).toBe(out.data.messageId);
+    const input = vault.inbound.ofSource(first.cid)!;
+    expect(input).toBe(vault.inbound.ofSource(second.cid));
+    expect([input.id, input.wireMessageId, input.members.map((member) => member.source.event.cid)]).toEqual([executionId(b0.did, a0.did, wire.toLowerCase() as WireMessageId), wire, [first.cid, second.cid]]);
+    expect(vault.outbound.ackTarget(first.cid)).toEqual({ status: "eligible", wireMessageId: wire.toLowerCase() });
+    expect(vault.outbound.ackTarget(second.cid)).toEqual({ status: "eligible", wireMessageId: wire.toLowerCase() });
+    const acks = [ack, asSpelled, threadedAsSpelled];
+    const replies = [reply, replyAsSpelled];
+    expect([...acks.map((event) => variant(scene, vault.checks, event, acks).effect), ...replies.map((event) => variant(scene, vault.checks, event, replies).effect)]).toEqual([
+      { status: "complete" },
+      { status: "conflict", because: "a pure ACK names its carrier alone, by its canonical wire ID" },
+      { status: "conflict", because: "a pure ACK keeps the carrier's thread and creation time" },
+      { status: "complete" },
+      { status: "conflict", because: "a Ping reply threads on the Ping's canonical wire ID and keeps its parent thread and timing" },
+    ]);
+    expectSameOverEveryOrder(scene, vault.checks);
   });
 });
