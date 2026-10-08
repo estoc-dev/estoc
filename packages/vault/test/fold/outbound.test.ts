@@ -337,7 +337,7 @@ describe("an outbound message", () => {
     expect(outboundOf(foldVault(unarrived.set(), vault.checks), ack)).toMatchObject({ intent: { status: "consistent" }, effect: { status: "pending", because: "the source it names is not here" }, work: { kind: "none", because: "the source it names is not here" } });
   });
 
-  it("reads what each automatic operation over an input came to: produced by its intent, skipped by its own decision with each skip's source judged as an intent's is, pending with neither, and in conflict with both", async () => {
+  it("reads what each automatic operation over an input came to: produced by its intent, skipped by its own decision with each skip's source judged as an intent's is, pending with neither, and in conflict with both, which stops the output's work and keeps what it recorded", async () => {
     const { scene, keys, a0, a1, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const ping = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { msgType: PING_TYPE, pleaseAck: [""] } });
@@ -361,14 +361,23 @@ describe("an outbound message", () => {
     expect(vault.outbound.effectResult(execution, PURE_ACK_EFFECT)).toEqual({ status: "produced", outbound: outboundOf(vault, ack) });
     expectOrderFree(scene.events, (set) => snapshotResults(foldVault(set, vault.checks), execution));
 
+    const preparation = preparationOf(scene, ack, { sender: a0.didId, recipient: b0, resolution: root });
+    const submission = submitted(scene, ack, preparation);
     const both = skip(PURE_ACK_EFFECT, ping, "no-receipt-given");
     vault = await fold(scene, keys);
-    expect(vault.outbound.effectResult(execution, PURE_ACK_EFFECT)).toEqual({
-      status: "conflict",
-      because: "both an output and a skip are recorded for the operation over the input",
-      outbound: outboundOf(vault, ack),
-      skips: [{ event: both, status: { status: "complete" } }],
+    const because = "both an output and a skip are recorded for the operation over the input";
+    expect(vault.outbound.effectResult(execution, PURE_ACK_EFFECT)).toEqual({ status: "conflict", because, outbound: outboundOf(vault, ack), skips: [{ event: both, status: { status: "complete" } }] });
+    expect(outboundOf(vault, ack)).toMatchObject({
+      intent: { status: "consistent" },
+      effect: { status: "conflict", because },
+      preparations: [{ event: preparation, status: { status: "complete" } }],
+      submissions: [{ event: submission, status: { status: "complete" } }],
+      submitted: true,
+      released: true,
+      outcome: { status: "conflict", because },
+      work: { kind: "none", because },
     });
+    expect(vault.outbound.effectResult(execution, PING_RESPONSE_EFFECT).status).toBe("skipped");
 
     const other = receipt(scene, { local: a0, peer: b0, resolution: root });
     const elsewhere = receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0), wire: ping.data.wireMessageId });

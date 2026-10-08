@@ -1,12 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { SignJWT, importJWK } from "jose";
 
 import type { DIDDoc } from "@estoc/did-peer";
-import type { JsonObject } from "@estoc/event-store";
+import type { Held, JsonObject, VaultRuntime } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import {
   AUTHENTICATION_METHOD,
@@ -50,6 +50,7 @@ import {
   handlersOf,
   openVault,
   pinnedResolver,
+  prepare,
   reactTo,
   completeResponse,
   receiptOf,
@@ -136,6 +137,10 @@ const echo: Handler = {
   effectTypes: [ECHO_EFFECT],
   respond: async (input) => [{ effectType: ECHO_EFFECT, content: { type: ECHO_TYPE, body: { echoed: input.source.event.data.wireMessageId }, thid: input.source.event.data.wireMessageId, pleaseAck: null, ack: [] } }],
 };
+
+/** A Ping handler of another version, that owes no Ping a reply. */
+const declining: Handler = { types: [PING_TYPE], effectTypes: [PING_RESPONSE_EFFECT], respond: async () => [{ effectType: PING_RESPONSE_EFFECT, content: null, skipped: "declined" }] };
+const PRODUCED_AND_SKIPPED = "both an output and a skip are recorded for the operation over the input";
 
 const ping = (wire: string, extra: Partial<IMessage> = {}): Partial<IMessage> => ({ id: wire, type: PING_TYPE, body: { response_requested: true }, please_ack: [""], created_time: CREATED, ...extra });
 
@@ -449,6 +454,63 @@ describe("the automatic effects of a live input", () => {
     expect([receipt.outbound.intent.status, receipt.outbound.effect, new Set(receipt.outbound.intents.map(({ author }) => author)).size, receipt.outbound.intents.map(({ data }) => data.createdTime)]).toEqual(["consistent", { status: "complete" }, 2, [CREATED, CREATED]]);
     expect(fold.outbound.effectResult(executionId, ECHO_EFFECT)).toMatchObject({ status: "produced", outbound: { intent: { status: "conflict" } } });
     expect(wire.posts).toHaveLength(4);
+    await closeAll(alice, replica, bob);
+  });
+
+  test("a reply one replica made and another skipped are, once the two merge, that operation's conflict: queued or prepared, the reply is prepared and carried by no action, completed by hand to nothing and listed nowhere, while the input's receipt goes", async () => {
+    const { alice, bob } = await parties();
+    const { wire, options, receive, executionOf } = await reacting(alice);
+    const later: EffectOptions = { ...options, dispatch: async (action) => ({ outcome: "pending", messageId: action.messageId, because: "called later" }) };
+    const queued = await executionOf(await receive(bob, ping(crypto.randomUUID())));
+    const prepared = await executionOf(await receive(bob, ping(crypto.randomUUID(), { please_ack: undefined })));
+    const replica = await copyOf(1, alice);
+    for (const executionId of [queued, prepared]) {
+      expect(outcomes([await completeResponse(replica.runtime, replica.keys, executionId, PING_RESPONSE_EFFECT, { ...later, handlers: [declining] })])).toEqual([[PING_RESPONSE_EFFECT, "skipped", "declined"]]);
+    }
+    const receipt = created(await completeResponse(alice.runtime, alice.keys, queued, PURE_ACK_EFFECT, later));
+    const replies = [created(await completeResponse(alice.runtime, alice.keys, queued, PING_RESPONSE_EFFECT, later)), created(await completeResponse(alice.runtime, alice.keys, prepared, PING_RESPONSE_EFFECT, later))] as const;
+    expect(await prepare(alice.runtime, alice.keys, replies[1].messageId, { didcomm })).toMatchObject({ outcome: "prepared" });
+    await alice.runtime.ingest([...(await foldOf(replica)).set.all()]);
+
+    let fold = await foldOf(alice);
+    for (const [executionId, reply, preparations] of [[queued, replies[0], 0], [prepared, replies[1], 1]] as const) {
+      expect(fold.outbound.effectResult(executionId, PING_RESPONSE_EFFECT)).toMatchObject({ status: "conflict", because: PRODUCED_AND_SKIPPED });
+      expect(fold.outbound.outbounds.get(reply.messageId)).toMatchObject({ effect: { status: "conflict" }, outcome: { status: "conflict" }, work: { kind: "none", because: PRODUCED_AND_SKIPPED }, preparations: { length: preparations } });
+      expect(await dispatch(alice.runtime, alice.keys, reply.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: reply.messageId, because: PRODUCED_AND_SKIPPED });
+      expect(await completeResponse(alice.runtime, alice.keys, executionId, PING_RESPONSE_EFFECT, options)).toEqual({ effectType: PING_RESPONSE_EFFECT, outcome: "none", because: PRODUCED_AND_SKIPPED });
+    }
+    expect([unfinishedWork(fold).outbounds.map(({ messageId }) => messageId), unfinishedWork(fold).responses]).toEqual([[receipt.messageId], []]);
+
+    expect(await dispatch(alice.runtime, alice.keys, receipt.action, { didcomm, fetch: wire.fetch })).toMatchObject({ outcome: "submitted", messageId: receipt.messageId });
+    fold = await foldOf(alice);
+    expect([wire.posts.length, fold.set.of("message.prepared").map(({ data }) => data.messageId).sort()]).toEqual([1, [receipt.messageId, replies[1].messageId].sort()]);
+    await closeAll(alice, replica, bob);
+  });
+
+  test("a skip merged while the reply is readied for its call stops it at the check right before the call: the preparation made stays, the action stays live and nothing is posted", async () => {
+    const { alice, bob } = await parties();
+    const { wire, options, receive, executionOf } = await reacting(alice);
+    const later: EffectOptions = { ...options, dispatch: async (action) => ({ outcome: "pending", messageId: action.messageId, because: "called later" }) };
+    const executionId = await executionOf(await receive(bob, ping(crypto.randomUUID(), { please_ack: undefined })));
+    const replica = await copyOf(1, alice);
+    await completeResponse(replica.runtime, replica.keys, executionId, PING_RESPONSE_EFFECT, { ...later, handlers: [declining] });
+    const reply = created(await completeResponse(alice.runtime, alice.keys, executionId, PING_RESPONSE_EFFECT, later));
+    const skipped = [...(await foldOf(replica)).set.all()];
+
+    const locked = alice.runtime.locked.bind(alice.runtime);
+    let merged = false;
+    vi.spyOn(alice.runtime, "locked").mockImplementation((async (work: (held: Held) => Promise<unknown>) => {
+      const value = await locked(work);
+      if (!merged) {
+        merged = true;
+        await locked((held) => held.ingest(skipped));
+      }
+      return value;
+    }) as VaultRuntime["locked"]);
+    expect(await dispatch(alice.runtime, alice.keys, reply.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: reply.messageId, because: PRODUCED_AND_SKIPPED });
+    vi.restoreAllMocks();
+    const outbound = (await foldOf(alice)).outbound.outbounds.get(reply.messageId)!;
+    expect([wire.posts.length, reply.action.spent, outbound.preparations.length, outbound.work]).toEqual([0, false, 1, { kind: "none", because: PRODUCED_AND_SKIPPED }]);
     await closeAll(alice, replica, bob);
   });
 

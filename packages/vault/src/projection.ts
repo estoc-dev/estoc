@@ -19,7 +19,6 @@ import { canonicalWireId, sameWireId } from "./ids.js";
 import { isDid, isEpochSeconds } from "./syntax.js";
 import type { AdditionalHeaders, Cid, Did, EpochSeconds, Identified, IntentCid, MessageIn, MessageOut, PlaintextCid } from "./types.js";
 
-/** The DIDComm plaintext media type: the `typ` header a plaintext carries. */
 export const PLAINTEXT_TYP = "application/didcomm-plain+json";
 
 /** The top-level DIDComm members a dedicated field models, or that a vault plaintext may not carry; none may appear in `headers`. */

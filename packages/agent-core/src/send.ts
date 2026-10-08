@@ -29,7 +29,7 @@ import {
   intentOf,
   readVaultEvent,
   sameChannel,
-  samePayload,
+  sameIntent,
   scanVault,
   senderGate,
   storeMessage,
@@ -111,11 +111,11 @@ type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid" | keyof Loca
  * The intent of `content` committed with its objects, in the channel
  * `target` selects, with networking off. A new message is created at
  * the time its content gives, else now. A message ID the vault has
- * already is not selected for again: the same content, its creation
- * time given as recorded or not at all, and a target that names the
- * recorded channel return what was committed, going in again only when
- * an object of it is missing; another intent or target under the same
- * ID is refused.
+ * already is not selected for again: content of the same intent, its
+ * self references spelled any way and its creation time given as
+ * recorded or not at all, and a target that names the recorded channel
+ * return what was committed, going in again only when an object of it
+ * is missing; another intent or target under the same ID is refused.
  */
 export async function send(runtime: VaultRuntime, keys: Keys, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
   const messageId = options.messageId ?? (uuidv7() as MessageId);
@@ -136,7 +136,7 @@ async function repeat(held: Held, fold: VaultFold, existing: Outbound, target: T
   if (existing.intent.status === "conflict" || existing.channel === null) throw new EntityConflict("message", messageId, existing.intent.status === "conflict" ? existing.intent.because : "an intent whose sender is not here");
   const { data } = existing.intent;
   const { fields, objects, roots } = fieldsOf(messageId, { ...content, createdTime: content.createdTime ?? data.createdTime }, [], null);
-  if (!samePayload({ ...fields, ...LOCAL, senderDidId: data.senderDidId, recipientDid: data.recipientDid }, data)) throw new EntityConflict("message", messageId, "another intent");
+  if (!sameIntent({ ...fields, ...LOCAL, senderDidId: data.senderDidId, recipientDid: data.recipientDid }, data)) throw new EntityConflict("message", messageId, "another intent");
   if (!targetAgrees(fold, target, existing.channel, data.recipientDid)) throw new EntityConflict("message", messageId, "another target");
   const sent = { messageId, channel: existing.channel, senderDidId: data.senderDidId };
   if (await objectsHeld(held, roots)) return { ...sent, intent: existing.intents[0] as VaultEvent<"message.out">, existed: true };

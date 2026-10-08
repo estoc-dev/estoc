@@ -240,6 +240,7 @@ export {
   type OutboundFold,
   type OutboundFoldOptions,
   foldOutbound,
+  sameIntent,
 } from "./fold/outbound.js";
 export { type Erasures, type Released, type ReadState, foldErasures, erased, retainedRoots, heldRoots, readState } from "./fold/held.js";
 export { type SendGate, senderGate, channelPolicy } from "./channel-policy.js";

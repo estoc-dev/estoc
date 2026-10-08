@@ -75,7 +75,6 @@ export class LocalRecords {
     return (await this.read("preparation-selected", messageId))?.preparationEventCid ?? null;
   }
 
-  /** Selects the preparation in place of any selected before. */
   select(messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<void> {
     return this.write("preparation-selected", messageId, { preparationEventCid });
   }

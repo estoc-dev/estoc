@@ -109,9 +109,10 @@ export interface Acknowledgement {
 /**
  * What an intent derived from an input rests on: the input's
  * execution, each record's source witness, the operation's rules, the
- * output's channel. Complete for a locally initiated send that names
- * no rotation. Conflict is for good; pending waits for evidence that
- * may still arrive, or for an operation this vault does not know.
+ * output's channel, and no skip under its tuple. Complete for a
+ * locally initiated send that names no rotation. Conflict is for good;
+ * pending waits for evidence that may still arrive, or for an
+ * operation this vault does not know.
  */
 export type EffectStatus = { status: "complete" } | { status: "pending"; because: string } | { status: "conflict"; because: string };
 
@@ -175,7 +176,8 @@ export interface Skip {
  * the operation's decision that the input owes it no output, every
  * record of it listed with its own evidence. Pending: neither, and the
  * output is still to make. Both an output and a skip are the tuple's
- * conflict for good.
+ * conflict for good, and the output's own effect conflict: nothing
+ * prepares or carries it, whatever the skip's evidence.
  */
 export type EffectResult =
   | { status: "produced"; outbound: Outbound }
@@ -240,6 +242,14 @@ export function foldOutbound(
   }
 
   const shared = { set, dids, evidence, continuity, inbound, erasures, resolutionChecks, known, selections };
+  const skips = new Map<EffectKey, Skip[]>();
+  for (const event of set.of("effect.skipped")) {
+    const skip: Skip = { event, status: skipStatus(event, shared) };
+    const list = skips.get(event.data.effectKey);
+    if (list === undefined) skips.set(event.data.effectKey, [skip]);
+    else list.push(skip);
+  }
+
   const outbounds = new Map<MessageId, Outbound>();
   const released = new Set<MessageId>();
   for (const [messageId, events] of intents) {
@@ -250,17 +260,10 @@ export function foldOutbound(
       failures: failures.get(messageId) ?? [],
       acknowledgements: acknowledgements.get(messageId) ?? [],
       witnesses: witnesses.get(messageId) ?? [],
+      skips,
     });
     outbounds.set(messageId, outbound);
     if (outbound.released) released.add(messageId);
-  }
-
-  const skips = new Map<EffectKey, Skip[]>();
-  for (const event of set.of("effect.skipped")) {
-    const skip: Skip = { event, status: skipStatus(event, shared) };
-    const list = skips.get(event.data.effectKey);
-    if (list === undefined) skips.set(event.data.effectKey, [skip]);
-    else list.push(skip);
   }
 
   const stray: StrayEvent[] = [];
@@ -282,7 +285,7 @@ export function foldOutbound(
       const key = effectKey(executionId, effectType);
       const outbound = outbounds.get(automaticMessageId(key)) ?? null;
       const skipped = skips.get(key) ?? [];
-      if (outbound !== null && skipped.length > 0) return { status: "conflict", because: "both an output and a skip are recorded for the operation over the input", outbound, skips: skipped };
+      if (outbound !== null && skipped.length > 0) return { status: "conflict", because: PRODUCED_AND_SKIPPED, outbound, skips: skipped };
       if (outbound !== null) return { status: "produced", outbound };
       return skipped.length > 0 ? { status: "skipped", skips: skipped } : { status: "pending" };
     },
@@ -303,6 +306,8 @@ export function foldOutbound(
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+const PRODUCED_AND_SKIPPED = "both an output and a skip are recorded for the operation over the input";
 
 /**
  * Is the observation an admitted complete witness of an input whose
@@ -353,6 +358,7 @@ type Inputs = Shared & {
   failures: readonly VaultEvent<"delivery.failed">[];
   acknowledgements: readonly VaultEvent<"delivery.acknowledged">[];
   witnesses: readonly PlacedSource[];
+  skips: ReadonlyMap<EffectKey, readonly Skip[]>;
 };
 
 function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.out">[], inputs: Inputs): Outbound {
@@ -385,7 +391,8 @@ function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.o
   const terminations = inputs.failures.map((event) => terminationOf(event, data));
   const terminal = terminations.find((termination) => termination.status.status === "complete") ?? null;
 
-  const effect = data === null ? { status: "complete" as const } : effectOfRecords(events, channel, inputs);
+  const effect: EffectStatus =
+    data === null ? { status: "complete" } : data.effectKey !== null && inputs.skips.has(data.effectKey) ? { status: "conflict", because: PRODUCED_AND_SKIPPED } : effectOfRecords(events, channel, inputs);
   if (effect.status === "conflict" && fault === null) fault = effect.because;
 
   const ackWitnesses: AckWitness[] = channel === null || prepared.status !== "complete" ? [] : inputs.witnesses.filter((source) => inputs.continuity.ackPath(channel, source.channel)).map((source) => ({ source }));
@@ -409,12 +416,6 @@ function outboundOf(messageId: MessageId, events: readonly VaultEvent<"message.o
   return { messageId, intents: events, intent, sender, channel, preparations, submissions, submitted, terminations, terminal, effect, ackWitnesses, acknowledgements, acknowledged, late, erased, outcome, work, released };
 }
 
-/**
- * Records of one message are one intent when they agree on the intent
- * CID, the sender, the canonical recipient, the effect tuple and its
- * key, and the rotation they announce. Their sources are evidence and
- * may differ: each is judged on its own.
- */
 function intentOf(events: readonly VaultEvent<"message.out">[]): IntentStatus {
   const first = events[0]!.data;
   for (const { data } of events) {
@@ -423,7 +424,15 @@ function intentOf(events: readonly VaultEvent<"message.out">[]): IntentStatus {
   return { status: "consistent", data: first };
 }
 
-function sameIntent(a: MessageOut, b: MessageOut): boolean {
+/**
+ * Two records of one message are one intent when they agree on the
+ * intent CID, the sender, the canonical recipient, the effect tuple and
+ * its key, and the rotation they announce. The intent CID reads a self
+ * reference in any spelling, and an absent thread, as one, so the
+ * spelling a record keeps is no part of the comparison. Their sources
+ * are evidence and may differ: each is judged on its own.
+ */
+export function sameIntent(a: MessageOut, b: MessageOut): boolean {
   return (
     a.intentCid === b.intentCid &&
     a.senderDidId === b.senderDidId &&

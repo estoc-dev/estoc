@@ -31,8 +31,9 @@
 - **Records of one message agree by intent**: `message.out` records
   under one message ID are one intent when they agree on the intent
   CID, the sender, the canonical recipient, the effect tuple and the
-  rotation; each automatic record's source is checked on its own, so
-  two records naming two observations of one input are one intent.
+  rotation (`sameIntent`); each automatic record's source is checked on
+  its own, so two records naming two observations of one input are one
+  intent.
   The schema recomputes `intentCid` of `message.out` and `message.in`
   from the event's own fields, the message ID or the wire ID being the
   own ID. A notification's thread and receipt request are read through
@@ -43,7 +44,9 @@
   `OutboundFold.effectResult(executionId, effectType)` reads what an
   operation came to (`EffectResult`): `produced`, `skipped` with each
   `Skip`'s source checked as an intent's is, `pending`, or `conflict`
-  when both an output and a skip are recorded. `automaticIntent`
+  when both an output and a skip are recorded. That conflict is also
+  the output's own effect conflict: its outcome is `conflict` and its
+  work `none`, its preparations and submissions kept. `automaticIntent`
   carries it as `result`, and `unfinishedWork` lists a missing response
   only while its result is pending.
 - **Each message layer has its CID**: `IntentCid`, `PlaintextCid` and

@@ -73,7 +73,7 @@ const peerOf = (channelId: ChannelId): string => {
           </p>
           <p v-if="outbound.because" class="note">{{ outbound.because }}</p>
           <template v-if="outbound.entries.includes('selectPreparation')">
-            <p class="note">It was sealed on more than one device. Choose the copy this device sends, then send it. If another device sent its copy, it may arrive twice.</p>
+            <p class="note">Choose the copy this device sends, then send it. If another device sent its copy, it may arrive twice.</p>
             <div class="card-actions" data-preparations>
               <button
                 v-for="(cid, i) in outbound.candidates"

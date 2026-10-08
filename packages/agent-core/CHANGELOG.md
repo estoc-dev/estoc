@@ -36,7 +36,10 @@
   its own `now`), so every user message goes out with `created_time`. A
   send repeated under a recorded message ID that gives no time or null
   reads the recorded one before comparing, so a moved clock never makes
-  it another intent; another non-null time is another intent.
+  it another intent; another non-null time is another intent. The
+  comparison is the fold's `sameIntent`, so a repetition is the recorded
+  intent whatever spelling of its self references it or any merged
+  record of it keeps.
 - **Effects are decided by their recorded result**: each operation reads
   its tuple's result before the body is read or the handler asked. An
   output recorded is reused, a skip stands, and only a pending operation

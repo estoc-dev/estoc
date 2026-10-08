@@ -29,7 +29,7 @@ import {
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, automaticDraft, createDid, retireDid, send, type Content, routeOf } from "../src/index.js";
-import { directParty, received, type DirectParty } from "./helpers.js";
+import { directParty, merged, received, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -151,6 +151,26 @@ describe("send to a channel", () => {
     await contact(alice, OTHER, [toBob]);
     expect((await send(alice.runtime, alice.keys, { contactId: OTHER }, HELLO, { messageId: MESSAGE })).existed).toBe(true);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(1);
+    await closeAll(alice, bob, carol);
+  });
+
+  test("a send repeated under its message ID returns what was committed once another replica's record of the intent, spelling its self references otherwise, has merged before or after it, for the request as first made or in the other spelling", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const content: Content = { ...HELLO, pleaseAck: [""] };
+    for (const offset of [-1000, 1000]) {
+      const sent = await send(alice.runtime, alice.keys, { channel: toBob }, content);
+      const { messageId } = sent;
+      const spelled = { thid: messageId.toUpperCase(), pleaseAck: [messageId.toUpperCase()] };
+      await merged(alice.runtime, "message.out", { ...sent.intent.data, ...spelled }, new Date(Date.parse(sent.intent.at) + offset).toISOString());
+      const outbound = (await fold(alice)).outbound.outbounds.get(messageId)!;
+      expect([outbound.intent.status, outbound.intents.length, outbound.intents[0]!.cid === sent.intent.cid]).toEqual(["consistent", 2, offset > 0]);
+      for (const again of [content, { ...content, ...spelled }]) {
+        const repeated = await send(alice.runtime, alice.keys, { channel: toBob }, again, { messageId });
+        expect([repeated.existed, repeated.intent.cid]).toEqual([true, outbound.intents[0]!.cid]);
+      }
+      await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...content, pleaseAck: null }, { messageId })).rejects.toBeInstanceOf(EntityConflict);
+    }
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(4);
     await closeAll(alice, bob, carol);
   });
 
