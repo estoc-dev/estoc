@@ -186,9 +186,9 @@ describe("precheck", () => {
     const bare = await ending(b0, null);
     expect(precheckFromPrior(bare, { authenticatedSender: b0.longForm })).toEqual(inspectFromPrior(bare));
     const proof = await verifyFromPrior(addressed, b0.document);
-    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: b0.longForm }, { transitionId: "e1" })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
-    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: null }, { transitionId: "e1" })).toMatchObject({ status: "bound" });
-    expect(bindFromPrior(await verifyFromPrior(bare, b0.document), { ref: "receipt-e", token: bare, recipient: a0.longForm, sender: null }, { transitionId: "e1" })).toMatchObject({ status: "unbound" });
+    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: b0.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
+    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: null })).toMatchObject({ status: "bound" });
+    expect(bindFromPrior(await verifyFromPrior(bare, b0.document), { ref: "receipt-e", token: bare, recipient: a0.longForm, sender: null })).toMatchObject({ status: "unbound" });
   });
 });
 
@@ -356,51 +356,50 @@ describe("bind", () => {
   it("binds a rotation to the receipt from the successor and yields a transition and an observation that the model accepts", async () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.document);
-    const binding = bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient: a0.longForm, sender: b1.longForm }, { transitionId: "p1", observationId: "o1" });
+    const binding = bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient: a0.longForm, sender: b1.longForm });
     expect(binding).toEqual({
       status: "bound",
       facts: [
-        { kind: "peer-transition", id: "p1", at: { localDid: a0.shortForm, peerDid: b0.shortForm }, change: { kind: "rotate", successor: b1.shortForm }, receipt: "receipt-1" },
-        { kind: "address-observed", id: "o1", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, carriedTransition: "p1", receipt: "receipt-1" },
+        { kind: "peer-transition", at: { localDid: a0.shortForm, peerDid: b0.shortForm }, change: { kind: "rotate", successor: b1.shortForm }, evidence: "receipt-1" },
+        { kind: "address-observed", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, carried: true, evidence: "receipt-1" },
       ],
     });
     if (binding.status !== "bound") throw new Error(binding.status);
     const model = deriveContinuity(binding.facts);
-    expect(model.head({ localDid: a0.shortForm, peerDid: b0.shortForm })).toEqual({ status: "head", channel: { localDid: a0.shortForm, peerDid: b1.shortForm }, support: ["p1"] });
+    expect(model.head({ localDid: a0.shortForm, peerDid: b0.shortForm })).toEqual({ status: "head", channel: { localDid: a0.shortForm, peerDid: b1.shortForm }, support: [{ kind: "peer-transition", evidence: "receipt-1" }] });
     expect(model.confirmation(a0.shortForm, b0.shortForm)).toMatchObject({ status: "confirmed" });
   });
 
-  it("binds a topology-only transition when no observation ID is given, and accepts the short-form sender", async () => {
+  it("accepts the short-form recipient and sender", async () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.document);
-    const binding = bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient: a0.shortForm, sender: b1.shortForm }, { transitionId: "p1" });
-    expect(binding).toMatchObject({ status: "bound", facts: [{ kind: "peer-transition", id: "p1" }] });
+    const long = bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient: a0.longForm, sender: b1.longForm });
+    expect(bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient: a0.shortForm, sender: b1.shortForm })).toEqual(long);
   });
 
   it("reports a mismatch instead of a fact for the wrong token, sender or recipient", async () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.document);
-    const ids = { transitionId: "p1", observationId: "o1" };
-    expect(bindFromPrior(proof, { ref: "r", token: await rotation(b0, b1, {}, { iat: IAT + 1 }), recipient: a0.longForm, sender: b1.longForm }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("token") });
-    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: a0.longForm, sender: b0.longForm }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
-    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: a0.longForm, sender: null }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("authenticated sender") });
-    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: b0.longForm, sender: b1.longForm }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("issuer") });
-    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: b1.longForm, sender: b1.longForm }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("successor") });
-    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: "did:web:a0.example", sender: b1.longForm }, ids)).toMatchObject({ status: "mismatch", because: expect.stringContaining("did:peer:4") });
+    expect(bindFromPrior(proof, { ref: "r", token: await rotation(b0, b1, {}, { iat: IAT + 1 }), recipient: a0.longForm, sender: b1.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("token") });
+    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: a0.longForm, sender: b0.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
+    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: a0.longForm, sender: null })).toMatchObject({ status: "mismatch", because: expect.stringContaining("authenticated sender") });
+    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: b0.longForm, sender: b1.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("issuer") });
+    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: b1.longForm, sender: b1.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("successor") });
+    expect(bindFromPrior(proof, { ref: "r", token: jwt, recipient: "did:web:a0.example", sender: b1.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("did:peer:4") });
   });
 
   it("binds an ending only to the recipient it names, on an anonymous receipt", async () => {
     const addressed = await ending(b0, a0);
     const proof = await verifyFromPrior(addressed, b0.document);
-    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: null }, { transitionId: "e1" })).toEqual({
+    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: null })).toEqual({
       status: "bound",
-      facts: [{ kind: "peer-transition", id: "e1", at: { localDid: a0.shortForm, peerDid: b0.shortForm }, change: { kind: "end" }, receipt: "receipt-e" }],
+      facts: [{ kind: "peer-transition", at: { localDid: a0.shortForm, peerDid: b0.shortForm }, change: { kind: "end" }, evidence: "receipt-e" }],
     });
-    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: b1.longForm, sender: null }, { transitionId: "e1" })).toMatchObject({ status: "mismatch", because: expect.stringContaining("aud") });
-    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: b0.longForm }, { transitionId: "e1" })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
+    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: b1.longForm, sender: null })).toMatchObject({ status: "mismatch", because: expect.stringContaining("aud") });
+    expect(bindFromPrior(proof, { ref: "receipt-e", token: addressed, recipient: a0.longForm, sender: b0.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
     const unaddressed = await ending(b0, null);
     const bare = await verifyFromPrior(unaddressed, b0.document);
-    expect(bindFromPrior(bare, { ref: "receipt-e", token: unaddressed, recipient: a0.longForm, sender: null }, { transitionId: "e1" })).toMatchObject({ status: "unbound", because: expect.stringContaining("audience") });
+    expect(bindFromPrior(bare, { ref: "receipt-e", token: unaddressed, recipient: a0.longForm, sender: null })).toMatchObject({ status: "unbound", because: expect.stringContaining("audience") });
   });
 });
 
@@ -413,7 +412,7 @@ describe("create", () => {
     expect(inspectFromPrior(proof.token)).toEqual({ header: { alg: "EdDSA", typ: "JWT", kid: b0.kid }, claims: { iss: b0.longForm, sub: b1.longForm, aud: undefined, iat: IAT } });
     const again = await verifyFromPrior(proof.token, b0.document);
     expect(again.token).toBe(proof.token);
-    expect(bindFromPrior(again, { ref: "r", token: proof.token, recipient: a0.longForm, sender: b1.longForm }, { transitionId: "p1" })).toMatchObject({ status: "bound" });
+    expect(bindFromPrior(again, { ref: "r", token: proof.token, recipient: a0.longForm, sender: b1.longForm })).toMatchObject({ status: "bound" });
   });
 
   it("creates an ending proof addressed to the peer", async () => {
