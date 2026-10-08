@@ -1,6 +1,6 @@
 # @estoc/post
 
-The `https://estoc.dev/post/1.0` type format for [folder-objects](../folder-object): a post is an object whose principal bytes are authored text. Vocabulary contract: [folder-object/formats/post-1.0.md](https://github.com/estoc-net/folder-object/blob/main/formats/post-1.0.md).
+The `https://estoc.dev/post/1.0` type format for [folder-objects](../folder-object): a post is an object whose principal bytes are authored text. Vocabulary contract: [folder-object/formats/post-1.0.md](https://github.com/estoc-dev/folder-object/blob/main/formats/post-1.0.md).
 
 Pure functions, no IO; runs in Node, workerd, and the browser.
 

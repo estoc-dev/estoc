@@ -1,4 +1,4 @@
-# estoc-net/estoc
+# estoc-dev/estoc
 
 The Estoc web app, the libraries it is made of and the mediator it talks
 through, in one pnpm workspace:
@@ -118,14 +118,14 @@ notices, but consumers on npm will.
 ## History
 
 This repository was assembled on 2026-08-16 from four repositories —
-[estoc-net/did-peer], [estoc-net/keystore], [estoc-net/agent-core],
-[estoc-net/app] — with `git filter-repo --to-subdirectory-filter`, so each
+[estoc-dev/did-peer], [estoc-dev/keystore], [estoc-dev/agent-core],
+[estoc-dev/app] — with `git filter-repo --to-subdirectory-filter`, so each
 package's full history is here under its current path (`git log --follow`
 works across the move). The originals are archived. The mediator joined
-the same way on 2026-10-01, from [estoc-net/didcomm-mediator].
+the same way on 2026-10-01, from [estoc-dev/didcomm-mediator].
 
-[estoc-net/didcomm-mediator]: https://github.com/estoc-net/didcomm-mediator
-[estoc-net/did-peer]: https://github.com/estoc-net/did-peer
-[estoc-net/keystore]: https://github.com/estoc-net/keystore
-[estoc-net/agent-core]: https://github.com/estoc-net/agent-core
-[estoc-net/app]: https://github.com/estoc-net/app
+[estoc-dev/didcomm-mediator]: https://github.com/estoc-dev/didcomm-mediator
+[estoc-dev/did-peer]: https://github.com/estoc-dev/did-peer
+[estoc-dev/keystore]: https://github.com/estoc-dev/keystore
+[estoc-dev/agent-core]: https://github.com/estoc-dev/agent-core
+[estoc-dev/app]: https://github.com/estoc-dev/app

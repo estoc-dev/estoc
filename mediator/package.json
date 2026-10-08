@@ -7,7 +7,7 @@
   "author": "merely",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/estoc-net/estoc.git",
+    "url": "git+https://github.com/estoc-dev/estoc.git",
     "directory": "mediator"
   },
   "type": "module",
@@ -20,7 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.workers.json",
-    "docker:build": "docker build -f Dockerfile -t ghcr.io/estoc-net/didcomm-mediator ..",
+    "docker:build": "docker build -f Dockerfile -t ghcr.io/estoc-dev/didcomm-mediator ..",
     "dev:workers": "wrangler dev",
     "deploy": "wrangler deploy",
     "smoke": "tsx scripts/smoke.ts"

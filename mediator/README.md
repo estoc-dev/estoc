@@ -22,7 +22,7 @@ The mediator is built from the [estoc workspace](../README.md) it is part
 of, so deploy from a clone of the whole repository:
 
 ```sh
-git clone https://github.com/estoc-net/estoc && cd estoc
+git clone https://github.com/estoc-dev/estoc && cd estoc
 pnpm install
 cd mediator
 pnpm exec wrangler d1 create mediator    # paste database_id into wrangler.jsonc
@@ -48,7 +48,7 @@ replica-mediation off fails the smoke, since the app cannot enroll with it.
 ## Quick start (Docker)
 
 ```sh
-git clone https://github.com/estoc-net/estoc && cd estoc/mediator
+git clone https://github.com/estoc-dev/estoc && cd estoc/mediator
 MEDIATOR_PUBLIC_URL=https://mediator.example.com docker compose up -d
 curl -s https://mediator.example.com/
 ```
@@ -468,9 +468,9 @@ pnpm run typecheck
   didcomm WASM is the same Rust either way.
 
 The DIDComm layer (pack/unpack via
-[@estoc/didcomm-node](https://github.com/estoc-net/didcomm-rust), did:peer:2/4 and did:web
+[@estoc/didcomm-node](https://github.com/estoc-dev/didcomm-rust), did:peer:2/4 and did:web
 resolution) is shared lineage with
-[didcomm-http](https://github.com/estoc-net/didcomm-http).
+[didcomm-http](https://github.com/estoc-dev/didcomm-http).
 
 ## Status
 

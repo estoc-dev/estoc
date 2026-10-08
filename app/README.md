@@ -1,6 +1,6 @@
 # Estoc
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/estoc-net/estoc)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/estoc-dev/estoc)
 
 An offline-first DIDComm v2 messenger you install as a web app. One
 identity from one seed, minted in your browser; your contacts and message
@@ -87,7 +87,7 @@ your data never touches the place the app was served from.
 
 ## Run it
 
-This directory is one package of the [estoc-net/estoc] workspace, alongside
+This directory is one package of the [estoc-dev/estoc] workspace, alongside
 the libraries it is built from (`packages/daemon-api` for the view, and
 `packages/{daemon,agent-core,event-store,keystore}` for the worker it hosts),
 which it takes straight from the tree — no publish step between a library
@@ -228,9 +228,9 @@ Nothing here has had an independent security audit.
 
 Apache-2.0
 
-[@estoc/agent-core]: https://github.com/estoc-net/estoc/tree/main/packages/agent-core
-[@estoc/keystore]: https://github.com/estoc-net/estoc/tree/main/packages/keystore
-[@estoc/event-store]: https://github.com/estoc-net/estoc/tree/main/packages/event-store
-[didcomm-mediator]: https://github.com/estoc-net/estoc/tree/main/mediator
+[@estoc/agent-core]: https://github.com/estoc-dev/estoc/tree/main/packages/agent-core
+[@estoc/keystore]: https://github.com/estoc-dev/estoc/tree/main/packages/keystore
+[@estoc/event-store]: https://github.com/estoc-dev/estoc/tree/main/packages/event-store
+[didcomm-mediator]: https://github.com/estoc-dev/estoc/tree/main/mediator
 [vite-plugin-pwa]: https://vite-pwa-org.netlify.app/
-[estoc-net/estoc]: https://github.com/estoc-net/estoc
+[estoc-dev/estoc]: https://github.com/estoc-dev/estoc

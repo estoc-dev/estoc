@@ -1,6 +1,6 @@
 # @estoc/folder-object
 
-Reference implementation of the [folder-object](https://github.com/estoc-net/folder-object) format — *an object is a folder* — in three layers, one package:
+Reference implementation of the [folder-object](https://github.com/estoc-dev/folder-object) format — *an object is a folder* — in three layers, one package:
 
 - **tree** — hash a mapping (path → bytes) into a UnixFS merkle DAG under IPIP-499's `unixfs-v1-2025` profile, the same root CID as `ipfs add` (kubo ≥ 0.40), empty directories included; verify an object set against a root; resolve one path block by block, each hop proven against its CID. CID/IPLD **as a format, not as infrastructure**: no DHT, no IPNS, no pinning;
 - **object** — read a mapping as an object: enumerate the canonical tree (`index.json` + `files/…`, minus hidden `.`-prefixed entries as the UnixFS profile excludes them), validate the index (format / closure layers, spec §8), drop litter; hash it to its version identity, the root CID;
