@@ -17,7 +17,7 @@ import {
   kindOf,
   type DidId,
   type Keys,
-  type MessageHash,
+  type IntentCid,
   type ReadObject,
   type Source,
   type VaultChecks,
@@ -25,12 +25,11 @@ import {
   type VaultData,
   type WireMessageId,
 } from "../../src/index.js";
-import { AUTHOR, AUTHOR2, HASH, cidOf, expectOrderFree, type Scene, fakeEventCid } from "./helpers.js";
+import { AUTHOR, AUTHOR2, INTENT_CID, cidOf, expectOrderFree, type Scene, fakeEventCid, OTHER_INTENT_CID } from "./helpers.js";
 import { IAT, blocked, noObjects, proof, receipt, resolved, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys | null, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
 
-const OTHER_HASH = "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash;
 
 const readerOf = (objects: Map<Cid, Uint8Array>) => async (wanted: Cid) => objects.get(wanted) ?? null;
 
@@ -42,13 +41,13 @@ async function resign(keys: Keys, didId: DidId, header: Record<string, unknown>,
     .sign(await importJWK(key.privateJwk(), "EdDSA"));
 }
 
-type Observation = { local: Local; peer: Peer; wire: string; hash?: MessageHash; fromPrior?: string; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; at?: string };
+type Observation = { local: Local; peer: Peer; wire: string; hash?: IntentCid; fromPrior?: string; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; at?: string };
 
 /** An authenticated receipt under its own resolution, of the given wire and intent. */
 const observe = (scene: Scene, o: Observation) =>
   receipt(
     scene,
-    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer), wire: o.wire, fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides } },
+    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer), wire: o.wire, fromPrior: o.fromPrior ?? null, overrides: { intentCid: o.hash ?? (INTENT_CID as IntentCid), ...o.overrides } },
     { author: o.author ?? AUTHOR, at: o.at }
   );
 
@@ -62,7 +61,7 @@ function picture(vault: VaultFold) {
       channel: execution.channel,
       members: execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness]),
       siblings: execution.siblings.map(standingOf),
-      intentHash: execution.intentHash,
+      intentCid: execution.intentCid,
       kind: execution.kind,
       status: execution.status,
       because: execution.status === "complete" ? null : execution.because,
@@ -96,7 +95,7 @@ describe("an inbound input", () => {
       channel: { localDid: a0.did, peerDid: b0.did },
       wireMessageId: wire,
       siblings: [],
-      intentHash: HASH,
+      intentCid: INTENT_CID,
       kind: "application",
       status: "complete",
       erased: false,
@@ -138,11 +137,11 @@ describe("an inbound input", () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
     const wire = uuidv7();
     const plain = observe(scene, { local: a0, peer: b1, wire });
-    const carried = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: await proof(peerKeys, b0, b1) });
+    const carried = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_INTENT_CID, fromPrior: await proof(peerKeys, b0, b1) });
     let vault = await fold(scene, keys);
     const conflict = { status: "conflict", because: "2 intents are admitted for one input" };
     let execution = vault.inbound.ofMessage(plain.data.messageId)!;
-    expect(execution).toMatchObject({ ...conflict, intentHash: null, kind: null });
+    expect(execution).toMatchObject({ ...conflict, intentCid: null, kind: null });
     expect(execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness])).toEqual([
       [plain.cid, true, { status: "complete" }],
       [carried.cid, true, { status: "complete" }],
@@ -166,11 +165,11 @@ describe("an inbound input", () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const wire = uuidv7();
     const shortIssuer = await resign(peerKeys, b0.didId, { alg: "EdDSA", typ: "JWT", kid: `${b0.did}${AUTHENTICATION_METHOD}` }, { iss: b0.did, sub: b1.longFormDid, iat: IAT });
-    const refused = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: "not a JWT" });
-    const waiting = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_HASH, fromPrior: shortIssuer });
+    const refused = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_INTENT_CID, fromPrior: "not a JWT" });
+    const waiting = observe(scene, { local: a0, peer: b1, wire, hash: OTHER_INTENT_CID, fromPrior: shortIssuer });
     let vault = await fold(scene, keys);
     let execution = vault.inbound.ofMessage(refused.data.messageId)!;
-    expect(execution).toMatchObject({ status: "pending", because: "no observation of the input is admitted", intentHash: null, kind: null });
+    expect(execution).toMatchObject({ status: "pending", because: "no observation of the input is admitted", intentCid: null, kind: null });
     expect(execution.members.map(({ source, positive, witness }) => [source.event.cid, positive, witness])).toEqual([
       [refused.cid, false, { status: "invalid", because: expect.stringMatching(/^not a compact JWT/) }],
       [waiting.cid, false, { status: "pending", because: "the proof is not yet verified" }],
@@ -180,7 +179,7 @@ describe("an inbound input", () => {
     const plain = observe(scene, { local: a0, peer: b1, wire });
     vault = await fold(scene, keys);
     execution = vault.inbound.ofMessage(refused.data.messageId)!;
-    expect(execution).toMatchObject({ status: "complete", intentHash: HASH, kind: "application" });
+    expect(execution).toMatchObject({ status: "complete", intentCid: INTENT_CID, kind: "application" });
     expect(execution.members.map(({ source, positive }) => [source.event.cid, positive])).toEqual([
       [refused.cid, false],
       [waiting.cid, false],
@@ -196,7 +195,7 @@ describe("an inbound input", () => {
       [waiting.cid, true, "complete"],
       [plain.cid, true, "complete"],
     ]);
-    expect(execution).toMatchObject({ status: "conflict", because: "2 intents are admitted for one input", intentHash: null });
+    expect(execution).toMatchObject({ status: "conflict", because: "2 intents are admitted for one input", intentCid: null });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 

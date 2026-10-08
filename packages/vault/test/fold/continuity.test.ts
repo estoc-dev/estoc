@@ -19,13 +19,12 @@ import {
   type Channel,
   type DidId,
   type Keys,
-  type MessageHash,
   type ReadObject,
   type VaultChecks,
   type VaultFold,
   type WireMessageId,
 } from "../../src/index.js";
-import { MEDIATED, createdDid, expectOrderFree, fakeEventCid, type Scene } from "./helpers.js";
+import { MEDIATED, createdDid, expectOrderFree, fakeEventCid, type Scene, OTHER_INTENT_CID } from "./helpers.js";
 import { IAT, asPeer, blocked, channel, factsOf, noObjects, peerDid, proof, receipt, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
@@ -209,7 +208,7 @@ describe("a channel", () => {
     expect(vault.continuity.confirmedBy(a1.did, b0.did)).toBeNull();
     expectSameOverEveryOrder(scene, vault.checks);
 
-    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire: later.data.wireMessageId, overrides: { intentHash: "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash } });
+    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire: later.data.wireMessageId, overrides: { intentCid: OTHER_INTENT_CID } });
     vault = await fold(scene, keys);
     expect(vault.inbound.ofSource(later.cid)).toMatchObject({ status: "conflict", because: "2 intents are admitted for one input" });
     const admitted = [later, contradicting].map((source) => observation(source, a0, b0).id);

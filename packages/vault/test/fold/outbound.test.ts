@@ -19,7 +19,6 @@ import {
   inboundMessageId,
   type DidId,
   type Keys,
-  type MessageHash,
   type MessageId,
   type MessageOut,
   type Outbound,
@@ -30,12 +29,11 @@ import {
   type VaultFold,
   type WireMessageId,
 } from "../../src/index.js";
-import { AUTHOR2, Scene, cidOf, expectOrderFree, fakeEventCid } from "./helpers.js";
+import { AUTHOR2, Scene, cidOf, expectOrderFree, fakeEventCid, OTHER_INTENT_CID } from "./helpers.js";
 import { PEER_ID3, PURE_ACK, admitted, automatic, blocked, channel, intent, noObjects, packageOf, peerAgreeingOn, peerAgreeingOnBoth, proof, receipt, ref, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
 
-const OTHER_HASH = "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash;
 
 const P256_KEY = (() => {
   const point = p256.getPublicKey(new Uint8Array(32).fill(1), false);
@@ -173,7 +171,7 @@ describe("an outbound message", () => {
 
     const contradictions: [string, Parameters<typeof packageOf>[2]][] = [
       ["the package's sender is not the intent's", { sender: a1.didId, recipient: b0, resolution: resolved(scene, a1.didId, b0) }],
-      ["the package's intent hash is not the intent's", { sender: a0.didId, recipient: b0, resolution: root, overrides: { intentHash: OTHER_HASH } }],
+      ["the package's intent CID is not the intent's", { sender: a0.didId, recipient: b0, resolution: root, overrides: { intentCid: OTHER_INTENT_CID } }],
       ["the package's recipient is not the intent's", { sender: a0.didId, recipient: b1, resolution: resolved(scene, a0.didId, b1) }],
       ["the resolution it names was not taken at the package's key", { sender: a0.didId, recipient: b0, resolution: resolved(scene, a1.didId, b0) }],
       ["the resolution it names is not of the recipient", { sender: a0.didId, recipient: b0, resolution: resolved(scene, a0.didId, b1) }],
@@ -248,7 +246,7 @@ describe("an outbound message", () => {
     expectSameOverEveryOrder(scene, vault.checks);
 
     const competing = packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
-    scene.add("message.out", { ...out.data, intentHash: OTHER_HASH });
+    scene.add("message.out", { ...out.data, intentCid: OTHER_INTENT_CID });
     vault = await fold(scene, keys);
     const outbound = outboundOf(vault, out);
     expect(outbound.intent).toEqual({ status: "conflict", because: "the intents recorded under one message ID disagree" });
@@ -350,7 +348,7 @@ describe("an outbound message", () => {
     let vault = await fold(scene, keys);
     expect(outboundOf(vault, out).ackWitnesses.map(({ source }) => source.event.cid)).toEqual([first.cid]);
 
-    const second = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { ack: [out.data.messageId], intentHash: OTHER_HASH } });
+    const second = receipt(scene, { local: a0, peer: b0, resolution: root, wire, overrides: { ack: [out.data.messageId], intentCid: OTHER_INTENT_CID } });
     vault = await fold(scene, keys);
     expect(vault.continuity.witness(first.cid).status).toBe("complete");
     expect(vault.continuity.witness(second.cid).status).toBe("complete");
@@ -370,13 +368,13 @@ describe("an outbound message", () => {
     const waitingCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [waiting.data.messageId] } });
     acknowledged(scene, waiting, waitingCarrier, b0, a0);
     const contradicted = intent(scene, a0, b0);
-    packageOf(scene, contradicted, { sender: a0.didId, recipient: b0, resolution: root, overrides: { intentHash: OTHER_HASH } });
+    packageOf(scene, contradicted, { sender: a0.didId, recipient: b0, resolution: root, overrides: { intentCid: OTHER_INTENT_CID } });
     const contradictedCarrier = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [contradicted.data.messageId] } });
     acknowledged(scene, contradicted, contradictedCarrier, b0, a0);
     let vault = await fold(scene, keys);
     expect(outboundOf(vault, unpackaged)).toMatchObject({ ackWitnesses: [], acknowledged: false, late: false, acknowledgements: [{ status: { status: "pending", because: "no package is prepared here" } }], work: { kind: "prepare" } });
     expect(outboundOf(vault, waiting)).toMatchObject({ acknowledged: false, acknowledgements: [{ status: { status: "pending", because: "the resolution it names is not here" } }] });
-    expect(outboundOf(vault, contradicted)).toMatchObject({ acknowledged: false, acknowledgements: [{ status: { status: "conflict", because: "the package contradicts the intent: the package's intent hash is not the intent's" } }] });
+    expect(outboundOf(vault, contradicted)).toMatchObject({ acknowledged: false, acknowledgements: [{ status: { status: "conflict", because: "the package contradicts the intent: the package's intent CID is not the intent's" } }] });
     expectSameOverEveryOrder(scene, vault.checks);
 
     packageOf(scene, unpackaged, { sender: a0.didId, recipient: b0, resolution: root });
@@ -435,7 +433,7 @@ describe("an outbound message", () => {
     expect(outboundOf(vault, ackOfCarried).effect).toEqual({ status: "complete" });
     expect(vault.continuity.witness(carried.cid).status).toBe("complete");
 
-    receipt(scene, { local: a0, peer: b0, resolution: root, wire: source.data.wireMessageId, overrides: { intentHash: OTHER_HASH, pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
+    receipt(scene, { local: a0, peer: b0, resolution: root, wire: source.data.wireMessageId, overrides: { intentCid: OTHER_INTENT_CID, pleaseAck: [""], thid: "thread", createdTime: 1_700_000_000 } });
     vault = await fold(scene, keys);
     expect(variant(scene, vault.checks, ack, variants).effect).toEqual({ status: "conflict", because: "the source's input is in conflict: 2 intents are admitted for one input" });
     expect(outboundOf(vault, pong).effect).toEqual({ status: "complete" });
@@ -478,7 +476,7 @@ describe("an outbound message", () => {
     expect(variant(unplaced, vault.checks, ofEarlier, variants).effect).toEqual({ status: "conflict", because: "a pure ACK names its carrier alone" });
     expectOrderFree(unplaced.events, (set) => picture(foldVault(set, vault.checks)));
 
-    const contradicting = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, wire: source.data.wireMessageId, admitted: false, overrides: { intentHash: OTHER_HASH } });
+    const contradicting = receipt(scene, { local: a0, peer: b1, resolution: successorRoot, wire: source.data.wireMessageId, admitted: false, overrides: { intentCid: OTHER_INTENT_CID } });
     vault = await fold(scene, keys);
     expect(vault.inbound.ofSource(source.cid)!.contradicting.map((member) => member.source.event.cid)).toEqual([contradicting.cid]);
     expect(vault.outbound.ackTarget(source.cid)).toEqual({ status: "eligible", wireMessageId: source.data.wireMessageId });
@@ -755,7 +753,7 @@ describe("an outbound message", () => {
     const silent = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [] } });
     const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] }, admitted: false });
     const disputed = receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { pleaseAck: [""] } });
-    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: root, wire: disputed.data.wireMessageId, admitted: false, overrides: { intentHash: OTHER_HASH } });
+    const contradicting = receipt(scene, { local: a0, peer: b0, resolution: root, wire: disputed.data.wireMessageId, admitted: false, overrides: { intentCid: OTHER_INTENT_CID } });
     const vault = await fold(scene, keys);
     expect(vault.dispositions.disposition(ignored.cid).status).toBe("ignored-superseded");
     expect(vault.inbound.ofSource(disputed.cid)!.contradicting.map((member) => member.source.event.cid)).toEqual([contradicting.cid]);

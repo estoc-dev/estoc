@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **Each message layer has its CID**: `IntentCid`, `PlaintextCid` and
+  `EnvelopeCid` are the raw CIDs of the intent projection, the complete
+  plaintext and the normalized encrypted envelope, each its own type, so
+  one role is not handed in for another; the event CID stays the fourth
+  layer. `message.out.intentCid`, `message.in.intentCid` and
+  `plaintextCid`, and the preparation's three CIDs replace the
+  base64url SHA-256 `intentHash` and `plaintextHash`; `MessageHash` is
+  gone, and the schema checks the fields as raw CIDs. `Execution` carries
+  `intentCid` where it carried `intentHash`.
+- **The intent is a value under its CID**: `intentOf(ownId, control,
+  document)` makes an `Intent` from the control headers as the wire
+  spells them (`ControlHeaders`), the own ID and the stored document's
+  CID, checking, copying and freezing each field before the CID is
+  taken, and hands back `{ cid, value }` (`Identified`). The intent no
+  longer carries the own `id`: a thread or an ACK request naming the
+  message itself, under either case, is the self reference `SELF`
+  (`""`), and `document` is the document's CID rather than the document.
+  The CID is of `["estoc.message.intent", 1, projection]`;
+  `intentProjection` shows the projection. `intentOfOutbound(data)` and
+  `intentOfInbound(data)` read the recorded intent from an event's
+  payload, by its message ID or its wire ID. `semanticProjection`,
+  `intentHash` and `plaintextHash` are gone; `plaintextCidOf(plaintext)`
+  is the plaintext's CID.
+- **`readPlaintext` keeps the spelling apart from the intent**: it hands
+  back the plaintext `id` as spelled, the `control` headers as spelled,
+  which the events record, the `intent` under its CID and the
+  `plaintextCid`. `wirePlaintext(intent, id, document, addressing,
+  payloadOf)` takes the message ID and the stored document beside the
+  intent, refuses a document that is not the one the intent names, and
+  writes a self thread by omitting `thid` and a self ACK request as
+  `""`, whichever spelling the intent was recorded from.
+- **The envelope and the document have their constructors**:
+  `envelopeOf(packed)` parses the packed envelope strictly and hands back
+  its canonical bytes under their `EnvelopeCid`; `documentCidOf(document)`
+  is the CID of a stored document. `canonicalWireId` folds a wire ID's
+  ASCII letters to lower case, the spelling references are compared by.
 - **A source's standing is its type**: `Source` is its common fields with
   one of four members, told apart by `status`: `complete` with
   `localDidId`, `resolution` and `channel` all present, `incomplete` with
@@ -14,7 +50,7 @@
   rotation candidate's sources carry it. `Standing` is no longer exported.
 - **An input's standing is its type**: `Execution` is its common fields
   with one of three members, told apart by `status`: `complete` with
-  `intentHash`, `kind` and `firstWitness` all present, `pending` with
+  `intentCid`, `kind` and `firstWitness` all present, `pending` with
   `because` and the admitted intent once one is admitted, and `conflict`
   with `because` and no intent. `status` is now the string itself and
   `because` sits beside it, in place of the `{ status, because }` object;

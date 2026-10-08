@@ -34,14 +34,14 @@
 import { v7 as uuidv7 } from "uuid";
 
 import { isShortForm } from "@estoc/did-peer";
-import { canonicalize, isJsonObject, parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
+import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
 import {
   InvalidPublicKey,
   agreementKey,
+  envelopeOf,
   intentOfOutbound,
   objectReader,
-  plaintextHash,
-  rawCidOfBytes,
+  plaintextCidOf,
   readStoredDocument,
   readVaultEvent,
   rotationIntent,
@@ -198,17 +198,14 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
   if ("because" in ends) return { result: { outcome: "none", messageId, because: ends.because }, notes };
   const content = await readContent(held, intent);
   if ("pending" in content) return { result: { outcome: "pending", messageId, because: content.pending }, notes };
-  const plaintext = wirePlaintext(intentOfOutbound(intent, content.document), { from: ends.from, to: [channel.peerDid], fromPrior: ends.fromPrior }, (root) => content.payloads.get(root) as Uint8Array);
+  const plaintext = wirePlaintext(intentOfOutbound(intent).value, messageId, content.document, { from: ends.from, to: [channel.peerDid], fromPrior: ends.fromPrior }, (root) => content.payloads.get(root) as Uint8Array);
   const packed = await pack(fold, sender, ends, plaintext, options.didcomm);
-  const envelope = parseStrict(packed);
-  if (!isJsonObject(envelope)) throw new TypeError("the encrypted envelope is a JSON object");
-  const bytes = canonicalize(envelope);
-  const envelopeCid = rawCidOfBytes(bytes);
+  const envelope = envelopeOf(packed);
   const packageId = uuidv7() as PackageId;
   const resolved = await commitResolution(held, { resolution: ends.resolution, localKeyName: sender.keyNames.keyAgreement, peerPublicKey: ends.peerPublicKey });
   const [prepared] = (
     await held.commit(
-      [{ cid: envelopeCid, source: bytes }],
+      [{ cid: envelope.cid, source: envelope.value }],
       [
         vaultDraft("message.prepared", {
           messageId,
@@ -218,9 +215,9 @@ async function packageOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outb
           recipientDid: channel.peerDid,
           peerResolutionEventCid: resolved.cid as EventReference<"peer.resolved">,
           fromPrior: ends.fromPrior,
-          intentHash: intent.intentHash,
-          plaintextHash: plaintextHash(plaintext),
-          envelopeCid,
+          intentCid: intent.intentCid,
+          plaintextCid: plaintextCidOf(plaintext),
+          envelopeCid: envelope.cid,
         }),
       ]
     )

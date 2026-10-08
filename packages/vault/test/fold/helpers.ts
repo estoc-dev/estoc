@@ -14,6 +14,8 @@ import {
   type Did,
   type DidGeneration,
   type DidId,
+  type IntentCid,
+  type PlaintextCid,
   type KeyName,
   type MediationId,
   type KeyCheck,
@@ -42,10 +44,12 @@ export const MEDIATION2: MediationId = mediationIdOf(ROUTING_DID2);
 export const ENDPOINT = "https://ingress.example/didcomm";
 export const MEDIATED: RouteTarget = { kind: "mediated", routingDid: ROUTING_DID };
 export const DIRECT: RouteTarget = { kind: "direct", endpoint: ENDPOINT };
-export const HASH = "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA";
-
 const encoder = new TextEncoder();
 export const cidOf = (text: string) => rawCidOfBytes(encoder.encode(text));
+/** intent CIDs as the schema tells them: raw CIDs, of nothing in particular */
+export const INTENT_CID = cidOf("intent") as IntentCid;
+export const OTHER_INTENT_CID = cidOf("another intent") as IntentCid;
+export const PLAINTEXT_CID = cidOf("plaintext") as PlaintextCid;
 
 /** A vault in memory holding the scene's events and the bytes of every text named. */
 export async function vaultOf(scene: Scene, texts: readonly string[] = []): Promise<MemoryVault> {

@@ -6,7 +6,7 @@ import { FlattenedEncrypt, importJWK } from "jose";
 
 import { resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
 import { InvalidJson, canonicalize, parseStrict } from "@estoc/event-store";
-import { scanVault, storeMessage, wirePlaintext, type Did, type DidId, type Intent } from "@estoc/vault";
+import { intentOf, scanVault, storeMessage, wirePlaintext, type Did, type DidId } from "@estoc/vault";
 
 import { EnvelopeRefused, secretsResolverFor, unpack, type DidcommApi, type IMessage, type SecretsResolver } from "../src/protocol/didcomm.js";
 import { Keyring, createDid } from "../src/index.js";
@@ -287,8 +287,8 @@ describe("the plaintext read", () => {
       { id: "link", data: { links: ["https://example.invalid/a", "https://example.invalid/b"], hash: "zQmYmVjaWFs" } },
     ];
     const stored = storeMessage({ content: "hi", z: null, deep: { list: [{}, [], ""] } }, attachments);
-    const intent: Intent = { id: "m1", type: "https://didcomm.org/basicmessage/2.0/message", thid: "t1", pthid: "p1", document: stored.document, createdTime: 1788442800, expiresTime: 1788443800, pleaseAck: [""], ack: ["a1", "A1"], headers: { "x-note": { a: null }, "x-list": [1, "two"] } } as Intent;
-    const plaintext = wirePlaintext(intent, { from: bob.successor.did as Did, to: [a.longFormDid], fromPrior: bob.proof }, (root) => stored.payloads.find((payload) => payload.cid === root)!.bytes);
+    const intent = intentOf("m1", { type: "https://didcomm.org/basicmessage/2.0/message", thid: "t1", pthid: "p1", createdTime: 1788442800, expiresTime: 1788443800, pleaseAck: [""], ack: ["a1", "A1"], headers: { "x-note": { a: null }, "x-list": [1, "two"] } }, stored.bodyCid);
+    const plaintext = wirePlaintext(intent.value, "m1", stored.document, { from: bob.successor.did as Did, to: [a.longFormDid], fromPrior: bob.proof }, (root) => stored.payloads.find((payload) => payload.cid === root)!.bytes);
     const [packed] = await bob.seal(a.longFormDid, plaintext as unknown as IMessage);
     const unpacked = await unpack(didcomm, packed, resolverOf(), a.secrets);
     expect(jcs(unpacked.plaintext)).toBe(jcs(plaintext));

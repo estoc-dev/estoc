@@ -115,8 +115,8 @@ describe("send to a channel", () => {
     const document = readStoredDocument(JSON.parse(new TextDecoder().decode((await read(data.bodyCid)) as Uint8Array)));
     expect(document.attachments.map((attachment) => attachment.data.kind)).toEqual(["base64", "json", "links"]);
     for (const cid of data.attachmentCids) expect(await read(cid)).toBeInstanceOf(Uint8Array);
-    expect(intentOfOutbound(data, document).document).toEqual(document);
-    expect(readPlaintext({ typ: PLAINTEXT_TYP, id: MESSAGE, type: BASIC_MESSAGE, from: alice.longFormDid, to: [bob.longFormDid], thid: "thread-1", created_time: 1_000, expires_time: 2_000, please_ack: [""], lang: "en", body: document.body, attachments: content.attachments!.map((a) => ({ ...a })) }).intentHash).toBe(data.intentHash);
+    expect(intentOfOutbound(data)).toMatchObject({ cid: data.intentCid, value: { document: data.bodyCid, thid: "thread-1" } });
+    expect(readPlaintext({ typ: PLAINTEXT_TYP, id: MESSAGE, type: BASIC_MESSAGE, from: alice.longFormDid, to: [bob.longFormDid], thid: "thread-1", created_time: 1_000, expires_time: 2_000, please_ack: [""], lang: "en", body: document.body, attachments: content.attachments!.map((a) => ({ ...a })) }).intent.cid).toBe(data.intentCid);
 
     const short = await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
     expect(short.intent.data.recipientDid).toBe(bob.longFormDid);

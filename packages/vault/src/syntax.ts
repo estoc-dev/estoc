@@ -1,7 +1,7 @@
 /**
  * The spellings the payload schemas and the documents check: what a
  * DID, a DID URL, a URI, a UUID of a given version, a key name, a
- * message hash and a compact JWT look like. Syntax only — whether a DID resolves or a JWT verifies is
+ * compact JWT look like. Syntax only — whether a DID resolves or a JWT verifies is
  * for the code that holds the evidence.
  */
 
@@ -54,8 +54,6 @@ const UUID_V5 = new RegExp(`^${UUID_BODY.replace("V", "5")}$`);
 const UUID_V5_OR_V7 = new RegExp(`^${UUID_BODY.replace("V", "[57]")}$`);
 const KEY_NAME = new RegExp(`^(?:did/${UUID_BODY.replace("V", "[57]")}/(?:authentication|key-agreement)|mediation/${UUID_BODY.replace("V", "5")}/me)$`);
 const COMPACT_JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-/** 32 bytes as unpadded base64url: 43 characters, the last one carrying two zero bits. */
-const SHA256_BASE64URL = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 
 export const isDid = (value: unknown): value is string => typeof value === "string" && DID.test(value);
 export const isDidUrl = (value: unknown): value is string => typeof value === "string" && DID_URL.test(value);
@@ -71,5 +69,4 @@ export const isDerivedId = (value: unknown): value is string => typeof value ===
 export const isEntityId = (value: unknown): value is string => typeof value === "string" && UUID_V5_OR_V7.test(value);
 export const isKeyName = (value: unknown): value is string => typeof value === "string" && KEY_NAME.test(value);
 export const isCompactJwt = (value: unknown): value is string => typeof value === "string" && COMPACT_JWT.test(value);
-export const isMessageHash = (value: unknown): value is string => typeof value === "string" && SHA256_BASE64URL.test(value);
 export const isEpochSeconds = (value: unknown): value is number => Number.isSafeInteger(value);

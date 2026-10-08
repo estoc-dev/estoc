@@ -57,8 +57,8 @@ const OOB = "019b2a57-a947-7502-8fee-4d80d949dbcb";
 const KEY = `did/${DID_ID}/key-agreement`;
 const PEER_KEY = "z6LScHJqLmLd8zBAmcTY7BuyNvvYBEd44A6K8nVg2DSVCcis";
 const JWT = "eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJkaWQ6ZXhhbXBsZTphIn0.c2ln";
-const INTENT_HASH = "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA";
-const PLAINTEXT_HASH = "WkPpglZREjLGtviZ1L6c-R3EX1cTHtbe0sJrmhl77LQ";
+const INTENT = cidOf("intent");
+const PLAINTEXT = cidOf("plaintext");
 const SHORT = "did:peer:4zQmRendezvous";
 const LONG = `${SHORT}:z2NpDocument`;
 const LOCAL = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd";
@@ -152,7 +152,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
       headers: {},
       bodyCid: BODY,
       attachmentCids: [PHOTO],
-      intentHash: INTENT_HASH,
+      intentCid: INTENT,
       executionId: null,
       effectType: null,
       effectKey: null,
@@ -170,8 +170,8 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
       recipientDid: PEER,
       peerResolutionEventCid: RESOLVED,
       fromPrior: null,
-      intentHash: INTENT_HASH,
-      plaintextHash: PLAINTEXT_HASH,
+      intentCid: INTENT,
+      plaintextCid: PLAINTEXT,
       envelopeCid: ENVELOPE,
     } as Data<"message.prepared">,
     [ENVELOPE],
@@ -186,8 +186,8 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
     {
       messageId: IN,
       wireMessageId: WIRE,
-      intentHash: "855qiA-zQ94SVOPYj2KnooWRNJAe1GB419LMTGLMwAs",
-      plaintextHash: "dpPwT44Xre48u9xon4fUfvLOEQI6nYxQDzCCFnCJMK8",
+      intentCid: INTENT,
+      plaintextCid: PLAINTEXT,
       localKeyName: KEY,
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       peerResolutionEventCid: RESOLVED,
@@ -297,8 +297,11 @@ describe("identifiers in payloads", () => {
     rejects("peer.resolved", { ...resolved, peerPublicKey: PEER_KEY.slice(0, -1) }, [DOC], /canonical public key/);
     rejects("peer.resolved", { ...resolved, peerPublicKey: `did:key:${PEER_KEY}` }, [DOC]);
     rejects("peer.resolved", { ...resolved, documentCid: "bafyrei" }, [DOC], /raw DASL CID/);
-    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), intentHash: `${INTENT_HASH}=` }, [ENVELOPE], /base64url SHA-256/);
-    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), plaintextHash: PLAINTEXT_HASH.slice(0, -1) + "B" }, [ENVELOPE]);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), intentCid: "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" }, [ENVELOPE], /intentCid must be a raw DASL CID/);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), plaintextCid: fakeEventCid().replace("bafkrei", "bafyrei") }, [ENVELOPE], /plaintextCid must be a raw DASL CID/);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), envelopeCid: null }, [ENVELOPE], /envelopeCid/);
+    rejects("message.in", { ...(ALL["message.in"][0] as Loose), intentCid: null }, [BODY, PHOTO], /intentCid/);
+    rejects("message.out", { ...(ALL["message.out"][0] as Loose), intentCid: INTENT.slice(0, -1) }, [BODY, PHOTO], /intentCid must be a raw DASL CID/);
     rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), fromPrior: "a.b" }, [ENVELOPE], /compact JWT/);
   });
 

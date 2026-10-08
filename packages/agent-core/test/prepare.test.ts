@@ -5,7 +5,7 @@ import { canonicalize, parseStrict, type JsonObject } from "@estoc/event-store";
 import {
   channelOf,
   didKeyName,
-  plaintextHash,
+  plaintextCidOf,
   rawCidOfBytes,
   scanVault,
   signFromPrior,
@@ -102,7 +102,7 @@ describe("prepare", () => {
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content, { messageId: MESSAGE });
     const result = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace, now: () => 1_999_999 })));
     const { data } = result.prepared;
-    expect(data).toMatchObject({ messageId: MESSAGE, packageId: result.packageId, senderDidId: ALICE, localKeyName: didKeyName(ALICE, "key-agreement"), recipientDid: bob.did, peerResolutionEventCid: result.resolved.cid, fromPrior: null, intentHash: sent.intent.data.intentHash });
+    expect(data).toMatchObject({ messageId: MESSAGE, packageId: result.packageId, senderDidId: ALICE, localKeyName: didKeyName(ALICE, "key-agreement"), recipientDid: bob.did, peerResolutionEventCid: result.resolved.cid, fromPrior: null, intentCid: sent.intent.data.intentCid });
     expect(sent.intent.data.recipientDid).toBe(bob.longFormDid);
     expect(result.prepared.roots).toEqual([data.envelopeCid]);
     expect(result.resolved.data).toMatchObject({ localKeyName: didKeyName(ALICE, "key-agreement"), presentedDid: bob.longFormDid, did: bob.did });
@@ -125,7 +125,7 @@ describe("prepare", () => {
       ["a1", { base64: "aGVsbG8" }],
       ["a2", { links: ["https://files.example/x"], hash: "zQm1" }],
     ]);
-    expect(plaintextHash(plaintext as unknown as JsonObject)).toBe(data.plaintextHash);
+    expect(plaintextCidOf(plaintext as unknown as JsonObject)).toBe(data.plaintextCid);
 
     let f = await fold(alice);
     const outbound = f.outbound.outbounds.get(MESSAGE)!;
@@ -206,7 +206,7 @@ describe("prepare", () => {
     expect(first.plaintext).toMatchObject({ from: longFormDid, from_prior: fromPrior });
     expect(first.sender).toEqual({ did: longFormDid, kid: `${longFormDid}#key-2` });
     expect(first.fromPrior).toBe(fromPrior);
-    expect(plaintextHash(first.plaintext as unknown as JsonObject)).toBe(proven.prepared.data.plaintextHash);
+    expect(plaintextCidOf(first.plaintext as unknown as JsonObject)).toBe(proven.prepared.data.plaintextCid);
 
     await received(alice, bob, "wire-2", { type: BASIC_MESSAGE, body: { content: "got your new address" } }, { didId: ALICE_NEXT, did: next });
     expect((await fold(alice)).continuity.confirmedBy(next, bob.did)).not.toBeNull();

@@ -19,7 +19,7 @@
 import { compareEvents } from "@estoc/event-store";
 import { storeMessage } from "../document.js";
 import { executionId } from "../ids.js";
-import type { Channel, EventCid, ExecutionId, MessageHash, MessageId, MessageIn, WireMessageId } from "../types.js";
+import type { Channel, EventCid, ExecutionId, IntentCid, MessageId, MessageIn, WireMessageId } from "../types.js";
 import type { AdmissionFold } from "../admission/model.js";
 import type { ChannelEvidence, PlacedSource, Source } from "./channels.js";
 import type { Continuity, Witness } from "./continuity.js";
@@ -96,9 +96,9 @@ export type Execution = {
   /** an erasure names the message: its content produces no new work */
   readonly erased: boolean;
 } & (
-  | { readonly status: "complete"; readonly intentHash: MessageHash; readonly kind: InboundKind; readonly firstWitness: Member }
-  | { readonly status: "pending"; readonly because: string; readonly intentHash: MessageHash | null; readonly kind: InboundKind | null; readonly firstWitness: null }
-  | { readonly status: "conflict"; readonly because: string; readonly intentHash: null; readonly kind: null; readonly firstWitness: null }
+  | { readonly status: "complete"; readonly intentCid: IntentCid; readonly kind: InboundKind; readonly firstWitness: Member }
+  | { readonly status: "pending"; readonly because: string; readonly intentCid: IntentCid | null; readonly kind: InboundKind | null; readonly firstWitness: null }
+  | { readonly status: "conflict"; readonly because: string; readonly intentCid: null; readonly kind: null; readonly firstWitness: null }
 );
 
 export interface InboundFold {
@@ -157,17 +157,17 @@ function executionOf(messageId: MessageId, sources: readonly PlacedSource[], sib
   const wireMessageId = sources[0]!.event.data.wireMessageId;
   const members: Member[] = sources.map((source) => ({ source, positive: evidence.positive(source.event.cid), admitted: admissions.admitted(source.event.cid), witness: continuity.witness(source.event.cid) }));
   const admitted = members.filter((member) => member.admitted);
-  const intents = new Set<MessageHash>();
-  for (const member of admitted) intents.add(member.source.event.data.intentHash);
+  const intents = new Set<IntentCid>();
+  for (const member of admitted) intents.add(member.source.event.data.intentCid);
   const shared = { id: executionId(channel.peerDid, channel.localDid, wireMessageId), messageId, channel, wireMessageId, members, siblings, erased: erasures.has(messageId) };
-  if (intents.size > 1) return { ...shared, contradicting: [], status: "conflict", because: `${intents.size} intents are admitted for one input`, intentHash: null, kind: null, firstWitness: null };
-  if (intents.size === 0) return { ...shared, contradicting: [], status: "pending", because: "no observation of the input is admitted", intentHash: null, kind: null, firstWitness: null };
-  const intentHash = [...intents][0]!;
-  const contradicting = members.filter((member) => member.positive && !member.admitted && member.source.event.data.intentHash !== intentHash);
+  if (intents.size > 1) return { ...shared, contradicting: [], status: "conflict", because: `${intents.size} intents are admitted for one input`, intentCid: null, kind: null, firstWitness: null };
+  if (intents.size === 0) return { ...shared, contradicting: [], status: "pending", because: "no observation of the input is admitted", intentCid: null, kind: null, firstWitness: null };
+  const intentCid = [...intents][0]!;
+  const contradicting = members.filter((member) => member.positive && !member.admitted && member.source.event.data.intentCid !== intentCid);
   const kind = kindOf(admitted[0]!.source.event.data);
   const firstWitness = admitted.find((member) => member.witness.status === "complete");
-  if (firstWitness !== undefined) return { ...shared, contradicting, status: "complete", intentHash, kind, firstWitness };
+  if (firstWitness !== undefined) return { ...shared, contradicting, status: "complete", intentCid, kind, firstWitness };
   const waiting = admitted.find((member) => member.witness.status === "pending") ?? admitted[0]!;
   const because = `no admitted observation is a complete witness: ${(waiting.witness as Exclude<Witness, { status: "complete" }>).because}`;
-  return { ...shared, contradicting, status: "pending", because, intentHash, kind, firstWitness: null };
+  return { ...shared, contradicting, status: "pending", because, intentCid, kind, firstWitness: null };
 }

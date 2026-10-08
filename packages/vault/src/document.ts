@@ -1,11 +1,12 @@
 /**
- * The stored message document: the closed representation of a DIDComm
- * body and its attachments that a message event retains as one raw
- * object, and the payload objects the attachments' inline content
- * becomes. `storeMessage` normalizes the wire form into it and
- * `wireAttachment` turns a stored descriptor back into the wire form,
- * so that reading a message in and preparing one out meet at the same
- * bytes and the same hashes.
+ * The objects a message retains: the stored message document, the
+ * closed representation of a DIDComm body and its attachments that a
+ * message event keeps as one raw object, the payload objects the
+ * attachments' inline content becomes, and the normalized encrypted
+ * envelope a preparation keeps. `storeMessage` normalizes the wire form
+ * into the document and `wireAttachment` turns a stored descriptor back
+ * into the wire form, so that reading a message in and preparing one
+ * out meet at the same bytes and the same CIDs.
  */
 
 import { InvalidJson, canonicalText, canonicalize, isJsonObject, isRawCid, parseStrict, rawCidFromDigest, type JsonObject, type JsonValue } from "@estoc/event-store";
@@ -13,7 +14,7 @@ import { sha256 } from "@noble/hashes/sha2";
 import { base64url, base64urlnopad } from "@scure/base";
 
 import { InvalidPlaintext } from "./errors.js";
-import type { Cid, EpochSeconds } from "./types.js";
+import type { Cid, EnvelopeCid, EpochSeconds, Identified } from "./types.js";
 
 export type StoredAttachmentData =
   | { kind: "base64"; root: Cid; hash: string | null; jws: JsonValue | null }
@@ -105,6 +106,24 @@ function canonicalDocument(document: StoredMessageDocument): Uint8Array {
     if (err instanceof InvalidJson) throw new InvalidPlaintext(`not I-JSON: ${err.message}`);
     throw err;
   }
+}
+
+/** The CID of a stored message document: of `UTF8(RFC8785(document))`, the object `bodyCid` names. */
+export function documentCidOf(document: StoredMessageDocument): Cid {
+  return rawCidOfBytes(canonicalDocument(document));
+}
+
+/**
+ * The encrypted envelope as a preparation retains it: the packed text
+ * parsed strictly and canonicalized, under the raw CID of those bytes.
+ * Duplicate members and invalid I-JSON are refused before anything is
+ * stored; a text that is not a JSON object is no envelope.
+ */
+export function envelopeOf(packed: string): Identified<EnvelopeCid, Uint8Array> {
+  const envelope = parseStrict(packed);
+  if (!isJsonObject(envelope)) throw new TypeError("the encrypted envelope is not a JSON object");
+  const bytes = canonicalize(envelope);
+  return { cid: rawCidOfBytes(bytes) as EnvelopeCid, value: bytes };
 }
 
 function storeAttachment(value: unknown, at: string): { descriptor: StoredAttachment; payload: StoredObject | null } {

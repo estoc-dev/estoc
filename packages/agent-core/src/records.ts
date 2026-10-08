@@ -523,7 +523,7 @@ async function channelRecord(context: Context, view: ChannelView): Promise<Chann
 async function inboundRecord(context: Context, execution: Execution, contactIds: ContactId[]): Promise<MessageRecord> {
   const { fold } = context;
   const member = shownBy(execution);
-  const agreed = execution.intentHash !== null;
+  const agreed = execution.intentCid !== null;
   const { data } = member.source.event;
   const diagnostics: Diagnostic[] = [];
   if (execution.status !== "complete") diagnostics.push({ kind: "input", because: execution.because });

@@ -39,8 +39,15 @@ export type Did = string & { readonly __did: unique symbol };
 export type DidUrl = string & { readonly __didUrl: unique symbol };
 /** The derived idempotency key of one automatic effect. */
 export type EffectKey = string & { readonly __effectKey: unique symbol };
-/** Unpadded base64url SHA-256 of a canonical projection or plaintext. */
-export type MessageHash = string & { readonly __messageHash: unique symbol };
+/** The raw CID of the intent projection: one fixed application message, whichever ID, channel or envelope carries it. */
+export type IntentCid = Cid & { readonly __intentCid: unique symbol };
+/** The raw CID of one complete plaintext, own ID, addressing and proof included. */
+export type PlaintextCid = Cid & { readonly __plaintextCid: unique symbol };
+/** The raw CID of one normalized encrypted envelope: the object a preparation retains. */
+export type EnvelopeCid = Cid & { readonly __envelopeCid: unique symbol };
+
+/** A value under the CID that identifies it, taken from the value as it is held: the two never part. */
+export type Identified<C extends Cid, V> = { readonly cid: C; readonly value: V };
 
 /** One of our DIDs and a peer's, both canonical short forms, as an ordered pair: the unit every receipt, intent and continuity fact is scoped to. */
 export type Channel = { localDid: Did; peerDid: Did };
@@ -91,7 +98,7 @@ export type MessageOut = {
   headers: AdditionalHeaders;
   bodyCid: Cid;
   attachmentCids: Cid[];
-  intentHash: MessageHash;
+  intentCid: IntentCid;
   rotationEventCid: EventReference<"did.rotationSelected"> | null;
 } & (LocalSend | AutomaticEffect);
 
@@ -119,8 +126,8 @@ export type DidGeneration = { kind: "entry"; profile: string } | { kind: "start"
 export type MessageIn = {
   messageId: MessageId;
   wireMessageId: WireMessageId;
-  intentHash: MessageHash;
-  plaintextHash: MessageHash;
+  intentCid: IntentCid;
+  plaintextCid: PlaintextCid;
   localKeyName: KeyName;
   msgType: string;
   thid: string | null;
@@ -177,9 +184,9 @@ export type VaultData = {
     recipientDid: Did;
     peerResolutionEventCid: EventReference<"peer.resolved">;
     fromPrior: string | null;
-    intentHash: MessageHash;
-    plaintextHash: MessageHash;
-    envelopeCid: Cid;
+    intentCid: IntentCid;
+    plaintextCid: PlaintextCid;
+    envelopeCid: EnvelopeCid;
   };
   "delivery.submitted": { messageId: MessageId; packageId: PackageId };
   "delivery.failed": { messageId: MessageId; code: DeliveryFailureCode };

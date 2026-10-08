@@ -1,21 +1,23 @@
 /**
- * What a message means, as bytes to hash: the semantic projection (the
- * application content), the intent projection (that plus the immutable
- * control headers) and the exact plaintext. `readPlaintext` takes a
- * DIDComm plaintext apart into its stored content, its intent and the
- * addressing that is not intent; `wirePlaintext` puts an intent back on
- * the wire. The two meet: reading what `wirePlaintext` emits yields the
- * intent it was given, and the same intent hash.
+ * What a message means, as the value each layer identifies: the intent,
+ * one fixed application message under its intent CID, whichever ID,
+ * channel or envelope carries it; the complete plaintext under its
+ * plaintext CID; and between them the control headers as the wire
+ * spells them, which the message events record. `readPlaintext` takes a
+ * DIDComm plaintext apart into its stored content, its headers, its
+ * intent and the addressing that is not intent; `wirePlaintext` puts an
+ * intent back on the wire under a message ID. The two meet: reading what
+ * `wirePlaintext` emits yields the intent it was given, under the same
+ * CID.
  */
 
-import { InvalidJson, canonicalize, isJsonObject, type JsonObject } from "@estoc/event-store";
-import { sha256 } from "@noble/hashes/sha2";
-import { base64urlnopad } from "@scure/base";
+import { InvalidJson, canonicalText, canonicalize, deepFreeze, isJsonObject, isRawCid, parseStrict, type JsonObject, type JsonValue } from "@estoc/event-store";
 
-import { storeMessage, wireAttachment, type StoredMessage, type StoredMessageDocument } from "./document.js";
+import { documentCidOf, rawCidOfBytes, storeMessage, wireAttachment, type StoredMessage, type StoredMessageDocument } from "./document.js";
 import { InvalidPlaintext } from "./errors.js";
+import { canonicalWireId } from "./ids.js";
 import { isDid, isEpochSeconds } from "./syntax.js";
-import type { AdditionalHeaders, Cid, Did, EpochSeconds, MessageHash, MessageOut } from "./types.js";
+import type { AdditionalHeaders, Cid, Did, EpochSeconds, Identified, IntentCid, MessageIn, MessageOut, PlaintextCid } from "./types.js";
 
 /** The DIDComm plaintext media type: the `typ` header a plaintext carries. */
 export const PLAINTEXT_TYP = "application/didcomm-plain+json";
@@ -41,18 +43,24 @@ export const RESERVED_HEADERS = [
 
 const RESERVED = new Set<string>(RESERVED_HEADERS);
 
+/** The kind and version that prefix the intent projection when it is hashed: a change to the projection's fields or encoding is a new version. */
+const INTENT_KIND = "estoc.message.intent";
+const INTENT_VERSION = 1;
+
+/** The intent's reference to a message: `SELF` for the message itself, otherwise the referenced wire ID as spelled. */
+export type MessageReference = string;
+export const SELF: MessageReference = "";
+
 /**
- * The intent of one message: everything the intent hash covers, with
- * the content already in its stored form. An outbound freezes it in
- * `message.out`; an inbound observation computes it from the plaintext.
+ * The control headers of a message as the wire spells them, the own ID
+ * aside: what `message.out` and `message.in` record, and what the intent
+ * is projected from once the own ID is known. Null is an absent header,
+ * except `ack`, where absent is `[]`.
  */
-export type Intent = {
-  /** the plaintext `id`: the outbound message ID, or the received wire ID */
-  id: string;
+export type ControlHeaders = {
   type: string;
   thid: string | null;
   pthid: string | null;
-  document: StoredMessageDocument;
   createdTime: EpochSeconds | null;
   expiresTime: EpochSeconds | null;
   pleaseAck: string[] | null;
@@ -60,13 +68,35 @@ export type Intent = {
   headers: AdditionalHeaders;
 };
 
-/** A plaintext taken apart: what is intent, what is stored, and what is addressing. */
+/**
+ * The fixed application message the intent CID identifies: the control
+ * headers with every reference to the message itself folded to `SELF`,
+ * and the stored document by its CID. Only `intentOf` makes one, and
+ * what it hands out is frozen. The own ID, the addressing and the proof
+ * are not in it: one intent may be sent under any ID, in any channel.
+ */
+export type Intent = {
+  readonly type: string;
+  readonly thid: MessageReference;
+  readonly pthid: string | null;
+  readonly createdTime: EpochSeconds | null;
+  readonly expiresTime: EpochSeconds | null;
+  readonly pleaseAck: readonly MessageReference[] | null;
+  readonly ack: readonly string[];
+  readonly document: Cid;
+  readonly headers: AdditionalHeaders;
+};
+
+/** A plaintext taken apart: what is intent, what the events record, what is stored, and what is addressing. */
 export type ReadPlaintext = {
-  /** the plaintext as given, which `plaintextHash` covers */
+  /** the plaintext as given, which `plaintextCid` identifies */
   plaintext: JsonObject;
-  plaintextHash: MessageHash;
-  intent: Intent;
-  intentHash: MessageHash;
+  plaintextCid: PlaintextCid;
+  /** the plaintext `id`, as spelled */
+  id: string;
+  /** the control headers as spelled */
+  control: ControlHeaders;
+  intent: Identified<IntentCid, Intent>;
   stored: StoredMessage;
   typ: string | null;
   from: Did | null;
@@ -83,48 +113,73 @@ export function checkHeaders(value: unknown, at = "headers"): AdditionalHeaders 
   return value;
 }
 
-/** The application content of an intent: what two messages must share to say the same thing. */
-export function semanticProjection(intent: Intent): JsonObject {
+/**
+ * The intent of a message, under its CID: `control` as the wire spells
+ * it, `ownId` telling which thread and ACK references are the message's
+ * own, and the stored document by its CID. Each field is checked, copied
+ * and frozen before the CID is taken, so the CID is of the value handed
+ * out and nothing the caller does to its input afterwards reaches it.
+ * Nothing here reads a clock, a random source or a resolver.
+ */
+export function intentOf(ownId: string, control: ControlHeaders, document: Cid): Identified<IntentCid, Intent> {
+  const own = canonicalWireId(nonEmpty(ownId, "the own ID"));
+  const self = (reference: string): MessageReference => (canonicalWireId(reference) === own ? SELF : reference);
+  const thid = optional(control.thid, "thid", nonEmpty);
+  const createdTime = optional(control.createdTime, "createdTime", epochSeconds);
+  const expiresTime = optional(control.expiresTime, "expiresTime", epochSeconds);
+  checkExpiry(createdTime, expiresTime);
+  if (!isRawCid(document)) throw new InvalidPlaintext("document must be a raw DASL CID");
+  const intent: Intent = deepFreeze({
+    type: nonEmpty(control.type, "type"),
+    thid: thid === null ? SELF : self(thid),
+    pthid: optional(control.pthid, "pthid", nonEmpty),
+    createdTime,
+    expiresTime,
+    pleaseAck: optional(control.pleaseAck, "pleaseAck", strings)?.map(self) ?? null,
+    ack: optional(control.ack, "ack", strings) ?? [],
+    document,
+    headers: checkHeaders(copyOf(control.headers, "headers")),
+  });
+  return { cid: cidOf([INTENT_KIND, INTENT_VERSION, intentProjection(intent)], "the intent projection") as IntentCid, value: intent };
+}
+
+/** The intent projection: the object the intent CID is taken over, after the kind and version. */
+export function intentProjection(intent: Intent): JsonObject {
   return {
-    id: intent.id,
     type: intent.type,
     thid: intent.thid,
     pthid: intent.pthid,
-    body: intent.document.body,
-    attachments: intent.document.attachments,
-  };
-}
-
-/** The semantic projection with the immutable control headers: what `intentHash` covers. */
-export function intentProjection(intent: Intent): JsonObject {
-  return {
-    semantic: semanticProjection(intent),
     created_time: intent.createdTime,
     expires_time: intent.expiresTime,
     please_ack: intent.pleaseAck === null ? null : [...intent.pleaseAck],
     ack: [...intent.ack],
+    document: intent.document,
     headers: intent.headers,
   };
 }
 
-export function intentHash(intent: Intent): MessageHash {
-  return hashOf(intentProjection(intent), "the intent projection");
+/** The CID of one complete plaintext: every member it carries, explicit nulls, addressing and proof included. */
+export function plaintextCidOf(plaintext: JsonObject): PlaintextCid {
+  return cidOf(plaintext, "the plaintext") as PlaintextCid;
 }
 
-/** The hash of one exact plaintext: every member it carries, addressing and proof included. */
-export function plaintextHash(plaintext: JsonObject): MessageHash {
-  return hashOf(plaintext, "the plaintext");
-}
-
-function hashOf(value: JsonObject, what: string): MessageHash {
-  let bytes: Uint8Array;
+function cidOf(value: JsonValue, what: string): Cid {
   try {
-    bytes = canonicalize(value);
+    return rawCidOfBytes(canonicalize(value));
   } catch (err) {
     if (err instanceof InvalidJson) throw new InvalidPlaintext(`${what} is not I-JSON: ${err.message}`);
     throw err;
   }
-  return base64urlnopad.encode(sha256(bytes)) as MessageHash;
+}
+
+/** `value` as its own JSON: an own copy with nothing but I-JSON in it, or `InvalidPlaintext`. */
+function copyOf(value: unknown, at: string): JsonValue {
+  try {
+    return parseStrict(canonicalText(value));
+  } catch (err) {
+    if (err instanceof InvalidJson) throw new InvalidPlaintext(`${at} is not I-JSON: ${err.message}`);
+    throw err;
+  }
 }
 
 /**
@@ -138,20 +193,21 @@ export function requestsAck(currentWireId: string, pleaseAck: readonly string[] 
   return pleaseAck !== null && pleaseAck.some((target) => target === "" || target === currentWireId);
 }
 
-/** The intent a committed `message.out` froze, given the document `bodyCid` names. */
-export function intentOfOutbound(data: MessageOut, document: StoredMessageDocument): Intent {
-  return {
-    id: data.messageId,
-    type: data.msgType,
-    thid: data.thid,
-    pthid: data.pthid,
-    document,
-    createdTime: data.createdTime,
-    expiresTime: data.expiresTime,
-    pleaseAck: data.pleaseAck,
-    ack: data.ack,
-    headers: data.headers,
-  };
+type Recorded = Pick<MessageOut, "msgType" | "thid" | "pthid" | "createdTime" | "expiresTime" | "pleaseAck" | "ack" | "headers" | "bodyCid">;
+
+function recordedIntent(ownId: string, data: Recorded): Identified<IntentCid, Intent> {
+  const { msgType: type, thid, pthid, createdTime, expiresTime, pleaseAck, ack, headers } = data;
+  return intentOf(ownId, { type, thid, pthid, createdTime, expiresTime, pleaseAck, ack, headers }, data.bodyCid);
+}
+
+/** The intent a `message.out` records, the message ID being the own ID. */
+export function intentOfOutbound(data: MessageOut): Identified<IntentCid, Intent> {
+  return recordedIntent(data.messageId, data);
+}
+
+/** The intent a `message.in` records, the wire ID being the own ID. */
+export function intentOfInbound(data: MessageIn): Identified<IntentCid, Intent> {
+  return recordedIntent(data.wireMessageId, data);
 }
 
 /**
@@ -178,9 +234,7 @@ export function readPlaintext(value: unknown): ReadPlaintext {
   const pthid = optional(value.pthid, "pthid", nonEmpty);
   const createdTime = optional(value.created_time, "created_time", epochSeconds);
   const expiresTime = optional(value.expires_time, "expires_time", epochSeconds);
-  if (createdTime !== null && expiresTime !== null && expiresTime <= createdTime) {
-    throw new InvalidPlaintext("expires_time must be later than created_time");
-  }
+  checkExpiry(createdTime, expiresTime);
   const pleaseAck = optional(value.please_ack, "please_ack", strings);
   const ack = optional(value.ack, "ack", strings) ?? [];
   const fromPrior = optional(value.from_prior, "from_prior", (proof, at) => {
@@ -188,9 +242,10 @@ export function readPlaintext(value: unknown): ReadPlaintext {
     return proof;
   });
   const stored = storeMessage(value.body, value.attachments);
-  const headers: AdditionalHeaders = Object.fromEntries(Object.entries(value).filter(([name]) => !RESERVED.has(name)));
-  const intent: Intent = { id, type, thid, pthid, document: stored.document, createdTime, expiresTime, pleaseAck, ack, headers };
-  return { plaintext: value, plaintextHash: plaintextHash(value), intent, intentHash: intentHash(intent), stored, typ, from, to, fromPrior };
+  const headers = checkHeaders(copyOf(Object.fromEntries(Object.entries(value).filter(([name]) => !RESERVED.has(name))), "headers"));
+  const control: ControlHeaders = { type, thid, pthid, createdTime, expiresTime, pleaseAck, ack, headers };
+  const intent = intentOf(id, control, stored.bodyCid);
+  return { plaintext: value, plaintextCid: plaintextCidOf(value), id, control, intent, stored, typ, from, to, fromPrior };
 }
 
 function optional<T>(value: unknown, at: string, check: (value: unknown, at: string) => T): T | null {
@@ -212,39 +267,47 @@ function epochSeconds(value: unknown, at: string): EpochSeconds {
   return value;
 }
 
+function checkExpiry(createdTime: EpochSeconds | null, expiresTime: EpochSeconds | null): void {
+  if (createdTime !== null && expiresTime !== null && expiresTime <= createdTime) throw new InvalidPlaintext("expires_time must be later than created_time");
+}
+
 function strings(value: unknown, at: string): string[] {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) throw new InvalidPlaintext(`${at} must be an array of strings`);
   return [...(value as string[])];
 }
 
-/** The addressing and proof a package adds to an intent: what the plaintext hash covers beyond it. */
+/** The addressing and proof a package adds to an intent: what the plaintext CID covers beyond it and the own ID. */
 export type Addressing = { from: Did; to: Did[]; fromPrior: string | null };
 
 /**
- * The complete innermost plaintext of an intent: `typ`, `id`, `type`,
- * `from`, `to` and `body` always; timing, threading and `from_prior`
- * only when non-null; `please_ack` whenever the intent has one, even
- * empty; `ack` and `attachments` when non-empty; every additional
- * header at the top level. `payloadOf` supplies each inline
- * attachment's bytes by its root.
+ * The complete innermost plaintext of an intent under `id`: `typ`,
+ * `id`, `type`, `from`, `to` and `body` always; timing, `pthid` and
+ * `from_prior` only when non-null; `thid` only when the thread is
+ * another message's; `please_ack` whenever the intent has one, even
+ * empty, a self reference as `""`; `ack` and `attachments` when
+ * non-empty; every additional header at the top level. `document` is
+ * the stored document the intent names, and is checked to be it;
+ * `payloadOf` supplies each inline attachment's bytes by its root.
  */
-export function wirePlaintext(intent: Intent, addressing: Addressing, payloadOf: (root: Cid) => Uint8Array): JsonObject {
+export function wirePlaintext(intent: Intent, id: string, document: StoredMessageDocument, addressing: Addressing, payloadOf: (root: Cid) => Uint8Array): JsonObject {
+  const documentCid = documentCidOf(document);
+  if (documentCid !== intent.document) throw new InvalidPlaintext(`the document is ${documentCid}, not the intent's ${intent.document}`);
   const plaintext: JsonObject = { ...checkHeaders(intent.headers) };
   plaintext.typ = PLAINTEXT_TYP;
-  plaintext.id = intent.id;
+  plaintext.id = nonEmpty(id, "id");
   plaintext.type = intent.type;
   plaintext.from = addressing.from;
   plaintext.to = [...addressing.to];
   if (intent.createdTime !== null) plaintext.created_time = intent.createdTime;
   if (intent.expiresTime !== null) plaintext.expires_time = intent.expiresTime;
-  if (intent.thid !== null) plaintext.thid = intent.thid;
+  if (intent.thid !== SELF) plaintext.thid = intent.thid;
   if (intent.pthid !== null) plaintext.pthid = intent.pthid;
   if (intent.pleaseAck !== null) plaintext.please_ack = [...intent.pleaseAck];
   if (intent.ack.length > 0) plaintext.ack = [...intent.ack];
   if (addressing.fromPrior !== null) plaintext.from_prior = addressing.fromPrior;
-  plaintext.body = intent.document.body;
-  if (intent.document.attachments.length > 0) {
-    plaintext.attachments = intent.document.attachments.map((stored) => wireAttachment(stored, stored.data.kind === "links" ? null : payloadOf(stored.data.root)));
+  plaintext.body = document.body;
+  if (document.attachments.length > 0) {
+    plaintext.attachments = document.attachments.map((stored) => wireAttachment(stored, stored.data.kind === "links" ? null : payloadOf(stored.data.root)));
   }
   return plaintext;
 }

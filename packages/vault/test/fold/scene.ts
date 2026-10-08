@@ -47,8 +47,9 @@ import {
   type VaultData,
   type VaultEvent,
   type WireMessageId,
+  type EnvelopeCid,
 } from "../../src/index.js";
-import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, HASH, MEDIATED, MEDIATION, OTHER_SEED, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
+import { DID_ID, DID_ID2, DID_ID3, DIRECT, ENDPOINT, INTENT_CID, PLAINTEXT_CID, MEDIATED, MEDIATION, OTHER_SEED, Scene, type EventOptions, cidOf, createdDid, mediatedRoute, openKeys } from "./helpers.js";
 
 export const PEER_ID0 = "019b7000-0000-7000-8000-000000000b00" as DidId;
 export const PEER_ID1 = "019b7000-0000-7000-8000-000000000b01" as DidId;
@@ -160,8 +161,8 @@ export function observation(scene: Scene, r: Receipt, options: EventOptions = {}
     {
       messageId: inboundMessageId(r.peer.did, r.local.did, wire),
       wireMessageId: wire,
-      intentHash: HASH as VaultData["message.in"]["intentHash"],
-      plaintextHash: HASH as VaultData["message.in"]["plaintextHash"],
+      intentCid: INTENT_CID,
+      plaintextCid: PLAINTEXT_CID,
       localKeyName: didKeyName(r.local.didId, "key-agreement"),
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       peerResolutionEventCid: ref(r.resolution),
@@ -270,7 +271,7 @@ export function intent(scene: Scene, sender: Local, recipient: Peer, overrides: 
       headers: {},
       bodyCid: cidOf(`body ${messageId}`),
       attachmentCids: [],
-      intentHash: HASH as MessageOut["intentHash"],
+      intentCid: INTENT_CID,
       executionId: null,
       effectType: null,
       effectKey: null,
@@ -303,9 +304,9 @@ export function packageOf(scene: Scene, out: VaultEvent<"message.out">, input: P
       recipientDid: input.recipient.did,
       peerResolutionEventCid: ref(input.resolution),
       fromPrior: input.fromPrior ?? null,
-      intentHash: out.data.intentHash,
-      plaintextHash: HASH as VaultData["message.prepared"]["plaintextHash"],
-      envelopeCid: cidOf(`envelope ${packageId}`),
+      intentCid: out.data.intentCid,
+      plaintextCid: PLAINTEXT_CID,
+      envelopeCid: cidOf(`envelope ${packageId}`) as EnvelopeCid,
       ...input.overrides,
     },
     options

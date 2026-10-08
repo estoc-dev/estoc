@@ -1,8 +1,8 @@
-import { canonicalize, parseStrict } from "@estoc/event-store";
+import { InvalidJson, canonicalize, parseStrict } from "@estoc/event-store";
 import { base64url, base64urlnopad } from "@scure/base";
 import { describe, expect, it } from "vitest";
 
-import { InvalidPlaintext, messageRoots, rawCidOfBytes, readStoredDocument, storeMessage, wireAttachment, type StoredAttachment } from "../src/index.js";
+import { InvalidPlaintext, documentCidOf, envelopeOf, messageRoots, rawCidOfBytes, readStoredDocument, storeMessage, wireAttachment, type StoredAttachment } from "../src/index.js";
 
 const encoder = new TextEncoder();
 const PHOTO = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02]);
@@ -224,5 +224,32 @@ describe("wireAttachment", () => {
     const renamed = { ...json, data: { ...json.data, root: rawCidOfBytes(uncanonical) } } as StoredAttachment;
     expect(() => wireAttachment(renamed, uncanonical)).toThrow(/not in canonical form/);
     expect(storeMessage(BODY, [wireAttachment(json, payload)]).document).toEqual(stored.document);
+  });
+});
+
+describe("documentCidOf", () => {
+  it("names the object storeMessage writes for the document", () => {
+    const stored = storeMessage(BODY, [photo()]);
+    expect(documentCidOf(stored.document)).toBe(stored.bodyCid);
+    expect(documentCidOf({ body: BODY, attachments: [] })).toBe(storeMessage(BODY, undefined).bodyCid);
+    expect(documentCidOf({ body: { text: "other" }, attachments: [] })).not.toBe(stored.bodyCid);
+  });
+});
+
+describe("envelopeOf", () => {
+  it("keeps the packed envelope as its canonical bytes under their raw CID, whatever order and spacing the text had", () => {
+    const envelope = envelopeOf('{ "recipients": [ { "header": { "kid": "did:example:b#k" } } ], "ciphertext": "AAAA", "protected": "eyJ" }');
+    const canonical = encoder.encode('{"ciphertext":"AAAA","protected":"eyJ","recipients":[{"header":{"kid":"did:example:b#k"}}]}');
+    expect(envelope.value).toEqual(canonical);
+    expect(envelope.cid).toBe(rawCidOfBytes(canonical));
+    expect(envelopeOf('{"protected":"eyJ","ciphertext":"AAAA","recipients":[{"header":{"kid":"did:example:b#k"}}]}')).toEqual(envelope);
+    expect(envelopeOf('{"ciphertext":"AAAB","protected":"eyJ","recipients":[]}').cid).not.toBe(envelope.cid);
+  });
+
+  it("refuses duplicate members, invalid I-JSON and anything but an object", () => {
+    expect(() => envelopeOf('{"ciphertext":"A","ciphertext":"B"}')).toThrow(InvalidJson);
+    expect(() => envelopeOf('{"n":1e400}')).toThrow(InvalidJson);
+    expect(() => envelopeOf("[]")).toThrow(TypeError);
+    expect(() => envelopeOf('"text"')).toThrow(TypeError);
   });
 });

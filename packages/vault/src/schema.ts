@@ -15,7 +15,7 @@ import { messageRoots } from "./document.js";
 import { checkHeaders } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
 import { readReplicaGrant } from "./replica-grant.js";
-import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type {
   Channel,
   Cid,
@@ -24,13 +24,15 @@ import type {
   DidGeneration,
   DidId,
   DidUrl,
+  EnvelopeCid,
   EventReference,
   ExecutionId,
+  IntentCid,
   KeyName,
   MediationId,
-  MessageHash,
   MessageId,
   PackageId,
+  PlaintextCid,
   PublicKey,
   ReplicaId,
   VaultData,
@@ -75,7 +77,9 @@ const publicKey: Check<PublicKey> = (value, at) => {
   }
 };
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
-const hash: Check<MessageHash> = (value, at) => (isMessageHash(value) ? (value as MessageHash) : fail(at, "an unpadded base64url SHA-256"));
+const intentCid: Check<IntentCid> = (value, at) => cid(value, at) as IntentCid;
+const plaintextCid: Check<PlaintextCid> = (value, at) => cid(value, at) as PlaintextCid;
+const envelopeCid: Check<EnvelopeCid> = (value, at) => cid(value, at) as EnvelopeCid;
 const compactJwt: Check<string> = (value, at) => (isCompactJwt(value) ? value : fail(at, "a compact JWT"));
 const headers: Check<VaultData["message.out"]["headers"]> = (value, at) => {
   try {
@@ -229,7 +233,7 @@ const messageOut = checked(
     ...timing,
     bodyCid: cid,
     attachmentCids: arrayOf(cid, { distinct: true }),
-    intentHash: hash,
+    intentCid,
     executionId: nullable(derived<ExecutionId>()),
     effectType: nullable(nonEmpty),
     effectKey: nullable(text),
@@ -258,8 +262,8 @@ const messageIn = checked(
   shape({
     messageId: derived<MessageId>(),
     wireMessageId: nonEmpty as Check<WireMessageId>,
-    intentHash: hash,
-    plaintextHash: hash,
+    intentCid,
+    plaintextCid,
     localKeyName: keyName,
     msgType: nonEmpty,
     peerResolutionEventCid: nullable(ref<"peer.resolved">()),
@@ -395,9 +399,9 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
         recipientDid: peerDid,
         peerResolutionEventCid: ref<"peer.resolved">(),
         fromPrior: nullable(compactJwt),
-        intentHash: hash,
-        plaintextHash: hash,
-        envelopeCid: cid,
+        intentCid,
+        plaintextCid,
+        envelopeCid,
       }),
       (data) => {
         const expected = didKeyName(data.senderDidId, "key-agreement");

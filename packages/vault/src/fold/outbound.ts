@@ -389,7 +389,7 @@ function packageStatus(event: VaultEvent<"message.prepared">, data: MessageOut |
   if (data === null) return { status: "pending", because: "the intent is not consistent" };
   const { data: pkg } = event;
   if (pkg.senderDidId !== data.senderDidId) return conflict("the package's sender is not the intent's");
-  if (pkg.intentHash !== data.intentHash) return conflict("the package's intent hash is not the intent's");
+  if (pkg.intentCid !== data.intentCid) return conflict("the package's intent CID is not the intent's");
   const recipient = canonicalRecipient(pkg.recipientDid);
   if (recipient === null) return conflict("the package's recipient is no valid did:peer:4");
   if (channel !== null && recipient !== channel.peerDid) return conflict("the package's recipient is not the intent's");

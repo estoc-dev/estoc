@@ -33,7 +33,7 @@ derives are pinned there too.
 | Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, the key names |
 | How is a public key spelled? | `public-key.ts` | `canonicalPublicKey`, `agreementKey` |
 | Does this payload read? | `schema.ts`, `syntax.ts` | `readVaultEvent`, `readVaultDraft`, `vaultDraft` |
-| What does a message store, and hash to? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `readPlaintext`, `wirePlaintext`, `intentHash`, `plaintextHash` |
+| What does a message store, and what identifies it? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `envelopeOf`, `readPlaintext`, `wirePlaintext`, `intentOf`, `plaintextCidOf` |
 | Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `documentSendsTo` |
 | What does the vault retain of a peer's document? | `peer-document.ts` | `peerResolution`, `canonicalDidOf`, `authorizedMethodIds`, `methodPublicKey` |
 | How is a proof signed, and what is it verified against? | `from-prior.ts`, `replica-grant.ts`, `recipient-proof.ts` | `signFromPrior`, `issuerLongFormOf`, `signReplicaGrant`, `verifyReplicaGrant`, `signRecipientProof` |

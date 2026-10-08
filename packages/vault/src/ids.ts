@@ -86,6 +86,17 @@ export function compareUtf8(a: string, b: string): number {
 }
 
 /**
+ * The spelling every reference to a wire ID is compared by: its ASCII
+ * letters in lower case. DIDComm compares message IDs without regard to
+ * case, and an ID consists of URI unreserved characters, so nothing
+ * else folds. A stored field keeps the spelling received; only
+ * comparisons go through here.
+ */
+export function canonicalWireId(wireId: string): string {
+  return wireId.replace(/[A-Z]+/g, (letters) => letters.toLowerCase());
+}
+
+/**
  * The channel between one of our DIDs and a peer's, an ordered pair:
  * receiving from the peer at the local DID and sending from it to the
  * peer are the same channel, the reverse pair is another vault's view.

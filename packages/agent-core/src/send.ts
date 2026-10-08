@@ -15,14 +15,13 @@
 
 import { v7 as uuidv7 } from "uuid";
 
-import { canonicalText, parseStrict, type CommitObject, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
+import type { CommitObject, Held, JsonObject, VaultRuntime } from "@estoc/event-store";
 import {
   automaticIntent,
   canonicalDidOf,
   channelKey,
   channelOf,
-  checkHeaders,
-  intentHash,
+  intentOf,
   readVaultEvent,
   sameChannel,
   samePayload,
@@ -36,12 +35,12 @@ import {
   type Channel,
   type Cid,
   type ContactId,
+  type ControlHeaders,
   type Did,
   type DidId,
   type EpochSeconds,
   type EventReference,
   type Execution,
-  type Intent,
   type Keys,
   type LocalDidEntity,
   type LocalSend,
@@ -109,7 +108,7 @@ type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid" | keyof Loca
  */
 export async function send(runtime: VaultRuntime, keys: Keys, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
   const messageId = options.messageId ?? (uuidv7() as MessageId);
-  const { fields, objects, roots } = intentOf(messageId, content, [], null);
+  const { fields, objects, roots } = fieldsOf(messageId, content, [], null);
   return runtime.locked(async (held) => {
     const fold = await scanVault(held, keys);
     const existing = fold.outbound.outbounds.get(messageId);
@@ -188,33 +187,32 @@ function senderOf(fold: VaultFold, channel: Channel): LocalDidEntity {
 
 const LOCAL: LocalSend = { executionId: null, effectType: null, effectKey: null, sourceEventCid: null };
 
-function intentOf(messageId: MessageId, content: Content, ack: readonly string[], rotationEventCid: EventReference<"did.rotationSelected"> | null): { fields: IntentFields; objects: CommitObject[]; roots: readonly Cid[] } {
+function fieldsOf(messageId: MessageId, content: Content, ack: readonly string[], rotationEventCid: EventReference<"did.rotationSelected"> | null): { fields: IntentFields; objects: CommitObject[]; roots: readonly Cid[] } {
   const stored = storeMessage(content.body, content.attachments);
-  const intent: Intent = {
-    id: messageId,
+  const control: ControlHeaders = {
     type: content.type,
     thid: content.thid ?? null,
     pthid: content.pthid ?? null,
-    document: stored.document,
     createdTime: content.createdTime ?? null,
     expiresTime: content.expiresTime ?? null,
     pleaseAck: content.pleaseAck === undefined || content.pleaseAck === null ? null : [...content.pleaseAck],
     ack: [...ack],
-    headers: checkHeaders(parseStrict(canonicalText(content.headers ?? {}))),
+    headers: content.headers ?? {},
   };
+  const intent = intentOf(messageId, control, stored.bodyCid);
   const fields: IntentFields = {
     messageId,
-    msgType: intent.type,
-    thid: intent.thid,
-    pthid: intent.pthid,
-    createdTime: intent.createdTime,
-    expiresTime: intent.expiresTime,
-    pleaseAck: intent.pleaseAck,
-    ack: intent.ack,
-    headers: intent.headers,
+    msgType: control.type,
+    thid: control.thid,
+    pthid: control.pthid,
+    createdTime: control.createdTime,
+    expiresTime: control.expiresTime,
+    pleaseAck: control.pleaseAck,
+    ack: control.ack,
+    headers: intent.value.headers,
     bodyCid: stored.bodyCid,
     attachmentCids: stored.attachmentCids,
-    intentHash: intentHash(intent),
+    intentCid: intent.cid,
     rotationEventCid,
   };
   const objects: CommitObject[] = [{ cid: stored.bodyCid, source: stored.bytes }, ...stored.payloads.map(({ cid, bytes }) => ({ cid, source: bytes }))];
@@ -248,7 +246,7 @@ export interface EffectContent extends Content {
  */
 export function manualNotificationDraft(fold: VaultFold, messageId: MessageId, channel: Channel, content: EffectContent, rotationEventCid: EventReference<"did.rotationSelected">): { draft: VaultDraft<"message.out">; objects: CommitObject[] } {
   const sender = senderOf(fold, channel);
-  const { fields, objects } = intentOf(messageId, content, content.ack ?? [], rotationEventCid);
+  const { fields, objects } = fieldsOf(messageId, content, content.ack ?? [], rotationEventCid);
   const data: MessageOut = { ...fields, ...LOCAL, senderDidId: sender.didId, recipientDid: channel.peerDid };
   return { draft: vaultDraft("message.out", data), objects };
 }
@@ -268,7 +266,7 @@ export function automaticDraft(fold: VaultFold, effect: Effect, content: EffectC
   const tuple = automaticIntent(fold, effect.execution, effect.effectType);
   if (tuple.existing !== null) return { ...tuple, existing: tuple.existing, draft: null, objects: null };
   const sender = senderOf(fold, effect.channel);
-  const { fields, objects } = intentOf(tuple.messageId, content, content.ack ?? [], effect.rotationEventCid ?? null);
+  const { fields, objects } = fieldsOf(tuple.messageId, content, content.ack ?? [], effect.rotationEventCid ?? null);
   const origin: AutomaticEffect = { executionId: tuple.executionId, effectType: tuple.effectType, effectKey: tuple.effectKey, sourceEventCid: effect.source.event.cid as EventReference<"message.in"> };
   const data: MessageOut = { ...fields, ...origin, senderDidId: sender.didId, recipientDid: effect.channel.peerDid };
   return { ...tuple, existing: null, draft: vaultDraft("message.out", data), objects };

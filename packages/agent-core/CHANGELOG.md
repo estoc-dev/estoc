@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Message events carry CIDs**: `message.out.intentCid`,
+  `message.in.intentCid` and `plaintextCid`, and the preparation's
+  `intentCid`, `plaintextCid` and `envelopeCid` are the raw CIDs of
+  `@estoc/vault`'s message layers, in place of the base64url SHA-256
+  hashes. A send computes its intent with `intentOf` over the control
+  headers as given, the preparation assembles the plaintext from the
+  recorded intent under the message ID and keeps the envelope through
+  `envelopeOf`, and a receipt records the headers as the wire spelled
+  them beside the intent CID. An `Execution` carries `intentCid`.
 - **The plaintext is read from its text**: an opened envelope's plaintext
   is the strict parse of the text `@estoc/didcomm` `0.4.1-estoc.4` hands
   back beside the message, never the binding's own view of it. Every
