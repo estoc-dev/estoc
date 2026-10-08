@@ -9,7 +9,7 @@
 
 import { VAULT_VERSION, createRuntime, createTables, openInspector, openPortable, openRuntime, type OpenMode, type SqliteDriver } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
-import { type Case, assert, assertEqual, assertRejects, assertThrows } from "./driver-cases.js";
+import { type Case, assert, assertBytes, assertEqual, assertRejects, assertThrows } from "./driver-cases.js";
 
 export interface OpenHarness {
   /** A target no database exists at yet. */
@@ -17,6 +17,8 @@ export interface OpenHarness {
   open(target: string, mode: OpenMode): Promise<SqliteDriver>;
   /** Puts `bytes`, a complete database file, at `target`. */
   importFile(target: string, bytes: Uint8Array): Promise<void>;
+  /** The bytes of the closed database file at `target`. */
+  fileBytes(target: string): Promise<Uint8Array>;
   /** Runs `sql` on the database at `target` with `writable_schema` on, over a connection that allows it: Node's SQLite refuses it by default. */
   writeSchema(target: string, sql: string): Promise<void>;
   /** Files declared UTF-16, which only Node's SQLite can make: a snapshot written in UTF-16, and a UTF-8 one whose header alone claims it. */
@@ -84,6 +86,33 @@ export const openCases: OpenCase[] = [
         assertEqual(opened.wrapped, WRAPPED, "the wrapper");
       } finally {
         opened.close();
+      }
+    },
+  },
+  {
+    name: "a runtime or a snapshot of the earlier vault version is refused before the seed is asked for, and its file is left as it was",
+    run: async (h) => {
+      const earlier = "PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4";
+      const runtime = h.fresh();
+      createRuntime(await h.open(runtime, "create"), { metadata: META, wrapped: WRAPPED }).close();
+      const db = await h.open(runtime, "readwrite");
+      try {
+        db.exec(earlier);
+      } finally {
+        db.close();
+      }
+      const portable = await snapshot(h, (db) => db.exec(earlier));
+      const seedAsked = () => {
+        throw new Error("the seed was asked for");
+      };
+      for (const [what, target, attempt] of [
+        ["runtime", runtime, async () => openRuntime(await h.open(runtime, "readwrite"), { anchor: seedAsked })],
+        ["snapshot", portable, async () => openPortable(await h.open(portable, "readonly"))],
+      ] as const) {
+        const before = await h.fileBytes(target);
+        const refused = await assertRejects(attempt, "NotAVault", what);
+        assert(refused.message.includes(`vault version 4 is not ${VAULT_VERSION}`), `${what}: refused with ${refused.message}`);
+        assertBytes(await h.fileBytes(target), before, `${what}: the file after the refusal`);
       }
     },
   },

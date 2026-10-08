@@ -301,12 +301,21 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
     devDependencies:
+      '@estoc/didcomm':
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
       typescript:
         specifier: ~5.8.0
         version: 5.8.3

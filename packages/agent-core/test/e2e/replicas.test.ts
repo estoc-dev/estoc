@@ -185,6 +185,49 @@ describe("that a replica left an input to another", () => {
   });
 });
 
+describe("a registration the mediator has reclaimed", () => {
+  it("is made anew for a replica that takes the input only after: listed first, that replica answers the input too, and once the two merge each output is one intent of two records, each over its own replica's observation", { timeout: LONG }, async () => {
+    const { mediator, alice, elsewhere, bob } = await twoReplicas({ privateAddresses: false }, { liveDelivery: false });
+    await bob.agent.send(toAlice(alice, bob), ping, { messageId: PING });
+    await until("alice has the ping", () => alice.inbounds.length === 1);
+    await alice.agent.settled();
+    await until("bob has the receipt and the reply", () => bob.inbounds.length === 2);
+    const [executionId] = [...(await foldOf(alice)).inbound.executions.keys()];
+    const answering = (running: Running) => {
+      const responder = running.inbounds[0]?.responder;
+      if (responder?.status !== "self") throw new Error(`the replica does not answer the input: ${JSON.stringify(responder)}`);
+      return responder.registration;
+    };
+    const first = answering(alice);
+    expect(first?.replicas).toEqual([await replicaOf(alice)]);
+
+    for (const registrations of mediator.executions.values()) registrations.clear();
+    expect(await elsewhere.agent.connect()).toMatchObject([{ drained: { acked: 1 } }]);
+    await elsewhere.agent.settled();
+    const anew = answering(elsewhere);
+    expect(anew?.replicas).toEqual([await replicaOf(elsewhere)]);
+    expect(anew?.registrationId).not.toBe(first?.registrationId);
+    expect(elsewhere.inbounds[0]?.reacted?.effects.map((effect) => [effect.effectType, effect.outcome])).toEqual([
+      [PURE_ACK_EFFECT, "created"],
+      [PING_RESPONSE_EFFECT, "created"],
+    ]);
+    await until("bob has each output once more", () => bob.inbounds.length === 4);
+
+    await imported(alice, await snapshotOf(elsewhere));
+    await imported(elsewhere, await snapshotOf(alice));
+    for (const replica of [alice, elsewhere]) {
+      const fold = await foldOf(replica);
+      for (const effectType of [PURE_ACK_EFFECT, PING_RESPONSE_EFFECT]) {
+        const result = fold.outbound.effectResult(executionId!, effectType);
+        if (result.status !== "produced") throw new Error(`${effectType} is ${result.status}`);
+        const { intent, effect, intents } = result.outbound;
+        expect([intent.status, effect.status, new Set(intents.map(({ author }) => author)).size, new Set(intents.map(({ data }) => data.sourceEventCid)).size]).toEqual(["consistent", "complete", 2, 2]);
+      }
+      expect(await replica.agent.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    }
+  });
+});
+
 describe("a replica closed while it finds who answers its inputs", () => {
   test("asks for no registration once closed and answers nothing, keeping who it found answers each input, and leaves the inputs it took to a replica still open, which answers those it did not register for", { timeout: LONG }, async () => {
     const options = { liveDelivery: false, privateAddresses: false };

@@ -218,6 +218,22 @@ describe("the intent CID", () => {
     const cids = [without(PLAINTEXT, "please_ack"), ...[[], [""], ["older"], ["older", ""]].map((please_ack) => ({ ...PLAINTEXT, please_ack }))].map((p) => readPlaintext(p).intent.cid);
     expect(new Set(cids).size).toBe(cids.length);
   });
+
+  it("keeps the order of please_ack, of ack and of the attachments, and a reference please_ack repeats", () => {
+    const [photo] = PLAINTEXT.attachments;
+    const json = { id: "j", data: { json: { a: 1 } } };
+    const cids = [
+      { please_ack: ["older", ""] },
+      { please_ack: ["", "older"] },
+      { please_ack: ["older"] },
+      { please_ack: ["older", "older"] },
+      { ack: ["x", "y"] },
+      { ack: ["y", "x"] },
+      { attachments: [photo, json] },
+      { attachments: [json, photo] },
+    ].map((change) => readPlaintext({ ...PLAINTEXT, ...change }).intent.cid);
+    expect(new Set(cids).size).toBe(cids.length);
+  });
 });
 
 describe("intentOf", () => {

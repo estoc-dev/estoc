@@ -115,6 +115,7 @@ describe("the open cases on node:sqlite files", () => {
     fresh,
     open: async (target, mode) => open(target, mode, mode === "create" ? "delete" : undefined),
     importFile: (target, bytes) => writeFile(target, bytes),
+    fileBytes: async (target) => new Uint8Array(await readFile(target)),
     writeSchema: async (target, sql) => {
       const db = new DatabaseSync(target, { defensive: false });
       try {
@@ -203,29 +204,6 @@ describe("openRuntime", () => {
 
   it("never creates: a missing file is refused by the driver", () => {
     expect(() => open(fresh(), "readwrite")).toThrow(DatabaseMissing);
-  });
-
-  it("refuses a runtime or a snapshot of the earlier version, its schema whole, before asking for the seed or reading an event, and releases the file as it was", async () => {
-    const earlier = (kind: "runtime" | "portable") =>
-      handmade((db) => {
-        db.exec("PRAGMA ignore_check_constraints = ON");
-        fill(db, kind, { version: 4 });
-      });
-    const runtime = earlier("runtime");
-    const before = await readFile(runtime);
-    let asked = false;
-    const anchor = () => {
-      asked = true;
-      return ANCHOR;
-    };
-    await rejectsWith(openRuntime(open(runtime, "readwrite"), { anchor }), NotAVault, /vault version 4 is not 5/);
-    expect(asked).toBe(false);
-    expect(Array.from(await readFile(runtime))).toEqual(Array.from(before));
-
-    const snapshot = earlier("portable");
-    const kept = await readFile(snapshot);
-    expect(() => openPortable(open(snapshot, "readonly"))).toThrow(/vault version 4 is not 5/);
-    expect(Array.from(await readFile(snapshot))).toEqual(Array.from(kept));
   });
 
   it("refuses the wrong anchor before any write, closes the driver and releases the file as it was", async () => {

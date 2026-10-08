@@ -85,12 +85,15 @@ describe("the local records", () => {
     expect(await read(records)).toEqual([null, null, ACCEPTED]);
   });
 
-  test("live in the runtime's local options: a reopen reads every kind, while a restore from an export, and an identity reset, start with none", async () => {
+  test("live in the runtime's local options: a clearing of the caches and the trace keeps every kind and a reopen reads them, while a restore from an export, and an identity reset, start with none", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "estoc-local-records-"));
     const file = path.join(dir, "vault.sqlite");
     try {
       const alice = await directParty(1, "https://alice.example/didcomm", ALICE, openNodeSqlite(file, { mode: "create", journal: "delete" }));
-      await written(new LocalRecords(alice.runtime.local.options, alice.runtime.author));
+      const records = new LocalRecords(alice.runtime.local.options, alice.runtime.author);
+      await written(records);
+      await alice.runtime.local.clearCaches();
+      expect(await read(records)).toEqual([LEFT, PREPARED, ACCEPTED]);
       await alice.runtime.close();
 
       const reopened = await openVault(openNodeSqlite(file, { mode: "readwrite" }), alice.seedKey);
