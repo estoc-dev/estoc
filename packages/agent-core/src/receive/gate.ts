@@ -148,7 +148,7 @@ export type SenderProof = { sender: AuthenticatedSender | null } | { refused: st
 export function senderProof(unpacked: Unpacked, sealing: Sealing, resolution: Resolution | null): SenderProof {
   const { sender, plaintext } = unpacked;
   if (sender === null) {
-    if (plaintext.from !== undefined) return { refused: `the envelope is anonymous, but its plaintext claims to be from ${plaintext.from}` };
+    if (plaintext.from != null) return { refused: `the envelope is anonymous, but its plaintext claims to be from ${plaintext.from}` };
     return { sender: null };
   }
   if (sealing.skid !== sender.kid) return { refused: `the header names ${sealing.skid ?? "no key"} as the sender's key, but ${sender.kid} sealed the envelope` };

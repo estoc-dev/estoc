@@ -48,15 +48,15 @@
     "uuid": "^11.1.1"
   },
   "peerDependencies": {
-    "@estoc/didcomm": "^0.4.1-estoc.3"
+    "@estoc/didcomm": "^0.4.1-estoc.4"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
     "didcomm-node": "^0.4.1",
     "typescript": "~5.8.0",
     "vitest": "^3.2.7",
-    "@estoc/didcomm": "^0.4.1-estoc.3",
-    "@estoc/didcomm-node": "^0.4.1-estoc.3",
+    "@estoc/didcomm": "^0.4.1-estoc.4",
+    "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "jose": "^6.0.0"
   }
 }

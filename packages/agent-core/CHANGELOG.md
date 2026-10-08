@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **The plaintext is read from its text**: an opened envelope's plaintext
+  is the strict parse of the text `@estoc/didcomm` `0.4.1-estoc.4` hands
+  back beside the message, never the binding's own view of it. Every
+  member survives as sent, an explicit null on a known header and an
+  unknown member of attachment data among them, and a text that is not
+  strict JSON, a duplicate member anywhere in it, refuses the message
+  before anything is read. An anonymous envelope whose plaintext says
+  `"from": null` claims no sender. The complete plaintext an intent
+  assembles comes back off the wire canonicalizing to the same bytes.
+  `@estoc/didcomm` and `@estoc/didcomm-node` at `^0.4.1-estoc.4` are
+  required; a build that does not hand back the text is refused.
+
 - **The successor is derived, never chosen**: a rotation makes the entity
   the vault's `successorRecipe` names, a start of the entry bound to the
   peer's start or a next of the branch address, under `did.created` with its

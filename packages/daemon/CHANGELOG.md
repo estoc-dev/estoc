@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `@estoc/didcomm-node` moves to `^0.4.1-estoc.4`, the build that hands
+  back the plaintext text `@estoc/agent-core` now reads messages from.
+
 - **Successors are derived**: `rotate` and `rotateChannel` make the
   successor the vault's recipe names, on the predecessor's own route, and
   refuse a rotation this runtime cannot commit, one away from an address

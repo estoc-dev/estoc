@@ -7,6 +7,7 @@ import type {
 } from "@estoc/didcomm";
 
 import type { DIDDoc, Secret } from "@estoc/did-peer";
+import { isJsonObject, parseStrict } from "@estoc/event-store";
 
 /**
  * The slice of didcomm-rust the agent uses, handed in by the application
@@ -15,7 +16,8 @@ import type { DIDDoc, Secret } from "@estoc/did-peer";
  * native loading), and that wiring is the one thing this package refuses to
  * know. `@estoc/didcomm` and `@estoc/didcomm-node` export `Message` with
  * this exact shape; so do the upstream `didcomm` builds, but only the
- * Estoc builds can leave a `from_prior` unverified, which `unpack` needs.
+ * Estoc builds can leave a `from_prior` unverified and hand back the
+ * plaintext text, both of which `unpack` needs.
  */
 export interface DidcommApi {
   Message: typeof MessageClass;
@@ -44,14 +46,24 @@ export async function packEncrypted(didcomm: DidcommApi, message: IMessage, ...a
   }
 }
 
-/** `Message.unpack`, the opened message read out as a plain value. */
+/**
+ * `Message.unpack`, the opened plaintext as the strict parse of the
+ * text the binding decrypted and verified. The binding's own view of
+ * the message is not read: it has collapsed duplicate members, converted
+ * numbers and dropped the explicit nulls of the headers it knows, while
+ * the plaintext's identity and every field read of it must come from one
+ * value, the text's. So a header the binding types as absent may be an
+ * explicit null here, and every reader takes null as absent; a text that
+ * is not strict JSON refuses the whole message, however the binding read
+ * it.
+ */
 export async function unpackMessage(didcomm: DidcommApi, ...args: Parameters<DidcommApi["Message"]["unpack"]>): Promise<[IMessage, UnpackMetadata]> {
-  const [native, metadata] = await didcomm.Message.unpack(...args);
-  try {
-    return [native.as_value(), metadata];
-  } finally {
-    native.free();
-  }
+  const [native, metadata, text] = await didcomm.Message.unpack(...args);
+  native.free();
+  if (typeof text !== "string") throw new Error("the didcomm binding hands back no plaintext text: it is not a build that keeps the text it verified");
+  const plaintext = parseStrict(text);
+  if (!isJsonObject(plaintext)) throw new Error("the plaintext is not a JSON object");
+  return [plaintext as unknown as IMessage, metadata];
 }
 
 /** An envelope `unpack` will not open as an inbound message: what it is, not who sealed it, is wrong. */
@@ -64,6 +76,7 @@ export class EnvelopeRefused extends Error {
 
 /** An inbound envelope opened: what the envelope itself proved, and what the plaintext carried. */
 export interface Unpacked {
+  /** the strict parse of the plaintext text, as `unpackMessage` reads it */
   plaintext: IMessage;
   /**
    * The key that sealed the envelope as authenticated encryption, and its
@@ -107,7 +120,7 @@ export async function unpack(didcomm: DidcommApi, packed: string, resolver: DIDR
   const sender = typeof kid === "string" ? { did: didOf(kid) as string, kid } : null;
   if (sender !== null) {
     if (metadata.anonymous_sender) throw new EnvelopeRefused("the authenticated layer is wrapped in an anonymous one: its own recipients are not reported");
-    if (plaintext.from !== sender.did) throw new EnvelopeRefused(`from ${plaintext.from === undefined ? "is missing" : "does not name the sealer"}`);
+    if (plaintext.from !== sender.did) throw new EnvelopeRefused(`from ${plaintext.from == null ? "is missing" : "does not name the sealer"}`);
     if (metadata.non_repudiation && didOf(metadata.sign_from) !== sender.did) throw new EnvelopeRefused("the plaintext is signed by another than the sealer");
   }
   return { plaintext, sender, fromPrior: plaintext.from_prior ?? null, metadata };

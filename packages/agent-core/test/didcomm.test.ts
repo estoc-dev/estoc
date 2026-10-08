@@ -5,10 +5,12 @@ import { Message as UpstreamMessage } from "didcomm-node";
 import { FlattenedEncrypt, importJWK } from "jose";
 
 import { resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
-import { scanVault, type Did, type DidId } from "@estoc/vault";
+import { InvalidJson, canonicalize, parseStrict } from "@estoc/event-store";
+import { scanVault, storeMessage, wirePlaintext, type Did, type DidId, type Intent } from "@estoc/vault";
 
 import { EnvelopeRefused, secretsResolverFor, unpack, type DidcommApi, type IMessage, type SecretsResolver } from "../src/protocol/didcomm.js";
 import { Keyring, createDid } from "../src/index.js";
+import { sealingOf, senderProof } from "../src/receive/gate.js";
 import { didcomm, freshVault, newMediator, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
 
 const BOB = "did:web:bob.example";
@@ -107,7 +109,7 @@ describe("unpack", () => {
     await a.runtime.close();
   });
 
-  it("takes the proof off the wire as the binding parses it: a string as is, null as absent, anything else malformed", async () => {
+  it("takes the proof off the wire as the binding parses it: a string as is, null as absent though it stays in the plaintext, anything else malformed", async () => {
     const a = await alice();
     const key = agreementKeyOf(a.ring.secrets());
     for (const proof of ["not a jwt", ""]) {
@@ -116,7 +118,7 @@ describe("unpack", () => {
     }
     const nulled = await unpack(didcomm, await anonymously(JSON.stringify({ ...plain(null, a.longFormDid), from_prior: null }), key.kid, key.jwk), resolverOf(), a.secrets);
     expect(nulled.fromPrior).toBeNull();
-    expect(Object.hasOwn(nulled.plaintext, "from_prior")).toBe(false);
+    expect(nulled.plaintext.from_prior).toBeNull();
     for (const proof of [5, {}, []]) {
       const opening = unpack(didcomm, await anonymously(JSON.stringify({ ...plain(null, a.longFormDid), from_prior: proof }), key.kid, key.jwk), resolverOf(), a.secrets);
       await expect(opening).rejects.toThrow(/Malformed/);
@@ -227,7 +229,7 @@ describe("unpack", () => {
     await a.runtime.close();
   });
 
-  it("refuses attachment data that carries two content forms before anything of it is kept, and keeps a lone null json payload", async () => {
+  it("refuses attachment data that carries two content forms before anything of it is kept, and keeps a lone null json payload with every member beside it", async () => {
     const a = await alice();
     const key = agreementKeyOf(a.ring.secrets());
     const wire = (data: string) => JSON.stringify({ ...plain(null, a.longFormDid), attachments: [{ id: "a", data: "@@" }] }).replace('"@@"', data);
@@ -236,8 +238,71 @@ describe("unpack", () => {
       await expect(opening).rejects.toThrow(/Malformed/);
       await expect(opening).rejects.not.toThrow(EnvelopeRefused);
     }
-    const opened = await unpack(didcomm, await anonymously(wire('{"json":null,"note":1,"note":2}'), key.kid, key.jwk), resolverOf(), a.secrets);
-    expect(opened.plaintext.attachments?.[0]?.data).toEqual({ json: null });
+    const opened = await unpack(didcomm, await anonymously(wire('{"json":null,"note":1}'), key.kid, key.jwk), resolverOf(), a.secrets);
+    expect(opened.plaintext.attachments?.[0]?.data).toEqual({ json: null, note: 1 });
+    await a.runtime.close();
+  });
+});
+
+describe("the plaintext read", () => {
+  /** `text` sealed anonymously to Alice and opened: what the receiver reads of exactly these bytes. */
+  async function opened(a: Awaited<ReturnType<typeof alice>>, text: string) {
+    const key = agreementKeyOf(a.ring.secrets());
+    const packed = await anonymously(text, key.kid, key.jwk);
+    return { packed, unpacked: await unpack(didcomm, packed, resolverOf(), a.secrets) };
+  }
+  const utf8 = new TextDecoder();
+  const jcs = (value: unknown) => utf8.decode(canonicalize(value as Parameters<typeof canonicalize>[0]));
+
+  it("is the strict parse of the text, not the binding's view: explicit nulls stay, known or unknown the header, and the value canonicalizes to the bytes sealed", async () => {
+    const a = await alice();
+    const text = JSON.stringify({ id: "m1", typ: "application/didcomm-plain+json", type: "https://didcomm.org/basicmessage/2.0/message", from: null, to: [a.longFormDid], thid: null, created_time: 1788442800, "x-note": { a: null, n: [0, -1, 2.5, 1e21, 9007199254740991] }, body: { content: "hi", z: null } });
+    const { packed, unpacked } = await opened(a, text);
+    expect(unpacked.plaintext.thid).toBeNull();
+    expect(unpacked.plaintext.from).toBeNull();
+    expect((unpacked.plaintext as unknown as Record<string, unknown>)["x-note"]).toEqual({ a: null, n: [0, -1, 2.5, 1e21, 9007199254740991] });
+    expect(jcs(unpacked.plaintext)).toBe(jcs(parseStrict(text)));
+    const { thid: _absent, ...withoutThid } = parseStrict(text) as Record<string, unknown>;
+    expect(jcs(unpacked.plaintext)).not.toBe(jcs(withoutThid));
+    expect(senderProof(unpacked, sealingOf(packed), null)).toEqual({ sender: null });
+    await a.runtime.close();
+  });
+
+  it("refuses a duplicate member wherever it sits, as strict JSON: in the body, in an unknown header or in attachment data, where the binding would keep the last", async () => {
+    const a = await alice();
+    const wire = (member: Partial<IMessage> & Record<string, unknown>, hole: string) => JSON.stringify({ ...plain(null, a.longFormDid), ...member }).replace('"@@"', hole);
+    for (const text of [wire({ body: "@@" }, '{"k":1,"k":2}'), wire({ "x-note": "@@" }, '{"k":1,"k":2}'), wire({ attachments: [{ id: "a", data: "@@" as unknown as { json: null } }] }, '{"json":null,"note":1,"note":2}')]) {
+      await expect(opened(a, text)).rejects.toThrow(InvalidJson);
+    }
+    await a.runtime.close();
+  });
+
+  it("reads back from the wire the complete plaintext an intent assembles, byte for byte under canonicalization: timing, threading, acknowledgements, proof, every attachment carrier and the extra headers", async () => {
+    const a = await alice();
+    const bob = await rotatedBob();
+    const attachments = [
+      { id: "photo", description: "a photo", filename: "hi.txt", media_type: "text/plain", format: "plain", lastmod_time: 1788442000, byte_count: 2, data: { base64: "aGk", hash: "zQmYmVjaWFs", jws: { protected: "e30", signature: "c2ln", header: { kid: `${BOB}#auth` } } } },
+      { id: "card", data: { json: { note: null, n: [0, -1, 2.5, 1e21, 9007199254740991] } } },
+      { id: "nothing", data: { json: null } },
+      { id: "link", data: { links: ["https://example.invalid/a", "https://example.invalid/b"], hash: "zQmYmVjaWFs" } },
+    ];
+    const stored = storeMessage({ content: "hi", z: null, deep: { list: [{}, [], ""] } }, attachments);
+    const intent: Intent = { id: "m1", type: "https://didcomm.org/basicmessage/2.0/message", thid: "t1", pthid: "p1", document: stored.document, createdTime: 1788442800, expiresTime: 1788443800, pleaseAck: [""], ack: ["a1", "A1"], headers: { "x-note": { a: null }, "x-list": [1, "two"] } } as Intent;
+    const plaintext = wirePlaintext(intent, { from: bob.successor.did as Did, to: [a.longFormDid], fromPrior: bob.proof }, (root) => stored.payloads.find((payload) => payload.cid === root)!.bytes);
+    const [packed] = await bob.seal(a.longFormDid, plaintext as unknown as IMessage);
+    const unpacked = await unpack(didcomm, packed, resolverOf(), a.secrets);
+    expect(jcs(unpacked.plaintext)).toBe(jcs(plaintext));
+    expect(unpacked.fromPrior).toBe(bob.proof);
+    expect(unpacked.plaintext.attachments).toHaveLength(4);
+    await a.runtime.close();
+  });
+
+  it("refuses a binding that hands back no plaintext text", async () => {
+    const a = await alice();
+    const bob = await webIdentity(BOB, 77);
+    const [packed] = await new didcomm.Message(plain(BOB, a.longFormDid)).pack_encrypted(a.longFormDid, BOB, null, resolverOf(bob), secretsResolverFor(bob.secrets), { forward: false });
+    const upstream = { Message: UpstreamMessage } as unknown as DidcommApi;
+    await expect(unpack(upstream, packed, resolverOf(bob), a.secrets)).rejects.toThrow(/no plaintext text/);
     await a.runtime.close();
   });
 });
