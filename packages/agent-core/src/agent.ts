@@ -178,7 +178,6 @@ export class Agent {
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
   private readonly retries = new Map<MediationId, Retry>();
-  /** The connection of each arrangement under way, for whoever asks for it meanwhile to share. */
   private readonly connecting = new Map<MediationId, Promise<Connection>>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
