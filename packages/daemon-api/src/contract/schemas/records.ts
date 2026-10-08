@@ -216,6 +216,8 @@ export const pendingOutbound: z.ZodType<PendingOutbound> = z.object({
   messageId,
   channelId: channelId.nullable(),
   outcome: z.enum(["queued", "prepared"]),
+  candidates: z.array(eventCid),
+  selected: eventCid.nullable(),
   because: z.string().nullable(),
   entries,
 });

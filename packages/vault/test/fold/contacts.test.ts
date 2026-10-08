@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { foldContacts, foldVaultChecked, type ContactId } from "../../src/index.js";
 import { AUTHOR2, expectOrderFree, Scene, snapshot } from "./helpers.js";
-import { blocked, channel, intent, noObjects, packageOf, proof, receipt, resolved, vaults } from "./scene.js";
+import { blocked, channel, intent, noObjects, preparationOf, proof, receipt, resolved, vaults } from "./scene.js";
 
 const ALICE = "019b2a63-48bf-7214-961d-4c3f97cb95da" as ContactId;
 const BOB = "019b2a66-c794-7b41-bff1-68a4ecdd0b67" as ContactId;
@@ -68,7 +68,7 @@ describe("the contacts", () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
-    packageOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
+    preparationOf(scene, out, { sender: a0.didId, recipient: b0, resolution: root });
     receipt(scene, { local: a0, peer: b0, resolution: root, overrides: { ack: [out.data.messageId], pleaseAck: [""] } });
     receipt(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1), fromPrior: await proof(peerKeys, b0, b1) });
     receipt(scene, { local: a1, peer: b0, resolution: resolved(scene, a1.didId, b0) });

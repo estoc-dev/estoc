@@ -30,8 +30,8 @@ importers:
         specifier: workspace:^
         version: link:../packages/daemon-api
       '@estoc/didcomm':
-        specifier: ^0.4.1-estoc.3
-        version: 0.4.1-estoc.3
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@estoc/event-store':
         specifier: workspace:^
         version: link:../packages/event-store
@@ -176,11 +176,11 @@ importers:
         version: 11.1.1
     devDependencies:
       '@estoc/didcomm':
-        specifier: ^0.4.1-estoc.3
-        version: 0.4.1-estoc.3
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@estoc/didcomm-node':
-        specifier: ^0.4.1-estoc.3
-        version: 0.4.1-estoc.3
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
@@ -277,8 +277,8 @@ importers:
         specifier: workspace:^
         version: link:../daemon-api
       '@estoc/didcomm-node':
-        specifier: ^0.4.1-estoc.3
-        version: 0.4.1-estoc.3
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@estoc/event-store':
         specifier: workspace:^
         version: link:../event-store
@@ -301,12 +301,21 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
     devDependencies:
+      '@estoc/didcomm':
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
       typescript:
         specifier: ~5.8.0
         version: 5.8.3
@@ -1451,14 +1460,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@estoc/didcomm-node@0.4.1-estoc.3':
-    resolution: {integrity: sha512-EoAZHCUlAsjOcSTBK84o55WidCf7rOmjtt4yB9CUB7Brfa/4sWG1s5a5pfq+zX7yIKgjG120UlcbBTQeaQnQHw==}
-
   '@estoc/didcomm-node@0.4.1-estoc.4':
     resolution: {integrity: sha512-t2lFP/qWstTH2zHKSsJadlY1hLrIBJ9fng3vCHeWb0xdIcL3ELKfWaNzKRt6yybPLsmzUiSMHTpBttv8Lbldvw==}
-
-  '@estoc/didcomm@0.4.1-estoc.3':
-    resolution: {integrity: sha512-uyf6f+XXt1kbWFrSx6VC9xzpTzBqVPOapKpkOU1vhp7fRGM9YmOTCEkDYTFntwuwUC3TBXOz7KfIElATXVb8iQ==}
 
   '@estoc/didcomm@0.4.1-estoc.4':
     resolution: {integrity: sha512-NcGsihnlf3MX5GZecaLESYJvYeMrAGakK9fgDrdfF6/x2LbU1c5ylDB1XrV5tZkf0SVZpHqYM2IPxH5aeb+VQw==}
@@ -4335,11 +4338,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@estoc/didcomm-node@0.4.1-estoc.3': {}
-
   '@estoc/didcomm-node@0.4.1-estoc.4': {}
-
-  '@estoc/didcomm@0.4.1-estoc.3': {}
 
   '@estoc/didcomm@0.4.1-estoc.4': {}
 

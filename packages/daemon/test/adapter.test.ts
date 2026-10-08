@@ -269,6 +269,6 @@ describe("the methods table", () => {
     expect(names).not.toContain("close");
     expect(names).toContain("refresh");
     expect(names).toContain("resolveChannel");
-    expect(names).toHaveLength(30);
+    expect(names).toHaveLength(31);
   });
 });

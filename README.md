@@ -25,7 +25,7 @@ The libraries are still published to npm for everyone else — `pnpm publish`
 rewrites `workspace:^` to the real semver range on the way out — but that
 now happens at milestones, not per commit.
 
-The [version-3 vault specification](docs/replica-model/README.md) has a
+The [version-5 vault specification](docs/replica-model/README.md) has a
 reading guide covering storage, events, delivery and relationship policy;
 it is what the packages above implement. The version-2 documents under
 `docs/` are retired and kept as a record.

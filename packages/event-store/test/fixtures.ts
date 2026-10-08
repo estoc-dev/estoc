@@ -5,11 +5,11 @@
  * the real profile, for a vault that is never unlocked.
  */
 
-import type { VaultMetadata, WrappedSeed } from "../src/index.js";
+import { VAULT_VERSION, type VaultMetadata, type WrappedSeed } from "../src/index.js";
 
 export const ANCHOR = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 
-export const META: VaultMetadata = { version: 4, anchor: ANCHOR };
+export const META: VaultMetadata = { version: VAULT_VERSION, anchor: ANCHOR };
 
 export const WRAPPED: WrappedSeed = {
   version: 3,

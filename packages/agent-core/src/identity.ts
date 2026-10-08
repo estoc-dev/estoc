@@ -12,6 +12,7 @@
 
 import {
   SqliteVault,
+  VAULT_VERSION,
   createRuntime,
   openInspector,
   openPortable,
@@ -79,7 +80,7 @@ export interface CreateVaultOptions extends VaultOptions {
 /** Creates the vault in `driver`, opened to create, under the seed's anchor, and records its label. */
 export async function createVault(driver: SqliteDriver, { seedKey, wrapped, label, ...options }: CreateVaultOptions): Promise<OpenedVault> {
   const anchor = await Keys.anchorOf(seedKey);
-  const db = createRuntime(driver, { metadata: { version: 4, anchor }, wrapped });
+  const db = createRuntime(driver, { metadata: { version: VAULT_VERSION, anchor }, wrapped });
   const keys = await Keys.open(seedKey, anchor);
   const runtime = new SqliteVault(db, options);
   try {

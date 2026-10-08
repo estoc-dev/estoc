@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 
-import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, kindOf, type DidId, type MessageId } from "@estoc/vault";
+import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, forwardId, kindOf, type DidId, type EventReference, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
@@ -17,7 +17,7 @@ const HELLO = "019b0000-0000-7000-8000-000000000102" as MessageId;
 afterEach(stopAll);
 
 describe("first contact over a mediator", () => {
-  test("a Ping to an invitation is answered and acknowledged once, however often it is delivered; a refused call is made again only by a retry, with the same package", async () => {
+  test("a Ping to an invitation is answered and acknowledged once, however often it is delivered; a refused call is made again only by a retry, with the same preparation", async () => {
     const mediator = await newMediator();
     const forwards: IMessage[] = [];
     mediator.intercept = (msg) => {
@@ -89,11 +89,11 @@ describe("first contact over a mediator", () => {
     expect(forwards).toHaveLength(sentBefore);
     const waiting = await bob.agent.outbounds();
     expect(waiting.map(({ outbound, waiting }) => [outbound.messageId, outbound.outcome.status, waiting])).toEqual([[HELLO, "prepared", null]]);
-    const packageId = waiting[0]!.outbound.package!.event.data.packageId;
+    const preparationEventCid = waiting[0]!.outbound.preparations[0]!.event.cid as EventReference<"message.prepared">;
 
     const retried = await bob.agent.manual.retry(HELLO);
-    expect(retried).toMatchObject({ outcome: "submitted", packageId });
-    expect(forwards.at(-1)!.id).toBe(packageId);
+    expect(retried).toMatchObject({ outcome: "submitted", preparationEventCid });
+    expect(forwards.at(-1)!.id).toBe(forwardId(preparationEventCid));
     await until("alice has the message", () => alice.inbounds.length === 3);
     const last = await fold(alice);
     expect([...last.inbound.executions.values()].map((execution) => kindOf(execution.members[0]!.source.event.data)).sort()).toEqual(["application", "application"]);

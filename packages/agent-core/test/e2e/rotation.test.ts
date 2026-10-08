@@ -33,9 +33,9 @@ const links = (fold: VaultFold): string[][] => {
   return [...rows.values()].sort();
 };
 
-const packageOf = (output: Outbound) => output.package!.event.data;
+const preparationOf = (output: Outbound) => output.preparations[0]!.event.data;
 
-const carriesProof = (output: Outbound): boolean => packageOf(output).fromPrior !== null;
+const carriesProof = (output: Outbound): boolean => preparationOf(output).fromPrior !== null;
 
 describe("rotation between two agents", () => {
   test("the first message to a disclosed address selects a private successor, announced under a proof the peer verifies and answers; once the peer wrote there the proof is dropped, the old address takes no send but records what reaches it, and the peer's own rotation moves the head again", { timeout: LONG }, async () => {
@@ -68,11 +68,11 @@ describe("rotation between two agents", () => {
     const [notification] = [...ofAlice.outbound.outbounds.values()];
     expect(notification!.intents[0]!.data).toMatchObject({ msgType: EMPTY_MESSAGE_TYPE, senderDidId: address.rotation.successor, recipientDid: b0, pleaseAck: [""], ack: [] });
     expect(notification).toMatchObject({ acknowledged: true });
-    expect(packageOf(notification!).fromPrior === address.rotation.decision.data.fromPrior).toBe(true);
+    expect(preparationOf(notification!).fromPrior === address.rotation.decision.data.fromPrior).toBe(true);
 
     const second = await alice.agent.send({ channel: channelOf(a1, b0) }, hello("from my private address"), { messageId: SECOND });
     expect(second.dispatched).toMatchObject({ outcome: "submitted" });
-    expect(packageOf((await foldOf(alice)).outbound.outbounds.get(SECOND)!)).toMatchObject({ fromPrior: null, recipientDid: b0 });
+    expect(preparationOf((await foldOf(alice)).outbound.outbounds.get(SECOND)!)).toMatchObject({ fromPrior: null, recipientDid: b0 });
     await until("bob has the message from the private address", () => bob.inbounds.length === 2);
     expect(bob.inbounds[1]).toMatchObject({ received: { live: expect.any(LiveInput) }, after: { proof: { status: "not-present" } } });
 
@@ -140,7 +140,7 @@ describe("rotation between two agents", () => {
       expect([...fold.outbound.outbounds.values()].find((output) => output.intents[0]!.data.rotationEventCid === decision.decision.cid)).toMatchObject({ acknowledged: true });
     }
 
-    // Bob acknowledged alice's notification from his successor, the address it reached being replaced there, so his proof has reached her at hers: the join is confirmed on both sides, and its first package carries no proof.
+    // Bob acknowledged alice's notification from his successor, the address it reached being replaced there, so his proof has reached her at hers: the join is confirmed on both sides, and its first preparation carries no proof.
     const joined = await alice.agent.send({ channel: channelOf(a1, b1) }, hello("at the join"), { messageId: THIRD });
     expect(joined.dispatched).toMatchObject({ outcome: "submitted" });
     expect(carriesProof((await foldOf(alice)).outbound.outbounds.get(THIRD)!)).toBe(false);

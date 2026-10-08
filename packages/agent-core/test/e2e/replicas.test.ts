@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, leftTo, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
@@ -31,7 +31,7 @@ const seen = (mediator: FakeMediator, type: string): number => mediator.seenType
 
 const replicaOf = async (running: Running): Promise<Did> => (await foldOf(running)).replicas.replicas.get(running.runtime.author)!.did!;
 
-const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map((executionId) => leftTo(running.runtime.local.options, running.runtime.author, executionId)));
+const leftBy = async (running: Running): Promise<(Did | null)[]> => Promise.all([...(await foldOf(running)).inbound.executions.keys()].map(async (executionId) => (await new LocalRecords(running.runtime.local.options, running.runtime.author).leftTo(executionId))?.responderDid ?? null));
 
 const owed = async (running: Running): Promise<string[]> => (await running.agent.pending()).missingResponses.map(({ effectType }) => effectType);
 
@@ -182,6 +182,49 @@ describe("that a replica left an input to another", () => {
     await restart(second, options, { resetIdentity: true });
     for (const runtime of [elsewhere, second]) expect([await owed(runtime), await leftBy(runtime), (await foldOf(runtime)).set.of("message.out")]).toEqual([[ECHO], [null], []]);
     expect(seen(mediator, EXECUTION_REGISTER)).toBe(registrations);
+  });
+});
+
+describe("a registration the mediator has reclaimed", () => {
+  it("is made anew for a replica that takes the input only after: listed first, that replica answers the input too, and once the two merge each output is one intent of two records, each over its own replica's observation", { timeout: LONG }, async () => {
+    const { mediator, alice, elsewhere, bob } = await twoReplicas({ privateAddresses: false }, { liveDelivery: false });
+    await bob.agent.send(toAlice(alice, bob), ping, { messageId: PING });
+    await until("alice has the ping", () => alice.inbounds.length === 1);
+    await alice.agent.settled();
+    await until("bob has the receipt and the reply", () => bob.inbounds.length === 2);
+    const [executionId] = [...(await foldOf(alice)).inbound.executions.keys()];
+    const answering = (running: Running) => {
+      const responder = running.inbounds[0]?.responder;
+      if (responder?.status !== "self") throw new Error(`the replica does not answer the input: ${JSON.stringify(responder)}`);
+      return responder.registration;
+    };
+    const first = answering(alice);
+    expect(first?.replicas).toEqual([await replicaOf(alice)]);
+
+    for (const registrations of mediator.executions.values()) registrations.clear();
+    expect(await elsewhere.agent.connect()).toMatchObject([{ drained: { acked: 1 } }]);
+    await elsewhere.agent.settled();
+    const anew = answering(elsewhere);
+    expect(anew?.replicas).toEqual([await replicaOf(elsewhere)]);
+    expect(anew?.registrationId).not.toBe(first?.registrationId);
+    expect(elsewhere.inbounds[0]?.reacted?.effects.map((effect) => [effect.effectType, effect.outcome])).toEqual([
+      [PURE_ACK_EFFECT, "created"],
+      [PING_RESPONSE_EFFECT, "created"],
+    ]);
+    await until("bob has each output once more", () => bob.inbounds.length === 4);
+
+    await imported(alice, await snapshotOf(elsewhere));
+    await imported(elsewhere, await snapshotOf(alice));
+    for (const replica of [alice, elsewhere]) {
+      const fold = await foldOf(replica);
+      for (const effectType of [PURE_ACK_EFFECT, PING_RESPONSE_EFFECT]) {
+        const result = fold.outbound.effectResult(executionId!, effectType);
+        if (result.status !== "produced") throw new Error(`${effectType} is ${result.status}`);
+        const { intent, effect, intents } = result.outbound;
+        expect([intent.status, effect.status, new Set(intents.map(({ author }) => author)).size, new Set(intents.map(({ data }) => data.sourceEventCid)).size]).toEqual(["consistent", "complete", 2, 2]);
+      }
+      expect(await replica.agent.pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    }
   });
 });
 

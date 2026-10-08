@@ -460,6 +460,11 @@ export async function cancel(messageId: MessageId): Promise<void> {
   said("cancel", await call((daemon) => daemon.cancel({ messageId })));
 }
 
+/** The sealed copy of a message this device sends from now on; sending it is a retry of its own. */
+export async function selectPreparation(messageId: MessageId, preparationEventCid: EventCid): Promise<void> {
+  said("copy chosen", await call((daemon) => daemon.selectPreparation({ messageId, preparationEventCid })));
+}
+
 export async function completeResponse(executionId: ExecutionId, effectType: string): Promise<void> {
   said(`reply ${effectType}`, await call((daemon) => daemon.completeResponse({ executionId, effectType })));
 }

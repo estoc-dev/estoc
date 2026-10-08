@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { DAEMON_ERROR_CODES, OOB_INVITATION, OUTCOMES, PLAIN_TYP, schemas, type ContactId, type MethodName, type SendTarget } from "../../src/contract/index.js";
 import { HEAD_CHANNEL, as, linesState, openState } from "./fixtures.js";
 
-const { methods, METHOD_NAMES, isMethodName, COMMON_ERROR_CODES, sendTarget, invitation, DISPATCH_OUTCOMES, COMPLETION_OUTCOMES, CANCEL_OUTCOMES } = schemas;
+const { methods, METHOD_NAMES, isMethodName, COMMON_ERROR_CODES, sendTarget, invitation, DISPATCH_OUTCOMES, COMPLETION_OUTCOMES, CANCEL_OUTCOMES, SELECT_OUTCOMES } = schemas;
 
 const ok = (name: MethodName, side: "input" | "result", value: unknown) => methods[name][side].safeParse(value).success;
 
 describe("the method table", () => {
   it("names each public operation once, and nothing else is a method", () => {
-    expect(METHOD_NAMES).toHaveLength(31);
+    expect(METHOD_NAMES).toHaveLength(32);
     expect(new Set(METHOD_NAMES).size).toBe(METHOD_NAMES.length);
     expect(isMethodName("send")).toBe(true);
     expect(isMethodName("boot")).toBe(false);
@@ -91,7 +91,7 @@ describe("byte slots", () => {
 
 describe("procedure outcomes", () => {
   it("together cover the whole vocabulary and no more", () => {
-    expect(new Set([...DISPATCH_OUTCOMES, ...COMPLETION_OUTCOMES, ...CANCEL_OUTCOMES])).toEqual(new Set(OUTCOMES));
+    expect(new Set([...DISPATCH_OUTCOMES, ...COMPLETION_OUTCOMES, ...CANCEL_OUTCOMES, ...SELECT_OUTCOMES])).toEqual(new Set(OUTCOMES));
   });
 
   it("restrict a send to what one transport call can come to", () => {
@@ -107,11 +107,18 @@ describe("procedure outcomes", () => {
     for (const outcome of ["submitted", "pending", "failed"]) expect(ok("cancel", "result", { outcome, because: null })).toBe(false);
   });
 
-  it("let a completion find an intent already there or refuse one", () => {
+  it("let a completion find an intent already there, refuse one or find the operation owes none", () => {
     for (const name of ["completeResponse", "completeNotification"] as const) {
       for (const outcome of COMPLETION_OUTCOMES) expect(ok(name, "result", { outcome, because: null })).toBe(true);
       expect(ok(name, "result", { outcome: "cancelled", because: null })).toBe(false);
     }
+  });
+
+  it("let a choice of preparation select it or take none, and name the preparation it is asked for", () => {
+    for (const outcome of SELECT_OUTCOMES) expect(ok("selectPreparation", "result", { outcome, because: null })).toBe(true);
+    for (const outcome of ["submitted", "pending", "cancelled"]) expect(ok("selectPreparation", "result", { outcome, because: null })).toBe(false);
+    expect(ok("selectPreparation", "input", { messageId: "m-1", preparationEventCid: "bafyprep" })).toBe(true);
+    expect(ok("selectPreparation", "input", { messageId: "m-1" })).toBe(false);
   });
 
   it("return the successor channel from a rotation with its notification's outcome", () => {

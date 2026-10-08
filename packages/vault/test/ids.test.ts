@@ -9,6 +9,7 @@ import {
   anonymousMessageId,
   automaticMessageId,
   canonicalDid,
+  canonicalWireId,
   channelKey,
   channelOf,
   compareChannels,
@@ -17,17 +18,20 @@ import {
   effectKey,
   estocNamespace,
   executionId,
+  forwardId,
   inboundMessageId,
   mediationIdOf,
   mediationKeyName,
   replicaKeyName,
   sameDid,
+  sameWireId,
   startDidId,
   successorDidId,
   sameChannel,
   type Did,
   type DidId,
   type EffectKey,
+  type EventReference,
   type ExecutionId,
   type KeyName,
   type MediationId,
@@ -48,14 +52,15 @@ const PURE_ACK = "https://estoc.dev/distributed-delivery/1.0#pure-ack";
 const PING_RESPONSE = "https://didcomm.org/trust-ping/2.0/ping-response";
 
 describe("estocNamespace", () => {
-  it("derives each of the five namespaces from the URL namespace to the published value", () => {
-    expect(NAMESPACE_PURPOSES).toHaveLength(5);
+  it("derives each of the six namespaces from the URL namespace to the published value", () => {
+    expect(NAMESPACE_PURPOSES).toHaveLength(6);
     expect(Object.fromEntries(NAMESPACE_PURPOSES.map((p) => [p, estocNamespace(p)]))).toEqual({
       "inbound-message": "4dc929eb-aa9c-5f2e-9d33-1fdf1848fde6",
       "message-execution": "6511fc66-4d39-589e-b2c7-7185a807b6c6",
       "automatic-mid": "8847bd57-5907-5bcd-9a71-d1e97cee3199",
       mediation: "ef3354b7-959d-5de2-a68d-f475ff7a7ab4",
       "did-entity": "47c0b363-2cc9-5e29-8898-0cb3cffa2ac2",
+      forward: "065a85d2-b1e0-5b6f-9030-e2baafb0913d",
     });
     expect(estocNamespace("inbound-message")).toBe(uuidv5("https://estoc.dev/uuid/v1/inbound-message", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"));
   });
@@ -116,6 +121,17 @@ describe("inboundMessageId and executionId", () => {
     expect(anonymousMessageId(k1, ACK_WIRE)).not.toBe(inboundMessageId(PEER, LOCAL, ACK_WIRE));
   });
 
+  it("take the wire ID in its canonical form: one spelling of the ID in any case is one observation and one execution, and one anonymous observation", () => {
+    const upper = wire(ACK_WIRE.toUpperCase());
+    expect(upper).not.toBe(ACK_WIRE);
+    expect(inboundMessageId(PEER, LOCAL, upper)).toBe(inboundMessageId(PEER, LOCAL, ACK_WIRE));
+    expect(executionId(PEER, LOCAL, upper)).toBe(ACK_EXECUTION);
+    expect(executionId(PEER, LOCAL, upper)).toBe(uuidv5(canonicalize(["v4", { recipient: LOCAL, sender: PEER }, ACK_WIRE]), estocNamespace("message-execution")));
+    const key = "did/019b2a60-c68e-75bf-b6fb-ae1a41f8d715/key-agreement" as KeyName;
+    expect(anonymousMessageId(key, upper)).toBe(anonymousMessageId(key, ACK_WIRE));
+    expect(inboundMessageId(PEER, LOCAL, wire("Not-The-Same-1"))).not.toBe(inboundMessageId(PEER, LOCAL, wire("not-the-same-2")));
+  });
+
   it("refuse an empty wire ID, DID or key name", () => {
     expect(() => inboundMessageId(PEER, LOCAL, wire(""))).toThrow(InvalidIdentifier);
     expect(() => inboundMessageId(did(""), LOCAL, ACK_WIRE)).toThrow(InvalidIdentifier);
@@ -158,6 +174,17 @@ describe("effectKey and automaticMessageId", () => {
   });
 });
 
+describe("canonicalWireId and sameWireId", () => {
+  it("fold the ASCII letters of a wire ID to lower case and nothing else, and compare two IDs by that spelling", () => {
+    expect(canonicalWireId("019B2A70-E2C8-7fb4-b63f-1ACA32152062")).toBe("019b2a70-e2c8-7fb4-b63f-1aca32152062");
+    expect(canonicalWireId("Ünïcode~Id_1.2-3")).toBe("Ünïcode~id_1.2-3");
+    expect(sameWireId("a1", "A1")).toBe(true);
+    expect(sameWireId("a1", "a1")).toBe(true);
+    expect(sameWireId("a1", "a2")).toBe(false);
+    expect(sameWireId("", "")).toBe(true);
+  });
+});
+
 describe("canonicalDid", () => {
   it("spells a did:peer:4 by its short form whichever form it is given, and any other DID as it is, so that two spellings of one DID are the same DID", () => {
     const long = did(`${LOCAL}:z2LongForm`);
@@ -186,6 +213,17 @@ describe("mediationIdOf", () => {
     expect(() => mediationIdOf(did(""))).toThrow(InvalidIdentifier);
     expect(() => mediationIdOf(did("mediator.example"))).toThrow(InvalidIdentifier);
     expect(() => mediationIdOf(did("did:peer:4abc"))).toThrow(InvalidIdentifier);
+  });
+});
+
+describe("forwardId", () => {
+  const PREPARATION = "bafkreia5n4chkt47rrkgjs65fwyplx7wbnpe6ke3fq6xbjsmgwrmwvhcs4" as EventReference<"message.prepared">;
+
+  it("names the forward around a preparation's envelope by the preparation's event CID, to the published value, without carrying the CID", () => {
+    expect(forwardId(PREPARATION)).toBe("bc21dc07-fd00-54de-9ee6-eba82a332b94");
+    expect(forwardId(PREPARATION)).toBe(uuidv5(canonicalize(["v1", PREPARATION]), estocNamespace("forward")));
+    expect(forwardId(PREPARATION)).not.toContain(PREPARATION);
+    expect(forwardId("bafkreiefyoi7yed7cmfo7woi5kahpw7zu7uq6pj6avn4lgkbfwalkoxl7a" as EventReference<"message.prepared">)).not.toBe(forwardId(PREPARATION));
   });
 });
 

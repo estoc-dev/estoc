@@ -8,7 +8,7 @@
 
 import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge } from "../errors.js";
 import { canonicalEventBytes, type Cid, type Event } from "../event.js";
-import type { WrappedSeed } from "../keystore.js";
+import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
 import { Packer, hashSource, sortCids } from "../objects.js";
 import type { Held, HeldRoots, Vault, VaultRuntime } from "../vault.js";
 import type { SqliteDriver } from "./driver.js";
@@ -39,7 +39,6 @@ export interface ExportOptions {
 export type Exported = Validated;
 
 const FORMAT = "estoc-sqlite";
-const VAULT_VERSION = 4;
 
 /** How many bytes of chunks are gathered from a source stream before a transaction writes them: the memory an export holds beyond the chunk in hand. */
 const BATCH_BYTES = 8 * CHUNK_BYTES;

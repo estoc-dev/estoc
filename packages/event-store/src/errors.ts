@@ -1,5 +1,5 @@
 /**
- * What the version-4 event model throws. Each names the rule it stands
+ * What the event model throws. Each names the rule it stands
  * for; a store above wraps or reports them, never reinterprets.
  */
 
@@ -143,7 +143,7 @@ export class UnsupportedOperation extends Error {
   }
 }
 
-/** What was opened is not a version-4 vault this reader opens: another format or version, missing or malformed metadata, a keystore of another shape. Nothing was written. */
+/** What was opened is not a vault of the version this reader opens: another format or version, missing or malformed metadata, a keystore of another shape. Nothing was written. */
 export class NotAVault extends Error {
   constructor(message: string) {
     super(message);
@@ -314,7 +314,7 @@ export class SnapshotTooLarge extends Error {
   }
 }
 
-/** A restore's source is not a valid version-4 snapshot; nothing was published. */
+/** A restore's source is not a valid snapshot of this vault version; nothing was published. */
 export class InvalidSnapshot extends Error {
   constructor(readonly problems: { where: string; error: string }[]) {
     super(`not a valid snapshot: ${describe(problems)}`);

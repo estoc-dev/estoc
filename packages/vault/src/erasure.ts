@@ -1,9 +1,9 @@
 /**
- * The erasure of a message: every root its events and its packages
+ * The erasure of a message: every root its events and its preparations
  * still retain, released in one erase and collected in the same lock;
  * and the closure that keeps an erasure complete when a later event
- * names roots the erase did not — a later observation's, a package
- * prepared after.
+ * names roots the erase did not — a later observation's, a preparation
+ * made after.
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
@@ -62,7 +62,7 @@ export function erasureClosure(fold: VaultFold): VaultDraft<"message.erased">[] 
   return drafts;
 }
 
-/** Erase a message: every root its events and its packages still retain, in one commit, then collect. Nothing left to release commits nothing. */
+/** Erase a message: every root its events and its preparations still retain, in one commit, then collect. Nothing left to release commits nothing. */
 export function eraseMessage(runtime: VaultRuntime, keys: Keys | null, messageId: MessageId, because = "user", options: ScanOptions = {}): Promise<Committed> {
   return commitAndCollect(runtime, keys, options, (fold) => eraseDrafts(fold, [messageId], because));
 }

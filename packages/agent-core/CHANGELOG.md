@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+- **The preparation a message carries is this runtime's selection**
+  (breaking): the preparation `prepare` commits is selected right after
+  the commit and handed to dispatch only once the selection is written;
+  with none selected, the one valid preparation is selected in the
+  preparation step, and several wait for the user's choice,
+  `selectPreparation` (`Manual.selectPreparation`, `Dispatcher.select`),
+  which a manual retry then carries. A selection that names a
+  preparation not here, erased, waiting or contradicting the intent is
+  replaced by nothing on its own, and one the local options refuse
+  leaves the message prepared and uncalled (`none`). `carriage` says
+  what a call of an open message would carry. `OpenOutbound` lists the
+  valid `candidates` and the `selected` one, with the new manual entry
+  `selectPreparation` while several are valid.
+- **Runtime-local delivery records** (breaking): `LocalRecords` keeps
+  what this runtime alone knows of delivery in its local options, under
+  `RFC8785(["agent-core", 1, replicaId, kind, subjectId])`: the input its
+  replica left to another (`execution-left`), the preparation it selected
+  (`preparation-selected`) and an acceptance it observed and has not
+  recorded (`acceptance-owed`). Values of the wrong shape are refused, a
+  failed write is reported, and a failed read finds no record. An
+  acceptance is kept as owed before its commit and dropped after it, and
+  `Agent.open` records every acceptance it finds owed without a call; a
+  restore or an identity reset starts with none. `AgentOptions.localOptions`
+  (`LocalStore`, with `delete`) replaces `confirmations`, the responder
+  and the records take `local` in its place, `LocalRecords.leftTo`
+  replaces `leftTo`, and `transientOptions` replaces
+  `transientConfirmations`. Records kept under the earlier keys are not
+  read.
+- **A user's message is created at a fixed time**: `send` records the
+  content's `createdTime`, else the clock's second when the message is
+  first sent (`SendOptions.now`, `Date.now` by default; an `Agent` passes
+  its own `now`), so every user message goes out with `created_time`. A
+  send repeated under a recorded message ID that gives no time or null
+  reads the recorded one before comparing, so a moved clock never makes
+  it another intent; another non-null time is another intent. The
+  comparison is the fold's `sameIntent`, so a repetition is the recorded
+  intent whatever spelling of its self references it or any merged
+  record of it keeps.
+- **Effects are decided by their recorded result**: each operation reads
+  its tuple's result before the body is read or the handler asked. An
+  output recorded is reused, a skip stands, and only a pending operation
+  is decided. A handler may answer an operation with
+  `{ content: null, skipped: code }` when its own rule owes the input no
+  output for good; the agent records it as `effect.skipped` and the
+  outcome is `skipped` with that `code`. The built-in Ping reply skips a
+  Ping that asked for no reply (`no-response-requested`); an expired Ping
+  or a body not here stays pending. A skip the disk refuses is
+  `refused` and records nothing. `automaticDraft` returns the tuple's
+  `result`, with a draft only while it is pending (`RecordedResult`).
+- **Preparations are named by their event CID**: `prepare` mints no
+  package ID. `Prepared` of outcome `prepared` carries the committed
+  event, `reused` carries the one valid `preparation` the fold holds, and
+  a message with several valid preparations is `none` until one is
+  chosen: no second preparation is made beside one a merge brought.
+  `Dispatched` carries `preparationEventCid` in place of `packageId`,
+  `delivery.submitted` records it, and the Routing forward's ID is
+  `forwardId(preparationEventCid)`. A new vault is created at
+  `VAULT_VERSION`.
+- **Message events carry CIDs**: `message.out.intentCid`,
+  `message.in.intentCid` and `plaintextCid`, and the preparation's
+  `intentCid`, `plaintextCid` and `envelopeCid` are the raw CIDs of
+  `@estoc/vault`'s message layers, in place of the base64url SHA-256
+  hashes. A send computes its intent with `intentOf` over the control
+  headers as given, the preparation assembles the plaintext from the
+  recorded intent under the message ID and keeps the envelope through
+  `envelopeOf`, and a receipt records the headers as the wire spelled
+  them beside the intent CID. An `Execution` carries `intentCid`.
+- **Replies thread on the canonical wire ID**: a pure ACK and a triggered
+  rotation notification take `replyThread(carrier)` from `@estoc/vault`
+  as their thread and the ACK names the carrier's canonical wire ID; a
+  Ping reply threads on the Ping's canonical wire ID. A Ping spelled in
+  upper case earns the same intents every spelling of it would.
+- **The plaintext is read from its text**: an opened envelope's plaintext
+  is the strict parse of the text `@estoc/didcomm` `0.4.1-estoc.4` hands
+  back beside the message, never the binding's own view of it. Every
+  member survives as sent, an explicit null on a known header and an
+  unknown member of attachment data among them, and a text that is not
+  strict JSON, a duplicate member anywhere in it, refuses the message
+  before anything is read. An anonymous envelope whose plaintext says
+  `"from": null` claims no sender. The complete plaintext an intent
+  assembles comes back off the wire canonicalizing to the same bytes.
+  `@estoc/didcomm` and `@estoc/didcomm-node` at `^0.4.1-estoc.4` are
+  required; a build that does not hand back the text is refused.
+
 - **The successor is derived, never chosen**: a rotation makes the entity
   the vault's `successorRecipe` names, a start of the entry bound to the
   peer's start or a next of the branch address, under `did.created` with its

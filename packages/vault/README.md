@@ -30,10 +30,10 @@ derives are pinned there too.
 | Question | Module | Entry points |
 | --- | --- | --- |
 | What kind of value is this? | `types.ts` | the nominal identifier types, `VaultData` |
-| Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, the key names |
+| Which ID does a rule derive? | `ids.ts` | `inboundMessageId`, `executionId`, `effectKey`, `automaticMessageId`, `forwardId`, `mediationIdOf`, `successorDidId`, `startDidId`, `channelOf`, `canonicalWireId`, the key names |
 | How is a public key spelled? | `public-key.ts` | `canonicalPublicKey`, `agreementKey` |
 | Does this payload read? | `schema.ts`, `syntax.ts` | `readVaultEvent`, `readVaultDraft`, `vaultDraft` |
-| What does a message store, and hash to? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `readPlaintext`, `wirePlaintext`, `intentHash`, `plaintextHash` |
+| What does a message store, and what identifies it? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `envelopeOf`, `readPlaintext`, `wirePlaintext`, `intentOf`, `plaintextCidOf`, `requestsAck`, `replyThread` |
 | Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `documentSendsTo` |
 | What does the vault retain of a peer's document? | `peer-document.ts` | `peerResolution`, `canonicalDidOf`, `authorizedMethodIds`, `methodPublicKey` |
 | How is a proof signed, and what is it verified against? | `from-prior.ts`, `replica-grant.ts`, `recipient-proof.ts` | `signFromPrior`, `issuerLongFormOf`, `signReplicaGrant`, `verifyReplicaGrant`, `signRecipientProof` |
@@ -45,7 +45,7 @@ derives are pinned there too.
 | Which channel stands where, now? | `fold/continuity.ts` | `foldContinuity`: `head`, `witness`, `status`, `confirmedBy`, `blocked`, `decisionsIn` |
 | Which observations speak for the application? | `admission/model.ts` | `foldAdmissions`, `foldDispositions` |
 | Which inputs are established, through which witness? | `fold/inbound.ts` | `foldInbound` |
-| What has an outbound become, and what does it still need? | `fold/outbound.ts` | `foldOutbound` |
+| What has an outbound become, and what does it still need? What did an automatic operation come to? | `fold/outbound.ts` | `foldOutbound`: `outbounds`, `effectResult` |
 | What must collection keep? | `fold/held.ts` | `heldRoots`, `retainedRoots`, `readState` |
 | May this invitation still be handed out? | `fold/invitations.ts` | `foldInvitations` |
 | What did the user decide about a contact? | `fold/contacts.ts` | `foldContacts` |

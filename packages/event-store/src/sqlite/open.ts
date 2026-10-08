@@ -1,5 +1,5 @@
 /**
- * Creating and opening the version-4 vault in SQLite: what a database
+ * Creating and opening the vault in SQLite: what a database
  * must show before anything in it is trusted, checked in an order that
  * reads nothing ahead of what vouches for it, and what the caller gets
  * once it has. Ownership is the driver's. A create or open that fails,
@@ -11,7 +11,7 @@ import { v7 } from "uuid";
 
 import { AnchorMismatch, DamagedControl, NotAVault, ReadOnlyVault, SnapshotTooLarge, SqliteError, VaultClosed } from "../errors.js";
 import { isUuidv7, type AuthorId } from "../event.js";
-import { checkMetadata, checkWrappedSeed, type KeystoreAccess, type VaultMetadata, type WrappedSeed } from "../keystore.js";
+import { VAULT_VERSION, checkMetadata, checkWrappedSeed, type KeystoreAccess, type VaultMetadata, type WrappedSeed } from "../keystore.js";
 import type { Vault } from "../vault.js";
 import type { SqliteDriver, SqlValue } from "./driver.js";
 import { dropCache } from "./local.js";
@@ -80,7 +80,6 @@ export interface OpenRuntimeOptions {
 }
 
 const FORMAT = "estoc-sqlite";
-const VAULT_VERSION = 4;
 
 /**
  * Makes a runtime in the empty database `driver` was opened to create:

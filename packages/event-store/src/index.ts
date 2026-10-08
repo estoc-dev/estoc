@@ -61,7 +61,7 @@ export { rawCidOf, rawCidFromDigest, compareCids, sortCids, chunksOf, hashSource
 export { MemoryObjectStore, MemoryPreparation, type MemoryObjectStoreOptions, DEFAULT_MAX_OBJECT_BYTES, DEFAULT_EXTENT_BYTES } from "./memory-objects.js";
 
 export type { VaultMetadata, WrappedSeed, KeystoreAccess } from "./keystore.js";
-export { checkMetadata, checkWrappedSeed } from "./keystore.js";
+export { VAULT_VERSION, checkMetadata, checkWrappedSeed } from "./keystore.js";
 
 export type { CommitObject, VaultEvents, VaultObjects, Vault, KeepUnderLock, HeldRoots, Retained, RetainedRoots, Stage, Held, VaultRuntime, Stores, RuntimeOptions } from "./vault.js";
 export { WriterLock, Runtime, MemoryVault, heldRootsOf, type MemoryVaultOptions } from "./vault.js";

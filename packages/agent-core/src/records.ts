@@ -64,8 +64,8 @@ import {
 import { PROFILE } from "./protocol/user-profile.js";
 import type { EffectOptions } from "./effects.js";
 import { claimedName, handlerFor, handlersOf, reportedProblem, trustPing, type Handler } from "./handlers/index.js";
-import type { Confirmations } from "./replica-enrollment.js";
-import { leftTo } from "./responder.js";
+import type { LocalRecords } from "./local-records.js";
+import { carriage } from "./prepare.js";
 import { successorStanding } from "./successor.js";
 
 export type ViewOptions = Pick<EffectOptions, "handlers"> & {
@@ -73,11 +73,11 @@ export type ViewOptions = Pick<EffectOptions, "handlers"> & {
   privateAddresses?: boolean;
   /** the runtime whose membership of the arrangement routing a mediated predecessor is checked; left out, no runtime is assumed and a rotation is listed as any member of that arrangement could make it */
   author?: ReplicaId;
-  /** where the runtime keeps what its mediator confirmed: with `author`, the outputs of an input that replica left to another replica are no work of the user's here */
-  confirmations?: Pick<Confirmations, "get">;
+  /** the runtime's local records: the outputs of an input its replica left to another replica are no work of the user's here, and an outbound is shown with the preparation the runtime selected; left out, none is assumed */
+  local?: Pick<LocalRecords, "leftTo" | "selected">;
 };
 
-export type ManualEntry = "eraseMessage" | "deleteContact" | "blockChannels" | "cancel" | "retry" | "completeResponse" | "completeNotification" | "rotate";
+export type ManualEntry = "eraseMessage" | "deleteContact" | "blockChannels" | "cancel" | "retry" | "selectPreparation" | "completeResponse" | "completeNotification" | "rotate";
 
 export interface MessageHeaders {
   type: string;
@@ -128,7 +128,7 @@ export interface MessageRecord {
   late: boolean;
   /** an input's continuity proof, or the rotation decision an output announces */
   verification: Status;
-  /** `retry` calls transport for an output again; `complete` gives an input a reply it still earns */
+  /** `retry` calls transport for an output again, carrying what this runtime would carry; `complete` gives an input a reply it still earns */
   manualAction: "retry" | "complete" | "none";
   /** the replies `complete` would give */
   completes: string[];
@@ -223,6 +223,10 @@ export interface OpenOutbound {
   messageId: MessageId;
   channel: Channel | null;
   outcome: "queued" | "prepared";
+  /** the valid preparations a call may carry, in canonical order */
+  candidates: EventCid[];
+  /** the preparation this runtime's calls carry; null while it has selected none */
+  selected: EventCid | null;
   /** what no retry gets the message past; null while a retry may work on it */
   because: string | null;
   entries: ManualEntry[];
@@ -304,6 +308,7 @@ export async function recorder(fold: VaultFold, readObject: ReadObject, options:
   const unfinished = unfinishedWork(fold);
   const owed = owedResponses(fold, unfinished.responses, handlersOf(options.handlers));
   const left = await leftElsewhere(fold, options, owed, unfinished.notifications);
+  const selections = await selectionsOf(unfinished.outbounds, options);
   const ours = (input: Execution | null): boolean => input === null || !left.has(input.id);
   const responses = owed.filter(({ execution }) => ours(execution));
   const work = { ...unfinished, notifications: unfinished.notifications.filter(({ source }) => ours(inputOf(fold, source))) };
@@ -323,7 +328,7 @@ export async function recorder(fold: VaultFold, readObject: ReadObject, options:
     }
   }
 
-  const context: Context = { fold, readObject, completes, placed, documents: new Map(), reports: null };
+  const context: Context = { fold, readObject, completes, placed, selections, documents: new Map(), reports: null };
   const channels = new Map<string, Promise<ChannelRecord>>();
   const channel = (pair: Channel): Promise<ChannelRecord> => {
     const key = channelKey(pair);
@@ -346,24 +351,48 @@ export async function recorder(fold: VaultFold, readObject: ReadObject, options:
       return contactRecord(view, records);
     },
     invitations: () => invitationRecords(fold),
-    pending: () => pendingWork(fold, options, work, responses),
+    pending: () => pendingWork(fold, options, work, responses, selections),
   };
 }
 
 const inputOf = (fold: VaultFold, source: MissingNotification["source"]): Execution | null => (source === null ? null : fold.inbound.ofSource(source.event.cid));
 
-async function leftElsewhere(fold: VaultFold, { author, confirmations }: ViewOptions, responses: readonly MissingResponse[], notifications: readonly MissingNotification[]): Promise<Set<ExecutionId>> {
+async function leftElsewhere(fold: VaultFold, { local }: ViewOptions, responses: readonly MissingResponse[], notifications: readonly MissingNotification[]): Promise<Set<ExecutionId>> {
   const left = new Set<ExecutionId>();
-  if (author === undefined || confirmations === undefined) return left;
+  if (local === undefined) return left;
   const inputs = [...responses.map(({ execution }) => execution), ...notifications.map(({ source }) => inputOf(fold, source))];
-  for (const execution of inputs) if (execution !== null && !left.has(execution.id) && (await leftTo(confirmations, author, execution.id)) !== null) left.add(execution.id);
+  for (const execution of inputs) if (execution !== null && !left.has(execution.id) && (await local.leftTo(execution.id)) !== null) left.add(execution.id);
   return left;
+}
+
+async function selectionsOf(outbounds: readonly Outbound[], { local }: ViewOptions): Promise<Map<MessageId, EventCid>> {
+  const selections = new Map<MessageId, EventCid>();
+  if (local === undefined) return selections;
+  for (const { messageId } of outbounds) {
+    const selected = await local.selected(messageId);
+    if (selected !== null) selections.set(messageId, selected);
+  }
+  return selections;
+}
+
+/**
+ * What a retry of an open outbound would carry here, and the steps the
+ * user has: a retry while there is something to prepare or carry, and
+ * the choice of a preparation while several are valid, or while the one
+ * selected cannot be carried and another can.
+ */
+function stepsOf(outbound: Outbound, selected: EventCid | null): { because: string | null; entries: ManualEntry[] } {
+  const carried = carriage(outbound, selected);
+  const choices = outbound.work.kind === "dispatch" ? outbound.work.candidates.length : 0;
+  const choose: ManualEntry[] = choices > 1 || (choices > 0 && carried.kind === "none") ? ["selectPreparation"] : [];
+  if (carried.kind === "prepare" || carried.kind === "carry") return { because: null, entries: ["retry", ...choose, "cancel"] };
+  return { because: carried.because, entries: [...choose, "cancel"] };
 }
 
 /**
  * The replies an established input may still be given. The receipt is
  * the vault's own candidate. A protocol's reply is a candidate under
- * each operation the input's handler declares and no intent records,
+ * each operation the input's handler declares and no result records,
  * chosen as a completion chooses it, so that a registered handler
  * replacing a built-in one replaces its candidates too. An erased
  * input keeps the candidates of a registered handler, which may answer
@@ -378,7 +407,7 @@ function owedResponses(fold: VaultFold, own: readonly MissingResponse[], handler
     const { source } = execution.firstWitness;
     const handler = handlerFor(handlers, source.event.data.msgType);
     if (handler === null || (handler === trustPing && execution.erased)) continue;
-    const operations = handler.effectTypes.filter((effectType) => effectType !== PURE_ACK_EFFECT && automaticIntent(fold, execution, effectType).existing === null);
+    const operations = handler.effectTypes.filter((effectType) => effectType !== PURE_ACK_EFFECT && automaticIntent(fold, execution, effectType).result.status === "pending");
     if (operations.length === 0) continue;
     const selected = responseChannel(fold, execution);
     if (selected.status === "none") continue;
@@ -443,6 +472,8 @@ interface Context {
   completes: ReadonlyMap<MessageId, string[]>;
   /** the outputs with no fixed pair that are shown in a channel, by its key */
   placed: ReadonlyMap<string, readonly Outbound[]>;
+  /** the preparation this runtime selected, by open outbound */
+  selections: ReadonlyMap<MessageId, EventCid>;
   documents: Map<Cid, Promise<BodyRecord>>;
   reports: Promise<ReadonlyMap<MessageId, Diagnostic[]>> | null;
 }
@@ -523,7 +554,7 @@ async function channelRecord(context: Context, view: ChannelView): Promise<Chann
 async function inboundRecord(context: Context, execution: Execution, contactIds: ContactId[]): Promise<MessageRecord> {
   const { fold } = context;
   const member = shownBy(execution);
-  const agreed = execution.intentHash !== null;
+  const agreed = execution.intentCid !== null;
   const { data } = member.source.event;
   const diagnostics: Diagnostic[] = [];
   if (execution.status !== "complete") diagnostics.push({ kind: "input", because: execution.because });
@@ -559,7 +590,8 @@ async function outboundRecord(context: Context, outbound: Outbound, channel: Cha
   else if (outbound.outcome.status === "conflict") diagnostics.push({ kind: "outcome", because: outbound.outcome.because });
   if (outbound.effect.status !== "complete" && diagnostics[0]?.because !== outbound.effect.because) diagnostics.push({ kind: "effect", because: outbound.effect.because });
   const open = outbound.outcome.status === "queued" || outbound.outcome.status === "prepared";
-  if (open && outbound.work.kind === "none") diagnostics.push({ kind: "work", because: outbound.work.because });
+  const steps = stepsOf(outbound, context.selections.get(outbound.messageId) ?? null);
+  if (open && steps.because !== null) diagnostics.push({ kind: "work", because: steps.because });
 
   diagnostics.push(...reports);
   const rotationEventCid = intent?.rotationEventCid ?? null;
@@ -578,7 +610,7 @@ async function outboundRecord(context: Context, outbound: Outbound, channel: Cha
     acknowledged: outbound.acknowledged,
     late: outbound.late,
     verification: rotationEventCid === null ? { status: "not-present" } : fold.continuity.status(rotationEventCid),
-    manualAction: open && outbound.work.kind !== "none" && !outbound.erased ? "retry" : "none",
+    manualAction: open && steps.entries.includes("retry") ? "retry" : "none",
     completes: [],
     diagnostics,
   };
@@ -643,11 +675,12 @@ function openRotation(fold: VaultFold, author: ReplicaId | undefined, { channel,
   return { channel, sourceEventCids: sources.map((source) => source.event.cid), status: standing.status, because: standing.status === "ready" ? null : standing.because, entries: standing.status === "ready" ? ["rotate"] : [] };
 }
 
-function pendingWork(fold: VaultFold, options: ViewOptions, work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[]): PendingWork {
+function pendingWork(fold: VaultFold, options: ViewOptions, work: ReturnType<typeof unfinishedWork>, responses: readonly MissingResponse[], selections: ReadonlyMap<MessageId, EventCid>): PendingWork {
   return {
     pendingOutbounds: work.outbounds.map((outbound) => {
-      const because = outbound.work.kind === "none" ? outbound.work.because : null;
-      return { messageId: outbound.messageId, channel: outbound.channel, outcome: outbound.outcome.status as "queued" | "prepared", because, entries: because === null ? ["retry", "cancel"] : ["cancel"] };
+      const selected = selections.get(outbound.messageId) ?? null;
+      const candidates = outbound.work.kind === "dispatch" ? outbound.work.candidates.map((candidate) => candidate.event.cid) : [];
+      return { messageId: outbound.messageId, channel: outbound.channel, outcome: outbound.outcome.status as "queued" | "prepared", candidates, selected, ...stepsOf(outbound, selected) };
     }),
     missingResponses: responses.map(({ execution, effectType, channel }) => ({
       executionId: execution.id,

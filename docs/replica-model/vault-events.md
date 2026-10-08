@@ -4,8 +4,7 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **version 5**; the packages are at version 4 until they meet this
-text ([transition](README.md#version-5-transition)). The event vocabulary of
+Status: **version 5**. The event vocabulary of
 one single-seed vault executed by its writable full runtimes, one alone or
 several side by side as the replicas of a replica-mediation arrangement. The folds over the
 events and the procedures that append them are code; see
@@ -1918,11 +1917,7 @@ Missing bytes never authorize collection of retained roots.
 ## 11. Folds and procedures
 
 The folds over these events, and the procedures that decide what to
-append, are specified by their code and its tests, not by this document,
-except for the rules version 5 changes: until the packages reach this
-version those are defined by the sections above and the
-[message vectors](message-vectors.md), and a module linked beside one of them
-locates the code to change ([README](README.md#version-5-transition)).
+append, are specified by their code and its tests, not by this document.
 [`packages/vault/README.md`](../../packages/vault/README.md) lists them,
 one module per question, with each module's entry points; a module's
 leading comment states the rule it implements, and the tests beside it

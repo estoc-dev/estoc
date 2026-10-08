@@ -20,7 +20,7 @@ export interface Baseline {
   lines: LinesState;
 }
 
-export const OUTCOMES = ["submitted", "pending", "failed", "uncertain", "expired", "spent", "none", "refused", "existing", "cancelled"] as const;
+export const OUTCOMES = ["submitted", "pending", "failed", "uncertain", "expired", "spent", "none", "refused", "existing", "skipped", "cancelled", "selected"] as const;
 
 export type OutcomeTag = (typeof OUTCOMES)[number];
 
@@ -31,7 +31,10 @@ export type OutcomeTag = (typeof OUTCOMES)[number];
  * answer other than acceptance; `uncertain` an attempt whose arrival
  * is unknown; `expired` and `cancelled` a recorded termination; `none`,
  * `refused`, `spent` and `existing` the procedure's ways of taking no
- * new action. Clients branch on the tag, never on the text.
+ * new action; `skipped` an operation's recorded decision that the input
+ * owes it no output, its skip code the reason; `selected` the
+ * preparation a person chose for this daemon's calls of a message.
+ * Clients branch on the tag, never on the text.
  */
 export interface Outcome<Tag extends OutcomeTag = OutcomeTag> {
   outcome: Tag;
@@ -41,10 +44,13 @@ export interface Outcome<Tag extends OutcomeTag = OutcomeTag> {
 /** What one transport call of a message can come to. */
 export type DispatchOutcome = "submitted" | "pending" | "failed" | "uncertain" | "expired" | "spent" | "none";
 
-/** What a completion, or a rotation's notification, can come to: a dispatch, or an intent it found or refused. */
-export type CompletionOutcome = DispatchOutcome | "existing" | "refused";
+/** What a completion, or a rotation's notification, can come to: a dispatch, an intent it found or refused, or the operation's decision to owe the input nothing. */
+export type CompletionOutcome = DispatchOutcome | "existing" | "refused" | "skipped";
 
 export type CancelOutcome = "cancelled" | "none";
+
+/** A preparation chosen, or `none` with why: the message is closed or takes no call now, the preparation is no valid one of it, or its envelope is not here. */
+export type SelectOutcome = "selected" | "none";
 
 export interface SendResult extends Outcome<DispatchOutcome> {
   messageId: MessageId;
@@ -149,6 +155,8 @@ export interface Methods {
   send: Method<SendInput, SendResult>;
   retry: Method<{ messageId: MessageId }, Outcome<DispatchOutcome>>;
   cancel: Method<{ messageId: MessageId }, Outcome<CancelOutcome>>;
+  /** The preparation this daemon's calls of the message carry from now on; it calls nothing, and a `retry` carries the choice. */
+  selectPreparation: Method<{ messageId: MessageId; preparationEventCid: EventCid }, Outcome<SelectOutcome>>;
   completeResponse: Method<{ executionId: ExecutionId; effectType: string }, Outcome<CompletionOutcome>>;
   completeNotification: Method<{ rotationEventCid: EventCid }, Outcome<CompletionOutcome>>;
   rotate: Method<RotateInput, RotateResult>;

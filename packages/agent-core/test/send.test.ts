@@ -29,7 +29,7 @@ import {
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, automaticDraft, createDid, retireDid, send, type Content, routeOf } from "../src/index.js";
-import { directParty, received, type DirectParty } from "./helpers.js";
+import { directParty, merged, received, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -115,14 +115,25 @@ describe("send to a channel", () => {
     const document = readStoredDocument(JSON.parse(new TextDecoder().decode((await read(data.bodyCid)) as Uint8Array)));
     expect(document.attachments.map((attachment) => attachment.data.kind)).toEqual(["base64", "json", "links"]);
     for (const cid of data.attachmentCids) expect(await read(cid)).toBeInstanceOf(Uint8Array);
-    expect(intentOfOutbound(data, document).document).toEqual(document);
-    expect(readPlaintext({ typ: PLAINTEXT_TYP, id: MESSAGE, type: BASIC_MESSAGE, from: alice.longFormDid, to: [bob.longFormDid], thid: "thread-1", created_time: 1_000, expires_time: 2_000, please_ack: [""], lang: "en", body: document.body, attachments: content.attachments!.map((a) => ({ ...a })) }).intentHash).toBe(data.intentHash);
+    expect(intentOfOutbound(data)).toMatchObject({ cid: data.intentCid, value: { document: data.bodyCid, thid: "thread-1" } });
+    expect(readPlaintext({ typ: PLAINTEXT_TYP, id: MESSAGE, type: BASIC_MESSAGE, from: alice.longFormDid, to: [bob.longFormDid], thid: "thread-1", created_time: 1_000, expires_time: 2_000, please_ack: [""], lang: "en", body: document.body, attachments: content.attachments!.map((a) => ({ ...a })) }).intent.cid).toBe(data.intentCid);
 
     const short = await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
     expect(short.intent.data.recipientDid).toBe(bob.longFormDid);
     const plain = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
     expect(plain.intent.data.recipientDid).toBe(bob.did);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(3);
+    await closeAll(alice, bob, carol);
+  });
+
+  test("two sends of one content are two message IDs under one intent CID", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const first = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    const second = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    expect(first.messageId).not.toBe(second.messageId);
+    expect(second.intent.cid).not.toBe(first.intent.cid);
+    expect(second.intent.data.intentCid).toBe(first.intent.data.intentCid);
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
     await closeAll(alice, bob, carol);
   });
 
@@ -140,6 +151,44 @@ describe("send to a channel", () => {
     await contact(alice, OTHER, [toBob]);
     expect((await send(alice.runtime, alice.keys, { contactId: OTHER }, HELLO, { messageId: MESSAGE })).existed).toBe(true);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(1);
+    await closeAll(alice, bob, carol);
+  });
+
+  test("a send repeated under its message ID returns what was committed once another replica's record of the intent, spelling its self references otherwise, has merged before or after it, for the request as first made or in the other spelling", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const content: Content = { ...HELLO, pleaseAck: [""] };
+    for (const offset of [-1000, 1000]) {
+      const sent = await send(alice.runtime, alice.keys, { channel: toBob }, content);
+      const { messageId } = sent;
+      const spelled = { thid: messageId.toUpperCase(), pleaseAck: [messageId.toUpperCase()] };
+      await merged(alice.runtime, "message.out", { ...sent.intent.data, ...spelled }, new Date(Date.parse(sent.intent.at) + offset).toISOString());
+      const outbound = (await fold(alice)).outbound.outbounds.get(messageId)!;
+      expect([outbound.intent.status, outbound.intents.length, outbound.intents[0]!.cid === sent.intent.cid]).toEqual(["consistent", 2, offset > 0]);
+      for (const again of [content, { ...content, ...spelled }]) {
+        const repeated = await send(alice.runtime, alice.keys, { channel: toBob }, again, { messageId });
+        expect([repeated.existed, repeated.intent.cid]).toEqual([true, outbound.intents[0]!.cid]);
+      }
+      await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...content, pleaseAck: null }, { messageId })).rejects.toBeInstanceOf(EntityConflict);
+    }
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(4);
+    await closeAll(alice, bob, carol);
+  });
+
+  test("a user's message is created at the time its content gives, else at the clock's second when it is first sent; a send repeated under its ID with that time, none or null is the same message whatever the clock says now, another time is another intent, and an expiry not after the creation is refused", async () => {
+    const { alice, bob, carol, toBob } = await parties();
+    const sent = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_999 });
+    expect(sent.intent.data.createdTime).toBe(1_788_442_800);
+    const later = { messageId: MESSAGE, now: () => 1_788_449_999_000 };
+    for (const createdTime of [undefined, null, 1_788_442_800]) {
+      const again = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime }, later);
+      expect([again.existed, again.intent.cid]).toEqual([true, sent.intent.cid]);
+    }
+    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_788_442_801 }, later)).rejects.toBeInstanceOf(EntityConflict);
+
+    const given = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_000 }, { now: later.now });
+    expect(given.intent.data.createdTime).toBe(1_000);
+    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, expiresTime: 1_788_442_800 }, { now: () => 1_788_442_800_500 })).rejects.toThrow(/expires_time must be later than created_time/);
+    expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
     await closeAll(alice, bob, carol);
   });
 
@@ -225,8 +274,8 @@ describe("automatic effects", () => {
     const effect = { execution, source, effectType: PURE_ACK_EFFECT, channel: toBob };
     const drafted = automaticDraft(f, effect, { type: EMPTY_MESSAGE_TYPE, body: {}, thid: "wire-1", createdTime: 1_000, ack: ["wire-1"] });
     const key = effectKey(execution.id, PURE_ACK_EFFECT);
-    expect(drafted).toMatchObject({ executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, messageId: automaticMessageId(key), existing: null });
-    if (drafted.existing !== null) throw new Error("drafted");
+    expect(drafted).toMatchObject({ executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, messageId: automaticMessageId(key), result: { status: "pending" } });
+    if (drafted.draft === null) throw new Error("drafted");
     expect(drafted.draft.data).toMatchObject({ messageId: automaticMessageId(key), senderDidId: ALICE, recipientDid: bob.did, msgType: EMPTY_MESSAGE_TYPE, thid: "wire-1", pthid: null, createdTime: 1_000, expiresTime: null, pleaseAck: null, ack: ["wire-1"], executionId: execution.id, effectType: PURE_ACK_EFFECT, effectKey: key, sourceEventCid, rotationEventCid: null });
     expect(drafted.objects.map((object) => object.cid)).toEqual([drafted.draft.data.bodyCid]);
 
@@ -241,7 +290,7 @@ describe("automatic effects", () => {
     await retireDid(alice.runtime, alice.keys, ALICE, "user");
     f = await fold(alice);
     const again = automaticDraft(f, { ...effect, execution: f.inbound.ofSource(sourceEventCid)!, source: f.channels.sources.get(sourceEventCid)! }, { type: EMPTY_MESSAGE_TYPE, body: { other: true }, ack: ["wire-1"] });
-    expect(again).toMatchObject({ messageId: drafted.messageId, existing: { messageId: drafted.messageId }, draft: null, objects: null });
+    expect(again).toMatchObject({ messageId: drafted.messageId, result: { status: "produced", outbound: { messageId: drafted.messageId } }, draft: null, objects: null });
     await closeAll(alice, bob, carol);
   });
 

@@ -30,7 +30,7 @@ import {
 } from "@estoc/vault";
 
 import type { LiveAction } from "./action.js";
-import type { Cancelled, Dispatched } from "./dispatch.js";
+import type { Cancelled, Dispatched, Selected } from "./dispatch.js";
 import type { Dispatcher } from "./dispatcher.js";
 import { completeResponse, type EffectOptions, type EffectOutcome } from "./effects.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
@@ -55,6 +55,7 @@ export interface Manual extends Record<ManualEntry, unknown> {
   blockChannels(channels: readonly Channel[], includeSuccessors: boolean): Promise<Event[]>;
   cancel(messageId: MessageId): Promise<Cancelled>;
   retry(messageId: MessageId): Promise<Dispatched>;
+  selectPreparation(messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<Selected>;
   completeResponse(executionId: ExecutionId, effectType: string): Promise<EffectOutcome>;
   completeNotification(rotationEventCid: EventReference<"did.rotationSelected">): Promise<EffectOutcome>;
   rotate(target: Omit<RotationTarget, "sourceEventCid">): Promise<Rotated>;
@@ -70,6 +71,7 @@ export function manualProcedures(runtime: VaultRuntime, keys: Keys, dispatcher: 
     blockChannels: (channels, includeSuccessors) => blockChannels(runtime, keys, channels, includeSuccessors, scan),
     cancel: (messageId) => dispatcher.cancel(messageId),
     retry: (messageId) => dispatcher.retry(messageId),
+    selectPreparation: (messageId, preparationEventCid) => dispatcher.select(messageId, preparationEventCid),
     completeResponse: (executionId, effectType) => completeResponse(runtime, keys, executionId, effectType, { ...options, dispatch }),
     completeNotification: (rotationEventCid) => completeNotification(runtime, keys, rotationEventCid, { now, trace, dispatch }),
     rotate: ({ localDidId, peerDid }) => rotate(runtime, keys, { localDidId, peerDid, sourceEventCid: null }, { now, trace, dispatch }),

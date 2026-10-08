@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import { cancel, completeNotification, completeResponse, openIndex, retry, rotate, state } from "../core/store.js";
+import { cancel, completeNotification, completeResponse, openIndex, retry, rotate, selectPreparation, state } from "../core/store.js";
 import type { ChannelId } from "../core/types.js";
 import { useAttention } from "./attention.js";
 import { go } from "./nav.js";
@@ -13,8 +13,9 @@ import { dispositionOf, labelOf, shortDid } from "./util.js";
  * step it waits for. Opening a vault sends nothing on its own: a
  * message a transport was never called for, a reply an input still
  * earns, a private address a peer's first message calls for, a rotation
- * the peer was never told of, each waits here. What has no step says
- * what it waits for.
+ * the peer was never told of, each waits here. A message sealed on more
+ * than one device waits for the person to choose the copy this one
+ * sends. What has no step says what it waits for.
  */
 const { pending, byHand, waiting, discarded, unplacedInputs, unplacedOutputs, count } = useAttention();
 const sendsClosed = computed(() => openIndex()?.snapshot.restoreUnexplained ?? false);
@@ -71,6 +72,24 @@ const peerOf = (channelId: ChannelId): string => {
             A message {{ outbound.outcome === "queued" ? "not sealed yet" : "sealed, not sent" }}<template v-if="outbound.channelId"> to {{ whoIs(outbound.channelId) }}</template>.
           </p>
           <p v-if="outbound.because" class="note">{{ outbound.because }}</p>
+          <template v-if="outbound.entries.includes('selectPreparation')">
+            <p class="note">Choose the copy this device sends, then send it. If another device sent its copy, it may arrive twice.</p>
+            <div class="card-actions" data-preparations>
+              <button
+                v-for="(cid, i) in outbound.candidates"
+                :key="cid"
+                class="btn-quiet small"
+                type="button"
+                :title="cid"
+                :aria-pressed="cid === outbound.selected"
+                :disabled="busy || cid === outbound.selected"
+                data-choose-preparation
+                @click="act(() => selectPreparation(outbound.messageId, cid))"
+              >
+                {{ cid === outbound.selected ? `Copy ${i + 1}, chosen` : `Choose copy ${i + 1}` }}
+              </button>
+            </div>
+          </template>
           <div class="card-actions">
             <button v-if="outbound.entries.includes('retry')" class="btn small" type="button" :disabled="busy || sendsClosed" data-send-now @click="act(() => retry(outbound.messageId))">Send now</button>
             <button v-if="outbound.entries.includes('cancel')" class="btn-quiet small" type="button" :disabled="busy" data-cancel @click="act(() => cancel(outbound.messageId))">Cancel it</button>

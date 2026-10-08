@@ -126,7 +126,15 @@ const invitationRecord = ({ disclosureEventCid, oobId, didId, localDid, state }:
 
 function pendingWork(pending: read.PendingWork): PendingWork {
   return {
-    pendingOutbounds: pending.pendingOutbounds.map(({ messageId, channel, outcome, because, entries }) => ({ messageId: apiId(messageId), channelId: channelId(channel), outcome, because, entries })),
+    pendingOutbounds: pending.pendingOutbounds.map(({ messageId, channel, outcome, candidates, selected, because, entries }) => ({
+      messageId: apiId(messageId),
+      channelId: channelId(channel),
+      outcome,
+      candidates: candidates.map((cid) => apiId<EventCid>(cid)),
+      selected: selected === null ? null : apiId<EventCid>(selected),
+      because,
+      entries,
+    })),
     missingResponses: pending.missingResponses.map(({ executionId, messageId, effectType, channel, entries }) => ({ executionId: apiId(executionId), messageId: apiId(messageId), effectType, channelId: channelIdOf(channel), entries })),
     rotationCandidates: pending.rotationCandidates.map(({ channel, sourceEventCids, status, because, entries }) => ({ channelId: channelIdOf(channel), sourceEventCids: sourceEventCids.map((cid) => apiId<EventCid>(cid)), status, because, entries })),
     missingNotifications: pending.missingNotifications.map(({ rotationEventCid, channel, sourceEventCid, entries }) => ({ rotationEventCid: apiId(rotationEventCid), channelId: channelIdOf(channel), sourceEventCid: sourceEventCid === null ? null : apiId<EventCid>(sourceEventCid), entries })),

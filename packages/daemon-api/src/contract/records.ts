@@ -234,7 +234,7 @@ export interface ConversationRecord {
   diagnostics: string[];
 }
 
-export const MANUAL_ENTRIES = ["eraseMessage", "deleteContact", "blockChannels", "cancel", "retry", "completeResponse", "completeNotification", "rotate"] as const;
+export const MANUAL_ENTRIES = ["eraseMessage", "deleteContact", "blockChannels", "cancel", "retry", "selectPreparation", "completeResponse", "completeNotification", "rotate"] as const;
 /** A method a pending item names as the step a person may take on it. */
 export type ManualEntry = (typeof MANUAL_ENTRIES)[number];
 
@@ -242,6 +242,10 @@ export interface PendingOutbound {
   messageId: MessageId;
   channelId: ChannelId | null;
   outcome: "queued" | "prepared";
+  /** the valid preparations a call may carry, in canonical order: `selectPreparation` chooses among them */
+  candidates: EventCid[];
+  /** the preparation this daemon's calls carry; null while it has chosen none, as after a restore */
+  selected: EventCid | null;
   /** what no retry gets the message past; null while a retry may work on it */
   because: string | null;
   entries: ManualEntry[];

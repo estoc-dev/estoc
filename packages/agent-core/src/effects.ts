@@ -14,12 +14,17 @@
  * conflict, its peer not moved on; and the reply's sender chosen by
  * the fold — the carrier's own local DID while it may send, else the
  * unique verified successor that keeps the peer — is fixed by the
- * intent for good. Each operation looks its tuple up first: an intent
- * already under it is reused as it is, before the input's body is
- * read or its handler asked anything, so that a fixed output survives
- * a body gone or a handler that would decide otherwise now, and the
- * same input delivered again, a package retried, a body erased or a
- * clock moved never make a second output. Two operations are the
+ * intent for good. Each operation looks its tuple's result up first,
+ * before the input's body is read or its handler asked anything: an
+ * intent already under it is reused as it is, and a skip stands, so
+ * that a fixed output survives a body gone or a handler that would
+ * decide otherwise now, and the same input delivered again, a
+ * preparation retried, a body erased or a clock moved never make a
+ * second output. A skip is recorded only when the operation's own rule,
+ * applied to the input, owes it no output for good; a receipt local
+ * policy withholds, a channel that takes no reply now, evidence still
+ * to come or a record the disk refuses leaves the operation pending,
+ * with nothing recorded. Two operations are the
  * vault's own — the receipt an input requests of itself, given under
  * local policy and naming the carrier alone, and the notification of
  * a rotation, which the rotation's own procedure makes — and the
@@ -40,10 +45,13 @@ import {
   objectReader,
   readStoredDocument,
   readVaultEvent,
+  replyThread,
   requestsAck,
   automaticIntent,
   responseChannel,
   scanVault,
+  vaultDraft,
+  type AutomaticIntent,
   type EventReference,
   type Execution,
   type ExecutionId,
@@ -59,7 +67,7 @@ import type { Dispatched } from "./dispatch.js";
 import { UnknownEntity } from "./errors.js";
 import { effectTypesOf, handlerFor, handlersOf, type Handler, type Input, type Response } from "./handlers/index.js";
 import { MAX_CONTENT_BYTES } from "./prepare.js";
-import { automaticDraft, type EffectContent } from "./send.js";
+import { automaticDraft, type EffectContent, type RecordedResult } from "./send.js";
 import { note, type AgentTrace } from "./trace.js";
 
 export interface EffectOptions {
@@ -89,7 +97,9 @@ export type EffectOutcome =
   | { effectType: string; outcome: "created"; messageId: MessageId; intent: VaultEvent<"message.out">; action: LiveAction; dispatched: Called }
   /** the tuple had an intent already: reused as it is, dispatched only under a manual completion */
   | { effectType: string; outcome: "existing"; messageId: MessageId; action: LiveAction | null; dispatched: Called | null }
-  /** the operation gives the input nothing now */
+  /** the operation owes the input no output, for good: its skip, recorded now or before under the code the operation gave */
+  | { effectType: string; outcome: "skipped"; code: string }
+  /** the operation gives the input nothing now, and records nothing */
   | { effectType: string; outcome: "none"; because: string }
   /** the operation threw, in its handler deciding the content, in the content becoming an intent or in the disk recording it: nothing is committed for it, and the others stand */
   | { effectType: string; outcome: "refused"; because: string };
@@ -142,7 +152,7 @@ export async function callEffects(decided: DecidedEffects, options: Pick<EffectO
 
 /**
  * Whether a live input is still owed an output: it is established by
- * the live observation itself, and an operation over it has no intent
+ * the live observation itself, and an operation over it has no result
  * yet — the receipt, while local policy and the fold would give it, or
  * one the input's handler declares, whatever the handler would answer.
  * Read without the lock, to tell whether who answers the input matters
@@ -152,7 +162,7 @@ export function owesEffects(fold: VaultFold, live: LiveInput, options: Pick<Effe
   const execution = fold.inbound.ofSource(live.cid);
   if (execution === null || execution.status !== "complete" || notWitnessing(fold, execution, live.cid) !== null) return false;
   const { source } = execution.firstWitness;
-  const open = (effectType: string): boolean => automaticIntent(fold, execution, effectType).existing === null;
+  const open = (effectType: string): boolean => automaticIntent(fold, execution, effectType).result.status === "pending";
   if (open(PURE_ACK_EFFECT) && acknowledgement(fold, source, options.acknowledge ?? true).some((response) => response.content !== null)) return true;
   const handler = handlerFor(handlersOf(options.handlers), source.event.data.msgType);
   return handler !== null && handler.effectTypes.some((effectType) => effectType !== PURE_ACK_EFFECT && open(effectType));
@@ -191,7 +201,7 @@ export async function completeResponse(runtime: VaultRuntime, keys: Keys, execut
     if (settled.because !== null) return { effectType, outcome: "none", because: settled.because };
     const draft = settled.drafted.find((draft) => draft.effectType === effectType);
     if (draft === undefined) return { effectType, outcome: "none", because: "no operation here gives the input this output" };
-    if (draft.outcome === "none" || draft.outcome === "refused") return draft;
+    if (draft.outcome === "none" || draft.outcome === "refused" || draft.outcome === "skipped") return draft;
     return { ...draft, action: LiveAction.manual(draft.messageId) };
   });
   return dispatched(decided, executionId, options);
@@ -205,15 +215,15 @@ function scan(held: Held, keys: Keys, options: Pick<EffectOptions, "handlers">):
 export type Drafted =
   | { effectType: string; outcome: "created"; messageId: MessageId; intent: VaultEvent<"message.out">; action?: LiveAction }
   | { effectType: string; outcome: "existing"; messageId: MessageId; action?: LiveAction }
-  | Extract<EffectOutcome, { outcome: "none" | "refused" }>;
+  | Extract<EffectOutcome, { outcome: "none" | "refused" | "skipped" }>;
 
 /**
  * Under the lock: the input must be established, or no operation is
  * asked. The operations are the receipt and those the input's handler
- * declares, `only` narrowing them to one; each looks its tuple up
- * first, and only the ones with no intent yet are decided now — the
- * receipt by the vault, the rest by the handler, asked once for all of
- * them and answering with content for each it gives, one at most. A
+ * declares, `only` narrowing them to one; each looks its tuple's result
+ * up first, and only the pending ones are decided now — the receipt by
+ * the vault, the rest by the handler, asked once for all of them and
+ * answering with content or a skip for each it settles, one at most. A
  * handler that throws refuses every operation it was asked for; a
  * response that cannot be recorded refuses its own operation alone.
  */
@@ -224,16 +234,16 @@ async function settle(held: Held, fold: VaultFold, execution: Execution, options
   const operations = [...new Set([PURE_ACK_EFFECT, ...(handler?.effectTypes ?? [])])].filter((effectType) => only === undefined || effectType === only);
   const trace = options.trace ?? null;
   const drafted = new Map<string, Drafted>();
-  const open = new Map<string, MessageId>();
+  const open = new Map<string, AutomaticIntent>();
   for (const effectType of operations) {
     const tuple = automaticIntent(fold, execution, effectType);
-    if (tuple.existing !== null) drafted.set(effectType, { effectType, outcome: "existing", messageId: tuple.messageId });
-    else open.set(effectType, tuple.messageId);
+    if (tuple.result.status === "pending") open.set(effectType, tuple);
+    else drafted.set(effectType, resultOutcome({ ...tuple, result: tuple.result }));
   }
   const decide = async (response: Response): Promise<void> => {
-    const messageId = open.get(response.effectType);
-    if (messageId === undefined) return;
-    drafted.set(response.effectType, await record(held, fold, execution, source, messageId, response, trace));
+    const tuple = open.get(response.effectType);
+    if (tuple === undefined) return;
+    drafted.set(response.effectType, await record(held, fold, execution, source, tuple, response, trace));
     open.delete(response.effectType);
   };
   if (open.has(PURE_ACK_EFFECT)) for (const response of acknowledgement(fold, source, options.acknowledge ?? true)) await decide(response);
@@ -244,8 +254,8 @@ async function settle(held: Held, fold: VaultFold, execution: Execution, options
       responses = await handler.respond(input, fold);
     } catch (err) {
       for (const effectType of handler.effectTypes) {
-        const messageId = open.get(effectType);
-        if (messageId !== undefined) drafted.set(effectType, await refused(effectType, messageId, execution.id, err, trace));
+        const tuple = open.get(effectType);
+        if (tuple !== undefined) drafted.set(effectType, await refused(effectType, tuple.messageId, execution.id, err, trace));
       }
     }
     for (const response of responses) await decide(response);
@@ -265,19 +275,38 @@ function acknowledgement(fold: VaultFold, source: Source, acknowledge: boolean):
   if (!acknowledge) return [{ effectType: PURE_ACK_EFFECT, content: null, because: "receipts are not given here" }];
   const target = fold.outbound.ackTarget(source.event.cid);
   if (target.status !== "eligible") return [{ effectType: PURE_ACK_EFFECT, content: null, because: target.because }];
-  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: data.thid ?? data.wireMessageId, pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: [target.wireMessageId] };
+  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: replyThread(data), pthid: data.pthid, createdTime: data.createdTime, expiresTime: null, pleaseAck: null, ack: [target.wireMessageId] };
   return [{ effectType: PURE_ACK_EFFECT, content }];
 }
 
-/** The channel and the record of one operation's output, once its tuple is known to hold no intent. */
-async function record(held: Held, fold: VaultFold, execution: Execution, source: Source, messageId: MessageId, response: Response, trace: AgentTrace | null): Promise<Drafted> {
-  const { effectType } = response;
-  if (response.content === null) return { effectType, outcome: "none", because: response.because };
+/** What a recorded result settles: the output reused as it is, the skip standing, or their conflict, which gives the input nothing. */
+export function resultOutcome(tuple: RecordedResult): Drafted {
+  const { effectType, messageId, result } = tuple;
+  if (result.status === "produced") return { effectType, outcome: "existing", messageId };
+  if (result.status === "skipped") return { effectType, outcome: "skipped", code: result.skips[0]!.event.data.code };
+  return { effectType, outcome: "none", because: result.because };
+}
+
+/**
+ * The record of one pending operation's response: a skip, whatever
+ * channel a reply would take; or the output, in the channel selected
+ * for it, committed with its objects at once, so that no output is
+ * recorded without what it carries.
+ */
+async function record(held: Held, fold: VaultFold, execution: Execution, source: Source, tuple: AutomaticIntent, response: Response, trace: AgentTrace | null): Promise<Drafted> {
+  const { effectType, messageId } = tuple;
   try {
+    if ("skipped" in response) {
+      const code = response.skipped;
+      await held.commit([], [vaultDraft("effect.skipped", { executionId: tuple.executionId, effectType, effectKey: tuple.effectKey, sourceEventCid: source.event.cid as EventReference<"message.in">, code })]);
+      return { effectType, outcome: "skipped", code };
+    }
+    if (response.content === null) return { effectType, outcome: "none", because: response.because };
     const selected = responseChannel(fold, execution);
     if (selected.status === "none") return { effectType, outcome: "none", because: selected.because };
     const draft = automaticDraft(fold, { execution, source, effectType, channel: selected.channel }, response.content);
-    const [event] = (await held.commit(draft.objects!, [draft.draft!])).map(readVaultEvent);
+    if (draft.draft === null) return resultOutcome(draft);
+    const [event] = (await held.commit(draft.objects, [draft.draft])).map(readVaultEvent);
     return { effectType, outcome: "created", messageId, intent: event as VaultEvent<"message.out"> };
   } catch (err) {
     return refused(effectType, messageId, execution.id, err, trace);
@@ -299,7 +328,7 @@ async function readBody(held: Held, execution: Execution, source: Source): Promi
 
 /** The one transport call of a drafted intent, under the action it carries; none for an intent no action was minted for. A call's step that throws is this operation's alone. */
 export async function dispatched(draft: Drafted, executionId: ExecutionId | null, options: Pick<EffectOptions, "dispatch" | "trace">): Promise<EffectOutcome> {
-  if (draft.outcome === "none" || draft.outcome === "refused") return draft;
+  if (draft.outcome === "none" || draft.outcome === "refused" || draft.outcome === "skipped") return draft;
   if (draft.action === undefined) return { ...draft, outcome: "existing", action: null, dispatched: null };
   const { action, messageId, effectType } = draft;
   try {

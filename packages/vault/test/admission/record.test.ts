@@ -2,13 +2,12 @@ import type { Held } from "@estoc/event-store";
 import { v7 as uuidv7 } from "uuid";
 import { describe, expect, it } from "vitest";
 
-import { admissionDrafts, admitReceipts, foldVault, foldVaultChecked, rawCidOfBytes, reconcileAdmissions, scanVault, type Keys } from "../../src/index.js";
-import { HASH, Scene, expectOrderFree, vaultOf } from "../fold/helpers.js";
+import { admissionDrafts, admitReceipts, foldVault, foldVaultChecked, rawCidOfBytes, reconcileAdmissions, scanVault, type Cid, type Keys } from "../../src/index.js";
+import { OTHER_BODY_CID, Scene, cidOf, expectOrderFree, vaultOf } from "../fold/helpers.js";
 import { blocked, noObjects, observation, proof, receipt, resolved, shortIssuerProof, vaults, type Local, type Peer } from "../fold/scene.js";
 
 const fold = (scene: Scene, keys: Keys | null) => foldVaultChecked(scene.set(), keys, noObjects);
 
-const OTHER_HASH = "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA";
 
 describe("admitting receipts", () => {
   it("records, round by round, the first eligible observation of each input in canonical event order, each round judged against what the earlier ones admitted: a consistent duplicate is admitted next, a contradicting one refused for good, a superseded or denied one passed over, and one waiting for evidence holds up nothing", async () => {
@@ -16,9 +15,9 @@ describe("admitting receipts", () => {
     const wire = uuidv7();
     const plain = (local: Local, peer: Peer, overrides: Parameters<typeof receipt>[1]["overrides"] = {}) =>
       observation(scene, { local, peer, resolution: resolved(scene, local.didId, peer), overrides });
-    const input = (hash = HASH) => observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire, overrides: { intentHash: hash as never } });
+    const input = (bodyCid: Cid = cidOf(`body ${wire}`)) => observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire, overrides: { bodyCid } });
     const opening = input();
-    const contradicting = input(OTHER_HASH);
+    const contradicting = input(OTHER_BODY_CID);
     const consistent = input();
     const elsewhere = plain(a1, b0);
     const unresolved = plain(a0, b1, { peerResolutionEventCid: rawCidOfBytes(new Uint8Array(32).fill(3)) as never });
@@ -50,11 +49,11 @@ describe("admitting receipts", () => {
   it("admits the contradicting observation instead when it comes first in canonical event order, whatever order the events are read in; a commit the disk refuses ends the pass with the rounds before it durable, one whose answer is lost leaves its round durable all the same, and the next pass goes on from what is durable, admitting nothing twice", async () => {
     const { scene, keys, a0, b0, b1 } = await vaults();
     const wire = uuidv7();
-    const input = (hash: string, at?: string) => observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire, overrides: { intentHash: hash as never } }, { at });
-    const later = input(HASH, "2026-09-12T00:00:01.000Z");
-    const earlier = input(OTHER_HASH, "2026-09-12T00:00:00.000Z");
+    const input = (bodyCid: Cid, at?: string) => observation(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire, overrides: { bodyCid } }, { at });
+    const later = input(cidOf(`body ${wire}`), "2026-09-12T00:00:01.000Z");
+    const earlier = input(OTHER_BODY_CID, "2026-09-12T00:00:00.000Z");
     const other = observation(scene, { local: a0, peer: b1, resolution: resolved(scene, a0.didId, b1) });
-    const consistent = input(OTHER_HASH);
+    const consistent = input(OTHER_BODY_CID);
     const vault = await fold(scene, keys);
     expect(admissionDrafts(vault).map((draft) => draft.data.sourceEventCid)).toEqual([earlier.cid, other.cid]);
 
@@ -79,7 +78,7 @@ describe("admitting receipts", () => {
 
     expect(await reconcileAdmissions(memory, keys)).toEqual([]);
     const after = await scanVault(memory.vault, keys);
-    expect(after.inbound.ofSource(later.cid)).toMatchObject({ status: "complete", intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: later.cid } } }] });
+    expect(after.inbound.ofSource(later.cid)).toMatchObject({ status: "complete", intentCid: earlier.data.intentCid, contradicting: [{ source: { event: { cid: later.cid } } }] });
     expect(after.inbound.ofSource(later.cid)!.members.map(({ source, admitted }) => [source.event.cid, admitted])).toEqual([
       [earlier.cid, true],
       [later.cid, false],
@@ -93,9 +92,9 @@ describe("admitting receipts", () => {
     const wire = uuidv7();
     const fromPrior = await shortIssuerProof(peerKeys, b2, b3);
     const resolution = resolved(scene, a0.didId, b3);
-    const input = (hash: string, at: string) => observation(scene, { local: a0, peer: b3, resolution, wire, fromPrior, overrides: { intentHash: hash as never } }, { at });
-    const first = input(HASH, "2026-09-12T00:00:01.000Z");
-    const second = input(OTHER_HASH, "2026-09-12T00:00:00.000Z");
+    const input = (bodyCid: Cid, at: string) => observation(scene, { local: a0, peer: b3, resolution, wire, fromPrior, overrides: { bodyCid } }, { at });
+    const first = input(cidOf(`body ${wire}`), "2026-09-12T00:00:01.000Z");
+    const second = input(OTHER_BODY_CID, "2026-09-12T00:00:00.000Z");
     const waiting = await fold(scene, keys);
     const deferred = { status: "deferred", because: "the source's proof is not yet verified" };
     expect(waiting.dispositions.candidates.map(({ source, eligibility }) => [source.event.cid, eligibility])).toEqual([[second.cid, deferred], [first.cid, deferred]]);
@@ -107,7 +106,7 @@ describe("admitting receipts", () => {
     const memory = await vaultOf(scene);
     expect((await reconcileAdmissions(memory, keys)).map((event) => event.data.sourceEventCid)).toEqual([second.cid]);
     const after = await scanVault(memory.vault, keys);
-    expect(after.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentHash: OTHER_HASH, contradicting: [{ source: { event: { cid: first.cid } } }] });
+    expect(after.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentCid: second.data.intentCid, contradicting: [{ source: { event: { cid: first.cid } } }] });
     expect(after.dispositions.disposition(first.cid)).toEqual({ status: "pending-admission", because: "the observation contradicts the intent its input has admitted" });
   });
 });

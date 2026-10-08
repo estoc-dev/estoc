@@ -58,6 +58,7 @@ import {
   notificationChannel,
   objectReader,
   readVaultEvent,
+  replyThread,
   sameChannel,
   scanVault,
   signFromPrior,
@@ -80,7 +81,7 @@ import {
 import { LiveAction, initialAction, type Responding } from "./action.js";
 import { didOf } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
-import { dispatched, refused, type Drafted, type EffectOutcome } from "./effects.js";
+import { dispatched, refused, resultOutcome, type Drafted, type EffectOutcome } from "./effects.js";
 import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
 import { materializeSuccessor } from "./successor.js";
@@ -289,7 +290,7 @@ async function settleNotification(held: Held, fold: VaultFold, rotationEventCid:
   if (selected.status === "none") return { drafted: { effectType, outcome: "none", because: selected.because }, executionId };
   const { channel, source } = selected;
   const carried = source?.event.data ?? null;
-  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: carried === null ? null : (carried.thid ?? carried.wireMessageId), pthid: carried?.pthid ?? null, createdTime: carried?.createdTime ?? null, expiresTime: null, pleaseAck: [""], ack: [] };
+  const content: EffectContent = { type: EMPTY_MESSAGE_TYPE, body: {}, thid: carried === null ? null : replyThread(carried), pthid: carried?.pthid ?? null, createdTime: carried?.createdTime ?? null, expiresTime: null, pleaseAck: [""], ack: [] };
   const execution = executionId === null ? null : fold.inbound.executions.get(executionId)!;
   const messageId = execution === null ? (uuidv7() as MessageId) : automaticIntent(fold, execution, effectType).messageId;
   try {
@@ -298,7 +299,7 @@ async function settleNotification(held: Held, fold: VaultFold, rotationEventCid:
     if (source === null || execution === null) ({ draft, objects } = manualNotificationDraft(fold, messageId, channel, content, rotationEventCid));
     else {
       const automatic = automaticDraft(fold, { execution, source, effectType, channel, rotationEventCid }, content);
-      if (automatic.existing !== null) return { drafted: { effectType, outcome: "none", because: "the intent under the input's tuple names another rotation" }, executionId };
+      if (automatic.draft === null) return { drafted: automatic.result.status === "produced" ? { effectType, outcome: "none", because: "the intent under the input's tuple names another rotation" } : resultOutcome(automatic), executionId };
       ({ draft, objects } = automatic);
     }
     const [event] = (await held.commit(objects, [draft])).map(readVaultEvent);

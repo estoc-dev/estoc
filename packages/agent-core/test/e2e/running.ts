@@ -16,7 +16,7 @@ import { afterNextCommit, didcomm, mediatedParty, until as untilWithin, type Med
 
 /**
  * Where the process of a running party dies: `prepared` once its next
- * package is recorded, before any transport call is made for it;
+ * preparation is recorded, before any transport call is made for it;
  * `unsent` inside its next forward, which the mediator never takes;
  * `unrecorded` once the mediator has queued that forward and before
  * the caller hears so; `unacknowledged` inside its next
@@ -132,7 +132,7 @@ async function agentOver(mediator: FakeMediator, self: () => Started, life: Life
     fetch: transportOf(mediator, self, life),
     WebSocket: mediator.WebSocket,
     trace,
-    confirmations: vault.runtime.local.options,
+    localOptions: vault.runtime.local.options,
     onInbound: (inbound) => self().inbounds.push(inbound),
     log: (line) => self().log.push(line),
     ...options,

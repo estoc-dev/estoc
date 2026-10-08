@@ -26,8 +26,8 @@ import type { Channel } from "./types.js";
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
- * A reply an established input may still be given and no intent
- * records: a candidate for manual completion, listed with the channel
+ * A reply an established input may still be given, which no intent and
+ * no skip records: a candidate for manual completion, listed with the channel
  * the completion would fix it to. Whether it is given is the
  * completion's call, under current policy and what the body says.
  */
@@ -112,7 +112,7 @@ function missingResponses(fold: VaultFold): MissingResponse[] {
     const channel = responseChannel(fold, execution);
     if (channel.status === "none") continue;
     for (const effectType of candidates) {
-      if (automaticIntent(fold, execution, effectType).existing !== null) continue;
+      if (automaticIntent(fold, execution, effectType).result.status !== "pending") continue;
       missing.push({ execution, effectType, channel: channel.channel, source });
     }
   }

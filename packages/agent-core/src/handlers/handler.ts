@@ -8,9 +8,9 @@
  * effect type of the operation that produces it, with the content the
  * protocol's response rules fix from the source's headers and body. It
  * decides content only. The tuple, the message ID, the channel, the
- * sender and whether an intent already exists under the tuple are the
- * agent's, and a handler cannot move an output to another channel or
- * make a second one for the same operation. A handler reads the fold
+ * sender and what the operation came to under the tuple already are
+ * the agent's, and a handler cannot move an output to another channel
+ * or make a second one for the same operation. A handler reads the fold
  * and writes nothing.
  *
  * `@estoc/agent-core` ships handlers for trust-ping/2.0,
@@ -39,8 +39,16 @@ export interface Input {
   now(): number;
 }
 
-/** What an operation gives the input: its content, or nothing and why. */
-export type Response = { readonly effectType: string; readonly content: EffectContent } | { readonly effectType: string; readonly content: null; readonly because: string };
+/**
+ * What an operation gives the input: its content; nothing for good,
+ * under a stable code the operation defines, when its own rule applied
+ * to the input owes it no output whatever the clock, the policy or the
+ * evidence later; or nothing now and why, the output staying owed.
+ */
+export type Response =
+  | { readonly effectType: string; readonly content: EffectContent }
+  | { readonly effectType: string; readonly content: null; readonly skipped: string }
+  | { readonly effectType: string; readonly content: null; readonly because: string };
 
 export interface Handler {
   /** the message type URIs this handler answers */

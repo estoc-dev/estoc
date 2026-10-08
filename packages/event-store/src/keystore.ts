@@ -10,8 +10,15 @@ import { NotAVault } from "./errors.js";
 import { parseStrict } from "./jcs.js";
 import { isJsonObject } from "./json.js";
 
+/**
+ * The one vault version this store creates, opens, exports, imports and
+ * restores. Every other version is refused before an event or an object
+ * is read, and nothing in its file is changed.
+ */
+export const VAULT_VERSION = 5;
+
 /** The vault's identity as every copy states it: the format version, and the anchor DID the seed derives. */
-export type VaultMetadata = Readonly<{ version: 4; anchor: string }>;
+export type VaultMetadata = Readonly<{ version: typeof VAULT_VERSION; anchor: string }>;
 
 /** The wrapped seed as the API carries it: the keystore package's compact JWE string, as it is. */
 export type WrappedSeed = Readonly<{ version: 3; seedJwe: string }>;
@@ -32,9 +39,9 @@ export interface KeystoreAccess {
 export function checkMetadata(value: unknown): VaultMetadata {
   if (typeof value !== "object" || value === null) throw new NotAVault("vault metadata is an object");
   const { version, anchor } = value as { version?: unknown; anchor?: unknown };
-  if (version !== 4) throw new NotAVault(`vault version ${JSON.stringify(version)} is not 4`);
+  if (version !== VAULT_VERSION) throw new NotAVault(`vault version ${JSON.stringify(version)} is not ${VAULT_VERSION}`);
   if (typeof anchor !== "string" || !anchor.startsWith("did:") || anchor.length <= 4) throw new NotAVault("the anchor is a DID");
-  return Object.freeze({ version: 4, anchor });
+  return Object.freeze({ version: VAULT_VERSION, anchor });
 }
 
 /**

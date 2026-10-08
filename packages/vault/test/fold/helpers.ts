@@ -1,4 +1,4 @@
-import { MemoryVault, eventCidOf, type AuthorId, type Event, type EventCid, type EventEnvelope, type JsonObject } from "@estoc/event-store";
+import { MemoryVault, VAULT_VERSION, eventCidOf, type AuthorId, type Event, type EventCid, type EventEnvelope, type JsonObject } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";
 import { expect } from "vitest";
 
@@ -14,6 +14,7 @@ import {
   type Did,
   type DidGeneration,
   type DidId,
+  type PlaintextCid,
   type KeyName,
   type MediationId,
   type KeyCheck,
@@ -42,14 +43,16 @@ export const MEDIATION2: MediationId = mediationIdOf(ROUTING_DID2);
 export const ENDPOINT = "https://ingress.example/didcomm";
 export const MEDIATED: RouteTarget = { kind: "mediated", routingDid: ROUTING_DID };
 export const DIRECT: RouteTarget = { kind: "direct", endpoint: ENDPOINT };
-export const HASH = "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA";
-
 const encoder = new TextEncoder();
 export const cidOf = (text: string) => rawCidOfBytes(encoder.encode(text));
+/** A plaintext CID as the schema tells it: a raw CID, of nothing the vault keeps. */
+export const PLAINTEXT_CID = cidOf("plaintext") as PlaintextCid;
+/** A content no other observation of an input carries: what makes an observation's intent another. */
+export const OTHER_BODY_CID = cidOf("another body");
 
 /** A vault in memory holding the scene's events and the bytes of every text named. */
 export async function vaultOf(scene: Scene, texts: readonly string[] = []): Promise<MemoryVault> {
-  const vault = new MemoryVault({ metadata: { version: 4, anchor: await Keys.anchorOf(await importSeed(SEED)) } });
+  const vault = new MemoryVault({ metadata: { version: VAULT_VERSION, anchor: await Keys.anchorOf(await importSeed(SEED)) } });
   for (const text of texts) await vault.stores.objects.putObject(cidOf(text), encoder.encode(text));
   await vault.ingest(scene.events);
   return vault;

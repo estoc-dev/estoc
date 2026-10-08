@@ -93,8 +93,8 @@ describe("the receipt", () => {
     expect(event!.data).toEqual({
       messageId: inboundMessageId(bob.did, alice.did, wire),
       wireMessageId: wire,
-      intentHash: read.intentHash,
-      plaintextHash: read.plaintextHash,
+      intentCid: read.intent.cid,
+      plaintextCid: read.plaintextCid,
       localKeyName: didKeyName(DID, "key-agreement"),
       msgType: BASIC_MESSAGE,
       peerResolutionEventCid: resolved!.cid,

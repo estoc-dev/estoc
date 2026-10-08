@@ -2,6 +2,105 @@
 
 ## Unreleased
 
+- **A user's message has a creation time** (breaking): a locally
+  initiated `message.out` that names no rotation records a non-null
+  `createdTime`; a manual notification and an automatic output keep
+  their own rules, null included.
+- **An operation's tuple is read by its result**: `AutomaticIntent`
+  carries `result` alone; `existing` is gone, the output recorded under
+  the tuple being `result.outbound` when it is `produced`.
+- **A preparation is named by its event CID** (breaking):
+  `message.prepared` carries no `packageId`, `delivery.submitted` names
+  its preparation as `preparationEventCid`
+  (`EventReference<"message.prepared">`), and `PackageId` is gone. A
+  submission resolves that exact event: one whose preparation is not
+  here leaves the message waiting, unprepared and uncalled; one naming
+  another message's preparation, or another kind of event, completes
+  nothing. `forwardId(preparationEventCid)` derives the Routing 2.0
+  forward ID under the new `forward` namespace.
+- **A message may hold several preparations**: `Outbound.preparations`
+  lists every one, one per event, each with its own
+  `PreparationStatus`; `Outbound.package`, `packages`, `Package` and
+  `PackageStatus` are gone. A second preparation is no conflict, and
+  one that contradicts the intent is that preparation's own: the
+  message stays prepared and waits, opening no other. `Work` of kind
+  `dispatch` carries the complete, unerased `candidates`, among which
+  the runtime carries the one it selected. Any complete submission, or
+  a termination, releases every envelope the message's preparations
+  name at once.
+- **Records of one message agree by intent**: `message.out` records
+  under one message ID are one intent when they agree on the intent
+  CID, the sender, the canonical recipient, the effect tuple and the
+  rotation (`sameIntent`); each automatic record's source is checked on
+  its own, so two records naming two observations of one input are one
+  intent.
+  The schema recomputes `intentCid` of `message.out` and `message.in`
+  from the event's own fields, the message ID or the wire ID being the
+  own ID. A notification's thread and receipt request are read through
+  its intent, where naming itself in any case is the self reference.
+- **Effect results**: the new event `effect.skipped` (`EffectSkipped`)
+  records an automatic operation's terminal decision that an input
+  owes it no output, under the key its tuple derives.
+  `OutboundFold.effectResult(executionId, effectType)` reads what an
+  operation came to (`EffectResult`): `produced`, `skipped` with each
+  `Skip`'s source checked as an intent's is, `pending`, or `conflict`
+  when both an output and a skip are recorded. That conflict is also
+  the output's own effect conflict: its outcome is `conflict` and its
+  work `none`, its preparations and submissions kept. `automaticIntent`
+  carries it as `result`, and `unfinishedWork` lists a missing response
+  only while its result is pending.
+- **Each message layer has its CID**: `IntentCid`, `PlaintextCid` and
+  `EnvelopeCid` are the raw CIDs of the intent projection, the complete
+  plaintext and the normalized encrypted envelope, each its own type, so
+  one role is not handed in for another; the event CID stays the fourth
+  layer. `message.out.intentCid`, `message.in.intentCid` and
+  `plaintextCid`, and the preparation's three CIDs replace the
+  base64url SHA-256 `intentHash` and `plaintextHash`; `MessageHash` is
+  gone, and the schema checks the fields as raw CIDs. `Execution` carries
+  `intentCid` where it carried `intentHash`.
+- **The intent is a value under its CID**: `intentOf(ownId, control,
+  document)` makes an `Intent` from the control headers as the wire
+  spells them (`ControlHeaders`), the own ID and the stored document's
+  CID, checking, copying and freezing each field before the CID is
+  taken, and hands back `{ cid, value }` (`Identified`). The intent no
+  longer carries the own `id`: a thread or an ACK request naming the
+  message itself, under either case, is the self reference `SELF`
+  (`""`), and `document` is the document's CID rather than the document.
+  The CID is of `["estoc.message.intent", 1, projection]`;
+  `intentProjection` shows the projection. `intentOfOutbound(data)` and
+  `intentOfInbound(data)` read the recorded intent from an event's
+  payload, by its message ID or its wire ID. `semanticProjection`,
+  `intentHash` and `plaintextHash` are gone; `plaintextCidOf(plaintext)`
+  is the plaintext's CID.
+- **`readPlaintext` keeps the spelling apart from the intent**: it hands
+  back the plaintext `id` as spelled, the `control` headers as spelled,
+  which the events record, the `intent` under its CID and the
+  `plaintextCid`. `wirePlaintext(intent, id, document, addressing,
+  payloadOf)` takes the message ID and the stored document beside the
+  intent, refuses a document that is not the one the intent names, and
+  writes a self thread by omitting `thid` and a self ACK request as
+  `""`, whichever spelling the intent was recorded from.
+- **The envelope and the document have their constructors**:
+  `envelopeOf(packed)` parses the packed envelope strictly and hands back
+  its canonical bytes under their `EnvelopeCid`; `documentCidOf(document)`
+  is the CID of a stored document. `canonicalWireId` folds a wire ID's
+  ASCII letters to lower case, the spelling references are compared by.
+- **References to a message are compared by canonical wire ID**: DIDComm
+  compares message IDs without regard to case, so `inboundMessageId`,
+  `anonymousMessageId` and `executionId` take the wire ID's canonical
+  spelling into their transcripts, under which a lower-case ID derives as
+  before and two receipts of one ID in two cases are one input and one
+  execution; `requestsAck` reads a request naming the message's own ID in
+  any case; the ACK witnesses of an outbound, the carrier a
+  `delivery.acknowledged` names and the outbound a ping-response or
+  problem report answers are found by canonical wire ID; and a carrier's
+  receipt is its canonical wire ID (`ackTarget`), which a saved pure ACK
+  must name exactly. `replyThread(carrier)` is the thread a reply is on:
+  the carrier's canonical wire ID when the carrier is in its own thread,
+  otherwise its thread as spelled; the fold checks a pure ACK and a
+  triggered notification against it, and a Ping reply against the Ping's
+  canonical wire ID. `sameWireId` compares two IDs. Stored fields keep
+  the spelling received.
 - **A source's standing is its type**: `Source` is its common fields with
   one of four members, told apart by `status`: `complete` with
   `localDidId`, `resolution` and `channel` all present, `incomplete` with
@@ -14,7 +113,7 @@
   rotation candidate's sources carry it. `Standing` is no longer exported.
 - **An input's standing is its type**: `Execution` is its common fields
   with one of three members, told apart by `status`: `complete` with
-  `intentHash`, `kind` and `firstWitness` all present, `pending` with
+  `intentCid`, `kind` and `firstWitness` all present, `pending` with
   `because` and the admitted intent once one is admitted, and `conflict`
   with `because` and no intent. `status` is now the string itself and
   `because` sits beside it, in place of the `{ status, because }` object;

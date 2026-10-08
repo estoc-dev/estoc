@@ -19,9 +19,9 @@ import type { FactId } from "@estoc/continuity";
 
 import { InvalidIdentifier } from "./errors.js";
 import { isDerivedId, isDid, isEntityId, isMintedId } from "./syntax.js";
-import type { Channel, Did, DidId, EffectKey, EventCid, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
+import type { Channel, Did, DidId, EffectKey, EventCid, EventReference, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
-export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity"] as const;
+export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity", "forward"] as const;
 
 export type NamespacePurpose = (typeof NAMESPACE_PURPOSES)[number];
 
@@ -86,6 +86,22 @@ export function compareUtf8(a: string, b: string): number {
 }
 
 /**
+ * The spelling every reference to a wire ID is compared by: its ASCII
+ * letters in lower case. DIDComm compares message IDs without regard to
+ * case, and an ID consists of URI unreserved characters, so nothing
+ * else folds. A stored field keeps the spelling received; only
+ * comparisons go through here.
+ */
+export function canonicalWireId(wireId: string): string {
+  return wireId.replace(/[A-Z]+/g, (letters) => letters.toLowerCase());
+}
+
+/** Do two wire IDs name one message: equal once canonical. */
+export function sameWireId(a: string, b: string): boolean {
+  return a === b || canonicalWireId(a) === canonicalWireId(b);
+}
+
+/**
  * The channel between one of our DIDs and a peer's, an ordered pair:
  * receiving from the peer at the local DID and sending from it to the
  * peer are the same channel, the reverse pair is another vault's view.
@@ -115,27 +131,28 @@ export function compareChannels(a: Channel, b: Channel): number {
 
 /**
  * The observation group of an authenticated inbound message: by the
- * canonical sender and recipient DIDs and the wire ID, so that the same
- * input under another authorized key of the sender's document
- * converges, and the reverse direction under the same wire ID does not.
+ * canonical sender and recipient DIDs and the canonical wire ID, so
+ * that the same input under another authorized key of the sender's
+ * document, or under another spelling of its ID, converges, and the
+ * reverse direction under the same wire ID does not.
  */
 export function inboundMessageId(sender: Did, recipient: Did, wireMessageId: WireMessageId): MessageId {
-  return derive("inbound-message", ["v3", "authenticated", nonEmpty(sender, "sender DID"), nonEmpty(recipient, "recipient DID"), nonEmpty(wireMessageId, "wire message ID")]) as MessageId;
+  return derive("inbound-message", ["v3", "authenticated", nonEmpty(sender, "sender DID"), nonEmpty(recipient, "recipient DID"), canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as MessageId;
 }
 
-/** The observation group of an anonymous inbound message: by the local key that decrypted it and the wire ID. */
+/** The observation group of an anonymous inbound message: by the local key that decrypted it and the canonical wire ID. */
 export function anonymousMessageId(localKeyName: KeyName, wireMessageId: WireMessageId): MessageId {
-  return derive("inbound-message", ["v1", "anonymous", nonEmpty(localKeyName, "local key name"), nonEmpty(wireMessageId, "wire message ID")]) as MessageId;
+  return derive("inbound-message", ["v1", "anonymous", nonEmpty(localKeyName, "local key name"), canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as MessageId;
 }
 
 /**
  * The execution of one carrier in one channel: the peer is the sender,
- * the local DID the recipient. The transcript's members are the literal
- * tags `sender` and `recipient`, which RFC 8785 orders; the payload's
- * member names are no substitute.
+ * the local DID the recipient, the wire ID canonical. The transcript's
+ * members are the literal tags `sender` and `recipient`, which RFC 8785
+ * orders; the payload's member names are no substitute.
  */
 export function executionId(sender: Did, recipient: Did, wireMessageId: WireMessageId): ExecutionId {
-  return derive("message-execution", ["v4", { sender: nonEmpty(sender, "sender DID"), recipient: nonEmpty(recipient, "recipient DID") }, nonEmpty(wireMessageId, "wire message ID")]) as ExecutionId;
+  return derive("message-execution", ["v4", { sender: nonEmpty(sender, "sender DID"), recipient: nonEmpty(recipient, "recipient DID") }, canonicalWireId(nonEmpty(wireMessageId, "wire message ID"))]) as ExecutionId;
 }
 
 const EFFECT_TAG = "estoc/effect/3\0";
@@ -159,6 +176,17 @@ export function effectKey(executionId: ExecutionId, effectType: string): EffectK
 /** The message ID, and so the wire ID, of the one response an effect key names. */
 export function automaticMessageId(key: EffectKey): MessageId {
   return derive("automatic-mid", ["v1", nonEmpty(key, "effect key")]) as MessageId;
+}
+
+/**
+ * The Routing 2.0 `forward.id` around one preparation's envelope,
+ * derived from the preparation's event CID: every call carrying that
+ * envelope carries one forward ID, however often the forward is sealed
+ * again, while the mediator, which sees the forward ID, never sees the
+ * event CID it hides.
+ */
+export function forwardId(preparation: EventReference<"message.prepared">): string {
+  return derive("forward", ["v1", nonEmpty(preparation, "preparation event CID")]);
 }
 
 /**

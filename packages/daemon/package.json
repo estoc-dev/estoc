@@ -40,7 +40,7 @@
   "dependencies": {
     "@estoc/agent-core": "workspace:^",
     "@estoc/daemon-api": "workspace:^",
-    "@estoc/didcomm-node": "^0.4.1-estoc.3",
+    "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "@estoc/event-store": "workspace:^",
     "@estoc/keystore": "workspace:^",
     "@estoc/vault": "workspace:^",
@@ -50,8 +50,11 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@estoc/didcomm": "^0.4.1-estoc.4",
     "@types/node": "^26.6.2",
     "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.12",
+    "playwright-core": "^1.62.1",
     "typescript": "~5.8.0",
     "vitest": "^3.2.7"
   },

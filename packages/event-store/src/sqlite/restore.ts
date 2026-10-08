@@ -9,7 +9,7 @@ import { v7 } from "uuid";
 
 import { AnchorMismatch, InvalidSnapshot } from "../errors.js";
 import { canonicalEventBytes, type AuthorId, type Cid, type Event } from "../event.js";
-import type { WrappedSeed } from "../keystore.js";
+import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
 import type { HeldRoots } from "../vault.js";
 import type { SqliteDriver } from "./driver.js";
 import { copyObjects, type CopiedObject, type OpenDestination } from "./export.js";
@@ -37,7 +37,6 @@ export interface Restored extends Validated {
 }
 
 const FORMAT = "estoc-sqlite";
-const VAULT_VERSION = 4;
 
 /**
  * Restores `source`, a portable snapshot open read-only, into the

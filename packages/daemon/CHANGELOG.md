@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- The agent keeps its delivery records in the runtime's local options:
+  the preparation it selected for each message and an acceptance it has
+  not yet recorded, beside the inputs its replica left to another, and a
+  write or a deletion of one is a change to show. An acceptance the disk
+  would not record is recorded when the vault next opens, with no call.
+  A pending outbound shows its valid preparations and the one selected,
+  and `selectPreparation` writes the person's choice among them; a
+  restored vault has chosen none.
+
+- Completing an operation the input owes nothing, such as the reply to
+  a Ping that asked for none, answers `skipped` with the operation's
+  skip code. A user's message now always goes out with `created_time`;
+  the test corpus is regenerated.
+
+- `@estoc/didcomm-node` moves to `^0.4.1-estoc.4`, the build that hands
+  back the plaintext text `@estoc/agent-core` now reads messages from.
+
 - **Successors are derived**: `rotate` and `rotateChannel` make the
   successor the vault's recipe names, on the predecessor's own route, and
   refuse a rotation this runtime cannot commit, one away from an address

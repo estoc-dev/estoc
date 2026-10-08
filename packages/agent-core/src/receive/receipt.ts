@@ -113,23 +113,23 @@ function readOrRefuse({ plaintext, sender }: Authenticated): ReadPlaintext | Rec
 }
 
 function observationOf({ recipient, sender, delivery }: Authenticated, read: ReadPlaintext): Observed {
-  const { intent, stored } = read;
-  const wireMessageId = intent.id as WireMessageId;
+  const { control, stored } = read;
+  const wireMessageId = read.id as WireMessageId;
   const { source } = delivery;
   return {
     messageId: sender === null ? anonymousMessageId(recipient.localKeyName, wireMessageId) : inboundMessageId(sender.resolution.did, recipient.did, wireMessageId),
     wireMessageId,
-    intentHash: read.intentHash,
-    plaintextHash: read.plaintextHash,
+    intentCid: read.intent.cid,
+    plaintextCid: read.plaintextCid,
     localKeyName: recipient.localKeyName,
-    msgType: intent.type,
-    thid: intent.thid,
-    pthid: intent.pthid,
-    createdTime: intent.createdTime,
-    expiresTime: intent.expiresTime,
-    pleaseAck: intent.pleaseAck,
-    ack: intent.ack,
-    headers: intent.headers,
+    msgType: control.type,
+    thid: control.thid,
+    pthid: control.pthid,
+    createdTime: control.createdTime,
+    expiresTime: control.expiresTime,
+    pleaseAck: control.pleaseAck,
+    ack: control.ack,
+    headers: control.headers,
     fromPrior: read.fromPrior,
     bodyCid: stored.bodyCid,
     attachmentCids: stored.attachmentCids,

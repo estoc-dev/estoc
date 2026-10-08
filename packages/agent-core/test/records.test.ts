@@ -33,6 +33,7 @@ import { PROFILE } from "../src/protocol/user-profile.js";
 import {
   Dispatcher,
   Keyring,
+  LocalRecords,
   Receiver,
   Unusable,
   afterReceipt,
@@ -48,8 +49,10 @@ import {
   retireDid,
   send,
   type ChannelRecord,
+  type Dispatched,
   type Handler,
   type MessageRecord,
+  type PendingWork,
   type Source,
   routeOf,
 } from "../src/index.js";
@@ -83,15 +86,17 @@ async function hosting(alice: DirectParty, answer: (post: Post) => Response = ac
   const ring = await Keyring.load(alice.keys, await scanVault(alice.runtime.vault, alice.keys));
   const receiver = new Receiver(alice.runtime, alice.keys, ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
   const wire = posting((post) => answer(post));
-  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, effectTypes: effectTypesOf(handlers) });
+  const local = new LocalRecords(alice.runtime.local.options, alice.runtime.author);
+  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, effectTypes: effectTypesOf(handlers), local });
   const manual = manualProcedures(alice.runtime, alice.keys, dispatcher, { handlers, now: () => CREATED * 1000 });
   const receive = async (peer: DirectParty, extra: Partial<IMessage>, to: string = alice.longFormDid): Promise<EventReference<"message.in">> => {
     const outcome = await receiver.receive({ packed: await sealed(await peerSealer(peer), to, extra), source: DIRECT });
     if (outcome.outcome !== "received") throw new Error(`not received: ${JSON.stringify(outcome)}`);
     return outcome.cid;
   };
-  const channel = async (pair: Channel): Promise<ChannelRecord> => (await readRecords(alice.runtime, alice.keys, { handlers })).channel(pair);
-  return { wire, dispatcher, manual, receive, channel };
+  const channel = async (pair: Channel): Promise<ChannelRecord> => (await readRecords(alice.runtime, alice.keys, { handlers, local })).channel(pair);
+  const pending = async (): Promise<PendingWork> => (await readRecords(alice.runtime, alice.keys, { handlers, local })).pending();
+  return { wire, dispatcher, manual, receive, channel, pending };
 }
 
 const only = (record: ChannelRecord, direction: "in" | "out"): MessageRecord => {
@@ -145,13 +150,15 @@ describe("records", () => {
   test("an output a transport refused is shown prepared with a retry, which carries it; a cancelled one is terminal with nothing left to do", async () => {
     const { alice, bob } = await parties();
     let answer = refused;
-    const { wire, dispatcher, manual, channel } = await hosting(alice, () => answer());
+    const { wire, dispatcher, manual, channel, pending } = await hosting(alice, () => answer());
     const pair = { localDid: alice.did, peerDid: bob.did };
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
-    expect(await dispatcher.run(sent.action)).toMatchObject({ outcome: "failed" });
+    const failed = await dispatcher.run(sent.action);
+    expect(failed).toMatchObject({ outcome: "failed" });
+    const { preparationEventCid } = failed as Extract<Dispatched, { outcome: "failed" }>;
 
     expect(only(await channel(pair), "out")).toMatchObject({ messageId: sent.messageId, body: { state: "available", body: { content: "hello" } }, outcome: { status: "prepared" }, acknowledged: false, manualAction: "retry", effectType: null });
-    expect((await readRecords(alice.runtime, alice.keys)).pending().pendingOutbounds).toEqual([{ messageId: sent.messageId, channel: pair, outcome: "prepared", because: null, entries: ["retry", "cancel"] }]);
+    expect((await pending()).pendingOutbounds).toEqual([{ messageId: sent.messageId, channel: pair, outcome: "prepared", candidates: [preparationEventCid], selected: preparationEventCid, because: null, entries: ["retry", "cancel"] }]);
 
     answer = accepted;
     expect(await manual.retry(sent.messageId)).toMatchObject({ outcome: "submitted" });

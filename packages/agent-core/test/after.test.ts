@@ -55,7 +55,7 @@ async function eventsOf<T extends VaultEventType>(holder: Fresh, type: T): Promi
 }
 
 describe("after the receipt", () => {
-  test("a peer's ack names an outbound: once the outbound has its package, the witness is recorded as one acknowledgement by the preparation's own pass, the same ack delivered again is not recorded twice, another ack from the peer is, and an unrelated peer naming the ID earns nothing", async () => {
+  test("a peer's ack names an outbound: once the outbound has its preparation, the witness is recorded as one acknowledgement by the preparation's own pass, the same ack delivered again is not recorded twice, another ack from the peer is, and an unrelated peer naming the ID earns nothing", async () => {
     const { alice, bob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
     await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });

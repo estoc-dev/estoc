@@ -8,6 +8,8 @@ import {
   anonymousMessageId,
   automaticMessageId,
   effectKey,
+  intentOfInbound,
+  intentOfOutbound,
   isVaultEventType,
   rawCidOfBytes,
   readVaultDraft,
@@ -45,7 +47,6 @@ const UUID_V5_DID_ID = "019b0000-0000-5000-8000-00000000000c";
 const UUID_V4 = "019b0000-0000-4000-8000-00000000000c";
 const CONTACT = "019b2a63-48bf-7214-961d-4c3f97cb95da";
 const CONTACT2 = "019b2a66-c794-7b41-bff1-68a4ecdd0b67";
-const PACKAGE = "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c";
 const OUT = "019b2a70-e2c8-7fb4-b63f-1aca32152062";
 const IN = "d2192dcf-cc5c-5f7d-b4f1-46972b7b04de";
 const WIRE = "019b2a70-f225-721c-835f-67175be0667e";
@@ -53,12 +54,12 @@ const WIRE = "019b2a70-f225-721c-835f-67175be0667e";
 const RESOLVED = cidOf("resolved") as string;
 const SOURCE_IN = cidOf("source_in") as string;
 const ROTATION = cidOf("rotation") as string;
+const PREPARED = cidOf("prepared") as string;
 const OOB = "019b2a57-a947-7502-8fee-4d80d949dbcb";
 const KEY = `did/${DID_ID}/key-agreement`;
 const PEER_KEY = "z6LScHJqLmLd8zBAmcTY7BuyNvvYBEd44A6K8nVg2DSVCcis";
 const JWT = "eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJkaWQ6ZXhhbXBsZTphIn0.c2ln";
-const INTENT_HASH = "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA";
-const PLAINTEXT_HASH = "WkPpglZREjLGtviZ1L6c-R3EX1cTHtbe0sJrmhl77LQ";
+const PLAINTEXT = cidOf("plaintext");
 const SHORT = "did:peer:4zQmRendezvous";
 const LONG = `${SHORT}:z2NpDocument`;
 const LOCAL = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd";
@@ -76,6 +77,17 @@ const PURE_ACK = "https://estoc.dev/distributed-delivery/1.0#pure-ack";
 
 type Data<T extends VaultEventType> = VaultData[T];
 type Loose = Record<string, unknown>;
+
+/** `data` with the intent CID its own fields give, as a writer records it; as it is when its fields project no intent. */
+function withOwnIntent(data: Loose, own: (data: never) => { cid: string }): Loose {
+  try {
+    return { ...data, intentCid: own(data as never).cid };
+  } catch {
+    return data;
+  }
+}
+const out = (data: Loose) => withOwnIntent(data, intentOfOutbound);
+const inbound = (data: Loose) => withOwnIntent(data, intentOfInbound);
 
 function event(type: string, data: unknown, roots: readonly string[] = []): Event {
   return { cid: fakeEventCid(), at: "2026-09-13T00:00:00.000Z", author: AUTHOR, type, roots: [...roots], data } as Event;
@@ -138,56 +150,63 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
   "contact.merged": [{ contactId: CONTACT, fromContactId: CONTACT2 } as Data<"contact.merged">, []],
   "contact.deleted": [{ contactId: CONTACT } as Data<"contact.deleted">, []],
   "message.out": [
-    {
+    out({
       messageId: OUT,
       senderDidId: DID_ID,
       recipientDid: PEER,
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       thid: null,
       pthid: null,
-      createdTime: null,
+      createdTime: 1788442800,
       expiresTime: null,
       pleaseAck: [""],
       ack: [],
       headers: {},
       bodyCid: BODY,
       attachmentCids: [PHOTO],
-      intentHash: INTENT_HASH,
       executionId: null,
       effectType: null,
       effectKey: null,
       sourceEventCid: null,
       rotationEventCid: null,
-    } as unknown as Data<"message.out">,
+    }) as unknown as Data<"message.out">,
     [BODY, PHOTO],
   ],
   "message.prepared": [
     {
       messageId: OUT,
-      packageId: PACKAGE,
       senderDidId: DID_ID,
       localKeyName: KEY,
       recipientDid: PEER,
       peerResolutionEventCid: RESOLVED,
       fromPrior: null,
-      intentHash: INTENT_HASH,
-      plaintextHash: PLAINTEXT_HASH,
+      intentCid: cidOf("intent"),
+      plaintextCid: PLAINTEXT,
       envelopeCid: ENVELOPE,
     } as Data<"message.prepared">,
     [ENVELOPE],
   ],
-  "delivery.submitted": [{ messageId: OUT, packageId: PACKAGE } as Data<"delivery.submitted">, []],
+  "delivery.submitted": [{ messageId: OUT, preparationEventCid: PREPARED } as Data<"delivery.submitted">, []],
   "delivery.failed": [{ messageId: OUT, code: "expired" } as Data<"delivery.failed">, []],
   "delivery.acknowledged": [
     { messageId: OUT, localKeyName: KEY, peerPublicKey: PEER_KEY, ackMessageId: "27c4471f-8937-501b-9ffb-a7eaeeebc178", ackWireMessageId: "21559fb4-1a9f-54b1-b8fa-1bf82700d365" } as Data<"delivery.acknowledged">,
     [],
   ],
-  "message.in": [
+  "effect.skipped": [
     {
+      executionId: "ccee59f0-8c79-5011-8822-dbb14de9cf7d",
+      effectType: "https://didcomm.org/trust-ping/2.0/ping-response",
+      effectKey: effectKey("ccee59f0-8c79-5011-8822-dbb14de9cf7d" as ExecutionId, "https://didcomm.org/trust-ping/2.0/ping-response"),
+      sourceEventCid: SOURCE_IN,
+      code: "no-response-requested",
+    } as Data<"effect.skipped">,
+    [],
+  ],
+  "message.in": [
+    inbound({
       messageId: IN,
       wireMessageId: WIRE,
-      intentHash: "855qiA-zQ94SVOPYj2KnooWRNJAe1GB419LMTGLMwAs",
-      plaintextHash: "dpPwT44Xre48u9xon4fUfvLOEQI6nYxQDzCCFnCJMK8",
+      plaintextCid: PLAINTEXT,
       localKeyName: KEY,
       msgType: "https://didcomm.org/basicmessage/2.0/message",
       peerResolutionEventCid: RESOLVED,
@@ -205,7 +224,7 @@ const ALL: { [T in VaultEventType]: [Data<T>, readonly string[]] } = {
       attachmentCids: [PHOTO],
       bytes: 48213,
       receivedVia: { mediationId: MEDIATION, deliveryId: "01J...opaque" },
-    } as unknown as Data<"message.in">,
+    }) as unknown as Data<"message.in">,
     [BODY, PHOTO],
   ],
   "message.erased": [{ messageId: OUT, dropCids: [BODY, PHOTO], because: "user" } as Data<"message.erased">, []],
@@ -216,12 +235,12 @@ const OUT_DATA = ALL["message.out"][0] as MessageOut;
 const IN_DATA = ALL["message.in"][0] as MessageIn;
 
 describe("readVaultEvent", () => {
-  it("knows exactly the version-4 types", () => {
+  it("knows exactly the version-5 types", () => {
     expect([...VAULT_EVENT_TYPES].sort()).toEqual(Object.keys(ALL).sort());
-    expect(VAULT_EVENT_TYPES).toHaveLength(27);
+    expect(VAULT_EVENT_TYPES).toHaveLength(28);
     expect(isVaultEventType("message.out")).toBe(true);
     expect(isVaultEventType("relationship.bound")).toBe(false);
-    expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-4 event type/);
+    expect(() => readVaultEvent(event("relationship.bound", {}))).toThrow(/^relationship\.bound: not a version-5 event type/);
     expect(() => readVaultEvent(event("toString", {}))).toThrow(InvalidPayload);
   });
 
@@ -243,9 +262,9 @@ describe("readVaultEvent", () => {
     rejects("message.out", OUT_DATA, [PHOTO, BODY], /roots must be/);
     rejects("message.out", OUT_DATA, [BODY]);
     rejects("message.out", OUT_DATA, [BODY, PHOTO, PHOTO]);
-    accepts("message.out", { ...OUT_DATA, attachmentCids: [] }, [BODY]);
-    accepts("message.out", { ...OUT_DATA, attachmentCids: [BODY, PHOTO] }, [BODY, PHOTO]);
-    rejects("message.out", { ...OUT_DATA, attachmentCids: [PHOTO, PHOTO] }, [BODY, PHOTO], /attachmentCids must be distinct/);
+    accepts("message.out", out({ ...OUT_DATA, attachmentCids: [] }), [BODY]);
+    accepts("message.out", out({ ...OUT_DATA, attachmentCids: [BODY, PHOTO] }), [BODY, PHOTO]);
+    rejects("message.out", out({ ...OUT_DATA, attachmentCids: [PHOTO, PHOTO] }), [BODY, PHOTO], /attachmentCids must be distinct/);
     rejects("message.in", IN_DATA, [BODY]);
   });
 });
@@ -297,13 +316,16 @@ describe("identifiers in payloads", () => {
     rejects("peer.resolved", { ...resolved, peerPublicKey: PEER_KEY.slice(0, -1) }, [DOC], /canonical public key/);
     rejects("peer.resolved", { ...resolved, peerPublicKey: `did:key:${PEER_KEY}` }, [DOC]);
     rejects("peer.resolved", { ...resolved, documentCid: "bafyrei" }, [DOC], /raw DASL CID/);
-    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), intentHash: `${INTENT_HASH}=` }, [ENVELOPE], /base64url SHA-256/);
-    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), plaintextHash: PLAINTEXT_HASH.slice(0, -1) + "B" }, [ENVELOPE]);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), intentCid: "hmqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" }, [ENVELOPE], /intentCid must be a raw DASL CID/);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), plaintextCid: fakeEventCid().replace("bafkrei", "bafyrei") }, [ENVELOPE], /plaintextCid must be a raw DASL CID/);
+    rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), envelopeCid: null }, [ENVELOPE], /envelopeCid/);
+    rejects("message.in", { ...(ALL["message.in"][0] as Loose), intentCid: null }, [BODY, PHOTO], /intentCid/);
+    rejects("message.out", { ...(ALL["message.out"][0] as Loose), intentCid: OUT_DATA.intentCid.slice(0, -1) }, [BODY, PHOTO], /intentCid must be a raw DASL CID/);
     rejects("message.prepared", { ...(ALL["message.prepared"][0] as Loose), fromPrior: "a.b" }, [ENVELOPE], /compact JWT/);
   });
 
   test("a channel endpoint is a did:peer:4 short form; a peer address a message names may be the long form too", () => {
-    accepts("message.out", { ...OUT_DATA, recipientDid: PEER_LONG }, [BODY, PHOTO]);
+    accepts("message.out", out({ ...OUT_DATA, recipientDid: PEER_LONG }), [BODY, PHOTO]);
     rejects("message.out", { ...OUT_DATA, recipientDid: WEB }, [BODY, PHOTO], /recipientDid must be a did:peer:4 short or long form/);
     rejects("message.out", { ...OUT_DATA, recipientDid: "did:peer:2.Ez6LSbysY2xFMRpGMhb7tFTLMpeuPRaqaWM1yECx2AtzE3KCc" }, [BODY, PHOTO], /did:peer:4/);
     accepts("message.prepared", { ...ALL["message.prepared"][0], recipientDid: PEER_LONG }, [ENVELOPE]);
@@ -445,7 +467,22 @@ describe("rules between members", () => {
   test("delivery.failed ends an unsubmitted message by expiry or cancellation and nothing else", () => {
     accepts("delivery.failed", { messageId: OUT, code: "cancelled" });
     rejects("delivery.failed", { messageId: OUT, code: "rejected" }, [], /one of "expired", "cancelled"/);
-    rejects("delivery.failed", { messageId: OUT, code: "expired", packageId: PACKAGE }, [], /packageId is not a member/);
+    rejects("delivery.failed", { messageId: OUT, code: "expired", preparationEventCid: PREPARED }, [], /preparationEventCid is not a member/);
+  });
+
+  test("delivery.submitted names its preparation by event CID, and no package ID", () => {
+    rejects("delivery.submitted", { messageId: OUT, preparationEventCid: "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c" }, [], /preparationEventCid must be an event CID/);
+    rejects("delivery.submitted", { messageId: OUT, packageId: "019b2a73-4ce0-79ba-ad4a-f9fc4f45d37c" }, [], /preparationEventCid is missing/);
+  });
+
+  test("effect.skipped records the key of its tuple and a code, and retains nothing", () => {
+    const skipped = ALL["effect.skipped"][0] as Loose;
+    rejects("effect.skipped", { ...skipped, effectType: PURE_ACK }, [], /effectKey is not the key of the producing tuple/);
+    rejects("effect.skipped", { ...skipped, effectType: "ping-response" }, [], /an effect type is a URI with a scheme/);
+    rejects("effect.skipped", { ...skipped, executionId: OUT }, [], /executionId must be a canonical UUIDv5/);
+    rejects("effect.skipped", { ...skipped, sourceEventCid: null }, [], /sourceEventCid must be an event CID/);
+    rejects("effect.skipped", { ...skipped, code: "" }, [], /code must be a non-empty string/);
+    rejects("effect.skipped", skipped, [BODY], /roots must be \[\]/);
   });
 
   test("message.prepared names the sender entity's own key-agreement key", () => {
@@ -465,7 +502,7 @@ describe("rules between members", () => {
 describe("message.out", () => {
   const EXECUTION = "ccee59f0-8c79-5011-8822-dbb14de9cf7d" as ExecutionId;
   const KEY_OF_PURE_ACK = "Vyjgpd9idT4bb9ejAEdwT5J8dX-kL6FfSniCkFZDB20";
-  const AUTOMATIC = {
+  const AUTOMATIC = out({
     ...OUT_DATA,
     executionId: EXECUTION,
     effectType: PURE_ACK,
@@ -476,11 +513,11 @@ describe("message.out", () => {
     pleaseAck: null,
     ack: [WIRE],
     attachmentCids: [],
-  };
+  });
 
   it("freezes timing, exact pleaseAck, exact ack and headers", () => {
-    accepts("message.out", { ...OUT_DATA, createdTime: 1788442800, expiresTime: 1788446400, pleaseAck: null, headers: { lang: "en" } }, [BODY, PHOTO]);
-    accepts("message.out", { ...OUT_DATA, pleaseAck: [] }, [BODY, PHOTO]);
+    accepts("message.out", out({ ...OUT_DATA, createdTime: 1788442800, expiresTime: 1788446400, pleaseAck: null, headers: { lang: "en" } }), [BODY, PHOTO]);
+    accepts("message.out", out({ ...OUT_DATA, pleaseAck: [] }), [BODY, PHOTO]);
     rejects("message.out", { ...OUT_DATA, createdTime: 10, expiresTime: 10 }, [BODY, PHOTO], /expiresTime must be later/);
     rejects("message.out", { ...OUT_DATA, createdTime: 1.5 }, [BODY, PHOTO]);
     rejects("message.out", { ...OUT_DATA, headers: { return_route: "all" } }, [BODY, PHOTO], /reserved header "return_route"/);
@@ -492,12 +529,29 @@ describe("message.out", () => {
     rejects("message.out", { ...OUT_DATA, senderDidId: UUID_V4 }, [BODY, PHOTO], /senderDidId must be a canonical UUIDv5 or UUIDv7/);
   });
 
-  test("a locally initiated send mints its ID, derives from no observation and acknowledges nothing; a manual notification names only its rotation", () => {
+  it("records the intent CID its own fields give, the message ID being the own ID: a self reference in either spelling is one intent, and any other field moved is another", () => {
+    for (const self of [{ thid: OUT }, { thid: OUT.toUpperCase() }, { pleaseAck: [OUT] }]) {
+      const spelled = { ...OUT_DATA, ...self };
+      accepts("message.out", spelled, [BODY, PHOTO]);
+      expect(out(spelled).intentCid).toBe(OUT_DATA.intentCid);
+    }
+    for (const moved of [{ createdTime: 1788442801 }, { pleaseAck: null }, { bodyCid: PHOTO, attachmentCids: [] }, { headers: { lang: "en" } }, { msgType: "https://example.com/other" }]) {
+      const data = out({ ...OUT_DATA, ...moved });
+      expect(data.intentCid).not.toBe(OUT_DATA.intentCid);
+      rejects("message.out", { ...data, intentCid: OUT_DATA.intentCid }, vaultDraft("message.out", data as never).roots, new RegExp(`intentCid is the CID of the intent its own fields project, ${data.intentCid}`));
+    }
+    expect(out({ ...OUT_DATA, recipientDid: PEER_LONG, senderDidId: DID_ID2 }).intentCid, "the addressing is no part of the intent").toBe(OUT_DATA.intentCid);
+  });
+
+  test("a locally initiated send mints its ID, derives from no observation, acknowledges nothing and has a creation time; a manual notification names only its rotation, and it and an automatic effect may have no creation time", () => {
     rejects("message.out", { ...OUT_DATA, ack: [WIRE] }, [BODY, PHOTO], /has ack \[\]/);
+    rejects("message.out", out({ ...OUT_DATA, createdTime: null }), [BODY, PHOTO], /a locally initiated send that names no rotation has a createdTime/);
+    accepts("message.out", out({ ...OUT_DATA, createdTime: null, rotationEventCid: ROTATION, msgType: "https://didcomm.org/empty/1.0/empty", attachmentCids: [] }), [BODY]);
+    accepts("message.out", out({ ...AUTOMATIC, createdTime: null }), [BODY]);
     rejects("message.out", { ...OUT_DATA, messageId: IN }, [BODY, PHOTO], /mints a UUIDv7/);
     rejects("message.out", { ...OUT_DATA, effectType: PURE_ACK }, [BODY, PHOTO], /all null or all present/);
     rejects("message.out", { ...OUT_DATA, sourceEventCid: SOURCE_IN }, [BODY, PHOTO], /sourceEventCid is present exactly for an effect/);
-    accepts("message.out", { ...OUT_DATA, rotationEventCid: ROTATION, msgType: "https://didcomm.org/empty/1.0/empty", attachmentCids: [] }, [BODY]);
+    accepts("message.out", out({ ...OUT_DATA, rotationEventCid: ROTATION, msgType: "https://didcomm.org/empty/1.0/empty", attachmentCids: [] }), [BODY]);
   });
 
   test("an automatic effect stores its producing tuple, the key of that tuple, the message ID of that key and the observation it derives from", () => {
@@ -525,8 +579,15 @@ describe("message.in", () => {
     did: null,
   };
 
+  it("records the intent CID its own fields give, the wire ID being the own ID", () => {
+    accepts("message.in", inbound({ ...IN_DATA, thid: WIRE, pleaseAck: [WIRE.toUpperCase()] }), [BODY, PHOTO]);
+    expect(inbound({ ...IN_DATA, thid: WIRE, pleaseAck: [WIRE.toUpperCase()] }).intentCid).toBe(IN_DATA.intentCid);
+    rejects("message.in", { ...IN_DATA, createdTime: 1788442801 }, [BODY, PHOTO], /intentCid is the CID of the intent its own fields project/);
+    rejects("message.in", { ...IN_DATA, wireMessageId: OUT, thid: WIRE }, [BODY, PHOTO], /intentCid is the CID of the intent its own fields project/);
+  });
+
   it("keeps normalized headers, the original proof string, the byte count and where it arrived", () => {
-    accepts("message.in", { ...IN_DATA, pleaseAck: null, ack: [OUT, OUT], headers: { lang: "en" }, fromPrior: JWT, thid: "t", pthid: OOB }, [BODY, PHOTO]);
+    accepts("message.in", inbound({ ...IN_DATA, pleaseAck: null, ack: [OUT, OUT], headers: { lang: "en" }, fromPrior: JWT, thid: "t", pthid: OOB }), [BODY, PHOTO]);
     accepts("message.in", { ...IN_DATA, fromPrior: "not a jwt at all" }, [BODY, PHOTO]);
     accepts("message.in", { ...IN_DATA, fromPrior: "" }, [BODY, PHOTO]);
     accepts("message.in", { ...IN_DATA, receivedVia: { mediationId: null, deliveryId: null }, bytes: 0 }, [BODY, PHOTO]);

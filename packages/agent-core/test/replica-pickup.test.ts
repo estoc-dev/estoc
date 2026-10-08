@@ -33,7 +33,7 @@ afterEach(async () => {
 async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}): Promise<Enrolled> {
   const p = await party(mediator, 1);
   const inbounds: Inbound[] = [];
-  const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, privateAddresses: false, liveDelivery: false, onInbound: (inbound) => inbounds.push(inbound), ...over });
+  const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false, onInbound: (inbound) => inbounds.push(inbound), ...over });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
   const { replica } = await agent.enroll(p.mediationId);
   await selectMediation(p.runtime, p.keys, p.mediationId);

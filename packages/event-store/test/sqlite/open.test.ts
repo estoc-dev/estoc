@@ -23,6 +23,7 @@ import {
   DatabaseMissing,
   NotAVault,
   ReadOnlyVault,
+  VAULT_VERSION,
   VaultClosed,
   WriterLock,
   checkWrappedSeed,
@@ -86,7 +87,7 @@ function handmade(body: (db: SqliteDriver) => void): string {
 function fill(db: SqliteDriver, kind: "runtime" | "portable", meta: { format?: string; version?: number; ready?: number; anchor?: string } = {}): SqliteDriver {
   db.exec(`PRAGMA application_id = 1163088963; PRAGMA user_version = 2`);
   createTables(db, kind);
-  db.prepare("INSERT INTO vault_meta VALUES (1, ?, ?, ?, ?, ?)").run(meta.format ?? "estoc-sqlite", meta.version ?? 4, kind, meta.ready ?? 1, meta.anchor ?? ANCHOR);
+  db.prepare("INSERT INTO vault_meta VALUES (1, ?, ?, ?, ?, ?)").run(meta.format ?? "estoc-sqlite", meta.version ?? VAULT_VERSION, kind, meta.ready ?? 1, meta.anchor ?? ANCHOR);
   db.prepare("INSERT INTO keystore VALUES (1, 3, ?)").run(new TextEncoder().encode(WRAPPED.seedJwe));
   if (kind === "runtime") db.exec(`INSERT INTO store_state VALUES (1, '${EVENT_ID}', '${EVENT_ID}', 0)`);
   return db;
@@ -114,6 +115,7 @@ describe("the open cases on node:sqlite files", () => {
     fresh,
     open: async (target, mode) => open(target, mode, mode === "create" ? "delete" : undefined),
     importFile: (target, bytes) => writeFile(target, bytes),
+    fileBytes: async (target) => new Uint8Array(await readFile(target)),
     writeSchema: async (target, sql) => {
       const db = new DatabaseSync(target, { defensive: false });
       try {
@@ -146,7 +148,7 @@ describe("createRuntime", () => {
     expect(await vault.keystore(locked).read()).toEqual(WRAPPED);
     expect(vault.driver.prepare("PRAGMA application_id").get()).toEqual({ application_id: 0x45535443 });
     expect(vault.driver.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
-    expect(vault.driver.prepare("SELECT * FROM vault_meta").get()).toEqual({ singleton: 1, format: "estoc-sqlite", vault_version: 4, kind: "runtime", ready: 1, anchor: ANCHOR });
+    expect(vault.driver.prepare("SELECT * FROM vault_meta").get()).toEqual({ singleton: 1, format: "estoc-sqlite", vault_version: VAULT_VERSION, kind: "runtime", ready: 1, anchor: ANCHOR });
     expect(vault.driver.prepare("SELECT replica_id, store_generation, last_seq FROM store_state").get()).toEqual({ replica_id: vault.author, store_generation: vault.generation, last_seq: 0 });
     vault.close();
     expect(Array.from((await readFile(file)).subarray(18, 20)), "a runtime is a WAL file").toEqual([2, 2]);
@@ -249,8 +251,8 @@ describe("openRuntime", () => {
       { name: "the earlier schema version, which no migration reads", file: handmade((db) => db.exec("PRAGMA application_id = 1163088963; PRAGMA user_version = 1")), message: /schema version 1 is not supported/ },
       { name: "no metadata table", file: handmade((db) => db.exec("PRAGMA application_id = 1163088963; PRAGMA user_version = 2")), message: /vault_meta cannot be read/ },
       { name: "another format", file: handmade((db) => fillLoose(db, "estoc-other", 3, "runtime", 1)), message: /format "estoc-other"/ },
-      { name: "the earlier vault version, which no migration reads", file: handmade((db) => fillLoose(db, "estoc-sqlite", 3, "runtime", 1)), message: /vault version 3/ },
-      { name: "a later vault version", file: handmade((db) => fillLoose(db, "estoc-sqlite", 5, "runtime", 1)), message: /vault version 5/ },
+      { name: "the earlier vault version, which no migration reads", file: handmade((db) => fillLoose(db, "estoc-sqlite", 4, "runtime", 1)), message: /vault version 4 is not 5/ },
+      { name: "a later vault version", file: handmade((db) => fillLoose(db, "estoc-sqlite", 6, "runtime", 1)), message: /vault version 6 is not 5/ },
       { name: "a portable snapshot", file: handmade((db) => fill(db, "portable")), message: /a portable one, not a runtime/ },
       { name: "an unready runtime", file: handmade((db) => fill(db, "runtime", { ready: 0 })), message: /not ready/ },
       { name: "no metadata row", file: handmade((db) => fill(db, "runtime").exec("DELETE FROM vault_meta")), message: /vault_meta has 0 rows/ },

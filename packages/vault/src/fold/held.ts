@@ -1,12 +1,15 @@
 /**
  * What the vault must keep: every root an accepted event retains,
  * except what a message's erasure released from that message's events,
- * and except a prepared envelope once its message is submitted or
- * terminated under a consistent intent — the outbound fold's word,
- * handed in as the released messages — since a package whose transport
- * call was observed, or whose message ended unsent, is never sent
- * again. Nothing else releases an envelope: a peer's acknowledgement,
- * a competing package, a conflict or missing evidence hold it.
+ * and except every envelope the preparations of a message name, all at
+ * once, once the message is submitted by any of them or terminated
+ * under a consistent intent — the outbound fold's word, handed in as
+ * the released messages — since a message whose transport call was
+ * observed, or which ended unsent, is never sent again. Nothing else
+ * releases an envelope: a peer's acknowledgement, another preparation,
+ * a runtime's local selection, a conflict or missing evidence hold it.
+ * Release is edge by edge, so an object another event still names
+ * stays held.
  * An event of a type this version does not name, or one whose payload
  * does not read, holds every root it names, and so does every event
  * that is not a message's: a peer document stays as long as the

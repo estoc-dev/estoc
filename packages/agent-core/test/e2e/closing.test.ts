@@ -42,7 +42,7 @@ describe("a message erased", () => {
     await until("alice has the message", () => alice.inbounds.length === 1);
     await until("bob has the acknowledgement", () => bob.inbounds.length === 1);
     const sent = (await foldOf(bob)).outbound.outbounds.get(FIRST)!;
-    const { envelopeCid } = sent.package!.event.data;
+    const { envelopeCid } = sent.preparations[0]!.event.data;
     const envelope = new TextDecoder().decode((await bob.runtime.vault.objects.read(envelopeCid, MAX_ENVELOPE_BYTES))!);
     const { bodyCid } = (await foldOf(alice)).set.of("message.in")[0]!.data;
 
@@ -135,7 +135,7 @@ describe("a message that was not accepted", () => {
     const { mediator, alice, bob, toAlice } = await pair();
     bob.refuseForward.armed = true;
     await bob.agent.send(toAlice, hello("on second thought"), { messageId: FIRST });
-    const { envelopeCid } = (await foldOf(bob)).outbound.outbounds.get(FIRST)!.package!.event.data;
+    const { envelopeCid } = (await foldOf(bob)).outbound.outbounds.get(FIRST)!.preparations[0]!.event.data;
 
     expect(await bob.agent.manual.cancel(FIRST)).toMatchObject({ outcome: "cancelled", failed: { data: { code: "cancelled" } } });
     expect(held(await foldOf(bob)).has(envelopeCid)).toBe(false);

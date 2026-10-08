@@ -2,13 +2,12 @@ import { SignJWT, importJWK } from "jose";
 import { v7 as uuidv7 } from "uuid";
 import { describe, expect, it } from "vitest";
 
-import { AUTHENTICATION_METHOD, anonymousMessageId, didKeyName, foldVault, foldVaultChecked, type DidId, type EventReference, type Keys, type MessageHash, type ReadObject, type VaultChecks, type VaultData, type VaultFold, type WireMessageId } from "../../src/index.js";
-import { AUTHOR, AUTHOR2, HASH, expectOrderFree, fakeEventCid, type Scene } from "../fold/helpers.js";
+import { AUTHENTICATION_METHOD, anonymousMessageId, didKeyName, foldVault, foldVaultChecked, type DidId, type Cid, type EventReference, type Keys, type ReadObject, type VaultChecks, type VaultData, type VaultFold, type WireMessageId } from "../../src/index.js";
+import { AUTHOR, AUTHOR2, OTHER_BODY_CID, expectOrderFree, fakeEventCid, type Scene } from "../fold/helpers.js";
 import { IAT, admitted, blocked, invitation, noObjects, observation, peerDid, proof, receipt, resolved, vaults, type Local, type Peer } from "../fold/scene.js";
 
 const fold = (scene: Scene, keys: Keys | null, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
 
-const OTHER_HASH = "Amqd2ObLCbE6Ru94DITHwte-8oYqrtNZgPxiv7WfXAA" as MessageHash;
 
 /** A peer no resolution of the scene retains a document for: a proof it issues under its short form waits for one. */
 const undocumentedPeer = (keys: Keys) => peerDid(keys, "019b7000-0000-7000-8000-000000000b04" as DidId);
@@ -21,13 +20,13 @@ async function resign(keys: Keys, local: { didId: Local["didId"] }, header: Reco
     .sign(await importJWK(key.privateJwk(), "EdDSA"));
 }
 
-type Observed = { local: Local; peer: Peer; wire?: string; hash?: MessageHash; fromPrior?: string; short?: boolean; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; admitted?: boolean };
+type Observed = { local: Local; peer: Peer; wire?: string; body?: Cid; fromPrior?: string; short?: boolean; overrides?: Partial<VaultData["message.in"]>; author?: typeof AUTHOR; admitted?: boolean };
 
 /** A receipt under its own resolution, admitted only when asked. */
 const observe = (scene: Scene, o: Observed) =>
   receipt(
     scene,
-    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer, { short: o.short }), wire: o.wire ?? uuidv7(), fromPrior: o.fromPrior ?? null, overrides: { intentHash: o.hash ?? (HASH as MessageHash), ...o.overrides }, admitted: o.admitted ?? false },
+    { local: o.local, peer: o.peer, resolution: resolved(scene, o.local.didId, o.peer, { short: o.short }), wire: o.wire ?? uuidv7(), fromPrior: o.fromPrior ?? null, overrides: { ...(o.body === undefined ? {} : { bodyCid: o.body }), ...o.overrides }, admitted: o.admitted ?? false },
     { author: o.author ?? AUTHOR }
   );
 
@@ -106,7 +105,7 @@ describe("a disposition", () => {
     const first = observe(scene, { local: a0, peer: b0, wire });
     const ofFirst = admitted(scene, first);
     const consistent = observe(scene, { local: a0, peer: b0, wire });
-    const contradicting = observe(scene, { local: a0, peer: b0, wire, hash: OTHER_HASH });
+    const contradicting = observe(scene, { local: a0, peer: b0, wire, body: OTHER_BODY_CID });
     const refusedProof = observe(scene, { local: a0, peer: b1, fromPrior: "not a JWT" });
     const carrier = observe(scene, { local: a0, peer: b3, fromPrior: await proof(peerKeys, b2, b3) });
     const late = observe(scene, { local: a0, peer: b2 });
@@ -133,7 +132,7 @@ describe("a disposition", () => {
     expect(dispositions.disposition(clashing.cid)).toEqual({ status: "pending-admission", because: "the channel is denied" });
     expect(dispositions.disposition(clashingToo.cid).status).toBe("admitted");
     expect(dispositions.disposition(fakeEventCid())).toEqual({ status: "pending-admission", because: "the source is not here" });
-    expect(vault.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentHash: HASH, contradicting: [{ source: { event: { cid: contradicting.cid } } }] });
+    expect(vault.inbound.ofSource(first.cid)).toMatchObject({ status: "complete", intentCid: first.data.intentCid, contradicting: [{ source: { event: { cid: contradicting.cid } } }] });
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
@@ -160,7 +159,7 @@ describe("the candidates", () => {
     const wire = uuidv7();
     const first = observe(scene, { local: a0, peer: b3, wire, admitted: true });
     const consistent = observe(scene, { local: a0, peer: b3, wire });
-    const contradicting = observe(scene, { local: a0, peer: b3, wire, hash: OTHER_HASH });
+    const contradicting = observe(scene, { local: a0, peer: b3, wire, body: OTHER_BODY_CID });
     const refusedProof = observe(scene, { local: a0, peer: b1, fromPrior: "not a JWT" });
     const unresolved = observe(scene, { local: a0, peer: b2, overrides: { peerResolutionEventCid: fakeEventCid() as VaultData["message.in"]["peerResolutionEventCid"] } });
     const b4 = await undocumentedPeer(peerKeys);

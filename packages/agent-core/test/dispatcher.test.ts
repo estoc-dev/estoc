@@ -48,7 +48,7 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
   };
 }
 
-/** A message to Bob's short form: its long form is not in evidence, so the package waits for it. */
+/** A message to Bob's short form: its long form is not in evidence, so the preparation waits for it. */
 const toShortForm = (s: Scene, messageId: MessageId) => send(s.alice.runtime, s.alice.keys, { channel: { localDid: s.alice.did, peerDid: s.bob.did } }, HELLO, { messageId });
 /** A message to Bob's long form: it brings the long form into evidence for every message to Bob. */
 const toLongForm = (s: Scene, messageId: MessageId) => send(s.alice.runtime, s.alice.keys, { channel: { localDid: s.alice.did, peerDid: s.bob.longFormDid } }, HELLO, { messageId });

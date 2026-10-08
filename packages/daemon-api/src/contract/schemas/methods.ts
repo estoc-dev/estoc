@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { DaemonErrorCode } from "../errors.js";
-import { OUTCOMES, type Baseline, type CancelOutcome, type CompletionOutcome, type ContactReached, type DispatchOutcome, type MergeResult, type MethodInput, type MethodName, type MethodResult, type Outcome, type OutcomeTag, type RotateResult, type SendResult, type SendTarget } from "../methods.js";
+import { OUTCOMES, type Baseline, type CancelOutcome, type CompletionOutcome, type ContactReached, type DispatchOutcome, type MergeResult, type MethodInput, type MethodName, type MethodResult, type Outcome, type OutcomeTag, type RotateResult, type SelectOutcome, type SendResult, type SendTarget } from "../methods.js";
 import { OOB_INVITATION, PLAIN_TYP, TRACE_LEVELS, type Invitation } from "../protocol.js";
 import { linesState } from "./lines.js";
 import { messageContent } from "./records.js";
@@ -30,13 +30,15 @@ const channelIds = z.array(channelId);
 const outcome = <Tag extends OutcomeTag>(tags: readonly Tag[]): z.ZodType<Outcome<Tag>> => z.object({ outcome: z.enum(tags as [Tag, ...Tag[]]), because: z.string().nullable() });
 
 export const DISPATCH_OUTCOMES = ["submitted", "pending", "failed", "uncertain", "expired", "spent", "none"] as const satisfies readonly DispatchOutcome[];
-export const COMPLETION_OUTCOMES = [...DISPATCH_OUTCOMES, "existing", "refused"] as const satisfies readonly CompletionOutcome[];
+export const COMPLETION_OUTCOMES = [...DISPATCH_OUTCOMES, "existing", "refused", "skipped"] as const satisfies readonly CompletionOutcome[];
 export const CANCEL_OUTCOMES = ["cancelled", "none"] as const satisfies readonly CancelOutcome[];
+export const SELECT_OUTCOMES = ["selected", "none"] as const satisfies readonly SelectOutcome[];
 
 export const outcomeTag: z.ZodType<OutcomeTag> = z.enum(OUTCOMES);
 export const dispatchOutcome = outcome(DISPATCH_OUTCOMES);
 export const completionOutcome = outcome(COMPLETION_OUTCOMES);
 export const cancelOutcome = outcome(CANCEL_OUTCOMES);
+export const selectOutcome = outcome(SELECT_OUTCOMES);
 
 const dispatched = z.object({ outcome: z.enum(DISPATCH_OUTCOMES), because: z.string().nullable() });
 export const sendResult: z.ZodType<SendResult> = dispatched.extend({ messageId, channelId });
@@ -102,6 +104,7 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   send: { input: z.object({ target: sendTarget, content: messageContent }), result: sendResult, errors: dispatching, bytes: noBytes },
   retry: { input: z.object({ messageId }), result: dispatchOutcome, errors: manual, bytes: noBytes },
   cancel: { input: z.object({ messageId }), result: cancelOutcome, errors: lifecycle, bytes: noBytes },
+  selectPreparation: { input: z.object({ messageId, preparationEventCid: eventCid }), result: selectOutcome, errors: lifecycle, bytes: noBytes },
   completeResponse: { input: z.object({ executionId, effectType: z.string() }), result: completionOutcome, errors: manual, bytes: noBytes },
   completeNotification: { input: z.object({ rotationEventCid: eventCid }), result: completionOutcome, errors: manual, bytes: noBytes },
   rotate: { input: z.object({ channelId }), result: rotateResult, errors: manual, bytes: noBytes },

@@ -23,6 +23,7 @@ import {
   Agent,
   AgentTrace,
   BUILT_IN_HANDLERS,
+  LocalRecords,
   MAX_CONTENT_BYTES,
   createDid,
   createMediation,
@@ -200,6 +201,7 @@ const outcomeOf = (called: Called): Outcome<DispatchWord> => ({ outcome: called.
 
 function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
   if (effect.outcome === "none" || effect.outcome === "refused") return { outcome: effect.outcome, because: effect.because, messageId: null };
+  if (effect.outcome === "skipped") return { outcome: "skipped", because: effect.code, messageId: null };
   if (effect.outcome === "created") return outcomeOf(effect.dispatched);
   return effect.dispatched === null ? { outcome: "existing", because: null, messageId: effect.messageId } : outcomeOf(effect.dispatched);
 }
@@ -324,7 +326,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   /** The records as of one cut: the fold, the content and the local options read under the writer lock, with nothing committed between them. */
   async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
     const fold = await scanVault(vault, keys, SCAN);
-    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, confirmations: runtime.local.options });
+    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, local: new LocalRecords(runtime.local.options, runtime.author) });
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
@@ -384,11 +386,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           },
           didcomm: await host.didcomm(),
           trace,
-          // The records read what the agent keeps here, the inputs its replica left to another among it, so a write is a change to show.
-          confirmations: {
+          // The records read what the agent keeps here, the inputs its replica left to another and the preparations it selected among it, so a write is a change to show.
+          localOptions: {
             get: (key) => runtime.local.options.get(key),
             set: async (key, value) => {
               await runtime.local.options.set(key, value);
+              changed();
+            },
+            delete: async (key) => {
+              await runtime.local.options.delete(key);
               changed();
             },
           },
@@ -962,6 +968,12 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       act(async (agent) => {
         const cancelled = await agent.manual.cancel(messageId);
         return { outcome: cancelled.outcome, because: cancelled.outcome === "none" ? cancelled.because : null, messageId: cancelled.messageId };
+      }),
+
+    selectPreparation: (messageId, preparationEventCid) =>
+      act(async (agent) => {
+        const selected = await agent.manual.selectPreparation(messageId, preparationEventCid);
+        return { outcome: selected.outcome, because: selected.outcome === "none" ? selected.because : null, messageId: selected.messageId };
       }),
 
     completeResponse: (executionId, effectType) =>

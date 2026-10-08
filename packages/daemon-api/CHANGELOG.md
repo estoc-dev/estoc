@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A message with several valid preparations is the person's to choose
+  for: `PendingOutbound` gains `candidates`, the valid preparations by
+  event CID, and `selected`, the one this daemon's calls carry or null,
+  and the method `selectPreparation` (`{ messageId,
+  preparationEventCid }`, the entry of the same name) writes the choice
+  and calls nothing, answering `selected` or `none` with why; a `retry`
+  carries it. A completion the operation owes the input nothing answers
+  `skipped` with the skip code.
+
 - `PendingWork.rotationCandidates` (`RotationCandidate`: the pair, the
   inputs calling for it, `ready`, `waiting` or `blocked` with why, and
   `rotate` as the entry while ready) lists the private addresses a peer's

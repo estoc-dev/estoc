@@ -19,7 +19,7 @@
  * that account once more needs a new replica ID.
  */
 
-import { isJsonObject, type JsonValue, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
+import { isJsonObject, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
 import { sameDid, scanVault, signReplicaGrant, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type Replica, type ReplicaId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import type { IMessage } from "./protocol/didcomm.js";
@@ -41,15 +41,6 @@ import { decide, serially } from "./procedure.js";
  * as long as the runtime's local options do.
  */
 export type Confirmations = Pick<LocalOptions, "get" | "set">;
-
-/** Confirmations kept for as long as the returned object is: whoever starts with a new one asks the mediator again, which changes nothing there. */
-export function transientConfirmations(): Confirmations {
-  const kept = new Map<string, JsonValue>();
-  return {
-    get: async (key) => kept.get(key),
-    set: async (key, value) => void kept.set(key, value),
-  };
-}
 
 const replicaAddedKey = (mediationId: MediationId, replicaId: ReplicaId): string => `replica-mediation/replica-added/${mediationId}/${replicaId}`;
 

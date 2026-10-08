@@ -24,7 +24,7 @@ import {
   retireDid,
   selectMediation,
   send,
-  transientConfirmations,
+  transientOptions,
 } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, directParty, newMediator, party, posting, type Party, mediatedRoute } from "./helpers.js";
@@ -77,7 +77,7 @@ describe("adding recipients", () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
     await address(p);
-    await expect(addRecipients(p.link, p.runtime, p.keys, transientConfirmations(), p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    await expect(addRecipients(p.link, p.runtime, p.keys, transientOptions(), p.mediationId)).rejects.toBeInstanceOf(Unusable);
     const unregistered = await party(mediator, 2);
     await expect(addRecipients(unregistered.link, unregistered.runtime, unregistered.keys, unregistered.runtime.local.options, unregistered.mediationId)).rejects.toBeInstanceOf(Unusable);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
@@ -196,7 +196,7 @@ describe("a mediated address", () => {
   it("is added by the agent's connection after the enrollment, and by a disclosure through the agent", async () => {
     const mediator = await newMediator();
     const p = await party(mediator, 1);
-    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, confirmations: p.runtime.local.options, liveDelivery: false };
+    const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false };
     const agent = await Agent.open(p, options);
     await agent.enroll(p.mediationId);
     await selectMediation(p.runtime, p.keys, p.mediationId);
@@ -211,7 +211,7 @@ describe("a mediated address", () => {
     await p.runtime.close();
   });
 
-  it("is held by its account before a package first discloses it as a sender", async () => {
+  it("is held by its account before an envelope first discloses it as a sender", async () => {
     const mediator = await newMediator();
     const alice = await enrolled(mediator);
     const from = await address(alice);

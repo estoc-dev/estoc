@@ -1,5 +1,5 @@
 /**
- * The schema of each version-4 event type: the closed member set of its
+ * The schema of each event type of this vault version: the closed member set of its
  * payload, each member's type and nullability, the rules that hold
  * between members, and what its `roots` must be. `readVaultEvent`
  * accepts an event of a known type or throws `InvalidPayload`; what it
@@ -7,15 +7,15 @@
  * matches evidence held elsewhere — is for the folds.
  */
 
-import { isEventCid, isJsonObject, isRawCid, type Draft, type Event } from "@estoc/event-store";
+import { VAULT_VERSION, isEventCid, isJsonObject, isRawCid, type Draft, type Event } from "@estoc/event-store";
 
 import { InvalidIdentifier, InvalidPayload, InvalidPlaintext, InvalidPublicKey, InvalidReplicaGrant } from "./errors.js";
 import { GENERATION_PROFILE, anonymousMessageId, automaticMessageId, compareChannels, didKeyName, effectKey, mediationIdOf, mediationKeyName, startDidId, successorDidId } from "./ids.js";
 import { messageRoots } from "./document.js";
-import { checkHeaders } from "./projection.js";
+import { checkHeaders, intentOfInbound, intentOfOutbound } from "./projection.js";
 import { parsePublicKey } from "./public-key.js";
 import { readReplicaGrant } from "./replica-grant.js";
-import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMessageHash, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
+import { isCompactJwt, isDerivedId, isDid, isDidUrl, isEntityId, isEpochSeconds, isKeyName, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type {
   Channel,
   Cid,
@@ -24,13 +24,15 @@ import type {
   DidGeneration,
   DidId,
   DidUrl,
+  EffectKey,
+  EnvelopeCid,
   EventReference,
   ExecutionId,
+  IntentCid,
   KeyName,
   MediationId,
-  MessageHash,
   MessageId,
-  PackageId,
+  PlaintextCid,
   PublicKey,
   ReplicaId,
   VaultData,
@@ -75,7 +77,9 @@ const publicKey: Check<PublicKey> = (value, at) => {
   }
 };
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
-const hash: Check<MessageHash> = (value, at) => (isMessageHash(value) ? (value as MessageHash) : fail(at, "an unpadded base64url SHA-256"));
+const intentCid: Check<IntentCid> = (value, at) => cid(value, at) as IntentCid;
+const plaintextCid: Check<PlaintextCid> = (value, at) => cid(value, at) as PlaintextCid;
+const envelopeCid: Check<EnvelopeCid> = (value, at) => cid(value, at) as EnvelopeCid;
 const compactJwt: Check<string> = (value, at) => (isCompactJwt(value) ? value : fail(at, "a compact JWT"));
 const headers: Check<VaultData["message.out"]["headers"]> = (value, at) => {
   try {
@@ -157,7 +161,6 @@ const idMembers = {
   mediationId: derived<MediationId>(),
   didId: entity<DidId>(),
   contactId: minted<ContactId>(),
-  packageId: minted<PackageId>(),
 };
 
 const timing = {
@@ -176,6 +179,28 @@ function expiryAfterCreation(data: { createdTime: number | null; expiresTime: nu
 
 function spellingOf(spelling: string, shortForm: string): boolean {
   return spelling === shortForm || spelling.startsWith(`${shortForm}:`);
+}
+
+/**
+ * The recorded intent CID is the one the event's own fields give, the
+ * message's own ID being the one the event names it by: a reader never
+ * takes the field on trust, and two records of one intent compare by it.
+ */
+function intentIsOwn(recorded: IntentCid, intent: () => IntentCid): void {
+  let own: IntentCid;
+  try {
+    own = intent();
+  } catch (err) {
+    if (err instanceof InvalidPlaintext) throw new Fault(err.message);
+    throw err;
+  }
+  if (recorded !== own) throw new Fault(`intentCid is the CID of the intent its own fields project, ${own}`);
+}
+
+/** The effect key an output or a skip records is its tuple's. */
+function keyedByTuple(data: { executionId: ExecutionId; effectType: string; effectKey: string }): void {
+  const key = effectKey(data.executionId, data.effectType);
+  if (data.effectKey !== key) throw new Fault(`effectKey is not the key of the producing tuple, ${key}`);
 }
 
 const channel: Check<Channel> = shape({ localDid: channelDid, peerDid: channelDid });
@@ -229,7 +254,7 @@ const messageOut = checked(
     ...timing,
     bodyCid: cid,
     attachmentCids: arrayOf(cid, { distinct: true }),
-    intentHash: hash,
+    intentCid,
     executionId: nullable(derived<ExecutionId>()),
     effectType: nullable(nonEmpty),
     effectKey: nullable(text),
@@ -245,12 +270,13 @@ const messageOut = checked(
     if (present === 0) {
       if (!isMintedId(data.messageId)) throw new Fault("a locally initiated send mints a UUIDv7 messageId");
       if (data.ack.length > 0) throw new Fault("a locally initiated send has ack []");
-      return;
+      if (data.rotationEventCid === null && data.createdTime === null) throw new Fault("a locally initiated send that names no rotation has a createdTime");
+    } else {
+      keyedByTuple(data as { executionId: ExecutionId; effectType: string; effectKey: string });
+      const messageId = automaticMessageId(data.effectKey as EffectKey);
+      if (data.messageId !== messageId) throw new Fault(`an automatic effect's messageId is derived from its key: ${messageId}`);
     }
-    const key = effectKey(data.executionId as ExecutionId, data.effectType as string);
-    if (data.effectKey !== key) throw new Fault(`effectKey is not the key of the producing tuple, ${key}`);
-    const messageId = automaticMessageId(key);
-    if (data.messageId !== messageId) throw new Fault(`an automatic effect's messageId is derived from its key: ${messageId}`);
+    intentIsOwn(data.intentCid, () => intentOfOutbound(data as VaultData["message.out"]).cid);
   }
 ) as Check<VaultData["message.out"]>;
 
@@ -258,8 +284,8 @@ const messageIn = checked(
   shape({
     messageId: derived<MessageId>(),
     wireMessageId: nonEmpty as Check<WireMessageId>,
-    intentHash: hash,
-    plaintextHash: hash,
+    intentCid,
+    plaintextCid,
     localKeyName: keyName,
     msgType: nonEmpty,
     peerResolutionEventCid: nullable(ref<"peer.resolved">()),
@@ -283,9 +309,8 @@ const messageIn = checked(
     if (anonymous) {
       const messageId = anonymousMessageId(data.localKeyName, data.wireMessageId);
       if (data.messageId !== messageId) throw new Fault(`an anonymous observation's messageId is derived from its local key and wire ID: ${messageId}`);
-      return;
-    }
-    if (!spellingOf(data.presentedDid as string, data.did as string)) throw new Fault("presentedDid is a spelling of did");
+    } else if (!spellingOf(data.presentedDid as string, data.did as string)) throw new Fault("presentedDid is a spelling of did");
+    intentIsOwn(data.intentCid, () => intentOfInbound(data as VaultData["message.in"]).cid);
   }
 ) as Check<VaultData["message.in"]>;
 
@@ -389,15 +414,14 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     checked(
       shape({
         messageId: entity<MessageId>(),
-        packageId: idMembers.packageId,
         senderDidId: idMembers.didId,
         localKeyName: keyName,
         recipientDid: peerDid,
         peerResolutionEventCid: ref<"peer.resolved">(),
         fromPrior: nullable(compactJwt),
-        intentHash: hash,
-        plaintextHash: hash,
-        envelopeCid: cid,
+        intentCid,
+        plaintextCid,
+        envelopeCid,
       }),
       (data) => {
         const expected = didKeyName(data.senderDidId, "key-agreement");
@@ -406,7 +430,7 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
     ),
     (data) => [data.envelopeCid]
   ),
-  "delivery.submitted": schema(shape({ messageId: entity<MessageId>(), packageId: idMembers.packageId }), none),
+  "delivery.submitted": schema(shape({ messageId: entity<MessageId>(), preparationEventCid: ref<"message.prepared">() }), none),
   "delivery.failed": schema(shape({ messageId: entity<MessageId>(), code: oneOf(["expired", "cancelled"]) }), none),
   "delivery.acknowledged": schema(
     shape({
@@ -416,6 +440,13 @@ const SCHEMAS: { [T in VaultEventType]: Schema<T> } = {
       ackMessageId: derived<MessageId>(),
       ackWireMessageId: nonEmpty as Check<WireMessageId>,
     }),
+    none
+  ),
+  "effect.skipped": schema(
+    checked(
+      shape({ executionId: derived<ExecutionId>(), effectType: nonEmpty, effectKey: text as Check<EffectKey>, sourceEventCid: ref<"message.in">(), code: nonEmpty }),
+      keyedByTuple
+    ),
     none
   ),
   "message.in": schema(messageIn, contentRoots),
@@ -446,14 +477,14 @@ function read<T extends VaultEventType>(type: T, data: unknown, roots: readonly 
  * `isVaultEventType` first and keeps those as they are.
  */
 export function readVaultEvent(event: Event): VaultEvent {
-  if (!isVaultEventType(event.type)) throw new InvalidPayload(event.type, "not a version-4 event type");
+  if (!isVaultEventType(event.type)) throw new InvalidPayload(event.type, `not a version-${VAULT_VERSION} event type`);
   read(event.type, event.data, event.roots);
   return event as VaultEvent;
 }
 
 /** A draft as a draft of its type, `roots` filled in, or `InvalidPayload`. */
 export function readVaultDraft(draft: Draft): VaultDraft {
-  if (!isVaultEventType(draft.type)) throw new InvalidPayload(draft.type, "not a version-4 event type");
+  if (!isVaultEventType(draft.type)) throw new InvalidPayload(draft.type, `not a version-${VAULT_VERSION} event type`);
   const roots = draft.roots ?? [];
   read(draft.type, draft.data, roots);
   return { ...draft, roots } as VaultDraft;

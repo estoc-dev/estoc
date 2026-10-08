@@ -4,9 +4,7 @@
 [Suite guide](README.md) · Phase 1 · [Read by task](#reading-guide)
 <!-- suite-navigation:end -->
 
-Status: **version 5** — content-addressed events; the packages accept
-version 4 until they meet this text
-([transition](README.md#version-5-transition)). SQLite is the
+Status: **version 5** — content-addressed events. SQLite is the
 sole persistent vault and interchange format. Each writable runtime has its
 own local identity and database ownership. This specification defines
 observable store semantics, not SQLite's implementation. Capitalized

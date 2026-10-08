@@ -25,7 +25,7 @@ import {
   plainMessage,
   secretsResolverFor,
   selectMediation,
-  transientConfirmations,
+  transientOptions,
   type IMessage,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
@@ -161,7 +161,7 @@ describe("the line to the mediator", () => {
     };
     for (const [name, forgery] of Object.entries(forgeries)) {
       forge = forgery;
-      await expect(enroll(link, p.runtime, p.keys, transientConfirmations(), p.mediationId), name).rejects.toBeInstanceOf(UnverifiedReply);
+      await expect(enroll(link, p.runtime, p.keys, transientOptions(), p.mediationId), name).rejects.toBeInstanceOf(UnverifiedReply);
       expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(p.mediationId)?.status, name).toBe("pending");
     }
     expect((await p.trace.read({ type: "envelope.rejected" })).map((entry) => entry.data["reason"])).toEqual([
@@ -176,7 +176,7 @@ describe("the line to the mediator", () => {
     expect(signed?.data["from_kid"]).toBeUndefined();
     expect(String(signed?.data["sign_from"]).startsWith(`${mediator.did}#`)).toBe(true);
     forge = null;
-    expect((await enroll(link, p.runtime, p.keys, transientConfirmations(), p.mediationId)).mediation.routingDid).toBe(mediator.did);
+    expect((await enroll(link, p.runtime, p.keys, transientOptions(), p.mediationId)).mediation.routingDid).toBe(mediator.did);
     await p.runtime.close();
   });
 
@@ -188,7 +188,7 @@ describe("the line to the mediator", () => {
     expect(opened.msg.type).toBe(ACCOUNT_REGISTERED);
     expect(opened.metadata).toMatchObject({ encrypted: true, authenticated: true, anonymous_sender: true });
     expect(opened.sender).toBe(mediator.did);
-    expect((await enroll(p.link, p.runtime, p.keys, transientConfirmations(), p.mediationId)).mediation.status).toBe("usable");
+    expect((await enroll(p.link, p.runtime, p.keys, transientOptions(), p.mediationId)).mediation.status).toBe("usable");
     expect(await p.trace.read({ type: "envelope.rejected" })).toEqual([]);
     await p.runtime.close();
   });
