@@ -1,25 +1,22 @@
 /**
  * The spellings the payload schemas and the documents check: what a
- * DID, a DID URL, a URI, a UUID of a given version, a key name, a
- * compact JWT look like. Syntax only — whether a DID resolves or a JWT verifies is
+ * DID and a DID URL look like, by the grammar `@estoc/did-peer` reads
+ * documents with, and a URI, a UUID of a given version, a key name, a
+ * compact JWT. Syntax only — whether a DID resolves or a JWT verifies is
  * for the code that holds the evidence.
  */
 
 import ipaddr from "ipaddr.js";
 
-// DID Core ABNF: `did:` a method name of lowercase letters and digits, then
-// colon-separated segments of ALPHA / DIGIT / "." / "-" / "_" / pct-encoded.
-const DID_SYNTAX = "did:[a-z0-9]+:(?:(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})*:)*(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+";
-const DID = new RegExp(`^${DID_SYNTAX}$`);
-// A DID URL is a DID followed by RFC 3986 path-abempty, query and fragment:
-// every component is built from pchar, so a percent sign
-// must begin a two-digit escape, and a space or a second `#` is not a URL.
-// The only general URL parser in the platform, WHATWG `URL`, escapes and
+export { isDid, isDidUrl } from "@estoc/did-peer";
+
+// RFC 3986 pchar, of which a path, query and fragment are built: a percent
+// sign must begin a two-digit escape, and a space or a second `#` is not a
+// URI. The only general URL parser in the platform, WHATWG `URL`, escapes and
 // normalizes what it is given instead of refusing it, so it cannot decide
 // whether the exact spelling is one.
 const PCHAR = "(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})";
 const QUERY_OR_FRAGMENT = `(?:${PCHAR}|[/?])*`;
-const DID_URL = new RegExp(`^${DID_SYNTAX}(?:/${PCHAR}*)*(?:\\?${QUERY_OR_FRAGMENT})?(?:#${QUERY_OR_FRAGMENT})?$`);
 // RFC 3986 §3 URI: scheme, then an authority with path-abempty or a path
 // that is absolute, rootless or empty, then query and fragment. The host is
 // an IP literal, an IPv4 address or a reg-name; the last two share one
@@ -55,8 +52,6 @@ const UUID_V5_OR_V7 = new RegExp(`^${UUID_BODY.replace("V", "[57]")}$`);
 const KEY_NAME = new RegExp(`^(?:did/${UUID_BODY.replace("V", "[57]")}/(?:authentication|key-agreement)|mediation/${UUID_BODY.replace("V", "5")}/me)$`);
 const COMPACT_JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
-export const isDid = (value: unknown): value is string => typeof value === "string" && DID.test(value);
-export const isDidUrl = (value: unknown): value is string => typeof value === "string" && DID_URL.test(value);
 export const isUri = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
   const match = URI.exec(value);

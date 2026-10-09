@@ -1,10 +1,11 @@
+import { splitDidUrl } from "@estoc/did-peer";
 import { canonicalText } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";
 import { base64urlnopad } from "@scure/base";
 import { compactVerify, decodeProtectedHeader, importJWK } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { IdentityMismatch, Keys, RECIPIENT_PROOF_TYP, mediationIdOf, mintDid, mintMediationDid, peerResolution, signRecipientProof, splitDidUrl, type Did, type DidId, type MintedDid } from "../src/index.js";
+import { IdentityMismatch, Keys, RECIPIENT_PROOF_TYP, mediationIdOf, mintDid, mintMediationDid, peerResolution, signRecipientProof, type Did, type DidId, type MintedDid } from "../src/index.js";
 
 const DID_ID = "019b2a54-05bd-74ef-b8ac-e8375cb776c2" as DidId;
 const DID_ID2 = "019b2a55-7f10-7b6a-8c21-5d3e9a0f4b17" as DidId;

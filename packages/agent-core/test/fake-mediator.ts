@@ -1,11 +1,11 @@
 import { Message } from "@estoc/didcomm-node";
 import type { IMessage } from "@estoc/didcomm-node";
-import { encodeLongForm, longToShort, resolveDIDCommDoc, resolveShortForm, toDIDCommDIDDoc } from "@estoc/did-peer";
+import { encodeLongForm, longToShort, resolveDIDCommDoc, resolveShortForm, splitDidUrl, toDIDCommDIDDoc } from "@estoc/did-peer";
 import type { Secret } from "@estoc/did-peer";
 import bs58 from "bs58";
 import { base64urlToBytes } from "@estoc/did-peer";
 import type { DerivedIdentity } from "@estoc/keystore";
-import { RECIPIENT_PROOF_TYP, canonicalDid, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, sameDid, splitDidUrl, type Did, type DidUrl } from "@estoc/vault";
+import { RECIPIENT_PROOF_TYP, canonicalDid, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, sameDid, type Did, type DidUrl } from "@estoc/vault";
 import { base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 
 import {

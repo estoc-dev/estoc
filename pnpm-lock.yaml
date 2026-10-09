@@ -366,7 +366,13 @@ importers:
       bs58:
         specifier: ^6.0.0
         version: 6.0.0
+      canonicalize:
+        specifier: ^5.1.0
+        version: 5.1.0
     devDependencies:
+      '@estoc/didcomm-node':
+        specifier: ^0.4.1-estoc.4
+        version: 0.4.1-estoc.4
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2

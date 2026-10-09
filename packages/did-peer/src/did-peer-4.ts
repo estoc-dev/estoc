@@ -1,15 +1,16 @@
 import { sha256 } from "@noble/hashes/sha2";
 import bs58 from "bs58";
 
+import { VERIFICATION_RELATIONSHIPS } from "./document.js";
 import { frozen, remembered } from "./remembered.js";
 
 /**
  * did:peer:4 (numalgo 4).
  *
- * Port of the reference implementation at references/did-peer-4-ts. The upstream
- * package is not published to npm, so the ~170 lines live here instead. The
- * `varint` dependency is dropped: both multicodec prefixes used by the method are
- * constants, so they are inlined below.
+ * Port of the TypeScript reference implementation. The upstream package is not
+ * published to npm, so the port lives here instead. The `varint` dependency is
+ * dropped: both multicodec prefixes used by the method are constants, so they
+ * are inlined below.
  */
 
 /** multicodec `json` (0x0200) as an unsigned varint */
@@ -207,14 +208,6 @@ export function decode(did: string): PeerDocument {
   return decoded(did);
 }
 
-const VERIFICATION_RELATIONSHIPS = [
-  "authentication",
-  "assertionMethod",
-  "keyAgreement",
-  "capabilityDelegation",
-  "capabilityInvocation",
-] as const;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -246,10 +239,10 @@ function mapVerificationMethods(
 }
 
 /**
- * Apply the resolution rules from the spec: set `id`, and default the
- * `controller` of every verification method to the DID.
+ * Resolve a long form's input document: set `id`, and default the
+ * `controller` of every verification method, listed or embedded, to the DID.
  *
- * Per the spec, relative references (`#key-1`) are left as-is. Use
+ * Relative references (`#key-1`) stay as the input document has them. Use
  * {@link absolutizeReferences} for consumers that require absolute DID URLs.
  */
 function contextualizeDocument(did: string, document: PeerDocument): PeerDocument {

@@ -1,7 +1,7 @@
 {
   "name": "@estoc/did-peer",
   "version": "0.2.0",
-  "description": "did:peer:2 and did:peer:4 — encoding, resolution, and conversion to the DIDDoc shape didcomm-rust expects. Pure decoding, no IO; runs in Node, workerd, and the browser.",
+  "description": "did:peer:2 and did:peer:4 — encoding, resolution, what a DID document's verification relationships authorize, and conversion to the DIDDoc shape didcomm-rust expects. Pure decoding, no IO; runs in Node, workerd, and the browser.",
   "license": "Apache-2.0",
   "author": "merely",
   "repository": {
@@ -25,6 +25,9 @@
     "src"
   ],
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -35,9 +38,11 @@
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
-    "bs58": "^6.0.0"
+    "bs58": "^6.0.0",
+    "canonicalize": "^5.1.0"
   },
   "devDependencies": {
+    "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "@types/node": "^26.6.2",
     "typescript": "~5.8.0",
     "vitest": "^3.0.0"

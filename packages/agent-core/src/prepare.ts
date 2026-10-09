@@ -38,7 +38,7 @@
  * replaced, and the preparation it made stands uncarried.
  */
 
-import { isShortForm } from "@estoc/did-peer";
+import { isShortForm, splitDidUrl } from "@estoc/did-peer";
 import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
 import {
   InvalidPublicKey,
@@ -52,7 +52,6 @@ import {
   rotationIntent,
   sameChannel,
   scanVault,
-  splitDidUrl,
   vaultDraft,
   wirePlaintext,
   type Channel,

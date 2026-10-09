@@ -55,6 +55,7 @@ and reports a change only when binding succeeds.
 | Repeated JSON claim name | The parser's last value is used; inspection and interpretation of the verified payload agree. |
 | Short-form `iss` and `kid` with the matching retained long form | Accepted; presented spellings and canonical short forms are both retained. |
 | Wrong, malformed or hash-mismatched issuer long form, or a key not authorized for authentication | `document` failure; a caller-assembled document cannot substitute another key. |
+| A method defined twice under one ID with different content, or alike with a value that has no RFC 8785 form (a lone surrogate, a number beyond a double), or an `authentication` reference into the document that names no method, even when the method the `kid` names signed | `document` failure: the document is read as `@estoc/did-peer` reads any DID document. |
 | A qualifying Multikey, JWK or embedded authentication method | Can verify an Ed25519 signature; a key authorized only for keyAgreement cannot. |
 | Altered signed payload, another signing key or incorrect signature bytes | `signature` failure. |
 | A different receipt token, a sender other than the rotation successor, or an ineligible recipient | Binding `mismatch`, reporting no change. |
@@ -99,8 +100,8 @@ proof saves no decision and sends no message.
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].
 
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L79
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L109
-[test-verify]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L222
-[test-bind]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L420
-[test-create]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L458
+[test-inspect]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L79
+[test-precheck]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L109
+[test-verify]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L222
+[test-bind]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L432
+[test-create]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L470

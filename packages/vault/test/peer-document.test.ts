@@ -16,7 +16,6 @@ import {
   methodPublicKey,
   peerResolution,
   rawCidOfBytes,
-  splitDidUrl,
   verifyResolutions,
   type Did,
   type DidUrl,
@@ -197,9 +196,10 @@ describe("peerResolution", () => {
     refused(method({ publicKeyMultibase: undefined, publicKeyJwk: "x" }), /verificationMethod\[0\] has an object publicKeyJwk/);
     refused({ ...INPUT, authentication: [{ id: "#embedded", publicKeyMultibase: ED_KEY2 }] }, /authentication\[0\] has a string type/);
     const service = (patch: Record<string, unknown>): JsonObject => ({ ...INPUT, service: [patched({ id: "#service", type: "DIDCommMessaging", serviceEndpoint: "https://a.example" }, patch)] });
-    refused(service({ id: "#bad id" }), /service\[0\]\.id is a DID URL or a fragment reference/);
-    refused(service({ id: "#bad%escape" }), /service\[0\]\.id is a DID URL or a fragment reference/);
-    refused(service({ id: "service" }), /service\[0\]\.id is a DID URL or a fragment reference/);
+    refused(service({ id: "#bad id" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "#bad%escape" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "https://a.exam ple/service" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "service" }), /service\[0\]\.id is a URI or a fragment or query reference/);
     refused(service({ type: undefined }), /service\[0\] has a type, a string or strings/);
     refused(service({ type: [] }), /service\[0\] has a type, a string or strings/);
     refused({ ...INPUT, service: [...(INPUT["service"] as JsonObject[]), { id: "#service", type: "LinkedDomains", serviceEndpoint: "https://bob.example" }] }, /two services are/);
@@ -240,6 +240,13 @@ describe("peerResolution on key material and service endpoints", () => {
     for (const endpoint of ["https://a.example", { origins: ["https://a.example"] }, ["https://a.example", { uri: "wss://b.example" }]]) {
       const resolved = peerResolution(encodeLongForm(service(endpoint)));
       expect((resolved.document["service"] as JsonObject[])[1]?.["serviceEndpoint"]).toEqual(endpoint);
+    }
+  });
+
+  it("keeps a service whose id is a URI of its own, as a fetched DID document's may be", () => {
+    for (const id of ["https://a.example/service", "urn:example:service", "?service=1"]) {
+      const resolved = peerResolution(encodeLongForm({ ...INPUT, service: [{ id, type: "LinkedDomains", serviceEndpoint: "https://a.example" }] }));
+      expect((resolved.document["service"] as JsonObject[])[0]?.["id"], id).toBe(id);
     }
   });
 
@@ -301,52 +308,20 @@ describe("canonicalDidOf", () => {
   });
 });
 
-describe("splitDidUrl", () => {
-  it("splits at the first path, query or fragment delimiter", () => {
-    expect(splitDidUrl("did:web:bob.example#key-1")).toEqual(["did:web:bob.example", "#key-1"]);
-    expect(splitDidUrl("did:web:bob.example?versionId=1#key-1")).toEqual(["did:web:bob.example", "?versionId=1#key-1"]);
-    expect(splitDidUrl("did:web:bob.example/path#key-1")).toEqual(["did:web:bob.example", "/path#key-1"]);
-    expect(splitDidUrl("did:web:bob.example")).toEqual(["did:web:bob.example", ""]);
-  });
-});
-
 describe("authorizedMethodIds", () => {
   const document = peerResolution(LONG).document;
 
-  it("lists references resolved against the document id and embedded methods by their own ids, in order", () => {
+  it("lists references resolved against the document id and embedded methods by their own ids, in order, as @estoc/did-peer reads them", () => {
     expect(authorizedMethodIds(document, "authentication")).toEqual([`${LONG}#key-1`, `${LONG}#embedded`]);
     expect(authorizedMethodIds(document, "keyAgreement")).toEqual([`${LONG}#key-2`]);
   });
 
-  it("keeps an absolute reference, into this document or another, and lists a repeated method once", () => {
-    const web: JsonObject = {
-      id: "did:web:bob.example",
-      verificationMethod: [{ id: "did:web:bob.example#a", type: "Multikey", controller: "did:web:bob.example", publicKeyMultibase: ED_KEY }],
-      authentication: ["#a", "did:web:bob.example#a", "did:web:other.example#k"],
-    };
-    expect(authorizedMethodIds(web, "authentication")).toEqual(["did:web:bob.example#a", "did:web:other.example#k"]);
-    expect(authorizedMethodIds(web, "keyAgreement")).toEqual([]);
-  });
-
-  it("refuses a reference into this document that names no method, a path-relative reference, and an entry of another shape", () => {
+  it("refuses as an invalid document what @estoc/did-peer refuses to read: a dangling reference, a path-relative one, two different methods under one id", () => {
     const base = { id: "did:web:bob.example", verificationMethod: [{ id: "#a", type: "Multikey", publicKeyMultibase: ED_KEY }] };
-    expect(() => authorizedMethodIds({ ...base, authentication: ["#b"] }, "authentication")).toThrow(/references no verification method/);
+    expect(() => authorizedMethodIds({ ...base, authentication: ["#b"] }, "authentication")).toThrow(InvalidDidDocument);
     expect(() => authorizedMethodIds({ ...base, authentication: ["a"] }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ ...base, authentication: [1] }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ ...base, authentication: "#a" }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ verificationMethod: [] }, "authentication")).toThrow(/document id/);
-  });
-
-  it("refuses two different methods under one id", () => {
-    const twice: JsonObject = {
-      id: "did:web:bob.example",
-      verificationMethod: [
-        { id: "#a", type: "Multikey", publicKeyMultibase: ED_KEY },
-        { id: "did:web:bob.example#a", type: "Multikey", publicKeyMultibase: ED_KEY2 },
-      ],
-      authentication: ["#a"],
-    };
-    expect(() => authorizedMethodIds(twice, "authentication")).toThrow(/two different verification methods/);
+    const twice: JsonObject = { ...base, verificationMethod: [...base.verificationMethod, { id: "did:web:bob.example#a", type: "Multikey", publicKeyMultibase: ED_KEY2 }], authentication: ["#a"] };
+    expect(() => authorizedMethodIds(twice, "authentication")).toThrow(InvalidDidDocument);
   });
 });
 

@@ -20,7 +20,7 @@
  * audience verifies but does not bind.
  */
 
-import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm } from "@estoc/did-peer";
+import { authorizedMethodIds, decodeLongForm, definedMethod, DIDDocumentError, isLongForm, isShortForm, longToShort, resolveLongForm, splitDidUrl } from "@estoc/did-peer";
 import { base58, base64urlnopad } from "@scure/base";
 import { compactVerify, decodeJwt, decodeProtectedHeader, errors, type JWK, type JWTPayload } from "jose";
 
@@ -144,7 +144,8 @@ function canonicalDid(spelling: unknown, what: string): DidSpelling {
   return { presented: spelling, canonical: longToShort(spelling) };
 }
 
-function splitDidUrl(url: unknown, what: string): { did: DidSpelling; fragment: string } {
+/** A DID URL naming a method: a did:peer:4 spelling and one non-empty fragment. */
+function methodUrl(url: unknown, what: string): { did: DidSpelling; fragment: string } {
   if (typeof url !== "string") throw profile(`${what} is a string`);
   const hash = url.indexOf("#");
   if (hash < 0 || url.indexOf("#", hash + 1) >= 0 || hash === url.length - 1) throw profile(`${what} is a DID URL with one fragment`);
@@ -252,7 +253,7 @@ function checkProfile({ header, claims }: Decoded): { issuer: DidSpelling; chang
     for (const name of header["crit"]) if (name !== "b64") throw profile(`the critical header ${name} is not one this profile understands`);
   }
   const issuer = canonicalDid(claims.iss, "iss");
-  const kid = splitDidUrl(header.kid, "kid");
+  const kid = methodUrl(header.kid, "kid");
   if (kid.did.canonical !== issuer.canonical) throw profile("the kid names a key of iss");
   return { issuer, change: profileChange(claims, issuer) };
 }
@@ -327,10 +328,6 @@ function isJwtType(typ: string | undefined): boolean {
 
 type Method = { id: string; key: JWK };
 
-function relativeTo(id: string, documentId: string): string {
-  return id.startsWith("#") ? `${documentId}${id}` : id;
-}
-
 /**
  * The method's key as the JWK the library verifies with. A
  * `publicKeyJwk` is passed whole, so the library refuses one that
@@ -388,50 +385,35 @@ function issuerDocument(longForm: Did, issuer: DidSpelling): Record<string, unkn
   return document;
 }
 
+function read<T>(reading: () => T): T {
+  try {
+    return reading();
+  } catch (err) {
+    if (err instanceof DIDDocumentError) throw new InvalidFromPrior(err.message, "document");
+    throw err;
+  }
+}
+
 /**
- * The authentication method of the issuer's document that `kid` names:
- * the kid's DID portion names the issuer, the fragment matches byte for
- * byte, and the method is listed under `authentication`, by reference
- * or embedded.
+ * The authentication method of the issuer's document that `kid` names,
+ * the document read as `@estoc/did-peer` reads any DID document: of the
+ * methods it authorizes for authentication, the one whose DID is the
+ * kid's, in either form, and whose fragment is the kid's byte for byte.
  */
 function authenticationMethod(documentId: string, document: Record<string, unknown>, kid: string): Method {
-  const target = splitDidUrl(kid, "kid");
-  const defined = new Map<string, Record<string, unknown>>();
-  const methods = document["verificationMethod"];
-  if (methods !== undefined) {
-    if (!Array.isArray(methods)) throw new InvalidFromPrior("verificationMethod is an array", "document");
-    for (const method of methods) {
-      if (!isPlainObject(method) || typeof method["id"] !== "string") throw new InvalidFromPrior("a verification method is an object with an id", "document");
-      defined.set(relativeTo(method["id"], documentId), method);
-    }
-  }
-  const authentication = document["authentication"];
-  if (!Array.isArray(authentication)) throw new InvalidFromPrior("the document lists authentication methods", "document");
-  for (const entry of authentication) {
-    let id: string;
-    let method: Record<string, unknown> | undefined;
-    if (typeof entry === "string") {
-      id = relativeTo(entry, documentId);
-      method = defined.get(id);
-    } else if (isPlainObject(entry) && typeof entry["id"] === "string") {
-      id = relativeTo(entry["id"], documentId);
-      method = entry;
-    } else {
-      throw new InvalidFromPrior("an authentication entry is a DID URL or an embedded method", "document");
-    }
-    const hash = id.indexOf("#");
-    if (hash < 0) continue;
-    let did: DidSpelling;
+  const target = methodUrl(kid, "kid");
+  const named = (id: string): boolean => {
+    const [did, rest] = splitDidUrl(id);
+    if (rest !== `#${target.fragment}`) return false;
     try {
-      did = canonicalDid(id.slice(0, hash), "a method id");
+      return canonicalDid(did, "a method id").canonical === target.did.canonical;
     } catch {
-      continue;
+      return false;
     }
-    if (did.canonical !== target.did.canonical || id.slice(hash + 1) !== target.fragment) continue;
-    if (method === undefined) throw new InvalidFromPrior(`${id} is authorized but not defined`, "document");
-    return { id: kid, key: ed25519Jwk(method, id) };
-  }
-  throw new InvalidFromPrior(`${kid} is not an authentication method of ${documentId}`, "document");
+  };
+  const id = read(() => authorizedMethodIds(document, "authentication")).find(named);
+  if (id === undefined) throw new InvalidFromPrior(`${kid} is not an authentication method of ${documentId}`, "document");
+  return { id: kid, key: ed25519Jwk(read(() => definedMethod(document, id)), id) };
 }
 
 function profileChange(claims: UnverifiedFromPrior["claims"], issuer: DidSpelling): VerifiedChange {

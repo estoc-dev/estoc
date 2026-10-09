@@ -13,8 +13,8 @@
  */
 
 import type { Secret } from "@estoc/did-peer";
-import { longToShort } from "@estoc/did-peer";
-import { authorizedMethodIds, peerResolution, splitDidUrl, type DidId, type DidKeys, type Keys, type LocalKey, type MediationId, type VaultFold } from "@estoc/vault";
+import { longToShort, splitDidUrl } from "@estoc/did-peer";
+import { authorizedMethodIds, peerResolution, type DidId, type DidKeys, type Keys, type LocalKey, type MediationId, type VaultFold } from "@estoc/vault";
 
 /** A held identity: its keys, and the DID URLs of each method under every spelling the entity has. */
 interface Held {

@@ -1,15 +1,17 @@
 # @estoc/did-peer
 
-did:peer:2 and did:peer:4 — encoding, resolution, and conversion to the flat
-`DIDDoc` shape [didcomm-rust](https://github.com/sicpa-dlab/didcomm-rust)
-expects.
+did:peer:2 and did:peer:4 — encoding, resolution, what a DID document's
+verification relationships authorize, and conversion to the flat `DIDDoc`
+shape [didcomm-rust](https://github.com/sicpa-dlab/didcomm-rust) expects.
 
-Everything here is pure encoding/decoding of the [Peer DID method](https://identity.foundation/peer-did-method-spec/).
-For both peer methods the document *is* the identifier, so resolution never
+Everything here is pure: encoding and decoding of the [Peer DID method](https://identity.foundation/peer-did-method-spec/),
+and reading a DID document already in hand. For both peer methods the document *is* the identifier, so resolution never
 touches the network and no store can be out of date: what a long form decodes
 to is worked out from its text, and once worked out is kept in memory (see
-below). One source runs unchanged in Node (≥18), Cloudflare workerd, and the
-browser: sha256 comes from `@noble/hashes`, base64 from `atob`/`btoa`.
+below). One source runs unchanged in Node (≥22), Cloudflare workerd, and a
+browser with `String.prototype.isWellFormed`: sha256 comes from
+`@noble/hashes`, base64 from `atob`/`btoa`, and RFC 8785 from `canonicalize`,
+which needs that method.
 
 ```sh
 npm install @estoc/did-peer
@@ -49,9 +51,27 @@ const converted = toDIDCommDIDDoc(raw);
 - **did:peer:4** — `isPeerDID4`, `isLongForm`, `isShortForm`, `encodeLongForm`,
   `encodeShortForm`, `longToShort`, `resolveLongForm`, `resolveShortForm`,
   `validateInputDocument`
+- **Reading a DID document** — `authorizedMethodIds`, `definedMethod`,
+  `serviceIds`, with `splitDidUrl`, `isDid` and `isDidUrl`: what the
+  verification relationships of any DID document authorize, and the entry
+  that defines each method, its ID resolved. A fragment or query reference
+  resolves against the document's `id`, a reference into the document names
+  a method it defines, and one ID defines one method or one service; anything
+  else is a `DIDDocumentError`. Two definitions of one method are the same
+  RFC 8785 text once their IDs are resolved, so a method defined twice with
+  a value that has none, a lone surrogate or a number beyond a double, is
+  refused. A service ID is an absolute URI as it stands, or a fragment or
+  query reference resolved the same way. The code that signs and the code
+  that verifies read a document through these and name the same method for
+  a key. Whether to keep a document at all, with every member in the shape
+  DID Core gives it and every service ID a well-formed URI, stays the
+  application's policy.
 - **DIDDoc conversion** — `toDIDCommDIDDoc` flattens a W3C DID document into
-  didcomm-rust's `DIDDoc`: absolute DID URLs, embedded verification methods
-  hoisted, only DIDCommMessaging services retained
+  didcomm-rust's `DIDDoc`: the relationships and methods as the reader above
+  reads them, every method the document defines hoisted into
+  `verificationMethod` wherever it is embedded, absolute DID URLs, only
+  DIDCommMessaging services retained. A document the reader refuses is a
+  `DIDDocConversionError`
 - **`resolveDIDCommDoc`** — both peer methods straight to a `DIDDoc`, the
   signature a didcomm resolver wants
 - **base64url helpers** — `Buffer`-free, work everywhere

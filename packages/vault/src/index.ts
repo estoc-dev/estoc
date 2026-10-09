@@ -153,7 +153,6 @@ export {
   canonicalDidOf,
   didcommServiceUris,
   peerResolution,
-  splitDidUrl,
   authorizedMethodIds,
   methodPublicKey,
 } from "./peer-document.js";

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Verification relationships are read by `@estoc/did-peer`**
+  (breaking): `authorizedMethodIds`, `definedMethod` and the service IDs
+  of a retained document come from `@estoc/did-peer`, which
+  `@estoc/from-prior` verifies with, so the method `signFromPrior` signs
+  under is the one verification finds. `isDid` and `isDidUrl` are its
+  grammar too. `splitDidUrl` is no longer exported; import it from
+  `@estoc/did-peer`. A service ID of a retained document may be any
+  URI once resolved, as a fetched did:web document's may; it had to be
+  a DID URL. Otherwise what the vault retains is unchanged.
 - **`from_prior` proofs come from `@estoc/from-prior`**: the vault
   verifies, binds and creates them with the new package instead of
   `@estoc/continuity/from-prior`, and projects the change a bound proof

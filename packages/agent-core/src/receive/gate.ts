@@ -7,8 +7,8 @@
  * document.
  */
 
-import { base64urlToUtf8, isPeerDID4, isShortForm } from "@estoc/did-peer";
-import { authorizedMethodIds, peerResolution, sameDid, splitDidUrl, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type ReplicaId, type VaultFold } from "@estoc/vault";
+import { base64urlToUtf8, isPeerDID4, isShortForm, splitDidUrl } from "@estoc/did-peer";
+import { authorizedMethodIds, peerResolution, sameDid, type Did, type DidId, type DidUrl, type KeyName, type PublicKey, type ReplicaId, type VaultFold } from "@estoc/vault";
 
 import type { Unpacked } from "../protocol/didcomm.js";
 import { authorizedKeys } from "../evidence.js";
