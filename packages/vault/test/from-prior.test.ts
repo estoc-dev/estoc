@@ -1,4 +1,4 @@
-import { InvalidFromPrior, verifyFromPrior } from "@estoc/continuity/from-prior";
+import { InvalidFromPrior, verifyFromPrior } from "@estoc/from-prior";
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";

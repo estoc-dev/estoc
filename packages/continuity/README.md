@@ -6,36 +6,33 @@ rotate, whether the peer has learned a new local address, and where the
 evidence contradicts itself. The package neither reads messages nor
 decides what an agent may do with a result.
 
-Two entry points keep proof processing apart from the pure model:
+This package is the model alone, and imports only `canonicalize`. The
+DIDComm v2 `from_prior` proofs a peer's rotation or ending rests on are
+verified and bound by
+[`@estoc/from-prior`](https://github.com/estoc-dev/estoc/blob/main/packages/from-prior/README.md),
+which knows nothing of continuity.
 
-| Entry point | What it does | What it imports |
-| --- | --- | --- |
-| `@estoc/continuity` | Validates facts, derives continuity queries | `canonicalize` only |
-| `@estoc/continuity/from-prior` | Inspects, prechecks, verifies, binds and creates DIDComm v2 `from_prior` proofs | `jose`, `@estoc/did-peer`, `@scure/base` |
-
-The types and JSDoc of the two entry points define the API. This file
-adds what the API cannot express: the evidence each fact must rest on,
-the profile, and the host contract, which are binding on an integrator
-too. The tests in the repository are the worked examples:
+The types and JSDoc define the API. This file adds what the API cannot
+express: the evidence each fact must rest on and the host contract,
+which are binding on an integrator too. The tests in the repository are
+the worked examples:
 [`accept.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/accept.test.ts)
-for which facts are accepted and how,
+for which facts are accepted and how, and
 [`model.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/model.test.ts)
-for what each query answers in each situation, and
-[`from-prior.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/from-prior.test.ts)
-for verifying, binding and creating proofs with a host-held key.
+for what each query answers in each situation.
 
 The repository's [illustrated guide](docs/guide.md) walks through joins,
-confirmation, contexts, conflicts, endings and proof boundaries, with
-diagrams and links to the corresponding tests.
+confirmation, contexts, conflicts and endings, with diagrams and links
+to the corresponding tests.
 
 ## Where it sits
 
 ```
 host: receipts, envelopes, saved decisions, retained documents, keys
-  │  verifyFromPrior + bindFromPrior          ← @estoc/continuity/from-prior
+  │  verifyFromPrior + bindFromPrior          ← @estoc/from-prior
   ▼
-continuity facts, projected again from the evidence;
-the host indexes its evidence by fact identity
+continuity facts, which the host projects again from its evidence
+and the changes bound proofs establish, and indexes by fact identity
   │  deriveContinuity
   ▼
 head, path, confirmation, history, conflicts   ← @estoc/continuity
@@ -46,8 +43,6 @@ host: admission, dispatch, contact policy, successor allocation
 
 | Question | This package | The host |
 | --- | --- | --- |
-| Is this a valid rotation or ending proof? | Parses the JWT, checks the profile, takes the key from the issuer's own document, verifies the signature | Retains the issuer's long-form DID and the original token |
-| Which pair does this receipt establish? | Binds the verified proof to the recipient and sender the host established | Decrypts and authenticates the envelope |
 | Did B0 become B1 here? Which pair follows both rotating? | Derives links, joins, contexts and a unique head | Uses the answer under its own policy |
 | Does the peer know A1? | Derives confirmation from peer observations addressed to the exact local DID | Supplies authenticated observations |
 | Does the evidence conflict? | Keeps every branch and reports the scope; picks no winner | Shows diagnostics, gathers more evidence |
@@ -95,9 +90,9 @@ Each kind rests on evidence only the host can establish:
 
 - An observation is one authenticated envelope to exactly that local
   DID from that peer. A `rotatedFrom` comes only from a proof that
-  verified and bound under the profile on that receipt; a proof-free
-  claim of a rotation is not a fact.
-- A peer ending is a proof that verified and bound under the profile.
+  verified and bound on that receipt under the `@estoc/from-prior`
+  profile; a proof-free claim of a rotation is not a fact.
+- A peer ending is a proof that verified and bound under that profile.
 - A local decision is a choice the host saved before acting on it.
 
 ## Queries
@@ -186,64 +181,6 @@ the ending extends across the opposite-side context and supplies no
 joined head. Two endings do not create an empty pair. A peer ending
 confirms no address.
 
-## from_prior
-
-```ts
-import { verifyFromPrior, bindFromPrior, createFromPrior } from "@estoc/continuity/from-prior";
-
-const proof = await verifyFromPrior(jwt, issuerLongForm);
-const binding = bindFromPrior(proof, { token: jwt, recipient, sender });
-if (binding.status === "bound") facts.push(binding.fact);
-```
-
-The supported profile, `FROM_PRIOR_PROFILE`, is did:peer:4 issuers,
-subjects and audiences, `EdDSA` over Ed25519 authentication keys, an
-integer `iat` and no `exp` or `nbf`: the profile evaluates no validity
-window, and verification consults no clock. Creation writes
-`typ: JWT`; reception takes `typ` as the optional media type it is,
-accepting its absence or `JWT` and `application/jwt` in any case. A
-`b64` header, when present, is `true` and listed in `crit`, as
-RFC 7797 requires of a JWT. DID equivalence is the did:peer:4 short
-form; presented spellings are kept beside it. The issuer's material is
-its long-form DID as the host retained it: a did:peer:4 is its own
-document, so the signing key is taken from the content the DID's
-hash covers and a document assembled by a caller cannot substitute one.
-The module resolves nothing over the network. `InvalidFromPrior.failure`
-tells form, profile, binding, document and signature failures apart.
-
-`inspectFromPrior` decodes a token without verifying it, so the host can
-find the issuer's material. `precheckFromPrior` applies every rule of
-the profile that needs no issuer document, and, given the receipt's
-authenticated sender, refuses a rotation whose successor is not that
-sender: a token it refuses can never verify or bind, so the host records
-the refusal instead of waiting for material, while a token it passes is
-still unverified. Decoding success is not profile validation, and the
-precheck grants no verified type. `verifyFromPrior` applies the same
-document-independent rules and establishes the issuer's declaration.
-`bindFromPrior` turns it into one fact at the pair the receipt
-established: a rotation requires the receipt's own token and an
-authenticated sender equal to `sub`, and yields the peer observation
-at `C(recipient, sub)` whose `rotatedFrom` is `iss`. An ending yields
-`peer-ending` at `C(recipient, iss)`. A wrong token, sender or recipient
-is a `mismatch`.
-
-A received ending has no sender, and the standard's basic form binds it
-to no particular relationship: a valid token could be replayed in a new
-anonymous envelope to another recipient, and decryption alone does not
-bind the declaration to that second relationship. This profile binds an
-ending only when its JWT names the recipient in `aud` and the receipt is
-anonymous, which the host asserts by a null sender only when the
-plaintext carried no `from`. An ending in the basic form verifies but
-reports `unbound`, so endings from agents that do not add `aud` are
-retained without binding. The signed audience is this profile's
-extension, not a DIDComm requirement.
-
-`createFromPrior` builds the token from a request and a signing
-capability that names its method and signs the JWS signing input, so a
-key behind a hardware wallet can sign, then verifies the result against
-the issuer's long form before returning it. Creating a proof saves and
-sends nothing.
-
 ## Host contract
 
 The model checks structure and graph semantics. Everything
@@ -309,25 +246,21 @@ below is the host's, and the model cannot check it.
   coordination mechanism is the host's; a local lock alone coordinates
   no remote replica. Deriving creates no admission, ACK, notification or
   dispatch action.
-- **Profile.** `PROFILE_VERSION` and `FROM_PRIOR_PROFILE` cover the fact
-  schema, normalization, proof acceptance and derivation together. A
-  change to what any of them means is a new profile string, never the
-  same string with new behavior; a host that keeps projected facts or
-  derived answers projects and derives them again when either string
-  changes.
+- **Profile.** `PROFILE_VERSION` covers the fact schema, normalization
+  and derivation. A change to what any of them means is a new profile
+  string rather than the same string with new behavior; a host that
+  keeps projected facts or derived answers projects and derives them
+  again when the string changes. Accepting and binding a proof is
+  `FROM_PRIOR_PROFILE`'s, which `@estoc/from-prior` describes.
 
 ## Limits
 
-- Endings bind only through this profile's signed audience; a basic
-  ending is verified and retained `unbound`, never applied.
 - `path` returns one deterministic path. `confirmation` lists every
   eligible observation, but with one deterministic witness each:
   alternative paths to the same observation are not enumerated. A
   policy that needs exhaustive routes needs a richer query; filtering
   facts out of the input to search for a preferred result can hide a
   rotation or a conflict.
-- The proof profile refuses `exp` and `nbf`. Supporting them needs an
-  explicit evaluation time and a rule for evidence accepted earlier.
 - Usable heads and paths are not monotonic: more evidence can expose a
   conflict and withdraw an answer. A converged conflict is a converged
   state.
@@ -340,6 +273,3 @@ below is the host's, and the model cannot check it.
 ## References
 
 - [RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785.html): the identity of a fact.
-- [DIDComm v2.1 DID Rotation](https://identity.foundation/didcomm-messaging/spec/v2.1/#did-rotation) and [Ending a Relationship](https://identity.foundation/didcomm-messaging/spec/v2.1/#ending-a-relationship): the wire proof.
-- [Peer DID method 4](https://identity.foundation/peer-did-method-spec/#method-4-short-form-and-long-form): short and long forms.
-- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html) and [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797.html#section-1): the JWT and its encoded payload.

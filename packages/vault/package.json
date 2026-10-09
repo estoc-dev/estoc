@@ -40,6 +40,7 @@
     "@estoc/continuity": "workspace:^",
     "@estoc/did-peer": "workspace:^",
     "@estoc/event-store": "workspace:^",
+    "@estoc/from-prior": "workspace:^",
     "@estoc/keystore": "workspace:^",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",

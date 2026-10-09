@@ -3,8 +3,10 @@
 Status: **implemented**. This document owns channel identity,
 invitations and the payloads of the three channel events: a local rotation
 decision, an application admission and a channel denial. The
+[`@estoc/from-prior` API and host contract](../../packages/from-prior/README.md)
+own proof semantics, and the
 [`@estoc/continuity` API and host contract](../../packages/continuity/README.md)
-own proof and graph semantics. The vault's reading of its evidence into that
+own graph semantics. The vault's reading of its evidence into the continuity
 model, operation eligibility, admission and dispatch authority are code, named
 in [section 7](#folds-and-procedures). Storage envelopes and durability follow
 [event-store.md](event-store.md). Sending and effect ordering follow
@@ -117,7 +119,10 @@ event establishes on its own is read by
 [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts): a source
 is one authenticated `message.in` with its own resolution document, a carrier
 is a source that brought a `from_prior` proof, a decision is a saved
-`did.rotationSelected`. [`packages/vault/src/fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts)
+`did.rotationSelected`. A carrier's proof is verified and bound to its receipt
+by `@estoc/from-prior`, whose README holds the proof profile; the vault projects
+the change a bound proof reports as the successor's observation carrying the
+rotation. [`packages/vault/src/fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts)
 projects them into the model as facts identified by their content, keeps its
 own index from event CIDs to those facts, and reads the model's answers for
 the host: each carrier's or decision's status, which channels take no new
@@ -352,9 +357,11 @@ its tests sit beside it. This document describes none of them a second time.
   [`reconcile.ts`](../../packages/agent-core/src/reconcile.ts) and
   [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts).
 - What each source, carrier and decision establishes on its own:
-  [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts). Locating
-  the issuer material a carried proof verifies against, and signing a local
-  proof: [`packages/vault/src/from-prior.ts`](../../packages/vault/src/from-prior.ts).
+  [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts), which
+  verifies and binds a carrier's proof with `@estoc/from-prior` and projects
+  the change it binds. Locating the issuer material a carried proof verifies
+  against, and signing a local proof with `@estoc/from-prior`:
+  [`packages/vault/src/from-prior.ts`](../../packages/vault/src/from-prior.ts).
 - Links, joins, conflicts, each carrier's and decision's status, the admitted
   witness that confirms an address for new work and which channels take no
   new work: [`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) over

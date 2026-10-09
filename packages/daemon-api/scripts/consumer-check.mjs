@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const FORBIDDEN = ["@estoc/daemon", "@estoc/agent-core", "@estoc/vault", "@estoc/event-store", "@estoc/keystore", "@estoc/didcomm", "@estoc/didcomm-node", "@estoc/did-peer", "@estoc/continuity", "@estoc/dasl", "ws", "undici"];
+const FORBIDDEN = ["@estoc/daemon", "@estoc/agent-core", "@estoc/vault", "@estoc/event-store", "@estoc/keystore", "@estoc/didcomm", "@estoc/didcomm-node", "@estoc/did-peer", "@estoc/continuity", "@estoc/from-prior", "@estoc/dasl", "ws", "undici"];
 
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 

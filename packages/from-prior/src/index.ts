@@ -1,17 +1,18 @@
 /**
- * @estoc/continuity/from-prior — the DIDComm v2 `from_prior` proof: a
- * compact JWT the prior DID's authentication key signs, whose `iss` is
- * the prior DID, whose `sub` is the new DID, and which omits `sub` to
- * end the relationship instead. This module inspects a token without
- * verifying it, verifies one against the issuer's long form the host
- * retained, binds a verified proof to the receipt it arrived on to
- * produce a continuity fact, and creates one with a signing capability
- * the host supplies. Between inspecting and verifying, a precheck
- * applies every rule of the profile that needs no issuer document, so
- * a token that can never verify or bind is refused before the host
- * waits for material. The supported profile is did:peer:4 issuers and
- * subjects and Ed25519 keys; DID equivalence is the did:peer:4 short
- * form, and nothing rewrites a signed byte.
+ * @estoc/from-prior — the DIDComm v2 `from_prior` proof: a compact JWT
+ * the prior DID's authentication key signs, whose `iss` is the prior
+ * DID, whose `sub` is the new DID, and which omits `sub` to end the
+ * relationship instead. This module inspects a token without verifying
+ * it, verifies one against the issuer's long form the host retained,
+ * binds a verified proof to the receipt it arrived on, and creates one
+ * with a signing capability the host supplies. A binding answers in the
+ * proof's own terms, who wrote to whom and from which DID; what that
+ * means for a relationship is the host's projection. Between inspecting
+ * and verifying, a precheck applies every rule of the profile that
+ * needs no issuer document, so a token that can never verify or bind
+ * is refused before the host waits for material. The supported profile
+ * is did:peer:4 issuers and subjects and Ed25519 keys; DID equivalence
+ * is the did:peer:4 short form, and nothing rewrites a signed byte.
  *
  * A received ending carries no sender, so the standard's basic form
  * binds it to no particular relationship. This profile binds an ending
@@ -21,9 +22,9 @@
 
 import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm } from "@estoc/did-peer";
 import { base58, base64urlnopad } from "@scure/base";
-import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
+import { compactVerify, decodeJwt, decodeProtectedHeader, errors, type JWK, type JWTPayload } from "jose";
 
-import type { ContinuityFact, Did } from "../types.js";
+export type Did = string;
 
 export const FROM_PRIOR_PROFILE = "estoc-from-prior/1";
 export const FROM_PRIOR_ALG = "EdDSA";
@@ -86,8 +87,13 @@ export type Receipt = Readonly<{
   sender: Did | null;
 }>;
 
+/** What a bound proof establishes about its receipt, in short-form DIDs. */
+export type BoundChange =
+  | Readonly<{ kind: "rotate"; recipient: Did; issuer: Did; successor: Did }>
+  | Readonly<{ kind: "end"; recipient: Did; issuer: Did }>;
+
 export type Binding =
-  | Readonly<{ status: "bound"; fact: ContinuityFact }>
+  | Readonly<{ status: "bound"; change: BoundChange }>
   | Readonly<{ status: "mismatch"; because: string }>
   | Readonly<{ status: "unbound"; because: string }>;
 
@@ -155,6 +161,7 @@ type Decoded = Readonly<{ header: ProtectedHeader; claims: UnverifiedFromPrior["
 
 /** The token's segments decoded and checked for shape: what it says, not what it proves. */
 function decode(jwt: string): Decoded {
+  checkSegments(jwt);
   let header: ReturnType<typeof decodeProtectedHeader>;
   let payload: JWTPayload;
   try {
@@ -167,19 +174,33 @@ function decode(jwt: string): Decoded {
   if (typeof header.kid !== "string") throw form("the protected header names a kid");
   if (header.typ !== undefined && typeof header.typ !== "string") throw form("typ is a string");
   checkHeaderExtensions(header);
-  checkSignatureSegment(jwt.slice(jwt.lastIndexOf(".") + 1));
   return { header: { ...header, alg: header.alg, typ: header.typ, kid: header.kid }, claims: claimsOf(payload) };
 }
 
-/** The third segment decodes and has the length of an Ed25519 signature; whether it verifies needs the issuer's key. */
-function checkSignatureSegment(segment: string): void {
-  let bytes: Uint8Array;
+/**
+ * The three segments as received, each base64url without padding,
+ * whitespace or other characters (RFC 7515 §2, §5.2). They are checked
+ * before the library reads them, because its decoder tolerates some of
+ * what the grammar excludes, and they are not normalized, because the
+ * signing input is the segments as received. The signature has the
+ * length of an Ed25519 signature; whether it verifies needs the
+ * issuer's key.
+ */
+function checkSegments(jwt: string): void {
+  const segments = jwt.split(".");
+  if (segments.length !== 3) throw form("not a compact JWT: the token is three segments");
+  const [header, payload, signature] = segments as [string, string, string];
+  segmentBytes(header, "protected header");
+  segmentBytes(payload, "payload");
+  if (segmentBytes(signature, "signature").length !== ED25519_SIGNATURE_BYTES) throw form(`the signature is ${ED25519_SIGNATURE_BYTES} bytes`);
+}
+
+function segmentBytes(segment: string, what: string): Uint8Array {
   try {
-    bytes = base64urlnopad.decode(segment);
+    return base64urlnopad.decode(segment);
   } catch {
-    throw form("the signature is base64url without padding");
+    throw form(`not a compact JWT: the ${what} segment is base64url without padding or whitespace`);
   }
-  if (bytes.length !== ED25519_SIGNATURE_BYTES) throw form(`the signature is ${ED25519_SIGNATURE_BYTES} bytes`);
 }
 
 function unverifiedOf({ header, claims }: Decoded): UnverifiedFromPrior {
@@ -188,11 +209,11 @@ function unverifiedOf({ header, claims }: Decoded): UnverifiedFromPrior {
 
 /**
  * A token's protected header and claims, decoded and checked for shape
- * only: three segments, the header members and claims this profile
- * reads, the RFC 7797 pairing of `b64` and `crit`, and a signature
- * segment of the right length. What this returns is what the token
- * says, not a proof; it lets the host find the issuer's material, and
- * `precheckFromPrior` applies the profile to it.
+ * only: three unpadded base64url segments, the header members and
+ * claims this profile reads, the RFC 7797 pairing of `b64` and `crit`,
+ * and a signature segment of the right length. What this returns is
+ * what the token says, not a proof; it lets the host find the issuer's
+ * material, and `precheckFromPrior` applies the profile to it.
  */
 export function inspectFromPrior(jwt: string): UnverifiedFromPrior {
   return unverifiedOf(decode(jwt));
@@ -271,7 +292,17 @@ function claimsOf(payload: JWTPayload): UnverifiedFromPrior["claims"] {
 
 const decoder = new TextDecoder();
 
-/** The claims a verified signature covers: read again from the bytes the library verified, not from the pre-verification decode. */
+/**
+ * The claims a verified signature covers, read again from the bytes the
+ * library verified. They are the claims the pre-verification decode
+ * read, so the issuer whose document was consulted and whose key the
+ * `kid` named is the issuer returned: both reads take the same payload
+ * segment through the library's one base64url decoder; once
+ * `checkHeaderExtensions` passes, `b64` cannot be `false`, so the
+ * verified payload is that segment decoded; and `decodeJwt` already
+ * decoded those bytes as UTF-8 with a fatal decoder, so this decode
+ * yields the same text.
+ */
 function verifiedClaims(payload: Uint8Array): UnverifiedFromPrior["claims"] {
   let parsed: unknown;
   try {
@@ -300,6 +331,16 @@ function relativeTo(id: string, documentId: string): string {
   return id.startsWith("#") ? `${documentId}${id}` : id;
 }
 
+/**
+ * The method's key as the JWK the library verifies with. A
+ * `publicKeyJwk` is passed whole, so the library refuses one that
+ * carries a private key, or whose `use`, `key_ops` or `alg`
+ * (RFC 7517 §4.2–4.4) does not allow verifying EdDSA. Its `x` is
+ * checked first to be the key's 32 bytes in unpadded base64url
+ * (RFC 8037 §2): runtimes import a JWK with padding, whitespace or
+ * other characters differently, and the same proof would verify in one
+ * and not in another.
+ */
 function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
   const multibase = method["publicKeyMultibase"];
   const jwk = method["publicKeyJwk"];
@@ -315,8 +356,16 @@ function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
     return { kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(bytes.subarray(ED25519_MULTICODEC.length)) };
   }
   if (isPlainObject(jwk) && multibase === undefined) {
-    if (jwk["kty"] !== "OKP" || jwk["crv"] !== "Ed25519" || typeof jwk["x"] !== "string") throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
-    return { kty: "OKP", crv: "Ed25519", x: jwk["x"] };
+    const x = jwk["x"];
+    if (jwk["kty"] !== "OKP" || jwk["crv"] !== "Ed25519" || typeof x !== "string") throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
+    let bytes: Uint8Array;
+    try {
+      bytes = base64urlnopad.decode(x);
+    } catch {
+      throw new InvalidFromPrior(`${id}: publicKeyJwk x is base64url without padding or whitespace`, "document");
+    }
+    if (bytes.length !== ED25519_KEY_BYTES) throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
+    return { ...jwk };
   }
   throw new InvalidFromPrior(`${id} carries one of publicKeyMultibase and publicKeyJwk`, "document");
 }
@@ -403,27 +452,23 @@ function profileChange(claims: UnverifiedFromPrior["claims"], issuer: DidSpellin
  * encodes, that method's Ed25519 key verifies the JWS, and the claims
  * the signature covers meet the profile. The document-independent rules
  * are the ones `precheckFromPrior` applies, so the two never diverge.
- * The library verifies the signature only; the profile has no
- * time-bound claim and consults no clock. The token is retained as
- * given; a failure says whether form, profile, document or signature
- * failed.
+ * The library checks the key and the signature only: every rule of the
+ * token it applies has been applied before, so a failure other than the
+ * signature's is the key's. The profile has no time-bound claim and
+ * consults no clock. The token is retained as given; a failure says
+ * whether form, profile, document or signature failed.
  */
 export async function verifyFromPrior(jwt: string, issuerLongForm: Did): Promise<VerifiedFromPrior> {
   const decoded = decode(jwt);
   const { issuer } = checkProfile(decoded);
   const document = issuerDocument(issuerLongForm, issuer);
   const method = authenticationMethod(issuerLongForm, document, decoded.header.kid);
-  let key: Awaited<ReturnType<typeof importJWK>>;
-  try {
-    key = await importJWK(method.key, FROM_PRIOR_ALG);
-  } catch (err) {
-    throw new InvalidFromPrior(`${method.id} is not an Ed25519 key: ${err instanceof Error ? err.message : String(err)}`, "document");
-  }
   let payload: Uint8Array;
   try {
-    ({ payload } = await compactVerify(jwt, key, { algorithms: [FROM_PRIOR_ALG] }));
+    ({ payload } = await compactVerify(jwt, method.key, { algorithms: [FROM_PRIOR_ALG] }));
   } catch (err) {
-    throw new InvalidFromPrior(`the signature does not verify under ${method.id}: ${err instanceof Error ? err.message : String(err)}`, "signature");
+    if (err instanceof errors.JWSSignatureVerificationFailed) throw new InvalidFromPrior(`the signature does not verify under ${method.id}`, "signature");
+    throw new InvalidFromPrior(`${method.id} is not a public Ed25519 key that verifies ${FROM_PRIOR_ALG}: ${err instanceof Error ? err.message : String(err)}`, "document");
   }
   const claims = verifiedClaims(payload);
   const signedIssuer = canonicalDid(claims.iss, "iss");
@@ -442,11 +487,11 @@ export async function verifyFromPrior(jwt: string, issuerLongForm: Did): Promise
  * Bind a verified proof to the receipt it arrived on. A rotation binds
  * when the receipt carries this very token and its authenticated
  * sender is the successor: the successor wrote to the recipient, having
- * rotated from the issuer, so the receipt yields one observation at
- * C(recipient, sub) that carried a rotation from `iss`. An ending binds
- * when the receipt is anonymous and the proof names the recipient as
- * its audience, and yields the peer's ending at C(recipient, iss).
- * Anything else binds nothing.
+ * rotated from the issuer. An ending binds when the receipt is
+ * anonymous and the proof names the recipient as its audience: the
+ * issuer ended what it had with the recipient. The bound change names
+ * the recipient, the issuer and, for a rotation, the successor; the
+ * host projects it into its own model. Anything else binds nothing.
  */
 export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Binding {
   if (receipt.token !== proof.token) return { status: "mismatch", because: "the receipt carries another token than the proof" };
@@ -464,12 +509,12 @@ export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Bindi
     if (sender === null) return { status: "mismatch", because: "a rotation arrives from an authenticated sender" };
     if (sender.canonical !== successor.canonical) return { status: "mismatch", because: `sub is ${successor.presented} but the sender is ${sender.presented}` };
     if (recipient.canonical === successor.canonical) return { status: "mismatch", because: "the recipient is the successor" };
-    return { status: "bound", fact: { kind: "peer-observation", at: { localDid: recipient.canonical, peerDid: successor.canonical }, rotatedFrom: proof.issuer.canonical } };
+    return { status: "bound", change: { kind: "rotate", recipient: recipient.canonical, issuer: proof.issuer.canonical, successor: successor.canonical } };
   }
   if (sender !== null) return { status: "mismatch", because: "an ending arrives without a sender" };
   if (proof.change.audience === null) return { status: "unbound", because: "the ending names no audience; this profile binds an ending only to the recipient it names" };
   if (proof.change.audience.canonical !== recipient.canonical) return { status: "mismatch", because: `aud is ${proof.change.audience.presented} but the recipient is ${recipient.presented}` };
-  return { status: "bound", fact: { kind: "peer-ending", at: { localDid: recipient.canonical, peerDid: proof.issuer.canonical } } };
+  return { status: "bound", change: { kind: "end", recipient: recipient.canonical, issuer: proof.issuer.canonical } };
 }
 
 const encoder = new TextEncoder();

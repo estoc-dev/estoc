@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`from_prior` proofs come from `@estoc/from-prior`**: the vault
+  verifies, binds and creates them with the new package instead of
+  `@estoc/continuity/from-prior`, and projects the change a bound proof
+  reports into the successor's observation carrying the rotation, as it
+  projects proof-free receipts and saved decisions into their facts.
 - **Continuity facts are identified by their content** (breaking): the
   projection follows the `estoc-continuity/3` profile of
   `@estoc/continuity`, one fact per event. A proof-free receipt is an
