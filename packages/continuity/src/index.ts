@@ -3,7 +3,7 @@
  * from normalized facts. This entry point is the pure model: the fact
  * schema and the identity of a fact, and synchronous deterministic
  * queries over a set of facts. It parses no JWT and does no
- * cryptography; that is `@estoc/continuity/from-prior`.
+ * cryptography; that is `@estoc/from-prior`.
  */
 
 export type { Change, Channel, ContinuityFact, Did, Ending, FactKind, LocalDecision, PeerEnding, PeerObservation, Rotation } from "./types.js";

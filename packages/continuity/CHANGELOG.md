@@ -30,12 +30,12 @@
 - **A conflict carries its scope**: every `Conflict` has `scope`, the
   channels it masks directly; a query that depends on them may answer
   `conflict` as well.
-- **from-prior takes the issuer's long form and binds one fact**
-  (breaking): `verifyFromPrior(jwt, issuerLongForm)` and
-  `ProofRequest.issuerLongForm`; `IssuerEvidence` and
-  `VerifiedFromPrior.document` are gone. `bindFromPrior(proof, receipt)`
-  takes a `Receipt` of token, recipient and sender, and yields the
-  successor's observation carrying the rotation, or the peer's ending.
+- **from_prior is its own package** (breaking): the
+  `@estoc/continuity/from-prior` entry point is gone, and so are the
+  `jose`, `@scure/base` and `@estoc/did-peer` dependencies. Proofs are
+  `@estoc/from-prior`'s, where `bindFromPrior` reports the change it
+  binds rather than a fact, and the host projects that change into the
+  fact it establishes.
 - `Rotation`, `Ending`, `PeerEnding`, `FactKind` and `FactIdentity` are
   exported; `successorChannel` is not. `validateFact` reads only a
   value's own members. `PROFILE_VERSION` is `estoc-continuity/3`.

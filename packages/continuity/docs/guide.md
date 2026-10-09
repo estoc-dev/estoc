@@ -7,8 +7,7 @@ point to the fixed source revision used to check these examples.
 
 Start with [both parties rotating and joining](#join), then explore
 [contexts](#contexts), [links only the positive graph has](#diagnostic) and
-[onward rotations](#onward). Proof input boundaries are collected under
-[verification and binding](#proofs).
+[onward rotations](#onward).
 
 | Notation | Meaning |
 | --- | --- |
@@ -31,10 +30,12 @@ purpose.
 
 ```mermaid
 flowchart TB
-    R["host: receipts, proofs,<br/>DID documents"] --> V["verify + bind"]
-    V --> F["Three kinds of fact,<br/>identified by content"]
-    D["host: saved local decisions"] --> F
-    O["host: authenticated<br/>peer observations"] --> F
+    R["host: receipts, proofs,<br/>DID documents"] --> V["@estoc/from-prior<br/>verify + bind"]
+    V --> B["BoundChange"]
+    B --> P["host projection"]
+    D["host: saved local decisions"] --> P
+    O["host: authenticated<br/>peer observations"] --> P
+    P --> F["Three kinds of fact,<br/>identified by content"]
     F --> X["host index:<br/>evidence to factIdentity"]
     F --> M["deriveContinuity<br/>accept, then derive"]
     M --> Q["head / path / confirmation<br/>history / conflicts / status"]
@@ -42,11 +43,13 @@ flowchart TB
     X --> H
 ```
 
-A receipt that carried a rotation is one observation that says two things: how
-the peer's address continued, and which local address the successor wrote to.
-A receipt that carried no proof confirms the exact address it records and
-nothing else. Facts are identified by content, so a thousand receipts from B0
-to A0 are one observation; the host keeps the index from each receipt to the
+Every fact is the host's projection: of a saved decision, of a receipt that
+carried no proof, or of the change `@estoc/from-prior` bound to the receipt that
+carried one. A receipt that carried a rotation is one observation that says two
+things: how the peer's address continued, and which local address the successor
+wrote to. A receipt that carried no proof confirms the exact address it records
+and nothing else. Facts are identified by content, so a thousand receipts from
+B0 to A0 are one observation; the host keeps the index from each receipt to the
 fact it projects, and answers which receipt a fact stands for.
 
 <a id="peer-rotation"></a>
@@ -131,8 +134,8 @@ The diamond shows where the two address changes continue together.
 **It contains no receipt from B1 to A1, so A1 remains unconfirmed.**
 
 This minimal example uses the public API. A0 and the other strings are the
-abbreviations used by the core tests; the proof API requires actual did:peer:4
-identifiers.
+abbreviations used by the core tests; `@estoc/from-prior` binds only actual
+did:peer:4 identifiers.
 
 ```ts
 import { deriveContinuity, type ContinuityFact } from "@estoc/continuity";
@@ -478,86 +481,6 @@ each; it does not enumerate every alternative route to the same observation.
 [join witnesses and zero-step paths][test-join]. The complete replay boundary
 is in the [README's query explanation](../README.md#what-the-answers-mean).
 
-<a id="proofs"></a>
-
-## Inspect, precheck, verify and bind are separate proof-processing stages
-
-```mermaid
-flowchart TB
-    JWT["Received JWT"] --> I["inspect<br/>Read header / claims"]
-    I --> P["precheck<br/>document-independent profile rules<br/>+ successor is the authenticated sender"]
-    P --> D["Host retrieves issuer long form"]
-    D --> V["verify<br/>profile + issuer key + signature"]
-    R["Host-established receipt<br/>token / recipient / sender"] --> B["bind<br/>Check this receipt"]
-    V --> B
-    B --> F["One bound fact"]
-```
-
-`inspect` can successfully read a token whose signature has been tampered with.
-`precheck` refuses, before the host has any issuer material, what the profile
-can already decide: the algorithm, media type and critical headers, the DIDs,
-the shape of the change and, given the authenticated sender, a rotation whose
-successor is someone else; what it passes is still unverified, and a host that
-lacks the issuer's material waits rather than rejects. `verify` applies the
-same rules again, takes the authorized key from the issuer's own long-form DID
-and verifies the signature. `bind` checks the exact token against the receipt
-and establishes a fact only when binding succeeds.
-
-| Input boundary exercised by the tests | Result |
-| --- | --- |
-| Wrong JWT segment count or JSON shape, non-integer `iat`, `sub: null`, or array-valued `aud` | `form` failure. |
-| A signature segment that is not base64url or not 64 bytes long | `form` failure at inspection, precheck and verification; a well-formed wrong signature is left to verification. |
-| `exp` or `nbf` | Rejected: this profile evaluates no validity window, and verification reads no clock. |
-| Unsupported DID method or algorithm, rotation to the issuer itself, or a rotation with an audience | `profile` failure. |
-| Absent `typ`, or case variants of JWT / application/jwt | Accepted; extra whitespace, parameters and other media types are rejected. |
-| Absent `b64`, or `true` with `b64` listed in `crit` | Accepted; `false`, wrong types and missing required critical-header declarations are rejected. |
-| Unknown critical extension | `profile` failure at the precheck and at verification; inspection still reads the token. |
-| `crit` naming a `b64` the header lacks, or listing a header twice | `form` failure at every stage. |
-| An authorized JWK whose `x` is not a 32-byte Ed25519 key | `document` failure, the same as a Multikey of another type. |
-| A rotation whose successor is not the authenticated sender the precheck was given | `binding` failure before any issuer material; an ending is left to `bind`. |
-| A tampered signature | Passes the precheck without a verified type; `signature` failure at verification. |
-| Repeated JSON claim name | The parser's last value is used; inspection and interpretation of the verified payload agree. |
-| Short-form `iss` and `kid` with the matching retained long form | Accepted; presented spellings and canonical short forms are both retained. |
-| Wrong, malformed or hash-mismatched issuer long form, or a key not authorized for authentication | `document` failure; a caller-assembled document cannot substitute another key. |
-| A qualifying Multikey, JWK or embedded authentication method | Can verify an Ed25519 signature; a key authorized only for keyAgreement cannot. |
-| Altered signed payload, another signing key or incorrect signature bytes | `signature` failure. |
-| A different receipt token, a sender other than the rotation successor, or an ineligible recipient | Binding `mismatch`, producing no fact. |
-| A rotation bound to its receipt | One observation at C(recipient, sub) whose `rotatedFrom` is `iss`; a bound ending yields `peer-ending` at C(recipient, iss). |
-
-### A verified ending can still be unbound
-
-```mermaid
-flowchart TD
-    V["Verified ending<br/>sub is absent"] --> A{"Signed aud present?"}
-    A -->|"No; basic receipt checks pass"| U["unbound<br/>Retain proof, no ending fact"]
-    A -->|"Yes"| R{"aud matches recipient<br/>and receipt is anonymous?"}
-    R -->|"Yes, and exact token matches"| F["bound<br/>Peer ending at C(recipient, issuer)"]
-    R -->|"No"| M["mismatch"]
-```
-
-`sender: null` is the host's assertion of an anonymous receipt, requiring the
-plaintext to contain no `from`. Signed audience is an extension of this
-package's profile. A valid basic ending token alone does not identify which
-recipient's relationship it ends. Ending binding produces no peer observation.
-
-### Creation verifies the signer's output too
-
-```mermaid
-flowchart LR
-    R["ProofRequest"] --> P["Check issuer / change / iat"]
-    P --> S["Host-held signer<br/>Sign JWS signing input"]
-    S --> V["Verify issuer document / method / signature"]
-    V --> O["VerifiedFromPrior"]
-```
-
-An inconsistent issuer, change or `iat` is rejected before signing. An
-unauthorized method, another key or invalid signature bytes cannot produce
-a verified proof. The signer can hold a non-exportable key. Creating a
-proof saves no decision and sends no message.
-
-**Tests:** [inspect][test-inspect], [precheck][test-precheck],
-[verify][test-verify], [bind][test-bind], [create][test-create].
-
 <a id="host"></a>
 
 ## Queries and commits must use a valid revision
@@ -599,7 +522,7 @@ ACK policy. Those decisions remain with the host that uses the results.
 | When is there no longer a unique head? | [Competition](#competition), [links only the positive graph has](#diagnostic), [onward rotations](#onward) | Competing changes; observations; the head across a context. |
 | Why does an ending take precedence over a waiting choice, and a conflict over an ending? | [Endings](#ending) | Ending; the head across a context. |
 | Which facts are one fact, and how can replicas converge to a conflict? | [Acceptance](#acceptance) | Accepting facts; the identity of a fact; validating a fact; convergence and monotonicity. |
-| Which inputs are rejected between a token and a fact? | [Proofs](#proofs) | Inspect; precheck; verify; bind; create. |
+| Which inputs are rejected between a token and a fact? | The [`@estoc/from-prior` guide](../../from-prior/docs/guide.md) | Inspect; precheck; verify; bind; create. |
 
 [test-peer]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L39
 [test-repeat]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L74
@@ -617,8 +540,3 @@ ACK policy. Those decisions remain with the host that uses the results.
 [test-accept]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L13
 [test-identity]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L57
 [test-validate]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L74
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L76
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L105
-[test-verify]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L195
-[test-bind]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L354
-[test-create]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L396
