@@ -121,6 +121,9 @@ export function projectFacts(evidence: ChannelEvidence): ContinuityFact[] {
   return facts;
 }
 
+/** Facts named in a reason: the kind and the event CID of each, in the order given. */
+export const describeFacts = (keys: readonly FactKey[]): string => keys.map(({ kind, evidence }) => `the ${kind} of ${evidence}`).join(", ");
+
 export function foldContinuity(set: VaultEventSet, evidence: ChannelEvidence, admissions: AdmissionFold): Continuity {
   return new ContinuityFold(set, evidence, admissions, deriveContinuity(projectFacts(evidence)));
 }
@@ -184,7 +187,7 @@ class ContinuityFold implements Continuity {
       case "waiting":
         return { status: "pending-history", because: status.because };
       case "unresolved":
-        return { status: "pending-history", because: `${status.missing.map(({ kind, evidence }) => `the ${kind} of ${evidence}`).join(", ")} is not here` };
+        return { status: "pending-history", because: `${describeFacts(status.missing)} is not here` };
       case "invalid":
         return { status: "invalid", because: status.because };
       case "unknown":

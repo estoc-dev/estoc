@@ -24,9 +24,9 @@ import type { Change, Channel, ContinuityFact, Did, FactKey, PeerTransition, Loc
 export type Side = Replaces;
 
 /**
- * A contradiction in the evidence, with its scope: the channels a query
- * answers `conflict` for because of it, and no usable link enters or
- * leaves.
+ * A contradiction in the evidence, with its scope: the channels it masks
+ * directly, which no usable link enters or leaves. A query that depends
+ * on them may answer `conflict` as well.
  */
 export type Conflict =
   /** two different changes of one endpoint claimed in one context, a saved decision counted whether or not it is confirmed yet; the scope is the context and the successor pairs its claims name */

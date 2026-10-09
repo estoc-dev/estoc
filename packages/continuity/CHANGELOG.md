@@ -22,7 +22,8 @@
   has `samePeer` and `sameLocal` in place of `localContext` and
   `peerContext`.
 - **A conflict carries its scope**: every `Conflict` has `scope`, the
-  channels a query answers `conflict` for because of it.
+  channels it masks directly; a query that depends on them may answer
+  `conflict` as well.
 - **`bindFromPrior(proof, receipt)` takes no IDs** (breaking): a
   rotation always yields the transition and the observation of the
   receipt that carried it, an ending the transition alone.

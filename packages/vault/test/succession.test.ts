@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { channelOf, generationOf, recipeDidId, startDidId, successorDidId, successorRecipe, type Did, type DidGeneration, type DidId, type Keys } from "../src/index.js";
 import { ENTRY, MEDIATED, type Scene, createdDid } from "./fold/helpers.js";
-import { channel, decisionKey, foldScene, proofFreeReceipt, receiptCarryingProof, rotation, transitionKey, vaults, type Local } from "./fold/scene.js";
+import { channel, decisionKey, foldScene, inModelOrder, proofFreeReceipt, receiptCarryingProof, rotation, transitionKey, vaults, type Local } from "./fold/scene.js";
 
 const start = (predecessor: Did, binding: Did): [DidId, DidGeneration] => [startDidId(predecessor, binding), { kind: "start", profile: "v1", predecessor, binding }];
 const next = (predecessor: Did): [DidId, DidGeneration] => [successorDidId(predecessor), { kind: "next", profile: "v1", predecessor }];
@@ -70,10 +70,14 @@ describe("the successor's recipe", () => {
     expect(successorRecipe(fold, channel(second, b1))).toEqual({ status: "ready", recipe: { kind: "next", predecessor: second.did }, support: supportOf(channel(second, b1)) });
     expect(successorRecipe(fold, channel(second, b2))).toMatchObject({ status: "waiting" });
 
-    await receiptCarryingProof(scene, peerKeys, second, b1, b2);
-    await receiptCarryingProof(scene, peerKeys, second, b1, b3);
+    const toB2 = await receiptCarryingProof(scene, peerKeys, second, b1, b2);
+    const toB3 = await receiptCarryingProof(scene, peerKeys, second, b1, b3);
     fold = await foldScene(scene, keys);
-    expect(successorRecipe(fold, channel(second, b2))).toMatchObject({ status: "blocked", because: /^the history from the branch's anchor to the pair is in conflict at / });
+    const competing = inModelOrder([transitionKey(toB2), transitionKey(toB3)]);
+    expect(successorRecipe(fold, channel(second, b2))).toEqual({
+      status: "blocked",
+      because: `the history from the branch's anchor to the pair is in conflict at ${competing.map(({ evidence }) => `the peer-transition of ${evidence}`).join(", ")}`,
+    });
   });
 
   it("waits while the generation of the address waits, and is blocked where it is invalid or under another profile", async () => {

@@ -269,10 +269,11 @@ give both endpoints the same successor DID. These are positive claims; the
 resulting conflicts prevent usable paths. The local rotation in the collision
 example has predecessor confirmation.
 
-Each conflict carries its scope, the pairs a query answers `conflict` for
-because of it: for competing changes the context and the successor pairs its
-claims name, for a cycle its pairs, for a refused join the pair and its two
-successor pairs.
+Each conflict carries its scope, the pairs it masks directly: for competing
+changes the context and the successor pairs its claims name, for a cycle its
+pairs, for a refused join the pair and its two successor pairs. A query that
+depends on those pairs may answer `conflict` as well; see
+[a link only the positive graph has](#diagnostic).
 
 **Tests:** [repeated carriers][test-peer], [competing changes][test-competition],
 [observations][test-observations].
