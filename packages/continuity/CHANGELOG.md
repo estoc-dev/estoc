@@ -2,35 +2,42 @@
 
 ## Unreleased
 
-- **A fact is keyed by its evidence** (breaking): each fact names the
-  record it rests on by `evidence`, and its kind and evidence together,
-  a `FactKey`, are its identity. The host-allocated `id`, `FactId`,
-  `receipt` and `decision` are gone. An observation's
-  `carriedTransition` is `carried: boolean`, naming the transition
-  under the same evidence, and a decision's `source` names a receipt,
-  resolved to that receipt's observation. Every answer names facts by
-  `FactKey`: support, waiting, missing, endings, conflict facts,
-  `status(key)`, and the `key` of change records, ending records and
+- **A fact is its content** (breaking): a fact names no evidence, and
+  facts that say the same thing are one fact however many pieces of
+  evidence the host projected them from. The host-allocated `id`,
+  `FactId`, `receipt` and `decision` are gone, and so are references
+  between facts. `factIdentity` gives the RFC 8785 text the model keys
+  and orders facts by, for a host that indexes its own evidence by fact.
+  Every answer lists facts: support, waiting, endings, conflict facts,
+  `status(fact)`, and the `fact` of change records, ending records and
   confirmations.
+- **Three kinds of fact** (breaking): `address-observed` carries the
+  peer's rotation as `rotatedFrom`, so a peer rotation is always the
+  observation of its successor and sits at both pairs; `peer-ended` is
+  the peer's ending; a `local-decision` names no source, and any usable
+  observation confirms its predecessor address. `PeerTransition` is
+  gone. `FactStatus` has no `invalid` or `unresolved`, and
+  `HeadResult.unresolved` lists `waiting` only.
 - **The model accepts facts itself** (breaking): `FactSnapshot`,
   `mergeFacts`, `emptySnapshot`, `normalizeSnapshot`, `sameFacts`,
   `IncompatibleSnapshot` and `canonicalFact` are gone.
-  `deriveContinuity` keeps an exact repeat once and refuses a second
-  value under one key with `InvalidFact`, so there is no identity
-  conflict, in `Conflict` or in `FactStatus`.
+  `deriveContinuity` keeps facts with one identity once, so there is no
+  identity conflict, in `Conflict` or in `FactStatus`.
 - **Contexts are named by the endpoint they keep** (breaking): `History`
   has `samePeer` and `sameLocal` in place of `localContext` and
   `peerContext`.
 - **A conflict carries its scope**: every `Conflict` has `scope`, the
   channels it masks directly; a query that depends on them may answer
   `conflict` as well.
-- **`bindFromPrior(proof, receipt)` takes no IDs** (breaking): a
-  rotation always yields the transition and the observation of the
-  receipt that carried it, an ending the transition alone.
-- `LocalDecision` is a discriminated union whose ending has a null
-  `source`; `Rotation`, `Ending`, `FactKind` and `FactKey` are
-  exported. `validateFact` reads only a value's own members.
-  `PROFILE_VERSION` is `estoc-continuity/2`.
+- **from-prior takes the issuer's long form and binds one fact**
+  (breaking): `verifyFromPrior(jwt, issuerLongForm)` and
+  `ProofRequest.issuerLongForm`; `IssuerEvidence` and
+  `VerifiedFromPrior.document` are gone. `bindFromPrior(proof, receipt)`
+  takes a `Receipt` of token, recipient and sender, and yields the
+  successor's observation carrying the rotation, or the peer's ending.
+- `Rotation`, `Ending`, `PeerEnding`, `FactKind` and `FactIdentity` are
+  exported; `successorChannel` is not. `validateFact` reads only a
+  value's own members. `PROFILE_VERSION` is `estoc-continuity/3`.
 
 ## 0.1.0 — 2026-09-29
 

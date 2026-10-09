@@ -34,7 +34,8 @@ diagrams and links to the corresponding tests.
 host: receipts, envelopes, saved decisions, retained documents, keys
   │  verifyFromPrior + bindFromPrior          ← @estoc/continuity/from-prior
   ▼
-continuity facts, projected again from the evidence
+continuity facts, projected again from the evidence;
+the host indexes its evidence by fact identity
   │  deriveContinuity
   ▼
 head, path, confirmation, history, conflicts   ← @estoc/continuity
@@ -55,67 +56,61 @@ host: admission, dispatch, contact policy, successor allocation
 
 ## Facts
 
-The model consumes three kinds of fact. Each names the record it rests
-on by `evidence`, a reference the host allocates that is stable across
-replicas and rebuilds and maps back to that record. A receipt gives at
-most one transition and one observation, and a saved decision one local
-decision, so the kind and the evidence together, a `FactKey`, name
-exactly one fact; every answer refers to facts by key. The types in
-`src/types.ts` say exactly what each member means.
+The model consumes three kinds of fact. A fact is its content: it names
+no evidence, and two facts that say the same thing are one fact however
+many receipts or saved decisions the host projected them from. Which
+piece of evidence stands for a fact in an answer is the host's to say.
+The types in `src/types.ts` say exactly what each member means.
 
-- `peer-transition` — the peer of `at` rotated to `successor`, or ended,
-  as a verified and bound proof established; the evidence is the receipt
-  that carried the proof.
-- `local-decision` — a saved choice to rotate the local DID of `at`, or
-  to end there. A rotation's `source` optionally names the receipt whose
-  observation confirms the predecessor address, and null lets the model
-  find any; an ending names no source.
 - `address-observed` — one authenticated receipt from the peer of `at`
-  to exactly its local DID; `carried` says the same receipt carried a
-  proof, whose transition is the one under the same evidence.
+  to exactly its local DID. When the receipt carried a verified and
+  bound rotation, `rotatedFrom` is the peer's predecessor: the peer of
+  `C(at.localDid, rotatedFrom)` became `at.peerDid`. The sender of a
+  rotation is its successor, so a peer rotation is always observed this
+  way, and such an observation sits at both pairs.
+- `peer-ended` — the peer of `at` ended, as a verified and bound proof
+  on an anonymous receipt established.
+- `local-decision` — a saved choice to rotate the local DID of `at`, or
+  to end there. A decision names no observation: any usable one
+  addressed to the predecessor confirms a rotation.
 
 A fact is admitted only in the exact shape of its kind: its own members
-and no others, explicit nulls, distinct endpoints, a successor that is
-neither endpoint. DIDs are compared byte for byte and never parsed, so
-the host passes canonical DIDs.
+and no others, explicit nulls, distinct endpoints, a successor or a
+predecessor that is neither endpoint. DIDs are compared byte for byte
+and never parsed, so the host passes canonical DIDs.
 
-`deriveContinuity` accepts the facts before deriving anything. An exact
-repeat is kept once, since projecting the same evidence again is
-ordinary; two values are the same when their RFC 8785 texts are, so
-member order does not matter but every string is kept exact. A second
-value under one key is refused with `InvalidFact`, as is a malformed
-fact: one receipt or one saved decision says one thing. The accepted
-facts are ordered by evidence and then by kind, in UTF-8 byte order, so
+`deriveContinuity` accepts the facts before deriving anything and
+refuses a malformed one with `InvalidFact`. The identity of a fact,
+`factIdentity`, is its RFC 8785 text, so member order does not matter
+but every string is kept exact. Facts with one identity are kept once,
+and the accepted facts are ordered by identity in UTF-8 byte order, so
 the answers are the same whatever order and repetition the facts came
-in.
+in. At one pair, an observation that carried no rotation and one that
+carried a rotation are different claims and both stay: the first rests
+on its receipt alone, the second also on the pair the peer left, which
+a conflict may reach without reaching the first. So the observations
+at a pair are at most one plain one and one per distinct predecessor.
 
 Each kind rests on evidence only the host can establish:
 
-- A peer transition is a proof that verified and bound under the
-  profile, at the pair the receipt established. Proof-free claims are
-  not transitions.
-- A local decision is a choice the host saved before acting on it. A
-  named `source` is exact: no other observation stands in for it, and a
-  source addressed to another local DID makes the decision invalid.
 - An observation is one authenticated envelope to exactly that local
-  DID from that peer. The transition its receipt carried must be a
-  rotation, received by the same local DID and naming the observed
-  peer as successor; anything else makes the observation invalid.
+  DID from that peer. A `rotatedFrom` comes only from a proof that
+  verified and bound under the profile on that receipt; a proof-free
+  claim of a rotation is not a fact.
+- A peer ending is a proof that verified and bound under the profile.
+- A local decision is a choice the host saved before acting on it.
 
 ## Queries
 
 `deriveContinuity(facts)` builds the model in the order the evidence
 depends on itself:
 
-1. **References.** Each fact's exact reference is resolved by key: a
-   decision's source to that receipt's observation, an observation's
-   carried transition to the transition of its own receipt. A missing
-   one leaves the fact `unresolved`; one of the wrong pair makes it
-   `invalid`.
-2. **Positive graph.** Every peer rotation, every local rotation whose
+1. **Positive graph.** Every peer rotation, every local rotation whose
    predecessor address an observation confirms, and every join two
-   rotations imply, all branches kept.
-3. **Contexts and conflicts** over that whole graph. Each context is
+   rotations imply, all branches kept. An observation confirms the
+   predecessor address when it is addressed to the predecessor by its
+   peer, or by a peer a path of peer rotations from it reaches.
+2. **Contexts and conflicts** over that whole graph. Each context is
    named by the endpoint it keeps. A change of the peer applies across
    its same-peer context, the pairs local rotations connect; a change of
    ours applies across its same-local context, the pairs peer rotations
@@ -126,7 +121,7 @@ depends on itself:
    either way. Each conflict carries its scope: for competing changes
    the context and the successors its claims name, for a cycle its
    pairs, for a refused join the pair and its two successor pairs.
-4. **Usable graph.** The same closure again, admitting no channel a
+3. **Usable graph.** The same closure again, admitting no channel a
    conflict reaches. The positive graph says what
    replacements the evidence shows; the usable graph says which of them
    an operation may rely on.
@@ -138,8 +133,8 @@ give the same answers from any enumeration order or storage.
 
 `head(channel)` answers, in order of precedence: `conflict` when a
 conflict reaches the pair, `ended` when an ending applies to it through
-usable links, `unresolved` while saved rotations of the endpoint wait for their
-evidence, then `head` with the unique usable forward pair and the
+usable links, `unresolved` while saved rotations of the endpoint wait for an
+observation confirming the predecessor address, then `head` with the unique usable forward pair and the
 support of the usable links that lead there. A pair only a waiting
 decision names as its successor is `unresolved`; `no-evidence` is for a pair no fact mentions.
 A known forward change without usable continuation never falls back to
@@ -157,10 +152,7 @@ apply to it and is `conflict`, never applied. **Every saved rotation of the endp
 across the pair's whole positive context, including pairs off the usable
 forward paths: one the same usable change covers is provenance, one at a
 pair usable links connect is `unresolved`, one only diagnostic history
-connects is `conflict`. A pending choice is diagnosed along its whole
-reference chain, as `status` diagnoses it: a missing carried transition
-of its source is listed as missing, and a conflicted one is a conflict
-that outranks an ending.
+connects is `conflict`.
 
 `changes(channel, side)` lists that side's changes across the channel's
 context with each fact's status. `path(from, to)` gives one directed
@@ -169,16 +161,17 @@ the usable observations by which the peer, or a usable successor of it,
 wrote to exactly that local DID, each with one complete witness.
 `history(channel)` shows every positive link connected to the channel,
 joins marked, the endings in scope and both contexts. `localDecisions`,
-`conflicts` and `status` expose what the others summarize. Each result
-type in `src/model.ts` documents its variants.
+`conflicts` and `status` expose what the others summarize; `status`
+takes a fact by its content. Answers list facts, not evidence. Each
+result type in `src/model.ts` documents its variants.
 
 Support re-derives the usable links an answer asserts, or one
 confirmation, under the same profile. It does not replay the whole
 answer: an unchanged head or a zero-step path has empty support, and
 neither establishes an address observation or a rotation; the endings
 an `ended` answer lists are the assertions, not the context that scopes
-them. No support proves the absence of a conflict or a missing reference
-outside the facts supplied. Keep the facts, not the support, to replay
+them. No support proves the absence of a conflict outside the facts
+supplied. Keep the facts, not the support, to replay
 a result.
 
 ### Endings
@@ -190,7 +183,7 @@ ending and a rotation of the same endpoint in one context compete, with
 no time-based winner; a rotation followed by the successor ending is
 ordinary forward history. When one side ends while the other rotates,
 the ending extends across the opposite-side context and supplies no
-joined head. Two endings do not create an empty pair. An ending carrier
+joined head. Two endings do not create an empty pair. A peer ending
 confirms no address.
 
 ## from_prior
@@ -198,9 +191,9 @@ confirms no address.
 ```ts
 import { verifyFromPrior, bindFromPrior, createFromPrior } from "@estoc/continuity/from-prior";
 
-const proof = await verifyFromPrior(jwt, { ref: "doc-1", longForm: issuerLongForm });
-const binding = bindFromPrior(proof, { ref: "receipt-1", token: jwt, recipient, sender });
-if (binding.status === "bound") facts.push(...binding.facts);
+const proof = await verifyFromPrior(jwt, issuerLongForm);
+const binding = bindFromPrior(proof, { token: jwt, recipient, sender });
+if (binding.status === "bound") facts.push(binding.fact);
 ```
 
 The supported profile, `FROM_PRIOR_PROFILE`, is did:peer:4 issuers,
@@ -211,9 +204,9 @@ window, and verification consults no clock. Creation writes
 accepting its absence or `JWT` and `application/jwt` in any case. A
 `b64` header, when present, is `true` and listed in `crit`, as
 RFC 7797 requires of a JWT. DID equivalence is the did:peer:4 short
-form; presented spellings are kept beside it. The issuer evidence is
-the issuer's long-form DID as the host retained it: a did:peer:4 is its
-own document, so the signing key is taken from the content the DID's
+form; presented spellings are kept beside it. The issuer's material is
+its long-form DID as the host retained it: a did:peer:4 is its own
+document, so the signing key is taken from the content the DID's
 hash covers and a document assembled by a caller cannot substitute one.
 The module resolves nothing over the network. `InvalidFromPrior.failure`
 tells form, profile, binding, document and signature failures apart.
@@ -226,13 +219,13 @@ sender: a token it refuses can never verify or bind, so the host records
 the refusal instead of waiting for material, while a token it passes is
 still unverified. Decoding success is not profile validation, and the
 precheck grants no verified type. `verifyFromPrior` applies the same
-document-independent rules and establishes the issuer's declaration. `bindFromPrior` turns it into facts at the pair the
-receipt established: a rotation requires the receipt's own token and an
-authenticated sender equal to `sub`, and yields the peer transition at
-`C(recipient, iss)` and the address observation at `C(recipient, sub)`,
-both under the receipt's reference, the observation marked as carrying
-the transition. An ending yields the transition alone. A wrong token,
-sender or recipient is a `mismatch`.
+document-independent rules and establishes the issuer's declaration.
+`bindFromPrior` turns it into one fact at the pair the receipt
+established: a rotation requires the receipt's own token and an
+authenticated sender equal to `sub`, and yields the address observation
+at `C(recipient, sub)` whose `rotatedFrom` is `iss`. An ending yields
+`peer-ended` at `C(recipient, iss)`. A wrong token, sender or recipient
+is a `mismatch`.
 
 A received ending has no sender, and the standard's basic form binds it
 to no particular relationship: a valid token could be replayed in a new
@@ -248,25 +241,26 @@ extension, not a DIDComm requirement.
 `createFromPrior` builds the token from a request and a signing
 capability that names its method and signs the JWS signing input, so a
 key behind a hardware wallet can sign, then verifies the result against
-the issuer evidence before returning it. Creating a proof saves and
+the issuer's long form before returning it. Creating a proof saves and
 sends nothing.
 
 ## Host contract
 
-The model checks structure, references and graph semantics. Everything
+The model checks structure and graph semantics. Everything
 below is the host's, and the model cannot check it.
 
 - **Evidence.** The host verifies source acceptance, endpoint ownership
-  and envelope authentication, and retains exact evidence references,
-  original tokens and documents. An evidence reference names one
-  immutable record, stable across replicas and rebuilds: two records
-  under one reference would project two values under one key, which the
-  model refuses. The Estoc vault addresses events by verified content
-  CID, so different envelopes have different references and all
-  distinct source events remain available. Content addressing does not
-  authenticate a source. The model cannot
-  reconstruct evidence a caller omitted, and a branded verified type is
-  not a security boundary for imported data.
+  and envelope authentication, and retains the original tokens and
+  documents. The model sees no evidence: a fact is its content, and an
+  answer lists facts. The host keeps the index from each piece of
+  evidence to the fact it projects, keyed by `factIdentity` so that it
+  treats as one fact exactly what the model does, and decides which
+  evidence a fact in an answer stands for: one fact may rest on many
+  receipts, and only the host knows which of them an operation may name.
+  The Estoc vault addresses events by verified content CID and keeps
+  that index itself; content addressing does not authenticate a source.
+  The model cannot reconstruct evidence a caller omitted, and a branded
+  verified type is not a security boundary for imported data.
 - **Completeness.** Every answer is relative to the facts supplied.
   The model cannot say that unknown history does not exist, and it does
   not see sources awaiting material, verification or binding; the host
@@ -274,14 +268,17 @@ below is the host's, and the model cannot check it.
   head does not satisfy an operation's missing exact prerequisites.
 - **Projection.** The retained source inventory and the projected facts
   are different layers: only the inventory grows by union, and the
-  facts are projected from it again. A newly learned source
-  contradiction may require re-verifying and rebuilding the projection,
-  and a verification cache is reused only while its exact token,
-  document, bindings and profile still hold in the combined evidence.
-  In the Estoc vault, evidence references are exact event CIDs; a
-  source CID/bytes mismatch is rejected before projection, and competing
-  facts from distinct events are all projected. No host may replace a
-  missing exact source with another equivalent observation.
+  facts are projected from it again. A fact projected from several
+  pieces of evidence may be passed as often as it was projected, and the
+  model keeps it once; deduplicating by `factIdentity` first keeps the
+  input to the number of distinct pairs, rotations and decisions rather
+  than the number of receipts, which is the host's cost to save. A newly
+  learned source contradiction may require re-verifying and rebuilding
+  the projection, and a verification cache is reused only while its
+  exact token, document, bindings and profile still hold in the combined
+  evidence. In the Estoc vault a source CID/bytes mismatch is rejected
+  before projection, and competing facts from distinct events are all
+  projected.
 - **One complete projection.** Publish a model view from one complete
   projection of the selected sources; a prefix cannot authorize an
   operation because the conflicting branch is not projected yet. Two
@@ -336,14 +333,13 @@ below is the host's, and the model cannot check it.
   state.
 - The vault consumes this package through its adapter: it addresses
   events by content CID, projects each retained receipt and saved
-  decision into facts whose evidence is that CID, and applies rotations
-  only.
-  An ending token a carrier brings is retained there as an unsupported
-  proof and never becomes a fact.
+  decision into a fact, keeps the index from event CIDs to facts, and
+  applies rotations only. An ending token a carrier brings is retained
+  there as an unsupported proof and never becomes a fact.
 
 ## References
 
-- [RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785.html): whether two facts under one key are the same.
+- [RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785.html): the identity of a fact.
 - [DIDComm v2.1 DID Rotation](https://identity.foundation/didcomm-messaging/spec/v2.1/#did-rotation) and [Ending a Relationship](https://identity.foundation/didcomm-messaging/spec/v2.1/#ending-a-relationship): the wire proof.
 - [Peer DID method 4](https://identity.foundation/peer-did-method-spec/#method-4-short-form-and-long-form): short and long forms.
 - [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html) and [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797.html#section-1): the JWT and its encoded payload.
