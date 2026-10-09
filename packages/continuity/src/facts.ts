@@ -1,7 +1,7 @@
 /**
- * The fact schema, its keys and its canonical form. A fact is admitted
- * by reading every member once into a fresh value, so nothing a caller
- * passed can answer differently later; equality is the RFC 8785
+ * The fact schema and the identity of a fact. A fact is admitted by
+ * reading every member once into a fresh value, so nothing a caller
+ * passed can answer differently later; its identity is the RFC 8785
  * serialization of that value, which orders members but keeps every
  * string exact.
  */
@@ -9,12 +9,12 @@
 import serialize from "canonicalize";
 
 import { InvalidFact } from "./errors.js";
-import type { AddressObservation, Change, Channel, ContinuityFact, Did, FactKey, FactKind, LocalDecision, PeerTransition } from "./types.js";
+import type { Change, Channel, ContinuityFact, Did, FactKind } from "./types.js";
 
 const FACT_MEMBERS: Record<FactKind, readonly string[]> = {
-  "peer-transition": ["kind", "at", "change", "evidence"],
-  "local-decision": ["kind", "at", "change", "source", "evidence"],
-  "address-observed": ["kind", "at", "carried", "evidence"],
+  "address-observed": ["kind", "at", "rotatedFrom"],
+  "peer-ended": ["kind", "at"],
+  "local-decision": ["kind", "at", "change"],
 };
 
 // I-JSON keeps a lone surrogate out of a string; RFC 8785 has no
@@ -63,99 +63,47 @@ function change(value: unknown, where: string): Change {
   throw new InvalidFact(`${where}.kind is rotate or end`);
 }
 
-export function replacedSide(fact: PeerTransition | LocalDecision): "local" | "peer" {
-  return fact.kind === "peer-transition" ? "peer" : "local";
-}
-
-/** The pair a rotation leads to, null for an ending. */
-export function successorChannel(fact: PeerTransition | LocalDecision): Channel | null {
-  if (fact.change.kind === "end") return null;
-  return fact.kind === "peer-transition" ? { localDid: fact.at.localDid, peerDid: fact.change.successor } : { localDid: fact.change.successor, peerDid: fact.at.peerDid };
-}
-
-function checkSuccessor(fact: PeerTransition | LocalDecision, where: string): void {
-  if (fact.change.kind === "end") return;
-  const replaced = replacedSide(fact) === "peer" ? fact.at.peerDid : fact.at.localDid;
-  if (fact.change.successor === replaced) throw new InvalidFact(`${where}: the successor is the DID it replaces`);
-  const kept = replacedSide(fact) === "peer" ? fact.at.localDid : fact.at.peerDid;
-  if (fact.change.successor === kept) throw new InvalidFact(`${where}: the successor is the other endpoint of the pair`);
-}
-
 /** `value` as a fact of the profile, read once, or `InvalidFact`. */
 export function validateFact(value: unknown, where = "fact"): ContinuityFact {
   if (!isPlainObject(value)) throw new InvalidFact(`${where} is an object`);
   const kind = value["kind"];
-  if (kind !== "peer-transition" && kind !== "local-decision" && kind !== "address-observed") throw new InvalidFact(`${where}.kind is peer-transition, local-decision or address-observed`);
+  if (kind !== "address-observed" && kind !== "peer-ended" && kind !== "local-decision") throw new InvalidFact(`${where}.kind is address-observed, peer-ended or local-decision`);
   exactMembers(value, FACT_MEMBERS[kind], where);
   const at = channel(value["at"], `${where}.at`);
   switch (kind) {
-    case "peer-transition": {
-      const fact: PeerTransition = { kind, at, change: change(value["change"], `${where}.change`), evidence: text(value["evidence"], `${where}.evidence`) };
-      checkSuccessor(fact, where);
-      return fact;
+    case "address-observed": {
+      const rotatedFrom = textOrNull(value["rotatedFrom"], `${where}.rotatedFrom`);
+      if (rotatedFrom === at.peerDid) throw new InvalidFact(`${where}: the peer rotated from the DID it rotated to`);
+      if (rotatedFrom === at.localDid) throw new InvalidFact(`${where}: the peer rotated from the local DID`);
+      return { kind, at, rotatedFrom };
     }
+    case "peer-ended":
+      return { kind, at };
     case "local-decision": {
       const decided = change(value["change"], `${where}.change`);
-      const source = textOrNull(value["source"], `${where}.source`);
-      const evidence = text(value["evidence"], `${where}.evidence`);
-      if (decided.kind === "end" && source !== null) throw new InvalidFact(`${where}: an ending confirms no predecessor address, so it names no source`);
-      const fact: LocalDecision = decided.kind === "end" ? { kind, at, change: decided, source: null, evidence } : { kind, at, change: decided, source, evidence };
-      checkSuccessor(fact, where);
-      return fact;
-    }
-    case "address-observed": {
-      const carried = value["carried"];
-      if (typeof carried !== "boolean") throw new InvalidFact(`${where}.carried is a boolean`);
-      const fact: AddressObservation = { kind, at, carried, evidence: text(value["evidence"], `${where}.evidence`) };
-      return fact;
+      if (decided.kind === "rotate" && decided.successor === at.localDid) throw new InvalidFact(`${where}: the successor is the DID it replaces`);
+      if (decided.kind === "rotate" && decided.successor === at.peerDid) throw new InvalidFact(`${where}: the successor is the other endpoint of the pair`);
+      return { kind, at, change: decided };
     }
   }
 }
 
-/** The RFC 8785 text of a validated fact: whether two facts under one key are the same fact. */
-export function canonicalFact(fact: ContinuityFact): string {
-  return serialize(fact) as string;
-}
-
-export function factKey(fact: FactKey): FactKey {
-  return { kind: fact.kind, evidence: fact.evidence };
-}
+/** The RFC 8785 text of a fact as the profile reads it: two facts with one identity are one fact. */
+export type FactIdentity = string;
 
 /**
- * A fact key as one string, for sets and maps: the kind, U+0000, the
- * evidence. No kind contains U+0000, so the first one splits the text
- * back into the key whatever the evidence holds.
+ * The identity the model gives a fact, for a host that keeps its own
+ * index from facts to the evidence they were projected from: the same
+ * test of sameness the model applies. Throws `InvalidFact` for a value
+ * the profile refuses.
  */
-export type KeyText = string;
-
-export function keyText(key: FactKey): KeyText {
-  return `${key.kind}\u0000${key.evidence}`;
+export function factIdentity(fact: ContinuityFact): FactIdentity {
+  return identityOf(validateFact(fact));
 }
 
-function keyOfText(text: KeyText): FactKey {
-  const split = text.indexOf("\u0000");
-  return { kind: text.slice(0, split) as FactKind, evidence: text.slice(split + 1) };
-}
-
-/** By evidence, then by kind, so that the facts of one receipt sit together. */
-export function compareKeys(a: FactKey, b: FactKey): number {
-  return compareUtf8(a.evidence, b.evidence) || compareUtf8(a.kind, b.kind);
-}
-
-export function sortedKeys(texts: Iterable<KeyText>): FactKey[] {
-  return [...new Set(texts)].map(keyOfText).sort(compareKeys);
-}
-
-/** The fact a fact names: a decision's source observation, the transition an observation's receipt carried. */
-export function referenceOf(fact: ContinuityFact): FactKey | null {
-  switch (fact.kind) {
-    case "peer-transition":
-      return null;
-    case "local-decision":
-      return fact.source === null ? null : { kind: "address-observed", evidence: fact.source };
-    case "address-observed":
-      return fact.carried ? { kind: "peer-transition", evidence: fact.evidence } : null;
-  }
+/** The identity of a fact already validated. */
+export function identityOf(fact: ContinuityFact): FactIdentity {
+  return serialize(fact) as string;
 }
 
 /**
