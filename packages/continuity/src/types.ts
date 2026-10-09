@@ -32,4 +32,4 @@ export type ContinuityFact = AddressObservation | PeerEnding | LocalDecision;
 export type FactKind = ContinuityFact["kind"];
 
 /** The fact schema, normalization, proof rules and derivation rules this package implements. */
-export const PROFILE_VERSION = "estoc-continuity/2";
+export const PROFILE_VERSION = "estoc-continuity/3";
