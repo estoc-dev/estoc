@@ -25,7 +25,9 @@ DIDComm v2 `from_prior` proofs, split from `@estoc/continuity/from-prior`.
   already was. A `publicKeyJwk` reaches the library whole, so one that
   carries the private key, or whose `use`, `key_ops` or `alg` does not
   allow verifying EdDSA, is a `document` failure at verification and at
-  creation.
+  creation. So is one whose `x` is not the 32-byte key in base64url
+  without padding or whitespace, in every runtime; such a key used to
+  verify wherever the runtime's JWK import tolerated it.
 - **The profile**: inspection, precheck, verification, binding and
   creation of `from_prior` under `estoc-from-prior/1`: did:peer:4
   parties, Ed25519, no validity window, no clock. The precheck applies

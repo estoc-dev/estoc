@@ -335,7 +335,11 @@ function relativeTo(id: string, documentId: string): string {
  * The method's key as the JWK the library verifies with. A
  * `publicKeyJwk` is passed whole, so the library refuses one that
  * carries a private key, or whose `use`, `key_ops` or `alg`
- * (RFC 7517 §4.2–4.4) does not allow verifying EdDSA.
+ * (RFC 7517 §4.2–4.4) does not allow verifying EdDSA. Its `x` is
+ * checked first to be the key's 32 bytes in unpadded base64url
+ * (RFC 8037 §2): runtimes import a JWK with padding, whitespace or
+ * other characters differently, and the same proof would verify in one
+ * and not in another.
  */
 function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
   const multibase = method["publicKeyMultibase"];
@@ -352,7 +356,15 @@ function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
     return { kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(bytes.subarray(ED25519_MULTICODEC.length)) };
   }
   if (isPlainObject(jwk) && multibase === undefined) {
-    if (jwk["kty"] !== "OKP" || jwk["crv"] !== "Ed25519" || typeof jwk["x"] !== "string") throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
+    const x = jwk["x"];
+    if (jwk["kty"] !== "OKP" || jwk["crv"] !== "Ed25519" || typeof x !== "string") throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
+    let bytes: Uint8Array;
+    try {
+      bytes = base64urlnopad.decode(x);
+    } catch {
+      throw new InvalidFromPrior(`${id}: publicKeyJwk x is base64url without padding or whitespace`, "document");
+    }
+    if (bytes.length !== ED25519_KEY_BYTES) throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
     return { ...jwk };
   }
   throw new InvalidFromPrior(`${id} carries one of publicKeyMultibase and publicKeyJwk`, "document");

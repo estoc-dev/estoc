@@ -48,7 +48,7 @@ and reports a change only when binding succeeds.
 | Absent `b64`, or `true` with `b64` listed in `crit` | Accepted; `false`, wrong types and missing required critical-header declarations are rejected. |
 | Unknown critical extension | `profile` failure at the precheck and at verification; inspection still reads the token. |
 | `crit` naming a `b64` the header lacks, or listing a header twice | `form` failure at every stage. |
-| An authorized JWK whose `x` is not a 32-byte Ed25519 key | `document` failure, the same as a Multikey of another type. |
+| An authorized JWK whose `x` is not a 32-byte key in base64url without padding or whitespace, even when it spells the key that signed | `document` failure at verification and at creation, the same as a Multikey of another type. |
 | An authorized JWK that carries the private key, or whose `use`, `key_ops` or `alg` does not allow verifying EdDSA | `document` failure, at verification and at creation; `use: sig`, `key_ops` with `verify` and `alg: EdDSA` verify. |
 | A rotation whose successor is not the authenticated sender the precheck was given | `binding` failure before any issuer material; an ending is left to `bind`. |
 | A tampered signature | Passes the precheck without a verified type; `signature` failure at verification. |
@@ -99,8 +99,8 @@ proof saves no decision and sends no message.
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].
 
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/8c9f1609e106331e81ae36eea624920331eaf555/packages/from-prior/test/from-prior.test.ts#L75
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/8c9f1609e106331e81ae36eea624920331eaf555/packages/from-prior/test/from-prior.test.ts#L104
-[test-verify]: https://github.com/estoc-dev/estoc/blob/8c9f1609e106331e81ae36eea624920331eaf555/packages/from-prior/test/from-prior.test.ts#L194
-[test-bind]: https://github.com/estoc-dev/estoc/blob/8c9f1609e106331e81ae36eea624920331eaf555/packages/from-prior/test/from-prior.test.ts#L353
-[test-create]: https://github.com/estoc-dev/estoc/blob/8c9f1609e106331e81ae36eea624920331eaf555/packages/from-prior/test/from-prior.test.ts#L391
+[test-inspect]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L79
+[test-precheck]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L109
+[test-verify]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L222
+[test-bind]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L404
+[test-create]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L442

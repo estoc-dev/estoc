@@ -313,6 +313,22 @@ describe("verify", () => {
     }
   });
 
+  it("reports a document failure for an authorized JWK whose x spells the signing key with padding, whitespace or other characters", async () => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const cases: [string, (x: string) => string][] = [
+      ["padding", (x) => `${x}=`],
+      ["a space", (x) => `${x.slice(0, 8)} ${x.slice(8)}`],
+      ["a character outside base64url", (x) => `${x.slice(0, 8)}!${x.slice(8)}`],
+      ["non-zero trailing bits", (x) => `${x.slice(0, -1)}${alphabet[alphabet.indexOf(x.at(-1)!) ^ 1]}`],
+    ];
+    for (const [what, spell] of cases) {
+      const jwk = party(`jwk-${what}`, (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, x: spell(key.jwk["x"]!) } }], authentication: ["#key-1"] }));
+      const jwt = await rotation(jwk, b1);
+      expect(() => precheckFromPrior(jwt), what).not.toThrow();
+      expect((await failure(verifyFromPrior(jwt, jwk.longForm))).failure, what).toBe("document");
+    }
+  });
+
   it("reports a document failure for an authorized JWK that carries the private key, or whose use, key_ops or alg does not allow verifying EdDSA", async () => {
     const cases: [string, (key: { d: string }) => Record<string, unknown>][] = [
       ["the private key", (key) => ({ d: key.d })],
@@ -465,10 +481,16 @@ describe("create", () => {
     expect((await failure(createFromPrior(request, { methodId: b0.kid, sign: async () => "sig" as unknown as Uint8Array }))).failure).toBe("signature");
   });
 
-  it("refuses to create a proof under a document whose JWK carries the private key", async () => {
-    const leaked = party("leaked", (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, d: key.d } }], authentication: ["#key-1"] }));
-    const request = { issuer: leaked.longForm, change: { kind: "rotate" as const, successor: b1.longForm }, iat: IAT, issuerLongForm: leaked.longForm };
-    expect((await failure(createFromPrior(request, signerOf(leaked)))).failure).toBe("document");
+  it("refuses to create a proof under a document whose JWK carries the private key, or pads its x", async () => {
+    const cases: [string, (key: { jwk: Record<string, string>; d: string }) => Record<string, unknown>][] = [
+      ["the private key", (key) => ({ d: key.d })],
+      ["a padded x", (key) => ({ x: `${key.jwk["x"]}=` })],
+    ];
+    for (const [what, members] of cases) {
+      const issuer = party(`create-${what}`, (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, ...members(key) } }], authentication: ["#key-1"] }));
+      const request = { issuer: issuer.longForm, change: { kind: "rotate" as const, successor: b1.longForm }, iat: IAT, issuerLongForm: issuer.longForm };
+      expect((await failure(createFromPrior(request, signerOf(issuer)))).failure, what).toBe("document");
+    }
   });
 
   it("refuses an inconsistent request before signing", async () => {

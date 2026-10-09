@@ -58,9 +58,10 @@ kept beside it. The issuer's material is its long-form DID as the host
 retained it: a did:peer:4 is its own document, so the signing key is
 taken from the content the DID's hash covers and a document assembled
 by a caller cannot substitute one. An authorized key is an Ed25519
-Multikey or public JWK; a `publicKeyJwk` carries no private member, and
-the `use`, `key_ops` and `alg` it may carry allow verifying `EdDSA`.
-The package resolves nothing over the network.
+Multikey or public JWK. A `publicKeyJwk` carries no private member, its
+`x` is the 32-byte key in base64url without padding or whitespace, as
+RFC 8037 writes it, and the `use`, `key_ops` and `alg` it may carry
+allow verifying `EdDSA`. The package resolves nothing over the network.
 `InvalidFromPrior.failure` tells form, profile, binding, document and
 signature failures apart.
 
@@ -132,4 +133,4 @@ sends nothing.
 - [DIDComm v2.1 DID Rotation](https://identity.foundation/didcomm-messaging/spec/v2.1/#did-rotation) and [Ending a Relationship](https://identity.foundation/didcomm-messaging/spec/v2.1/#ending-a-relationship): the wire proof.
 - [Peer DID method 4](https://identity.foundation/peer-did-method-spec/#method-4-short-form-and-long-form): short and long forms.
 - [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html#section-2), [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html) and [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797.html#section-1): the compact JWS, the JWT and its encoded payload.
-- [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html#section-4.2): the `use`, `key_ops` and `alg` of a JWK.
+- [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html#section-4.2) and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html#section-2): the `use`, `key_ops` and `alg` of a JWK, and the `x` of an Ed25519 one.
