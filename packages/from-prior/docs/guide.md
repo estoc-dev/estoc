@@ -100,8 +100,8 @@ proof saves no decision and sends no message.
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].
 
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L79
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L109
-[test-verify]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L222
-[test-bind]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L420
-[test-create]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L458
+[test-inspect]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L79
+[test-precheck]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L109
+[test-verify]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L222
+[test-bind]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L432
+[test-create]: https://github.com/estoc-dev/estoc/blob/894a30d30f38ae62019607c8051d98ac97ff2f36/packages/from-prior/test/from-prior.test.ts#L470
