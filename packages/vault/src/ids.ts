@@ -9,17 +9,16 @@
  * object standing in for it.
  */
 
+import { compareUtf8 } from "@estoc/continuity";
 import { isLongForm, isShortForm, longToShort } from "@estoc/did-peer";
 import { canonicalText, canonicalize, forbiddenIn, type JsonValue } from "@estoc/event-store";
 import { sha256 } from "@noble/hashes/sha2";
 import { base64urlnopad } from "@scure/base";
 import { v5 as uuidv5 } from "uuid";
 
-import type { FactId } from "@estoc/continuity";
-
 import { InvalidIdentifier } from "./errors.js";
 import { isDerivedId, isDid, isEntityId, isMintedId } from "./syntax.js";
-import type { Channel, Did, DidId, EffectKey, EventCid, EventReference, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
+import type { Channel, Did, DidId, EffectKey, EventReference, ExecutionId, KeyName, MediationId, MessageId, ReplicaId, WireMessageId } from "./types.js";
 
 export const NAMESPACE_PURPOSES = ["inbound-message", "message-execution", "automatic-mid", "mediation", "did-entity", "forward"] as const;
 
@@ -71,19 +70,9 @@ function canonical(value: string, what: string): string {
   return canonicalDid(value);
 }
 
-const encoder = new TextEncoder();
+export { compareUtf8 };
 
-/** Unsigned UTF-8 byte order, which differs from code-unit order beyond the BMP. */
-export function compareUtf8(a: string, b: string): number {
-  const x = encoder.encode(a);
-  const y = encoder.encode(b);
-  const n = Math.min(x.length, y.length);
-  for (let i = 0; i < n; i++) {
-    const d = (x[i] as number) - (y[i] as number);
-    if (d !== 0) return d;
-  }
-  return x.length - y.length;
-}
+const encoder = new TextEncoder();
 
 /**
  * The spelling every reference to a wire ID is compared by: its ASCII
@@ -115,8 +104,8 @@ export function channelOf(localDid: Did, peerDid: Did): Channel {
   return { localDid, peerDid };
 }
 
-/** The canonical text a channel sorts and indexes by: `RFC8785([localDid, peerDid])`. */
-export function channelKey(channel: Channel): string {
+/** The canonical text a channel sorts and indexes by: `RFC8785([localDid, peerDid])`; a channel the continuity model returns is one the fold gave it, so it keys the same. */
+export function channelKey(channel: Readonly<{ localDid: string; peerDid: string }>): string {
   return canonicalText([channel.localDid, channel.peerDid]);
 }
 
@@ -240,17 +229,6 @@ export function startDidId(publicDid: Did, binding: Did): DidId {
 export const GENERATION_PROFILE = "v1";
 
 export const ANCHOR_KEY_NAME = "anchor" as KeyName;
-
-/**
- * The IDs of the continuity facts one event projects, derived from its
- * CID so that every replica and every rebuild names the same fact: the
- * address observation of a receipt, the peer transition its proof
- * established, the local decision a rotation saved. They live in the
- * derived projection only; no event or wire message carries one.
- */
-export const observationFactId = (receipt: EventCid): FactId => `receipt:${receipt}:observation`;
-export const transitionFactId = (receipt: EventCid): FactId => `receipt:${receipt}:transition`;
-export const decisionFactId = (decision: EventCid): FactId => `decision:${decision}`;
 
 export type DidKeyRole = "authentication" | "key-agreement";
 

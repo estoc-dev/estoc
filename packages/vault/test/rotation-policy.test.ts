@@ -7,7 +7,7 @@ import { IAT, channel, foldScene, proof, proofFreeReceipt, receiptCarryingProof,
 const UNKNOWN_PREDECESSOR = "019b7000-0000-7000-8000-000000000c00" as DidId;
 
 describe("the rotation intent a rotation reuses", () => {
-  it("is the one recorded from the local DID in its verified peer-only context: none, one candidate, one still pending, or two successors in conflict", async () => {
+  it("is the one recorded from the local DID in its verified same-local context: none, one candidate, one still pending, or two successors in conflict", async () => {
     const { scene, keys, a0, a1, a2, b0, b1 } = await vaults();
     let vault = await foldScene(scene, keys);
     expect(decisionFor(vault, a0.did, b0.did)).toEqual({ status: "none" });

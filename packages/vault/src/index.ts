@@ -72,9 +72,6 @@ export {
   forwardId,
   GENERATION_PROFILE,
   ANCHOR_KEY_NAME,
-  observationFactId,
-  transitionFactId,
-  decisionFactId,
   type DidKeyRole,
   didKeyName,
   mediationKeyName,
@@ -207,7 +204,8 @@ export {
   foldDecisions,
   verifyProofs,
 } from "./fold/channels.js";
-export { type Status, type Witness, type PeerRoot, type ScopedConflict, type Continuity, projectFacts, foldContinuity } from "./fold/continuity.js";
+export { type Status, type Witness, type PeerRoot, type Continuity, projectFacts, foldContinuity } from "./fold/continuity.js";
+export type { Conflict as ContinuityConflict } from "@estoc/continuity";
 export { type AdmissionStatus, type Admission, type AdmissionFold, type Eligibility, type AdmissionCandidate, type Disposition, type Dispositions, foldAdmissions, foldDispositions } from "./admission/model.js";
 export { EMPTY_MESSAGE_TYPE, PING_RESPONSE_TYPE, PROBLEM_REPORT_TYPE, EMPTY_CONTENT_CID, type InboundKind, kindOf, type Member, type Execution, type InboundFold, foldInbound } from "./fold/inbound.js";
 export { type InvitationStatus, type Invitation, type InvitationFold, foldInvitations } from "./fold/invitations.js";

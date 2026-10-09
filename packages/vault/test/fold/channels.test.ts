@@ -369,8 +369,8 @@ describe("foldDecisions", () => {
     const manual = await rotation(scene, keys, { from: a2, peer: b0, to: a1 });
     const { evidence, checks, proofs } = await fold(scene, keys);
     expect(proofs.proofChecks.get(sourced.cid)).toMatchObject({ status: "verified", proof: { issuer: { presented: a0.longFormDid }, change: { kind: "rotate", successor: { presented: a1.longFormDid } } } });
-    const first: LocalDecision = { kind: "local-decision", id: `decision:${sourced.cid}`, at: channel(a0, b0), change: { kind: "rotate", successor: a1.did }, source: `receipt:${source.cid}:observation`, decision: sourced.cid };
-    const second: LocalDecision = { kind: "local-decision", id: `decision:${manual.cid}`, at: channel(a2, b0), change: { kind: "rotate", successor: a1.did }, source: null, decision: manual.cid };
+    const first: LocalDecision = { kind: "local-decision", at: channel(a0, b0), change: { kind: "rotate", successor: a1.did }, source: source.cid, evidence: sourced.cid };
+    const second: LocalDecision = { kind: "local-decision", at: channel(a2, b0), change: { kind: "rotate", successor: a1.did }, source: null, evidence: manual.cid };
     expect(evidence.decisions.get(sourced.cid)).toEqual({ event: sourced, channel: channel(a0, b0), status: { status: "candidate", fact: first } });
     expect(evidence.decisions.get(manual.cid)).toEqual({ event: manual, channel: channel(a2, b0), status: { status: "candidate", fact: second } });
     expectSameOverEveryOrder(scene.events, checks, proofs);
@@ -394,7 +394,7 @@ describe("foldDecisions", () => {
     const unchecked = foldChannelEvidence(scene.set(), foldChecked(scene.set(), checks).dids, { resolutionChecks: proofs.resolutionChecks });
     expect(unchecked.decisions.get(unverifiedSource.cid)!.status).toEqual({ status: "pending", because: "the proof is not yet checked" });
     const withDocument = await fold(scene, keys, readerOf(new Map([[b0.resolution.cid, b0.resolution.bytes]])));
-    expect(withDocument.evidence.decisions.get(unverifiedSource.cid)!.status).toMatchObject({ status: "candidate", fact: { source: `receipt:${unverified.cid}:observation` } });
+    expect(withDocument.evidence.decisions.get(unverifiedSource.cid)!.status).toMatchObject({ status: "candidate", fact: { source: unverified.cid } });
   });
 
   it("is invalid when the proof is not the two entities' exact long forms or does not verify, or the successor or peer is an old endpoint", async () => {
@@ -474,7 +474,7 @@ describe("foldDecisions", () => {
     resolved(scene, a1.didId, b2, { short: true });
     const withDocument = await fold(scene, keys, readerOf(new Map([[b2.resolution.cid, b2.resolution.bytes]])));
     expect(withDocument.evidence.carriers.get(waiting.cid)!.proof).toMatchObject({ status: "verified" });
-    expect(withDocument.evidence.decisions.get(fromWaiting.cid)!.status).toMatchObject({ status: "candidate", fact: { source: `receipt:${waiting.cid}:observation` } });
+    expect(withDocument.evidence.decisions.get(fromWaiting.cid)!.status).toMatchObject({ status: "candidate", fact: { source: waiting.cid } });
     expect(withDocument.evidence.decisions.get(fromRefused.cid)!.status).toMatchObject({ status: "conflict" });
   });
 
@@ -511,7 +511,7 @@ describe("foldDecisions", () => {
 
     const restored = await fold(scene, keys, readerOf(new Map([[b0.resolution.cid, b0.resolution.bytes]])));
     expect(status(restored, fromRefused)).toMatchObject({ status: "conflict", because: expect.stringMatching(/^the source's proof is invalid: not a compact JWT/) });
-    expect(status(restored, fromSound)).toMatchObject({ status: "candidate", fact: { source: `receipt:${sound.cid}:observation` } });
+    expect(status(restored, fromSound)).toMatchObject({ status: "candidate", fact: { source: sound.cid } });
   });
 
   it("is in conflict when an entity is, or the source is of another type, in another pair or itself in conflict", async () => {
@@ -569,7 +569,7 @@ describe("foldDecisions", () => {
     expect(status(restored, successorIsPeer)).toEqual({ status: "invalid", because: "the successor is the peer's DID" });
     expect(status(restored, otherPeer)).toEqual({ status: "conflict", because: "the source is not from the peer the decision rotates away from" });
     expect(status(restored, atSigningSource)).toEqual({ status: "conflict", because: "the source is not at the predecessor's key-agreement key" });
-    expect(status(restored, sound)).toMatchObject({ status: "candidate", fact: { at: channel(a0, b0), change: { kind: "rotate", successor: a1.did }, source: `receipt:${fromB0.cid}:observation` } });
+    expect(status(restored, sound)).toMatchObject({ status: "candidate", fact: { at: channel(a0, b0), change: { kind: "rotate", successor: a1.did }, source: fromB0.cid } });
   });
 });
 

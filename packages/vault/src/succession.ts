@@ -12,7 +12,7 @@
  * beside.
  */
 
-import type { FactId } from "@estoc/continuity";
+import type { FactKey } from "@estoc/continuity";
 
 import type { VaultFold } from "./fold/vault.js";
 import { GENERATION_PROFILE, startDidId, successorDidId } from "./ids.js";
@@ -32,7 +32,7 @@ export const generationOf = (recipe: SuccessorRecipe): DidGeneration => ({ ...re
  * where the evidence contradicts, a conflict in the history or
  * generations that do not read.
  */
-export type SuccessorChoice = { status: "ready"; recipe: SuccessorRecipe; support: readonly FactId[] } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
+export type SuccessorChoice = { status: "ready"; recipe: SuccessorRecipe; support: readonly FactKey[] } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
 
 export function successorRecipe(fold: Pick<VaultFold, "dids" | "continuity">, channel: Channel): SuccessorChoice {
   const didId = fold.dids.entityOfDid(channel.localDid);

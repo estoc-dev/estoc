@@ -1,7 +1,8 @@
 /**
  * Continuity over the channel evidence, derived by `@estoc/continuity`.
- * The evidence is projected into the package's facts under IDs every
- * replica derives from the same event CIDs: an authenticated proof-free
+ * The evidence is projected into the package's facts, each resting on
+ * the event whose CID is its evidence, so every replica keys the same
+ * fact alike: an authenticated proof-free
  * receipt is an address observation at its pair; a receipt whose proof
  * verified and bound is the peer transition and the observation of the
  * successor, both of that one receipt; a decision that passes its own
@@ -21,9 +22,9 @@
  * already forbids another successor.
  */
 
-import { deriveContinuity, successorChannel, type Conflict, type ContinuityFact, type Continuity as ContinuityModel, type FactId, type HeadResult, type PositiveLink } from "@estoc/continuity";
+import { deriveContinuity, type Conflict, type ContinuityFact, type Continuity as ContinuityModel, type FactKey, type HeadResult, type PositiveLink } from "@estoc/continuity";
 
-import { channelKey, channelOf, compareChannels, compareUtf8, observationFactId, sameChannel, transitionFactId } from "../ids.js";
+import { channelKey, channelOf, compareUtf8, sameChannel } from "../ids.js";
 import type { VaultEvent } from "../schema.js";
 import type { Channel, Did, EventCid } from "../types.js";
 import type { AdmissionFold } from "../admission/model.js";
@@ -60,29 +61,24 @@ export type Witness = { status: "complete" } | { status: "pending"; because: str
  * nothing about the pair itself.
  */
 export type PeerRoot =
-  /** the one peer DID of the pair's peer-only context no usable replacement leads to; the pair's own peer when none leads to it */
-  | { status: "found"; peerDid: Did; support: readonly FactId[] }
+  /** the one peer DID of the pair's same-local context no usable replacement leads to; the pair's own peer when none leads to it */
+  | { status: "found"; peerDid: Did; support: readonly FactKey[] }
   /** a conflict reaches the pair or a replacement on the way back, or the history leads back to more than one address */
   | { status: "conflict"; because: string };
-
-/** A conflict of the model with the channels its scope reaches: its context and the successors the claims in it name. */
-export interface ScopedConflict {
-  readonly conflict: Conflict;
-  readonly channels: readonly Channel[];
-}
 
 export interface Continuity {
   /** the facts the evidence projects, in the model's canonical order */
   readonly facts: readonly ContinuityFact[];
   /** the package's model over them, for what the queries below do not summarize */
   readonly model: ContinuityModel;
-  readonly conflicts: readonly ScopedConflict[];
+  /** the model's conflicts, each with the channels its scope reaches */
+  readonly conflicts: readonly Conflict[];
   /** a carrier's or a decision's status; a proof-free source is `not-present` */
   status(cid: EventCid): Status;
   witness(sourceEventCid: EventCid): Witness;
   /** does a conflict reach the channel or what lies ahead of it: no new work, no head */
   conflicted(channel: Channel): boolean;
-  /** has the peer replaced its DID anywhere in the channel's local-only context: no new work from the old peer */
+  /** has the peer replaced its DID anywhere in the channel's same-peer context: no new work from the old peer */
   superseded(channel: Channel): boolean;
   /** the unique usable channel forward replacements lead to, the channel itself when no fact mentions it; null while a replacement waits, conflicts or is not unique */
   head(channel: Channel): Channel | null;
@@ -99,17 +95,17 @@ export interface Continuity {
   ackPath(outbound: Channel, carrier: Channel): boolean;
   /** the denials that cover the channel: on the pair itself, or on a pair the history makes it succeed, conflicted or not, when that denial includes successors */
   blocked(channel: Channel): readonly VaultEvent<"channel.blocked">[];
-  /** the pairs of the channel's verified peer-only context, the channel itself included, in canonical order: the scope a decision at any of them is read in */
-  peerContext(channel: Channel): readonly Channel[];
+  /** the pairs of the channel's verified same-local context, the channel itself included, in canonical order: the scope a decision at any of them is read in */
+  sameLocal(channel: Channel): readonly Channel[];
   /**
-   * The peer's earliest address in the channel's peer-only context,
+   * The peer's earliest address in the channel's same-local context,
    * walking the usable peer replacements back from the channel: what a
    * relationship is anchored to when its first private branch is made.
    * Replacements the peer made toward another local DID count only
    * where a join carries them to this one.
    */
   peerRoot(channel: Channel): PeerRoot;
-  /** every decision rotating away from the channel's local DID anywhere in its peer-only context, whatever its status and whether or not it is projected */
+  /** every decision rotating away from the channel's local DID anywhere in its same-local context, whatever its status and whether or not it is projected */
   decisionsIn(channel: Channel): readonly Decision[];
 }
 
@@ -119,7 +115,7 @@ export function projectFacts(evidence: ChannelEvidence): ContinuityFact[] {
   for (const source of evidence.sources.values()) {
     if (source.status !== "complete") continue;
     const { cid, data } = source.event;
-    if (data.fromPrior === null) facts.push({ kind: "address-observed", id: observationFactId(cid), at: source.channel, carriedTransition: null, receipt: cid });
+    if (data.fromPrior === null) facts.push({ kind: "address-observed", at: source.channel, carried: false, evidence: cid });
     else facts.push(...(evidence.carriers.get(cid)?.facts ?? []));
   }
   for (const decision of evidence.decisions.values()) if (decision.status.status === "candidate") facts.push(decision.status.fact);
@@ -136,11 +132,10 @@ const asChannel = (channel: ModelChannel): Channel => channel as Channel;
 
 class ContinuityFold implements Continuity {
   readonly facts: readonly ContinuityFact[];
-  readonly conflicts: readonly ScopedConflict[];
+  readonly conflicts: readonly Conflict[];
   private readonly denials: readonly VaultEvent<"channel.blocked">[];
   private readonly heads = new Map<string, HeadResult>();
   private readonly covered = new Map<EventCid, ReadonlySet<string>>();
-  private readonly observed = new Map<FactId, Source>();
 
   constructor(
     set: VaultEventSet,
@@ -149,10 +144,8 @@ class ContinuityFold implements Continuity {
     readonly model: ContinuityModel
   ) {
     this.facts = model.facts;
-    const byId = new Map(model.facts.map((fact) => [fact.id, fact]));
-    this.conflicts = model.conflicts().map((conflict) => ({ conflict, channels: scopeOf(conflict, byId) }));
+    this.conflicts = model.conflicts();
     this.denials = set.of("channel.blocked");
-    for (const source of evidence.sources.values()) this.observed.set(observationFactId(source.event.cid), source);
   }
 
   private headOf(channel: Channel): HeadResult {
@@ -170,7 +163,7 @@ class ContinuityFold implements Continuity {
       if (source.status === "conflict") return { status: "invalid", because: `the carrier's own authentication is contradicted: ${source.because}` };
       if (proof.status === "pending-proof") return proof;
       if (source.status === "incomplete") return { status: "pending-history", because: `the carrier's own authentication is incomplete: ${source.because}` };
-      return this.factStatus(transitionFactId(cid));
+      return this.factStatus({ kind: "peer-transition", evidence: cid });
     }
     if (this.evidence.sources.has(cid)) return { status: "not-present" };
     const decision = this.evidence.decisions.get(cid);
@@ -178,12 +171,12 @@ class ContinuityFold implements Continuity {
     const { status } = decision;
     if (status.status === "pending") return { status: "pending-history", because: status.because };
     if (status.status !== "candidate") return status;
-    return this.factStatus(status.fact.id);
+    return this.factStatus({ kind: "local-decision", evidence: cid });
   }
 
   /** The model's status of a projected fact as the host reports it: usable is verified, waiting or an unresolved reference is history still to arrive. */
-  private factStatus(id: FactId): Status {
-    const status = this.model.status(id);
+  private factStatus(key: FactKey): Status {
+    const status = this.model.status(key);
     switch (status.status) {
       case "usable":
         return { status: "verified" };
@@ -192,11 +185,9 @@ class ContinuityFold implements Continuity {
       case "waiting":
         return { status: "pending-history", because: status.because };
       case "unresolved":
-        return { status: "pending-history", because: `${status.missing.join(", ")} is not here` };
+        return { status: "pending-history", because: `${status.missing.map(({ kind, evidence }) => `the ${kind} of ${evidence}`).join(", ")} is not here` };
       case "invalid":
         return { status: "invalid", because: status.because };
-      case "identity-conflict":
-        return { status: "conflict", because: "the fact has more than one value" };
       case "unknown":
         return { status: "pending-history", because: "the fact is not projected" };
     }
@@ -212,7 +203,7 @@ class ContinuityFold implements Continuity {
     if (source.status === "incomplete") return { status: "pending", because: source.because };
     if (proof?.status === "pending-proof") return { status: "pending", because: "the proof is not yet verified" };
     if (proof === undefined) return { status: "complete" };
-    const status = this.model.status(observationFactId(sourceEventCid));
+    const status = this.model.status({ kind: "address-observed", evidence: sourceEventCid });
     if (status.status === "usable") return { status: "complete" };
     return { status: "conflict", because: "because" in status ? status.because : `the observation is ${status.status}` };
   }
@@ -235,8 +226,8 @@ class ContinuityFold implements Continuity {
     if (localDid === peerDid) return null;
     const confirmation = this.model.confirmation(localDid, peerDid);
     if (confirmation.status !== "confirmed") return null;
-    for (const { id } of confirmation.observations) {
-      const source = this.observed.get(id);
+    for (const { key } of confirmation.observations) {
+      const source = this.evidence.sources.get(key.evidence as EventCid);
       if (source !== undefined && this.admissions.admitted(source.event.cid)) return source;
     }
     return null;
@@ -279,8 +270,8 @@ class ContinuityFold implements Continuity {
     return reached;
   }
 
-  peerContext(channel: Channel): readonly Channel[] {
-    return this.model.history(channel).peerContext.map(asChannel);
+  sameLocal(channel: Channel): readonly Channel[] {
+    return this.model.history(channel).sameLocal.map(asChannel);
   }
 
   peerRoot(channel: Channel): PeerRoot {
@@ -297,7 +288,7 @@ class ContinuityFold implements Continuity {
     const frontier = [channel];
     while (frontier.length > 0) {
       const current = frontier.pop()!;
-      if (this.conflicts.some(({ channels }) => channels.some((reached) => sameChannel(reached, current)))) return { status: "conflict", because: `a conflict reaches the pair of ${current.localDid} and ${current.peerDid}` };
+      if (this.conflicts.some(({ scope }) => scope.some((reached) => sameChannel(asChannel(reached), current)))) return { status: "conflict", because: `a conflict reaches the pair of ${current.localDid} and ${current.peerDid}` };
       const links = leadingTo.get(channelKey(current)) ?? [];
       if (links.length === 0) roots.push(current.peerDid);
       for (const link of links) {
@@ -319,18 +310,17 @@ class ContinuityFold implements Continuity {
   /**
    * A replacement the positive history shows but the usable one does
    * not, read off the claims it rests on. Here that is always one a
-   * conflict reaches: the facts are named by event CIDs, so no ID has
-   * two values, and a decision is projected only once it is a candidate.
+   * conflict reaches: a decision is projected only once it is a
+   * candidate.
    */
   private unusableReplacement(link: PositiveLink): PeerRoot {
-    const observations = new Set(this.facts.filter((fact) => fact.kind === "address-observed").map((fact) => fact.id));
-    const failing = link.support.filter((id) => !observations.has(id)).map((id) => this.model.status(id)).find((status) => status.status !== "usable");
+    const failing = link.support.filter((key) => key.kind !== "address-observed").map((key) => this.model.status(key)).find((status) => status.status !== "usable");
     const because = failing === undefined ? "" : `: ${failing.status}${"because" in failing ? `: ${failing.because}` : ""}`;
     return { status: "conflict", because: `the replacement of ${link.from.peerDid} by ${link.to.peerDid} is not usable${because}` };
   }
 
   decisionsIn(channel: Channel): readonly Decision[] {
-    const context = new Set(this.peerContext(channel).map(channelKey));
+    const context = new Set(this.sameLocal(channel).map(channelKey));
     const decisions: Decision[] = [];
     for (const decision of this.evidence.decisions.values()) {
       if (decision.channel === null || decision.channel.localDid !== channel.localDid) continue;
@@ -338,34 +328,4 @@ class ContinuityFold implements Continuity {
     }
     return decisions;
   }
-}
-
-/** The channels a conflict reaches: its context and the successors its claims name, the channels of a cycle or a refused join, the pairs of a repeated ID's variants. */
-function scopeOf(conflict: Conflict, byId: ReadonlyMap<FactId, ContinuityFact>): Channel[] {
-  const channels = new Map<string, Channel>();
-  const add = (channel: ModelChannel | null) => {
-    if (channel !== null) channels.set(channelKey(asChannel(channel)), asChannel(channel));
-  };
-  switch (conflict.kind) {
-    case "competing-changes":
-      for (const channel of conflict.context) add(channel);
-      for (const { facts } of conflict.changes) {
-        for (const id of facts) {
-          const fact = byId.get(id);
-          if (fact !== undefined && fact.kind !== "address-observed") add(successorChannel(fact));
-        }
-      }
-      break;
-    case "cycle":
-    case "identity-collision":
-      for (const channel of conflict.channels) add(channel);
-      break;
-    case "identity-conflict":
-      for (const fact of conflict.variants) {
-        add(fact.at);
-        if (fact.kind !== "address-observed") add(successorChannel(fact));
-      }
-      break;
-  }
-  return [...channels.values()].sort(compareChannels);
 }

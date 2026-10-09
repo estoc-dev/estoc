@@ -51,7 +51,7 @@ export interface MissingNotification {
  * A rotation away from a disclosed entry that established application
  * inputs call for and no decision records yet: one per rotation
  * intent, the local DID toward the peer anywhere in its verified
- * peer-only context, with every input supporting it. Ready names the
+ * same-local context, with every input supporting it. Ready names the
  * successor the inputs would select; waiting and blocked say what keeps
  * it from being made. Listing one takes no action: a rotation made by
  * hand reads the fold again under the lock, and the policy acts on a
@@ -141,7 +141,7 @@ function rotationCandidates(fold: VaultFold): RotationCandidate[] {
   const inputs = [...fold.inbound.executions.values()].flatMap((execution) => selectingInput(fold, execution) ?? []).sort((a, b) => compareEvents(a.event, b.event));
   for (const source of inputs) {
     const { channel } = source;
-    const key = canonicalText([channel.localDid, channelKey(fold.continuity.peerContext(channel)[0]!)]);
+    const key = canonicalText([channel.localDid, channelKey(fold.continuity.sameLocal(channel)[0]!)]);
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [source]);
     else group.push(source);
