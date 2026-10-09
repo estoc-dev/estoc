@@ -99,8 +99,8 @@ proof saves no decision and sends no message.
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].
 
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L79
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L109
-[test-verify]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L222
-[test-bind]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L404
-[test-create]: https://github.com/estoc-dev/estoc/blob/bbcb9034d0d5e288f66f4a2dc6c1a5e4f3e047ad/packages/from-prior/test/from-prior.test.ts#L442
+[test-inspect]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L79
+[test-precheck]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L109
+[test-verify]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L222
+[test-bind]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L420
+[test-create]: https://github.com/estoc-dev/estoc/blob/0284f9df359b3d7ce55aa6b6f88a47dab442265f/packages/from-prior/test/from-prior.test.ts#L458
