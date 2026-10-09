@@ -9,7 +9,7 @@
  * retained resolution of a short-form issuer holds.
  */
 
-import { InvalidFromPrior, createFromPrior } from "@estoc/continuity/from-prior";
+import { InvalidFromPrior, createFromPrior } from "@estoc/from-prior";
 import { isLongForm } from "@estoc/did-peer";
 
 import { InvalidDidDocument } from "./errors.js";

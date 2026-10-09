@@ -1,5 +1,5 @@
 /**
- * @estoc/continuity/from-prior — the DIDComm v2 `from_prior` proof: a
+ * @estoc/from-prior — the DIDComm v2 `from_prior` proof: a
  * compact JWT the prior DID's authentication key signs, whose `iss` is
  * the prior DID, whose `sub` is the new DID, and which omits `sub` to
  * end the relationship instead. This module inspects a token without
@@ -19,11 +19,12 @@
  * audience verifies but does not bind.
  */
 
+import type { ContinuityFact } from "@estoc/continuity";
 import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm } from "@estoc/did-peer";
 import { base58, base64urlnopad } from "@scure/base";
 import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
 
-import type { ContinuityFact, Did } from "../types.js";
+export type Did = string;
 
 export const FROM_PRIOR_PROFILE = "estoc-from-prior/1";
 export const FROM_PRIOR_ALG = "EdDSA";

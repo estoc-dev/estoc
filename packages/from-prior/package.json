@@ -1,13 +1,13 @@
 {
-  "name": "@estoc/continuity",
+  "name": "@estoc/from-prior",
   "version": "0.1.0",
-  "description": "Continuity between oriented DID pairs: a pure model that derives heads, paths, confirmation and conflicts from facts identified by their content (peer observations, peer endings, local decisions), without choosing winners; and a from-prior module that verifies, binds and creates DIDComm v2 from_prior proofs under a did:peer:4 + Ed25519 profile.",
+  "description": "DIDComm v2 from_prior proofs under a did:peer:4 + Ed25519 profile: inspect, precheck, verify and create a proof, and bind a verified one to the receipt it arrived on.",
   "license": "Apache-2.0",
   "author": "merely",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/estoc-dev/estoc.git",
-    "directory": "packages/continuity"
+    "directory": "packages/from-prior"
   },
   "type": "module",
   "exports": {
@@ -30,7 +30,10 @@
     "dev": "tsc --watch --preserveWatchOutput"
   },
   "dependencies": {
-    "canonicalize": "^5.1.0"
+    "@estoc/continuity": "workspace:^",
+    "@estoc/did-peer": "workspace:^",
+    "@scure/base": "^1.2.0",
+    "jose": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
@@ -42,6 +45,6 @@
     "didcomm",
     "from_prior",
     "did-rotation",
-    "continuity"
+    "did-peer"
   ]
 }

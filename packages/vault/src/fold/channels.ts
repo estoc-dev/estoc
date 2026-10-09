@@ -12,7 +12,7 @@
  */
 
 import type { ContinuityFact, LocalDecision } from "@estoc/continuity";
-import { InvalidFromPrior, bindFromPrior, precheckFromPrior, verifyFromPrior, type VerifiedFromPrior } from "@estoc/continuity/from-prior";
+import { InvalidFromPrior, bindFromPrior, precheckFromPrior, verifyFromPrior, type VerifiedFromPrior } from "@estoc/from-prior";
 import { isLongForm, longToShort } from "@estoc/did-peer";
 
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";

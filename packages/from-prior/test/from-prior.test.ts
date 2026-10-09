@@ -5,8 +5,7 @@ import { base58, base64urlnopad } from "@scure/base";
 import { SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 
-import { deriveContinuity } from "../src/index.js";
-import { bindFromPrior, createFromPrior, FROM_PRIOR_PROFILE, inspectFromPrior, InvalidFromPrior, precheckFromPrior, verifyFromPrior, type FromPriorFailure, type Signer, type VerifiedFromPrior } from "../src/from-prior/index.js";
+import { bindFromPrior, createFromPrior, FROM_PRIOR_PROFILE, inspectFromPrior, InvalidFromPrior, precheckFromPrior, verifyFromPrior, type FromPriorFailure, type Signer, type VerifiedFromPrior } from "../src/index.js";
 
 type Party = { longForm: string; shortForm: string; kid: string; privateKey: KeyObject; publicKeyBytes: Uint8Array };
 
@@ -358,9 +357,6 @@ describe("bind", () => {
     const binding = bindFromPrior(proof, { token: jwt, recipient: a0.longForm, sender: b1.longForm });
     const fact = { kind: "peer-observation", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, rotatedFrom: b0.shortForm } as const;
     expect(binding).toEqual({ status: "bound", fact });
-    const model = deriveContinuity([fact]);
-    expect(model.head({ localDid: a0.shortForm, peerDid: b0.shortForm })).toEqual({ status: "head", channel: { localDid: a0.shortForm, peerDid: b1.shortForm }, support: [fact] });
-    expect(model.confirmation(a0.shortForm, b0.shortForm)).toMatchObject({ status: "confirmed" });
   });
 
   it("accepts the short-form recipient and sender", async () => {
