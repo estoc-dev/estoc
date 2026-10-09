@@ -1,24 +1,21 @@
-import type { AddressObservation, Channel, Did, EvidenceRef, FactKey, LocalDecision, PeerTransition } from "../src/index.js";
+import { compareUtf8, factIdentity, type AddressObservation, type Channel, type ContinuityFact, type Did, type LocalDecision, type PeerEnding } from "../src/index.js";
 
 export const C = (localDid: Did, peerDid: Did): Channel => ({ localDid, peerDid });
 
-export const rotate = (evidence: EvidenceRef, at: Channel, successor: Did): PeerTransition => ({ kind: "peer-transition", at, change: { kind: "rotate", successor }, evidence });
+/** A receipt from the peer of `at` to its local DID that carried no proof. */
+export const observe = (at: Channel): AddressObservation => ({ kind: "address-observed", at, rotatedFrom: null });
 
-export const peerEnd = (evidence: EvidenceRef, at: Channel): PeerTransition => ({ kind: "peer-transition", at, change: { kind: "end" }, evidence });
+/** A receipt from the peer of `at` to its local DID that carried the peer's rotation from `from`. */
+export const rotated = (at: Channel, from: Did): AddressObservation => ({ kind: "address-observed", at, rotatedFrom: from });
 
-export const decide = (evidence: EvidenceRef, at: Channel, successor: Did, source: EvidenceRef | null = null): LocalDecision => ({ kind: "local-decision", at, change: { kind: "rotate", successor }, source, evidence });
+export const peerEnd = (at: Channel): PeerEnding => ({ kind: "peer-ended", at });
 
-export const localEnd = (evidence: EvidenceRef, at: Channel): LocalDecision => ({ kind: "local-decision", at, change: { kind: "end" }, source: null, evidence });
+export const decide = (at: Channel, successor: Did): LocalDecision => ({ kind: "local-decision", at, change: { kind: "rotate", successor } });
 
-/** With `carried`, the transition under the same evidence is the one this receipt carried. */
-export const observe = (evidence: EvidenceRef, at: Channel, carried = false): AddressObservation => ({ kind: "address-observed", at, carried, evidence });
+export const localEnd = (at: Channel): LocalDecision => ({ kind: "local-decision", at, change: { kind: "end" } });
 
-/** The keys of a transition, a decision and an observation, as results name them. */
-export const T = (evidence: EvidenceRef): FactKey => ({ kind: "peer-transition", evidence });
-export const D = (evidence: EvidenceRef): FactKey => ({ kind: "local-decision", evidence });
-export const O = (evidence: EvidenceRef): FactKey => ({ kind: "address-observed", evidence });
-
-export const keyOf = (fact: FactKey): FactKey => ({ kind: fact.kind, evidence: fact.evidence });
+/** Facts as the model lists them, in the order of their identities. */
+export const ordered = (...facts: ContinuityFact[]): ContinuityFact[] => [...facts].sort((a, b) => compareUtf8(factIdentity(a), factIdentity(b)));
 
 /** Every permutation of a short array. */
 export function* permutations<Item>(items: readonly Item[]): Generator<Item[]> {
