@@ -121,7 +121,7 @@ describe("a vault restored from a snapshot", () => {
     const fold = await foldOf(restored);
     expect(fold.set.of("message.in")).toHaveLength(1);
     expect(fold.dids.entities.has(ALICE_LATER)).toBe(false);
-    expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed")).toEqual([]);
+    expect(fold.continuity.facts.filter((fact) => fact.kind !== "peer-observation" || fact.rotatedFrom !== null)).toEqual([]);
   });
 
   it("predating a rotation the peer has verified selects the same successor when the message that prompted the first is delivered to it again: the peer joins the second proof to the one replacement, keeps its head there and sends on it", { timeout: LONG }, async () => {
@@ -170,7 +170,8 @@ describe("a vault restored from a snapshot", () => {
     expect(queuedFor(mediator, bob)).toBe(0);
     const ofBob = await foldOf(bob);
     expect(ofBob.continuity.conflicts).toEqual([]);
-    expect(ofBob.continuity.model.history(channelOf(b0, a0)).links.map((link) => [link.to.peerDid, link.usable, link.support.length])).toEqual([[a1, true, 2]]);
+    const links = ofBob.continuity.model.history(channelOf(b0, a0)).links;
+    expect(links.map((link) => [link.to.peerDid, link.usable, link.support.length, link.support.flatMap((fact) => ofBob.continuity.index.evidenceOf(fact)).length])).toEqual([[a1, true, 1, 2]]);
     expect(ofBob.continuity.head(channelOf(b0, a0))).toEqual(channelOf(b0, a1));
     const onward = await bob.agent.send({ channel: channelOf(b0, a1) }, hello("to the one successor"));
     expect(onward.dispatched).toMatchObject({ outcome: "submitted" });

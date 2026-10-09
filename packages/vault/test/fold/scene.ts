@@ -5,7 +5,7 @@
  * side signs, rotation decisions, intents and preparations between them,
  * so a fold over messages can be set up in a few lines.
  */
-import type { ContinuityFact, FactKey } from "@estoc/continuity";
+import { factIdentity, type ContinuityFact, type LocalDecision, type PeerObservation } from "@estoc/continuity";
 import { encodeLongForm } from "@estoc/did-peer";
 import type { Event, JsonObject } from "@estoc/event-store";
 import { SignJWT, importJWK } from "jose";
@@ -38,7 +38,6 @@ import {
   type DidId,
   type DidKeys,
   type EpochSeconds,
-  type EventCid,
   type EventReference,
   type ExecutionId,
   type Keys,
@@ -214,21 +213,17 @@ export async function shortIssuerProof(keys: Keys, predecessor: { didId: DidId; 
 
 export const channel = (local: { did: Did }, peer: { did: Did }): Channel => channelOf(local.did, peer.did);
 
-/** The two facts a carrier's bound proof establishes: the peer's transition at the predecessor pair and the successor's observation, both of this receipt. */
-export function factsOf(carrier: VaultEvent<"message.in">, local: { did: Did }, predecessor: { did: Did }, successor: { did: Did }): ContinuityFact[] {
-  return [
-    { kind: "peer-transition", at: channel(local, predecessor), change: { kind: "rotate", successor: successor.did }, evidence: carrier.cid },
-    { kind: "address-observed", at: channel(local, successor), carried: true, evidence: carrier.cid },
-  ];
-}
+/** The fact a proof-free receipt from the peer to the local DID projects. */
+export const seen = (local: { did: Did }, peer: { did: Did }): PeerObservation => ({ kind: "peer-observation", at: channel(local, peer), rotatedFrom: null });
 
-/** The keys of the facts an event projects, as the model names them. */
-export const transitionKey = (receipt: { cid: EventCid }): FactKey => ({ kind: "peer-transition", evidence: receipt.cid });
-export const observationKey = (receipt: { cid: EventCid }): FactKey => ({ kind: "address-observed", evidence: receipt.cid });
-export const decisionKey = (decision: { cid: EventCid }): FactKey => ({ kind: "local-decision", evidence: decision.cid });
+/** The fact a carrier's bound proof projects: the successor's observation, carrying the peer's rotation from the predecessor. */
+export const rotated = (local: { did: Did }, predecessor: { did: Did }, successor: { did: Did }): PeerObservation => ({ kind: "peer-observation", at: channel(local, successor), rotatedFrom: predecessor.did });
 
-/** Facts or keys in the model's order: by evidence, then by kind. */
-export const inModelOrder = <K extends FactKey>(keys: readonly K[]): K[] => [...keys].sort((a, b) => compareUtf8(a.evidence, b.evidence) || compareUtf8(a.kind, b.kind));
+/** The fact a decision to continue `from` as `to` toward the peer projects. */
+export const decided = (from: { did: Did }, peer: { did: Did }, to: { did: Did }): LocalDecision => ({ kind: "local-decision", at: channel(from, peer), change: { kind: "rotate", successor: to.did } });
+
+/** Facts in the model's order: by their identities. */
+export const inModelOrder = (facts: readonly ContinuityFact[]): ContinuityFact[] => [...facts].sort((a, b) => compareUtf8(factIdentity(a), factIdentity(b)));
 
 export type Rotation = { from: Local; peer: Peer; to: Local; source?: VaultEvent<"message.in"> | null; fromPrior?: string; overrides?: Partial<VaultData["did.rotationSelected"]> };
 

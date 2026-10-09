@@ -2,10 +2,11 @@
  * The continuity graph: channels as vertices, edges that replace exactly
  * one endpoint, and the joins two opposite-side edges leaving one pair
  * imply. Closure is a fixpoint, so the graph is the same whatever order
- * the edges came in. Nothing here knows what a fact is beyond its key.
+ * the edges came in. Nothing here knows what a fact is beyond its
+ * identity.
  */
 
-import { channelKey, compareChannels, compareUtf8, type KeyText } from "./facts.js";
+import { channelKey, compareChannels, compareUtf8, type FactIdentity } from "./facts.js";
 import type { Channel } from "./types.js";
 
 export type Replaces = "local" | "peer";
@@ -14,13 +15,13 @@ export interface Edge {
   readonly from: Channel;
   readonly to: Channel;
   readonly replaces: Replaces;
-  readonly support: Set<KeyText>;
+  readonly support: Set<FactIdentity>;
   /** derived by a join rather than declared by a fact at `from` */
   derived: boolean;
 }
 
 export interface Link {
-  readonly key: KeyText;
+  readonly identity: FactIdentity;
   readonly from: Channel;
   readonly to: Channel;
 }
@@ -67,7 +68,7 @@ export class Reach {
 
 export interface IdentityCollision {
   readonly channels: readonly Channel[];
-  readonly support: ReadonlySet<KeyText>;
+  readonly support: ReadonlySet<FactIdentity>;
 }
 
 export class Graph {
@@ -84,7 +85,7 @@ export class Graph {
     if (!this.vertices.has(key)) this.vertices.set(key, channel);
   }
 
-  add(from: Channel, to: Channel, replaces: Replaces, support: Iterable<KeyText>, derived = false): void {
+  add(from: Channel, to: Channel, replaces: Replaces, support: Iterable<FactIdentity>, derived = false): void {
     if (!this.admits(from) || !this.admits(to)) return;
     this.vertex(from);
     this.vertex(to);
@@ -243,18 +244,18 @@ export class Graph {
  * the graph is rebuilt until no candidate is admitted any more. The
  * confirming facts of each admitted candidate are returned with it.
  */
-export function closure<L extends Link>(
+export function closure(
   peerLinks: readonly Link[],
-  candidates: readonly L[],
+  candidates: readonly Link[],
   admits: (channel: Channel) => boolean,
-  confirms: (graph: Graph, candidate: L) => readonly KeyText[] | null
-): { graph: Graph; admitted: Map<L, readonly KeyText[]>; waiting: Set<L> } {
-  const admitted = new Map<L, readonly KeyText[]>();
+  confirms: (graph: Graph, candidate: Link) => readonly FactIdentity[] | null
+): { graph: Graph; admitted: Map<Link, readonly FactIdentity[]>; waiting: Set<Link> } {
+  const admitted = new Map<Link, readonly FactIdentity[]>();
   const waiting = new Set(candidates);
   const build = () => {
     const graph = new Graph(admits);
-    for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.key]);
-    for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.key, ...support]);
+    for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.identity]);
+    for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.identity, ...support]);
     graph.close();
     return graph;
   };

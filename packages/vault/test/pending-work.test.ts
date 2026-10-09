@@ -1,4 +1,4 @@
-import type { FactKey } from "@estoc/continuity";
+import type { ContinuityFact } from "@estoc/continuity";
 import { describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 
@@ -24,7 +24,7 @@ import {
   type PendingWork,
 } from "../src/index.js";
 import { MEDIATED, createdDid, expectOrderFree } from "./fold/helpers.js";
-import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, preparationOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotation, shortIssuerProof, transitionKey, vaults, type Local, type Peer } from "./fold/scene.js";
+import { IAT, PURE_ACK, automatic, blocked, channel, foldScene, intent, invitation, preparationOf, proof, proofFreeReceipt, receipt, receiptCarryingProof, ref, resolved, rotated, rotation, shortIssuerProof, vaults, type Local, type Peer } from "./fold/scene.js";
 
 const inputOf = (source: { data: { wireMessageId: string } }, peer: Peer, local: Local) => executionId(peer.did, local.did, source.data.wireMessageId as never);
 
@@ -122,7 +122,7 @@ describe("unfinished work", () => {
     let vault = await foldScene(scene, keys);
     expect(kindOf(control.data)).not.toBe("application");
     expect(vault.admissions.admitted(unadmitted.cid)).toBe(false);
-    const ready = (local: Local, binding: Peer, support: FactKey[] = []) => ({ status: "ready", recipe: { kind: "start", predecessor: local.did, binding: binding.did }, support });
+    const ready = (local: Local, binding: Peer, support: ContinuityFact[] = []) => ({ status: "ready", recipe: { kind: "start", predecessor: local.did, binding: binding.did }, support });
     expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([
       [channel(a0, b2), [unrelated.cid], ready(a0, b2)],
       [channel(a0, b0), [first.cid, second.cid], ready(a0, b0)],
@@ -134,7 +134,7 @@ describe("unfinished work", () => {
     vault = await foldScene(scene, keys);
     expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([
       [channel(a0, b2), [unrelated.cid], { status: "blocked", because: "the channel is denied" }],
-      [channel(a0, b1), [first.cid, second.cid, moved.cid], ready(a0, b0, [transitionKey(moved)])],
+      [channel(a0, b1), [first.cid, second.cid, moved.cid], ready(a0, b0, [rotated(a0, b0, b1)])],
     ]);
 
     const successor: Local = await createdDid(scene, keys, startDidId(a0.did, b0.did), MEDIATED, { kind: "start", profile: "v1", predecessor: a0.did, binding: b0.did });
@@ -153,7 +153,7 @@ describe("unfinished work", () => {
     const late = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0) }, { at: "2026-10-05T00:00:00.000Z" });
     let vault = await foldScene(scene, keys);
     expect([vault.continuity.superseded(channel(a0, b0)), vault.continuity.head(channel(a0, b0))]).toEqual([true, channel(a0, b1)]);
-    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [transitionKey(moved)] }]]);
+    expect(workSnapshot(unfinishedWork(vault)).rotationCandidates).toEqual([[channel(a0, b1), [moved.cid, late.cid], { status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [rotated(a0, b0, b1)] }]]);
     expectOrderFree(scene.events, (set) => workSnapshot(unfinishedWork(foldVault(set, vault.checks))).rotationCandidates);
 
     blocked(scene, a0, b1);

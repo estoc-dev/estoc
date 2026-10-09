@@ -40,14 +40,11 @@ export async function signFromPrior(keys: Keys, predecessor: { didId: DidId; lon
   }
   if (methodId === undefined) throw new InvalidFromPrior(`${predecessor.longFormDid} authorizes no authentication method carrying the entity's key`, "document");
   const proof = await createFromPrior(
-    { issuer: predecessor.longFormDid, change: { kind: "rotate", successor: successorLongFormDid }, iat, evidence: { ref: predecessor.longFormDid, longForm: predecessor.longFormDid } },
+    { issuer: predecessor.longFormDid, change: { kind: "rotate", successor: successorLongFormDid }, iat, issuerLongForm: predecessor.longFormDid },
     { methodId, sign: (input) => key.sign(input) }
   );
   return proof.token;
 }
-
-/** The long form a proof's issuer verifies against, and what it was taken from: the spelling itself, or the retained resolution that holds it. */
-export type IssuerLongForm = { ref: string; longForm: Did };
 
 /**
  * The immutable document of a proof's issuer, as the long form that
@@ -58,11 +55,11 @@ export type IssuerLongForm = { ref: string; longForm: Did };
  * its own long form derives. Null while none is here: a long form seen
  * only in other event data is not material.
  */
-export async function issuerLongFormOf(iss: Did, retained: Iterable<{ ref: string; data: VaultData["peer.resolved"] }>, readObject: ReadObject): Promise<IssuerLongForm | null> {
-  if (isLongForm(iss)) return { ref: iss, longForm: iss };
-  for (const { ref, data } of retained) {
+export async function issuerLongFormOf(iss: Did, retained: Iterable<VaultData["peer.resolved"]>, readObject: ReadObject): Promise<Did | null> {
+  if (isLongForm(iss)) return iss;
+  for (const data of retained) {
     if (data.did !== iss) continue;
-    if (isLongForm(data.presentedDid)) return { ref, longForm: data.presentedDid };
+    if (isLongForm(data.presentedDid)) return data.presentedDid;
     let document;
     try {
       document = await resolvedDocumentOf(data, readObject);
@@ -71,7 +68,7 @@ export async function issuerLongFormOf(iss: Did, retained: Iterable<{ ref: strin
       throw err;
     }
     const id = document?.["id"];
-    if (typeof id === "string" && isLongForm(id)) return { ref, longForm: id as Did };
+    if (typeof id === "string" && isLongForm(id)) return id as Did;
   }
   return null;
 }

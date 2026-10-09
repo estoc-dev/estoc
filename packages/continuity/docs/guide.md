@@ -14,49 +14,52 @@ Start with [both parties rotating and joining](#join), then explore
 | --- | --- |
 | `C(A0,B0)` | From A's perspective: A0 is the local DID and B0 is the peer DID. Swapping them changes the question. |
 | A0, A1, B0, B1 | DID abbreviations used in the tests. Numbers identify predecessors and successors in an example; they provide no timestamp or ordering authority. |
-| `p1` | A `peer-transition`: the peer's verified and bound rotation or ending. |
+| `p1` | A `peer-observation` fact whose receipt carried the peer's verified and bound rotation: B1 wrote to A0, having rotated from B0 (`rotatedFrom: "B0"`). |
+| `o1` | A `peer-observation` fact whose receipt carried no proof: an authenticated receipt from the peer to an **exact local DID**. |
 | `d1` | A `local-decision`: a local rotation or ending decision the host has saved. |
-| `o1` | An `address-observed` fact: an authenticated receipt from the peer to an **exact local DID**. |
+| `e` | An ending: a `peer-ending` fact, the peer's verified and bound ending, or a `local-decision` that ends. |
 | Dashed `join` edge | An edge derived from the two sides' rotations. It can be usable without another receipt. |
 | Dashed `diagnostic` edge | An edge retained to explain history or ambiguity. It cannot serve as a usable path. |
 | `support` | The facts supporting the asserted links or an individual confirmation, not every fact the answer depends on. |
 
-A result names a fact by its key: its kind and its evidence, the receipt or
-saved decision it rests on. The tables write the fact's label instead, as the
-tests name it. Edges are labeled with their purpose. In dependency diagrams,
-`source` and `carried` are fact references, not DID rotations.
+A result lists facts by their content; a fact names no receipt or saved
+decision, and facts that say the same thing are one fact. The tables write each
+fact's label, as the tests name the variable. Edges are labeled with their
+purpose.
 
 ## From evidence to queries
 
 ```mermaid
 flowchart TB
     R["host: receipts, proofs,<br/>DID documents"] --> V["verify + bind"]
-    V --> F["Three kinds of normalized fact"]
+    V --> F["Three kinds of fact,<br/>identified by content"]
     D["host: saved local decisions"] --> F
-    O["host: authenticated<br/>address observations"] --> F
+    O["host: authenticated<br/>peer observations"] --> F
+    F --> X["host index:<br/>evidence to factIdentity"]
     F --> M["deriveContinuity<br/>accept, then derive"]
     M --> Q["head / path / confirmation<br/>history / conflicts / status"]
     Q --> H["host: operation policy and commit"]
+    X --> H
 ```
 
-One receipt can supply both a transition and an observation. The transition
-establishes how addresses continue; the observation establishes which address
-the peer wrote to. A transition alone can establish topology. An observation
-alone can confirm the exact address it records.
+A receipt that carried a rotation is one observation that says two things: how
+the peer's address continued, and which local address the successor wrote to.
+A receipt that carried no proof confirms the exact address it records and
+nothing else. Facts are identified by content, so a thousand receipts from B0
+to A0 are one observation; the host keeps the index from each receipt to the
+fact it projects, and answers which receipt a fact stands for.
 
 <a id="peer-rotation"></a>
 
-## Receiving a peer rotation: continuation and confirmation have their own evidence
+## Receiving a peer rotation: one receipt, two pairs
 
-B1 writes to A0 carrying a B0-to-B1 proof. The host projects two facts: `p1`
-declares the rotation at the old pair, and `o1` records the receipt at the new
-pair. Both have that receipt as their evidence, so `o1` needs only `carried` to
-say that the transition of its own receipt is `p1`.
+B1 writes to A0 carrying a B0-to-B1 proof. The host projects one fact, `p1`: an
+observation at the new pair whose `rotatedFrom` is B0. It claims the rotation at
+the old pair and records the receipt at the new one, so it sits at both.
 
 ```mermaid
 flowchart LR
-    C00["C(A0,B0)"] -->|"p1: peer B0 → B1"| C01["C(A0,B1)"]
-    O1["o1: B1 wrote to A0<br/>carried: p1, same receipt"] --- C01
+    C00["C(A0,B0)"] -->|"p1: peer B0 → B1"| C01["C(A0,B1)<br/>p1: B1 wrote to A0"]
     CX["C(X0,B0)<br/>No connection to this history"]
 ```
 
@@ -64,12 +67,14 @@ flowchart LR
 | --- | --- |
 | `head(C(A0,B0))` | `head C(A0,B1)`, with support `[p1]`. |
 | `head(C(A0,B1))` | The queried pair is already the head, with support `[]`. |
-| `confirmation(A0,B0)` | `confirmed`, with witness `[o1,p1]` for `o1`. |
-| `confirmation(A0,B1)` | `o1` also confirms A0 here; the `p1` it carried remains part of its witness. |
+| `confirmation(A0,B0)` | `confirmed`, with witness `[p1]` for `p1`. |
+| `confirmation(A0,B1)` | `p1` also confirms A0 here, with the same witness. |
+| `changes(C(A0,B0), peer)` | `p1`, at the pair the peer left. `changes(C(A0,B1), peer)` lists nothing. |
+| Several receipts carry the same proof | One fact, `p1`. A receipt from B1 to A0 without a proof is a second fact beside it. |
 | An independent observation exists at `C(X0,B0)` | Its head stays `C(X0,B0)`. Sharing B0 creates no connection to the rotation. |
 | No fact mentions a pair | Its head is `no-evidence`. |
 
-**Tests:** [receiving a peer rotation][test-peer].
+**Tests:** [receiving a peer rotation][test-peer], [repeated carriers][test-repeat].
 
 <a id="local-rotation"></a>
 
@@ -88,19 +93,15 @@ flowchart LR
 
 | Input | `status(d1)` | `head(C(A0,B0))` |
 | --- | --- | --- |
-| Only `d1`, with `source: null` | `waiting` | `unresolved`, waiting `[d1]`, missing `[]`. |
+| Only `d1` | `waiting` | `unresolved`, waiting `[d1]`. |
 | Add `o0`, addressed to A0 | `usable` | `head C(A1,B0)`, support `[d1,o0]`. |
 | Only an observation addressed to A1 | `waiting` | Still `unresolved`: receipt at the successor does not confirm the predecessor. |
-| `source: o0`, but o0 is absent | `unresolved`, missing `[o0]` | `unresolved`, naming the exact missing reference o0. |
-| The named o0 addresses A0, but its peer is not on a reachable peer path | `waiting` | `unresolved`. |
-| The named o0 addresses another local DID | `invalid` | The decision establishes no usable link. |
-| The named receipt carried a transition but has no observation here | `unresolved`, missing that receipt's observation | A source never resolves to a transition. |
+| Instead `p1`, B1's receipt to A0 carrying B0 → B1 | `usable` | `head C(A1,B1)`, support `[d1,p1]`: B1 is a successor of B0 and wrote to A0. |
+| The same A0 → A1 saved at `C(A0,B0)` and at `C(A0,B1)`, which `p1` connects | `usable` | Joint support for one change, not a fork. |
 
-With `source: null`, the model finds a qualifying observation. A named source
-requires the observation of that exact receipt; another observation cannot
-replace it. A chain of
-unconfirmed A0-to-A1-to-A2 decisions also cannot become usable just because an
-observation addresses A2 at its far end.
+A decision names no observation: any usable one addressed to the predecessor
+confirms it. A chain of unconfirmed A0-to-A1-to-A2 decisions cannot become
+usable just because an observation addresses A2 at its far end.
 
 The declared but unestablished successor `C(A1,B0)` is also `unresolved`.
 `FactStatus.waiting` describes an individual fact, while
@@ -113,13 +114,13 @@ The declared but unestablished successor `C(A1,B0)` is also `unresolved`.
 ## Both parties rotate: a join establishes a pair without inventing a receipt
 
 At the starting pair, `o0` confirms A0. A saves `d1`, an A0-to-A1 decision, and
-B supplies `p1`, a B0-to-B1 transition. Once both base edges are established, the
-model derives two join edges:
+B1 writes to A0 carrying B0-to-B1, which is `p1`. Once both base edges are
+established, the model derives two join edges:
 
 ```mermaid
 flowchart LR
     C00["C(A0,B0)<br/>o0: B0 wrote to A0"] -->|"d1: local rotation"| C10["C(A1,B0)"]
-    C00 -->|"p1: peer rotation"| C01["C(A0,B1)"]
+    C00 -->|"p1: peer rotation"| C01["C(A0,B1)<br/>p1: B1 wrote to A0"]
     C10 -. "join: peer" .-> C11["C(A1,B1)<br/>Common head"]
     C01 -. "join: local" .-> C11
     classDef head fill:#e1f3e5,stroke:#39734a,color:#173d24
@@ -138,11 +139,9 @@ import { deriveContinuity, type ContinuityFact } from "@estoc/continuity";
 
 const C = (localDid: string, peerDid: string) => ({ localDid, peerDid });
 const facts: ContinuityFact[] = [
-  { kind: "address-observed", at: C("A0", "B0"), carried: false, evidence: "o0" },
-  { kind: "local-decision", at: C("A0", "B0"),
-    change: { kind: "rotate", successor: "A1" }, source: null, evidence: "d1" },
-  { kind: "peer-transition", at: C("A0", "B0"),
-    change: { kind: "rotate", successor: "B1" }, evidence: "p1" },
+  { kind: "peer-observation", at: C("A0", "B0"), rotatedFrom: null },
+  { kind: "local-decision", at: C("A0", "B0"), change: { kind: "rotate", successor: "A1" } },
+  { kind: "peer-observation", at: C("A0", "B1"), rotatedFrom: "B0" },
 ];
 
 const model = deriveContinuity(facts);
@@ -153,7 +152,7 @@ model.confirmation("A1", "B1");
 | Query | Result |
 | --- | --- |
 | `head` from C(A0,B0), C(A1,B0) or C(A0,B1) | All reach `C(A1,B1)`, with support `[d1,o0,p1]`. |
-| `confirmation(A0,B0)` | `confirmed`, established by o0. |
+| `confirmation(A0,B0)` | `confirmed` by o0, and by p1 through the B0 → B1 rotation. |
 | `confirmation(A1,B1)` or `confirmation(A1,B0)` | `unconfirmed`, with unusable `[]`: there is no observation addressed to A1. |
 | The two join edges in `history` | `derived: true` and `usable: true`, each with support `[d1,o0,p1]`. |
 
@@ -166,7 +165,7 @@ sequenceDiagram
     participant A1
     participant Model as Model over the new facts
     B1->>A1: Authenticated message without from_prior
-    A1->>Model: o2 at C(A1,B1), carried = false
+    A1->>Model: o2 at C(A1,B1), rotatedFrom = null
     Model-->>A1: confirmation(A1,B1) = confirmed, support [o2]
 ```
 
@@ -220,9 +219,9 @@ throughput guarantees.
 
 ```mermaid
 flowchart LR
-    subgraph SAME["Same change, more provenance"]
+    subgraph SAME["Same change, one fact"]
         direction LR
-        S0["C(A0,B0)"] -->|"p1 and p2: B0 → B1"| S1["C(A0,B1)<br/>head, support [p1,p2]"]
+        S0["C(A0,B0)"] -->|"p1: B0 → B1,<br/>from any number of receipts"| S1["C(A0,B1)<br/>head, support [p1]"]
     end
     subgraph FORK["Same context, different successors"]
         direction LR
@@ -239,8 +238,8 @@ and time select no successor.
 
 | Boundary | Result and reason |
 | --- | --- |
-| Two receipts both declare B0 → B1 | More support, with no additional successor or fork. |
-| p1 is at C(A0,B0), p2 is at C(A1,B0), and a local link connects the pairs | Different successors still compete in the same B0 context. |
+| Two receipts both carry B0 → B1 to A0 | One fact, with no additional successor or fork. |
+| B0 → B1 is carried to A0 and B0 → B2 to A1, and a local link connects C(A0,B0) and C(A1,B0) | Different successors still compete in the same B0 context. |
 | Remove that local connection, with no other context connection between the pairs | Sharing B0 alone does not establish this competition across pairs. |
 | Save both A0 → A1 and A0 → A2 at one pair, before any observation arrives | Already `competing-changes`: missing confirmation does not erase a saved fork. |
 | Add a proof-free observation to a conflicted context | It cannot restore usable continuation through the conflict. |
@@ -275,7 +274,7 @@ pairs, for a refused join the pair and its two successor pairs. A query that
 depends on those pairs may answer `conflict` as well; see
 [a link only the positive graph has](#diagnostic).
 
-**Tests:** [repeated carriers][test-peer], [competing changes][test-competition],
+**Tests:** [repeated carriers][test-repeat], [competing changes][test-competition],
 [observations][test-observations].
 
 <a id="acceptance"></a>
@@ -285,7 +284,7 @@ depends on those pairs may answer `conflict` as well; see
 ```mermaid
 flowchart LR
     A["replica A<br/>o0 + d1 + p1<br/>head = C(A1,B1)"] --> M["Sources meet;<br/>facts projected again"]
-    B["replica B<br/>o0 + p2<br/>p2 at C(A1,B0): B0 → B2"] --> M
+    B["replica B<br/>o0 + p2<br/>p2: B0 → B2 toward A1"] --> M
     M --> R["Both replicas see the same conflict<br/>p1 and p2 compete in one B0 context"]
 ```
 
@@ -298,20 +297,19 @@ cannot undo messages that have already been sent.
 | Input boundary | What the tests establish |
 | --- | --- |
 | The same facts in any order, with any repetition | The same answers. |
-| The same key, the same value | Kept once; object member order does not affect equality. |
-| The same key, a different value | `InvalidFact`: one receipt or one saved decision says one thing, so no value is chosen and none is kept beside another. |
-| The same change under different evidence | Separate support for one change. |
-| Different string case | Different evidence is another fact, and a different DID under one key another value; the core does not normalize DIDs for the host. |
-| Order of the accepted facts | Evidence, then kind, in UTF-8 byte order rather than UTF-16 or locale order. |
-| Extra or inherited members, empty evidence, equal endpoints, or a successor equal to either endpoint | `InvalidFact`. |
-| Missing or incorrectly typed `source` or `carried`, an ending with a successor or a source, or invalid Unicode | `InvalidFact`; a required explicit null cannot be omitted. |
+| The same content | One fact; object member order is not part of its identity. |
+| A receipt with a rotation and one without, at one pair | Two facts: the first also rests on the pair the peer left. |
+| Different string case | Another fact; the core does not normalize DIDs for the host. |
+| Order of the accepted facts | By identity, the RFC 8785 text, in UTF-8 byte order rather than UTF-16 or locale order. |
+| Unknown own enumerable members, required members missing from the object itself, equal endpoints, or a successor or predecessor equal to either endpoint | `InvalidFact`. |
+| Missing or incorrectly typed `rotatedFrom` or `change`, an ending with a successor, or invalid Unicode | `InvalidFact`; a required explicit null cannot be omitted. |
 | An input member is an accessor | Validation captures its value instead of reading a changing member again later. |
+| `factIdentity` or `status` of a value the profile refuses | `InvalidFact`, the same refusal `deriveContinuity` gives. |
 
-An invalid fact or a second value under a key rejects the whole call; nothing
-is derived that skips it.
+An invalid fact rejects the whole call; nothing is derived that skips it.
 
-**Tests:** [accepting facts][test-accept], [validating a fact][test-validate],
-[convergence and monotonicity][test-convergence].
+**Tests:** [accepting facts][test-accept], [the identity of a fact][test-identity],
+[validating a fact][test-validate], [convergence and monotonicity][test-convergence].
 
 <a id="diagnostic"></a>
 
@@ -319,62 +317,82 @@ is derived that skips it.
 
 A conflict takes every pair its scope reaches out of usable continuity, and with
 them what depends on those pairs, even beyond the scope. Here a peer fork at
-C(A0,Bz) reaches C(A0,Bp). Receipt s carried a transition from C(A0,Bp) to
-C(A0,B0), so neither that transition nor the observation of s is usable. The
-local rotation d names s as its source: it links C(A0,B0) to C(A1,B0) in
-positive history, never in usable continuity, though neither of its pairs is in
-conflict.
+C(A0,Bz) reaches C(A0,Bp). `s` is B0's receipt to A0 carrying B0's rotation
+from Bp: it sits at C(A0,Bp), which the fork reaches, so it is not usable. The
+local rotation `d` decides A0 → A1 at C(A0,B0), and nothing but `s` confirms A0
+there: `d` links C(A0,B0) to C(A1,B0) in positive history, never in usable
+continuity, though neither of its pairs is in conflict.
 
 ```mermaid
 flowchart LR
     Z["C(A0,Bz)<br/>fork: Bz → Bp, Bz → Bq"] -->|"f1"| P["C(A0,Bp)<br/>in the fork's scope"]
-    P -. "s: carried transition, not usable" .-> C00["C(A0,B0)<br/>s: observation, not usable"]
-    C00 -. "d: source = s, diagnostic" .-> C10["C(A1,B0)"]
+    P -. "s: Bp → B0, not usable" .-> C00["C(A0,B0)<br/>s: B0 wrote to A0"]
+    C00 -. "d: confirmed only by s, diagnostic" .-> C10["C(A1,B0)"]
     classDef conflict fill:#fbe5e5,stroke:#b04444,color:#702525
     class Z,P conflict
 ```
 
+Every rotation the peer makes is observed at its successor pair, addressed to
+the same local DID, so any usable peer link leaving C(A0,B0) would confirm A0
+for `d`. A pair shares the context of C(A0,B0) without lying ahead of it only
+through joins. Below, X0 became A0 at C(X0,B0) and at C(X0,B1), and the peer
+moved from B0 and from B1 to B2 toward X0: the joins carry both moves to A0, so
+C(A0,B0) and C(A0,B1) both lead to C(A0,B2). `i` decides A0 → A1 at C(A0,B1),
+confirmed by B1's receipt to A0 there, which does not lie ahead of C(A0,B0).
+
+```mermaid
+flowchart LR
+    C00["C(A0,B0)"] -. "join: peer" .-> C02["C(A0,B2)"]
+    C01["C(A0,B1)<br/>B1 wrote to A0"] -. "join: peer" .-> C02
+    C01 -->|"i: usable local"| C11["C(A1,B1)"]
+    C02 -. "join: local" .-> C12["C(A1,B2)<br/>head"]
+    C00 -. "d: diagnostic" .-> C10["C(A1,B0)"]
+    C10 -. "diagnostic join" .-> C12
+```
+
 | Situation | Result |
 | --- | --- |
-| Only d makes A0 → A1 | `head(C(A0,B0))` is `conflict`. There is no usable path and no fallback to the predecessor head. |
-| `p + o + i` make the same A0 → A1 usably at C(A0,B1), which p connects | They establish the head and path; d is provenance, and `status(d)` is `conflict` through its source. |
-| d names a source that is absent instead | The same: a waiting claim of a change usable links make anyway does not block the head. |
+| Only d makes A0 → A1 | `head(C(A0,B0))` is `conflict`, facts `[d,s]`. There is no usable path and no fallback to the predecessor head. |
+| `i` makes the same A0 → A1 usably at C(A0,B1), in the same usable context | `head C(A1,B2)` along C(A0,B0) → C(A0,B2) → C(A1,B2); d is provenance, and `status(d)` is `waiting`: only continuity that is not usable confirms A0 for it. |
+| d without `s`, so nothing confirms A0 for it | The same head: a waiting claim of a change usable links make anyway does not block it. |
+| d without `s` and without `i` | `unresolved`, waiting `[d]`. |
 
 Support in `history().links` is positive provenance. Even when a link has
 `usable: true`, its history support can contain facts that are not usable. For a
 usable witness, read the corresponding `path`, `head` or `confirmation` result.
 
-**Tests:** [the same change elsewhere in a context][test-covered].
+**Tests:** [the same change elsewhere in a context][test-covered],
+[a rotation and a plain observation at one pair][test-observations].
 
 <a id="onward"></a>
 
 ## Onward rotations on a side branch still need an answer
 
-Here is a harder boundary. `p + o + i` establish a usable route to A1B1: p
-rotates B0 → B1, o observes B1 writing to A0, and i decides A0 → A1 at C(A0,B1).
-The `d` of the previous section declares the same A0 → A1 and leaves a side
-branch through C(A1,B0) in positive history.
+Here is a harder boundary. Over the previous section's facts, `i` and the joins
+establish a usable route from C(A0,B0) to C(A1,B2), and `d` leaves a side branch
+through C(A1,B0) in positive history. `w` saves A1 → A2 on that branch.
 
 ```mermaid
 flowchart LR
-    C00["C(A0,B0)"] -->|"p: usable peer"| C01["C(A0,B1)<br/>o: addressed to A0"]
-    C01 -->|"i: usable local"| C11["C(A1,B1)<br/>Reached by p + o + i"]
+    C00["C(A0,B0)"] -. "join: peer" .-> C02["C(A0,B2)"]
+    C02 -. "join: local" .-> C12["C(A1,B2)<br/>Reached by usable links"]
     C00 -. "d: diagnostic" .-> C10["C(A1,B0)"]
-    C10 -. "diagnostic join" .-> C11
-    C10 -. "w: saved A1 → A2<br/>source = missing" .-> C20["C(A2,B0)<br/>Not yet established"]
+    C10 -. "diagnostic join" .-> C12
+    C10 -. "w: saved A1 → A2" .-> C20["C(A2,B0)<br/>Not yet established"]
 ```
 
-w is outside the original usable forward path, but it still declares an onward
-choice for A1. The query must account for that choice before returning a head.
+w is outside the usable forward path, but it still declares an onward choice
+for A1. The query must account for that choice before returning a head.
 
 | Evidence added to the base example | `head(C(A0,B0))` | Why |
 | --- | --- | --- |
-| w has not been added | `head C(A1,B1)`, support `[i,o,p]` | Usable evidence establishes the same change. |
-| Add w as shown | `conflict`, facts `[w]` | Only diagnostic history connects w's scope to the query; `status(w)` itself remains `unresolved` for its missing source. |
-| Also add usable `scope: C(A1,B0) → C(A1,B1)` | `unresolved`, waiting `[w]`, missing `[missing]` | Its scope is established; the exact source is still missing. |
-| Then supply `missing`, an observation from B0 to A1 | `head C(A2,B1)` | Both scope and confirmation prerequisites are satisfied. |
-| Without adding scope, independently establish A1 → A2 at C(A1,B1) using a new observation | `head C(A2,B1)` | The same onward change has usable support; w remains provenance. |
-| Instead save A1 → A3 at C(A1,B1) | `conflict` | It competes with w's A1 → A2. |
+| w has not been added | `head C(A1,B2)` | Usable evidence establishes the same change as d. |
+| Add w as shown | `conflict`, facts `[w]` | Only diagnostic history connects w's pair to the query; `status(w)` itself is `waiting`. |
+| Save the same A1 → A2 at C(A1,B2) instead | `unresolved`, waiting that decision | Usable links connect it; nothing confirms A1 there yet. |
+| Add `scope`, B2's receipt to A1 carrying B0 → B2 | `head C(A2,B2)` | It connects C(A1,B0) usably, and as an observation addressed to A1 it confirms w. |
+| Without `scope`, establish A1 → A2 at C(A1,B2) with a new observation | `head C(A2,B2)` | The same onward change has usable support; w remains provenance. |
+| Instead save A1 → A3 at C(A1,B2) | `conflict` | It competes with w's A1 → A2. |
+| Instead of w, end A1 at C(A1,B0) | `conflict`, facts `[the ending]` | Only diagnostic history connects the ending to the query. |
 
 This explains why `status(fact)` and `head(pair)` can return different statuses.
 The former describes the fact's own prerequisites; the latter also accounts for
@@ -407,10 +425,14 @@ context. Other pairs with no connecting evidence are unaffected.
 | B0 → B1, followed by B1 ending | `ended`: ordinary forward history at different predecessors. |
 | Local A0 ending and peer B0 → B1 | Both pairs are `ended`; there is no continuing joined head. |
 | Local ending and A0 → A1 in the same A0 context | `conflict`. |
-| An observation claims it carried an ending | `invalid`: an ending establishes no successor-address observation. |
-| Several endings of one side, or endings of both sides | `ended`, listing every one. |
+| Endings of one side at several pairs of a context, or endings of both sides | `ended`, listing every one. |
+| A saved A0 → A1 still waiting, and a peer ending at the same pair | `ended`; the decision stays `waiting`. |
 | An ending at another pair connects only through a link that is not usable, such as one leaving a pair a fork reaches | The query reports `conflict`; historical connectivity alone cannot apply the ending. |
 | The same link without the fork, or another ending of the same side at the queried pair | `ended`. |
+
+For known forward choices, the result accounts for relevant conflicts first,
+then established endings, unresolved choices and finally a usable head.
+`no-evidence` is reserved for an unknown pair.
 
 Endings retain the original pair and assertion. They create no `C(A,null)` and
 do not mean a contact was deleted, a peer was blocked or an application message
@@ -419,73 +441,40 @@ witness across pairs.
 
 **Tests:** [ending][test-ending], [usable scope for an ending][test-ending-scope].
 
-<a id="dependencies"></a>
-
-## Diagnose missing and conflicted evidence along the whole dependency chain
-
-Assume a usable `scope` establishes C(A0,B0) → C(A0,B1). At the old pair, w
-decides A0 → A1 and names receipt t as its source. At the new pair, s is the
-observation of receipt t, which carried transition t from C(A0,Bp) to C(A0,B1).
-
-```mermaid
-flowchart LR
-    W["w: local decision<br/>A0 → A1"] -->|"source = receipt t"| S["s: B1 wrote to A0"]
-    S -->|"carried"| T["t: Bp → B1<br/>the transition of the same receipt"]
-```
-
-| State of t and other inputs | Query result |
-| --- | --- |
-| t is absent | `head` is `unresolved`, missing `[t]`. Diagnose the exact reference; s cannot become proof-free. |
-| t is absent and B1 has a valid peer ending | `head` is `ended`; `status(w)` still exposes the missing evidence. |
-| t is here and usable | w becomes usable, yielding the common head C(A1,B1). |
-| A fork reaches C(A0,Bp), where t starts | `head` is `conflict`, tracing through s to the conflicted transition; `status(w)` names the fork's facts. |
-| That fork and the ending are both present | Still `conflict`: relevant conflict takes precedence over an ending. |
-
-Another subtle case uses only an observation whose carried transition is
-missing. `head` can return the original pair with empty support while
-`confirmation` remains `unconfirmed`, listing that observation as unusable.
-**A head cannot replace an operation's exact evidence prerequisites.**
-
-For known forward choices, the result accounts for relevant conflicts first,
-then established endings, unresolved choices and finally a usable head.
-`no-evidence` is reserved for an unknown pair.
-
-**Tests:** [the full reference chain][test-dependencies],
-[observations and carried transitions][test-observations].
-
 <a id="support"></a>
 
 ## A short link can need a witness spanning several hops
 
-o2 is a proof-free observation from B2 to A0. For d1 in B0's context to use it
-as predecessor confirmation, the witness also needs the B0 → B1 → B2 peer path.
+p2 is B2's receipt to A0 carrying B1 → B2. For it to confirm A0 in B0's
+context, its witness also needs p1, the B0 → B1 step.
 
 ```mermaid
 flowchart LR
-    C00["C(A0,B0)"] -->|"p1"| C01["C(A0,B1)"]
-    C01 -->|"p2"| C02["C(A0,B2)<br/>o2: addressed to A0"]
-    C00 -->|"d1: local link<br/>support [d1,o2,p1,p2]"| C10["C(A1,B0)"]
+    C00["C(A0,B0)"] -->|"p1"| C01["C(A0,B1)<br/>p1: addressed to A0"]
+    C01 -->|"p2"| C02["C(A0,B2)<br/>p2: addressed to A0"]
+    C00 -->|"d1: local link<br/>support [d1,p1,p2]"| C10["C(A1,B0)"]
 ```
 
-Keeping only d1 and o2 loses the evidence that lets B2 confirm A0 in B0's
-context. A usable witness includes the required peer path and the recursive
-prerequisites of its links. Support need not be a minimal set.
+`confirmation(A0,B0)` lists p1 with the witness `[p1]` and p2 with `[p1,p2]`.
+d1's link carries every such witness. Keeping only d1 and p2 loses p1, the step
+that lets B2 confirm A0 in B0's context. A usable witness includes the required
+peer path and the recursive prerequisites of its links. Support need not be a
+minimal set.
 
 | Returned evidence | What it establishes |
 | --- | --- |
 | `path.support` | Re-derives the asserted usable links under the same profile. |
-| Each `confirmation.observations[n].support` | Re-derives that individual confirmation, including the transition its observation carried. |
+| Each `confirmation.observations[n].support` | Re-derives that individual confirmation: the observation and the peer path to it. |
 | `head.support` | Supports the usable links leading to the head; it does not promise to replay the whole query verdict. |
-| An unchanged head or zero-step path, with support `[]` | There is no rotation link to prove; this establishes no address observation. |
+| An unchanged head or zero-step path, with support `[]` | There is no rotation link to prove; this establishes no peer observation. |
 | Positive provenance in `history` | Explains origins and ambiguity; it is not a general usable witness. |
 
 Keep the facts and the profile to replay a query result. Support proves no
-absence of conflicts or missing evidence outside those facts. `path` selects
-one deterministic path. `confirmation` lists eligible observations with one
-complete witness each; it does not enumerate every alternative route to the
-same observation.
+absence of conflicts outside those facts. `path` selects one deterministic
+path. `confirmation` lists eligible observations with one complete witness
+each; it does not enumerate every alternative route to the same observation.
 
-**Tests:** [confirmation support across several hops][test-local],
+**Tests:** [confirmation support across several hops][test-support],
 [join witnesses and zero-step paths][test-join]. The complete replay boundary
 is in the [README's query explanation](../README.md#what-the-answers-mean).
 
@@ -501,7 +490,7 @@ flowchart TB
     D --> V["verify<br/>profile + issuer key + signature"]
     R["Host-established receipt<br/>token / recipient / sender"] --> B["bind<br/>Check this receipt"]
     V --> B
-    B --> F["Bound facts"]
+    B --> F["One bound fact"]
 ```
 
 `inspect` can successfully read a token whose signature has been tampered with.
@@ -512,7 +501,7 @@ successor is someone else; what it passes is still unverified, and a host that
 lacks the issuer's material waits rather than rejects. `verify` applies the
 same rules again, takes the authorized key from the issuer's own long-form DID
 and verifies the signature. `bind` checks the exact token against the receipt
-and establishes facts only when binding succeeds.
+and establishes a fact only when binding succeeds.
 
 | Input boundary exercised by the tests | Result |
 | --- | --- |
@@ -529,11 +518,11 @@ and establishes facts only when binding succeeds.
 | A tampered signature | Passes the precheck without a verified type; `signature` failure at verification. |
 | Repeated JSON claim name | The parser's last value is used; inspection and interpretation of the verified payload agree. |
 | Short-form `iss` and `kid` with the matching retained long form | Accepted; presented spellings and canonical short forms are both retained. |
-| Wrong, malformed or hash-mismatched issuer document, or a key not authorized for authentication | `document` failure; a caller-assembled document cannot substitute another key. |
+| Wrong, malformed or hash-mismatched issuer long form, or a key not authorized for authentication | `document` failure; a caller-assembled document cannot substitute another key. |
 | A qualifying Multikey, JWK or embedded authentication method | Can verify an Ed25519 signature; a key authorized only for keyAgreement cannot. |
 | Altered signed payload, another signing key or incorrect signature bytes | `signature` failure. |
 | A different receipt token, a sender other than the rotation successor, or an ineligible recipient | Binding `mismatch`, producing no fact. |
-| A rotation bound to its receipt | A transition and an observation of the successor, both under the receipt's reference; a bound ending yields the transition alone. |
+| A rotation bound to its receipt | One observation at C(recipient, sub) whose `rotatedFrom` is `iss`; a bound ending yields `peer-ending` at C(recipient, iss). |
 
 ### A verified ending can still be unbound
 
@@ -549,22 +538,22 @@ flowchart TD
 `sender: null` is the host's assertion of an anonymous receipt, requiring the
 plaintext to contain no `from`. Signed audience is an extension of this
 package's profile. A valid basic ending token alone does not identify which
-recipient's relationship it ends. Ending binding produces no address observation.
+recipient's relationship it ends. Ending binding produces no peer observation.
 
 ### Creation verifies the signer's output too
 
 ```mermaid
 flowchart LR
-    R["ProofRequest"] --> P["Check request / issuer method"]
+    R["ProofRequest"] --> P["Check issuer / change / iat"]
     P --> S["Host-held signer<br/>Sign JWS signing input"]
-    S --> V["Verify against issuer evidence"]
+    S --> V["Verify issuer document / method / signature"]
     V --> O["VerifiedFromPrior"]
 ```
 
-An inconsistent request is rejected before signing. An unauthorized method,
-another key or invalid signature bytes cannot produce a verified proof. The
-signer can hold a non-exportable key. Creating a proof saves no decision and
-sends no message.
+An inconsistent issuer, change or `iat` is rejected before signing. An
+unauthorized method, another key or invalid signature bytes cannot produce
+a verified proof. The signer can hold a non-exportable key. Creating a
+proof saves no decision and sends no message.
 
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].
@@ -607,27 +596,29 @@ ACK policy. Those decisions remain with the host that uses the results.
 | --- | --- | --- |
 | How do address changes differ from address confirmation? | [Peer rotation](#peer-rotation), [local rotation](#local-rotation), [join](#join) | Receiving a peer rotation; local rotation and confirmation; both parties rotate. |
 | Where can a path go, and which pairs share a scope? | [Contexts](#contexts), [support](#support) | Graph reach; join paths and history; witnesses spanning several hops. |
-| When is there no longer a unique head? | [Competition](#competition), [links only the positive graph has](#diagnostic), [onward rotations](#onward) | Competing changes; the head across a context. |
-| Why does an ending or missing evidence take precedence? | [Endings](#ending), [dependency chains](#dependencies) | Ending; observations; the head across a context. |
-| Which facts are accepted, and how can replicas converge to a conflict? | [Acceptance](#acceptance) | Accepting facts; validating a fact; convergence and monotonicity. |
+| When is there no longer a unique head? | [Competition](#competition), [links only the positive graph has](#diagnostic), [onward rotations](#onward) | Competing changes; observations; the head across a context. |
+| Why does an ending take precedence over a waiting choice, and a conflict over an ending? | [Endings](#ending) | Ending; the head across a context. |
+| Which facts are one fact, and how can replicas converge to a conflict? | [Acceptance](#acceptance) | Accepting facts; the identity of a fact; validating a fact; convergence and monotonicity. |
 | Which inputs are rejected between a token and a fact? | [Proofs](#proofs) | Inspect; precheck; verify; bind; create. |
 
-[test-peer]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L39
-[test-local]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L83
-[test-join]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L164
-[test-competition]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L215
-[test-ending]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L289
-[test-observations]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L342
-[test-ending-scope]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L387
-[test-covered]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L406
-[test-onward]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L425
-[test-dependencies]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L449
-[test-convergence]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/model.test.ts#L472
-[test-graph]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/graph.test.ts#L6
-[test-accept]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/accept.test.ts#L14
-[test-validate]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/accept.test.ts#L65
-[test-inspect]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/from-prior.test.ts#L76
-[test-precheck]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/from-prior.test.ts#L105
-[test-verify]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/from-prior.test.ts#L195
-[test-bind]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/from-prior.test.ts#L355
-[test-create]: https://github.com/estoc-dev/estoc/blob/cd87f930f7ac6c7ff35c11cde91497a2e3e83537/packages/continuity/test/from-prior.test.ts#L406
+[test-peer]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L39
+[test-repeat]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L74
+[test-local]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L86
+[test-support]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L132
+[test-join]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L145
+[test-competition]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L197
+[test-ending]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L279
+[test-observations]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L345
+[test-ending-scope]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L400
+[test-covered]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L419
+[test-onward]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L437
+[test-convergence]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/model.test.ts#L461
+[test-graph]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/graph.test.ts#L6
+[test-accept]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L13
+[test-identity]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L57
+[test-validate]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/accept.test.ts#L74
+[test-inspect]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L76
+[test-precheck]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L105
+[test-verify]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L195
+[test-bind]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L354
+[test-create]: https://github.com/estoc-dev/estoc/blob/1a3985a283148b3e11f772e825a6b5100f62c826/packages/continuity/test/from-prior.test.ts#L396

@@ -3,9 +3,9 @@
  * compact JWT the prior DID's authentication key signs, whose `iss` is
  * the prior DID, whose `sub` is the new DID, and which omits `sub` to
  * end the relationship instead. This module inspects a token without
- * verifying it, verifies one against the issuer's document the host
- * supplies, binds a verified proof to the receipt it arrived on to
- * produce continuity facts, and creates one with a signing capability
+ * verifying it, verifies one against the issuer's long form the host
+ * retained, binds a verified proof to the receipt it arrived on to
+ * produce a continuity fact, and creates one with a signing capability
  * the host supplies. Between inspecting and verifying, a precheck
  * applies every rule of the profile that needs no issuer document, so
  * a token that can never verify or bind is refused before the host
@@ -23,7 +23,7 @@ import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm }
 import { base58, base64urlnopad } from "@scure/base";
 import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
 
-import type { ContinuityFact, Did, EvidenceRef } from "../types.js";
+import type { ContinuityFact, Did } from "../types.js";
 
 export const FROM_PRIOR_PROFILE = "estoc-from-prior/1";
 export const FROM_PRIOR_ALG = "EdDSA";
@@ -58,9 +58,6 @@ export type UnverifiedFromPrior = Readonly<{
 /** What the host authenticated about the receipt before it has the issuer's material. */
 export type PrecheckBinding = Readonly<{ authenticatedSender: Did }>;
 
-/** The issuer's long-form did:peer:4 as the host retained it, and its reference. */
-export type IssuerEvidence = Readonly<{ ref: EvidenceRef; longForm: Did }>;
-
 const verified: unique symbol = Symbol("verified");
 
 export type VerifiedChange = Readonly<{ kind: "rotate"; successor: DidSpelling }> | Readonly<{ kind: "end"; audience: DidSpelling | null }>;
@@ -73,13 +70,11 @@ export type VerifiedFromPrior = Readonly<{
   issuer: DidSpelling;
   change: VerifiedChange;
   iat: number;
-  document: Readonly<{ ref: EvidenceRef; longForm: Did }>;
   method: DidUrl;
 }>;
 
 /** What the host established about the receipt by decrypting and authenticating the envelope. */
-export type ReceiptEvidence = Readonly<{
-  ref: EvidenceRef;
+export type Receipt = Readonly<{
   /** the token exactly as the receipt carried it */
   token: string;
   /** the local DID the envelope was actually addressed to */
@@ -92,7 +87,7 @@ export type ReceiptEvidence = Readonly<{
 }>;
 
 export type Binding =
-  | Readonly<{ status: "bound"; facts: readonly ContinuityFact[] }>
+  | Readonly<{ status: "bound"; fact: ContinuityFact }>
   | Readonly<{ status: "mismatch"; because: string }>
   | Readonly<{ status: "unbound"; because: string }>;
 
@@ -110,7 +105,8 @@ export type ProofRequest = Readonly<{
   issuer: Did;
   change: Readonly<{ kind: "rotate"; successor: Did }> | Readonly<{ kind: "end"; audience: Did }>;
   iat: number;
-  evidence: IssuerEvidence;
+  /** the issuer's long-form did:peer:4, which is its document */
+  issuerLongForm: Did;
 }>;
 
 const ED25519_MULTICODEC = [0xed, 0x01];
@@ -330,18 +326,17 @@ function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
  * the long form's hash covers the document, so a key found in it is the
  * issuer's own.
  */
-function issuerDocument(evidence: IssuerEvidence, issuer: DidSpelling): { id: string; document: Record<string, unknown> } {
-  const longForm = evidence.longForm;
-  if (typeof longForm !== "string" || !isLongForm(longForm)) throw new InvalidFromPrior("the issuer evidence is a long-form did:peer:4", "document");
+function issuerDocument(longForm: Did, issuer: DidSpelling): Record<string, unknown> {
+  if (typeof longForm !== "string" || !isLongForm(longForm)) throw new InvalidFromPrior("the issuer's material is a long-form did:peer:4", "document");
   let document: unknown;
   try {
     document = resolveLongForm(longForm);
   } catch (err) {
     throw new InvalidFromPrior(`the issuer's long form does not resolve: ${err instanceof Error ? err.message : String(err)}`, "document");
   }
-  if (longToShort(longForm) !== issuer.canonical) throw new InvalidFromPrior(`the evidence is ${longForm}'s, not ${issuer.presented}'s`, "document");
+  if (longToShort(longForm) !== issuer.canonical) throw new InvalidFromPrior(`the long form is ${longForm}'s, not ${issuer.presented}'s`, "document");
   if (!isPlainObject(document)) throw new InvalidFromPrior("the issuer document is an object", "document");
-  return { id: longForm, document };
+  return document;
 }
 
 /**
@@ -409,15 +404,15 @@ function profileChange(claims: UnverifiedFromPrior["claims"], issuer: DidSpellin
  * the signature covers meet the profile. The document-independent rules
  * are the ones `precheckFromPrior` applies, so the two never diverge.
  * The library verifies the signature only; the profile has no
- * time-bound claim and consults no clock. The token and long form are
- * retained as given; a failure says whether form, profile, document or
- * signature failed.
+ * time-bound claim and consults no clock. The token is retained as
+ * given; a failure says whether form, profile, document or signature
+ * failed.
  */
-export async function verifyFromPrior(jwt: string, evidence: IssuerEvidence): Promise<VerifiedFromPrior> {
+export async function verifyFromPrior(jwt: string, issuerLongForm: Did): Promise<VerifiedFromPrior> {
   const decoded = decode(jwt);
   const { issuer } = checkProfile(decoded);
-  const { id: documentId, document } = issuerDocument(evidence, issuer);
-  const method = authenticationMethod(documentId, document, decoded.header.kid);
+  const document = issuerDocument(issuerLongForm, issuer);
+  const method = authenticationMethod(issuerLongForm, document, decoded.header.kid);
   let key: Awaited<ReturnType<typeof importJWK>>;
   try {
     key = await importJWK(method.key, FROM_PRIOR_ALG);
@@ -439,7 +434,6 @@ export async function verifyFromPrior(jwt: string, evidence: IssuerEvidence): Pr
     issuer: signedIssuer,
     change: profileChange(claims, signedIssuer),
     iat: claims.iat,
-    document: { ref: evidence.ref, longForm: documentId },
     method: method.id,
   } as VerifiedFromPrior;
 }
@@ -447,14 +441,14 @@ export async function verifyFromPrior(jwt: string, evidence: IssuerEvidence): Pr
 /**
  * Bind a verified proof to the receipt it arrived on. A rotation binds
  * when the receipt carries this very token and its authenticated
- * sender is the successor: the peer of C(recipient, issuer) became the
- * successor, and the successor wrote to the recipient, so the receipt
- * yields both the peer transition and the observation that carried it.
- * An ending binds when the receipt is anonymous and the proof names the
- * recipient as its audience, and yields the transition alone. Anything
- * else binds nothing.
+ * sender is the successor: the successor wrote to the recipient, having
+ * rotated from the issuer, so the receipt yields one observation at
+ * C(recipient, sub) that carried a rotation from `iss`. An ending binds
+ * when the receipt is anonymous and the proof names the recipient as
+ * its audience, and yields the peer's ending at C(recipient, iss).
+ * Anything else binds nothing.
  */
-export function bindFromPrior(proof: VerifiedFromPrior, receipt: ReceiptEvidence): Binding {
+export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Binding {
   if (receipt.token !== proof.token) return { status: "mismatch", because: "the receipt carries another token than the proof" };
   let recipient: DidSpelling;
   let sender: DidSpelling | null;
@@ -465,22 +459,17 @@ export function bindFromPrior(proof: VerifiedFromPrior, receipt: ReceiptEvidence
     return { status: "mismatch", because: err instanceof Error ? err.message : String(err) };
   }
   if (recipient.canonical === proof.issuer.canonical) return { status: "mismatch", because: "the recipient is the issuer" };
-  const at = { localDid: recipient.canonical, peerDid: proof.issuer.canonical };
   if (proof.change.kind === "rotate") {
     const successor = proof.change.successor;
     if (sender === null) return { status: "mismatch", because: "a rotation arrives from an authenticated sender" };
     if (sender.canonical !== successor.canonical) return { status: "mismatch", because: `sub is ${successor.presented} but the sender is ${sender.presented}` };
     if (recipient.canonical === successor.canonical) return { status: "mismatch", because: "the recipient is the successor" };
-    const facts: ContinuityFact[] = [
-      { kind: "peer-transition", at, change: { kind: "rotate", successor: successor.canonical }, evidence: receipt.ref },
-      { kind: "address-observed", at: { localDid: recipient.canonical, peerDid: successor.canonical }, carried: true, evidence: receipt.ref },
-    ];
-    return { status: "bound", facts };
+    return { status: "bound", fact: { kind: "peer-observation", at: { localDid: recipient.canonical, peerDid: successor.canonical }, rotatedFrom: proof.issuer.canonical } };
   }
   if (sender !== null) return { status: "mismatch", because: "an ending arrives without a sender" };
   if (proof.change.audience === null) return { status: "unbound", because: "the ending names no audience; this profile binds an ending only to the recipient it names" };
   if (proof.change.audience.canonical !== recipient.canonical) return { status: "mismatch", because: `aud is ${proof.change.audience.presented} but the recipient is ${recipient.presented}` };
-  return { status: "bound", facts: [{ kind: "peer-transition", at, change: { kind: "end" }, evidence: receipt.ref }] };
+  return { status: "bound", fact: { kind: "peer-ending", at: { localDid: recipient.canonical, peerDid: proof.issuer.canonical } } };
 }
 
 const encoder = new TextEncoder();
@@ -491,7 +480,7 @@ function segment(value: unknown): string {
 
 /**
  * Create a proof of the requested change and verify it against the
- * issuer evidence before returning it: the signer's method must be an
+ * issuer's long form before returning it: the signer's method must be an
  * authentication method of the issuer's document and its signature
  * must verify under that method's key. The result is what the host
  * saves with its decision; creating it decides and sends nothing.
@@ -515,7 +504,7 @@ export async function createFromPrior(request: ProofRequest, signer: Signer): Pr
   if (!(signature instanceof Uint8Array)) throw new InvalidFromPrior("the signer returned no bytes", "signature");
   if (signature.length !== ED25519_SIGNATURE_BYTES) throw new InvalidFromPrior(`the signer returned ${signature.length} bytes, not an Ed25519 signature`, "signature");
   const token = `${signingInput}.${base64urlnopad.encode(signature)}`;
-  const proof = await verifyFromPrior(token, request.evidence);
+  const proof = await verifyFromPrior(token, request.issuerLongForm);
   const matches =
     proof.issuer.presented === request.issuer &&
     proof.iat === request.iat &&
