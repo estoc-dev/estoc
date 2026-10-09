@@ -12,7 +12,7 @@
  */
 
 import type { ContinuityFact, LocalDecision } from "@estoc/continuity";
-import { InvalidFromPrior, bindFromPrior, precheckFromPrior, verifyFromPrior, type VerifiedFromPrior } from "@estoc/from-prior";
+import { InvalidFromPrior, bindFromPrior, precheckFromPrior, verifyFromPrior, type BoundChange, type VerifiedFromPrior } from "@estoc/from-prior";
 import { isLongForm, longToShort } from "@estoc/did-peer";
 
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";
@@ -227,7 +227,22 @@ function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck |
   if (source.status !== "complete") return { proof, fact: null };
   const binding = bindFromPrior(check.proof, { token: jwt, recipient: source.channel.localDid, sender });
   if (binding.status !== "bound") return refused({ status: "invalid", because: binding.because });
-  return { proof, fact: binding.fact };
+  return { proof, fact: factOfBinding(binding.change) };
+}
+
+/**
+ * The continuity fact a bound proof establishes: a rotation is the
+ * successor observed at its pair with the recipient, carrying the
+ * rotation from the issuer; an ending is the issuer's ending at its
+ * pair with the recipient.
+ */
+function factOfBinding(change: BoundChange): ContinuityFact {
+  switch (change.kind) {
+    case "rotate":
+      return { kind: "peer-observation", at: { localDid: change.recipient, peerDid: change.successor }, rotatedFrom: change.issuer };
+    case "end":
+      return { kind: "peer-ending", at: { localDid: change.recipient, peerDid: change.issuer } };
+  }
 }
 
 /**

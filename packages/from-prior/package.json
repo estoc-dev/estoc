@@ -30,7 +30,6 @@
     "dev": "tsc --watch --preserveWatchOutput"
   },
   "dependencies": {
-    "@estoc/continuity": "workspace:^",
     "@estoc/did-peer": "workspace:^",
     "@scure/base": "^1.2.0",
     "jose": "^6.0.0"

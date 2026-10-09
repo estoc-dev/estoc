@@ -351,12 +351,11 @@ describe("verify", () => {
 });
 
 describe("bind", () => {
-  it("binds a rotation to the receipt from the successor and yields the successor's observation, carrying the rotation, that the model accepts", async () => {
+  it("binds a rotation to the receipt from the successor and reports, in short form, the recipient it wrote to and the issuer it rotated from", async () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.longForm);
     const binding = bindFromPrior(proof, { token: jwt, recipient: a0.longForm, sender: b1.longForm });
-    const fact = { kind: "peer-observation", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, rotatedFrom: b0.shortForm } as const;
-    expect(binding).toEqual({ status: "bound", fact });
+    expect(binding).toEqual({ status: "bound", change: { kind: "rotate", recipient: a0.shortForm, issuer: b0.shortForm, successor: b1.shortForm } });
   });
 
   it("accepts the short-form recipient and sender", async () => {
@@ -366,7 +365,7 @@ describe("bind", () => {
     expect(bindFromPrior(proof, { token: jwt, recipient: a0.shortForm, sender: b1.shortForm })).toEqual(long);
   });
 
-  it("reports a mismatch instead of a fact for the wrong token, sender or recipient", async () => {
+  it("reports a mismatch, and binds no change, for the wrong token, sender or recipient", async () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.longForm);
     expect(bindFromPrior(proof, { token: await rotation(b0, b1, {}, { iat: IAT + 1 }), recipient: a0.longForm, sender: b1.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("token") });
@@ -380,7 +379,7 @@ describe("bind", () => {
   it("binds an ending only to the recipient it names, on an anonymous receipt", async () => {
     const addressed = await ending(b0, a0);
     const proof = await verifyFromPrior(addressed, b0.longForm);
-    expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: null })).toEqual({ status: "bound", fact: { kind: "peer-ending", at: { localDid: a0.shortForm, peerDid: b0.shortForm } } });
+    expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: null })).toEqual({ status: "bound", change: { kind: "end", recipient: a0.shortForm, issuer: b0.shortForm } });
     expect(bindFromPrior(proof, { token: addressed, recipient: b1.longForm, sender: null })).toMatchObject({ status: "mismatch", because: expect.stringContaining("aud") });
     expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: b0.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
     const unaddressed = await ending(b0, null);

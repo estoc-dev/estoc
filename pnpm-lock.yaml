@@ -468,9 +468,6 @@ importers:
 
   packages/from-prior:
     dependencies:
-      '@estoc/continuity':
-        specifier: workspace:^
-        version: link:../continuity
       '@estoc/did-peer':
         specifier: workspace:^
         version: link:../did-peer

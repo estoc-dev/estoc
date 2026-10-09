@@ -1,17 +1,18 @@
 /**
- * @estoc/from-prior — the DIDComm v2 `from_prior` proof: a
- * compact JWT the prior DID's authentication key signs, whose `iss` is
- * the prior DID, whose `sub` is the new DID, and which omits `sub` to
- * end the relationship instead. This module inspects a token without
- * verifying it, verifies one against the issuer's long form the host
- * retained, binds a verified proof to the receipt it arrived on to
- * produce a continuity fact, and creates one with a signing capability
- * the host supplies. Between inspecting and verifying, a precheck
- * applies every rule of the profile that needs no issuer document, so
- * a token that can never verify or bind is refused before the host
- * waits for material. The supported profile is did:peer:4 issuers and
- * subjects and Ed25519 keys; DID equivalence is the did:peer:4 short
- * form, and nothing rewrites a signed byte.
+ * @estoc/from-prior — the DIDComm v2 `from_prior` proof: a compact JWT
+ * the prior DID's authentication key signs, whose `iss` is the prior
+ * DID, whose `sub` is the new DID, and which omits `sub` to end the
+ * relationship instead. This module inspects a token without verifying
+ * it, verifies one against the issuer's long form the host retained,
+ * binds a verified proof to the receipt it arrived on, and creates one
+ * with a signing capability the host supplies. A binding answers in the
+ * proof's own terms, who wrote to whom and from which DID; what that
+ * means for a relationship is the host's projection. Between inspecting
+ * and verifying, a precheck applies every rule of the profile that
+ * needs no issuer document, so a token that can never verify or bind
+ * is refused before the host waits for material. The supported profile
+ * is did:peer:4 issuers and subjects and Ed25519 keys; DID equivalence
+ * is the did:peer:4 short form, and nothing rewrites a signed byte.
  *
  * A received ending carries no sender, so the standard's basic form
  * binds it to no particular relationship. This profile binds an ending
@@ -19,7 +20,6 @@
  * audience verifies but does not bind.
  */
 
-import type { ContinuityFact } from "@estoc/continuity";
 import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm } from "@estoc/did-peer";
 import { base58, base64urlnopad } from "@scure/base";
 import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
@@ -87,8 +87,13 @@ export type Receipt = Readonly<{
   sender: Did | null;
 }>;
 
+/** What a bound proof establishes about its receipt, in short-form DIDs. */
+export type BoundChange =
+  | Readonly<{ kind: "rotate"; recipient: Did; issuer: Did; successor: Did }>
+  | Readonly<{ kind: "end"; recipient: Did; issuer: Did }>;
+
 export type Binding =
-  | Readonly<{ status: "bound"; fact: ContinuityFact }>
+  | Readonly<{ status: "bound"; change: BoundChange }>
   | Readonly<{ status: "mismatch"; because: string }>
   | Readonly<{ status: "unbound"; because: string }>;
 
@@ -272,7 +277,17 @@ function claimsOf(payload: JWTPayload): UnverifiedFromPrior["claims"] {
 
 const decoder = new TextDecoder();
 
-/** The claims a verified signature covers: read again from the bytes the library verified, not from the pre-verification decode. */
+/**
+ * The claims a verified signature covers, read again from the bytes the
+ * library verified. They are the claims the pre-verification decode
+ * read, so the issuer whose document was consulted and whose key the
+ * `kid` named is the issuer returned: both reads take the same payload
+ * segment through the library's one base64url decoder; once
+ * `checkHeaderExtensions` passes, `b64` cannot be `false`, so the
+ * verified payload is that segment decoded; and `decodeJwt` already
+ * decoded those bytes as UTF-8 with a fatal decoder, so this decode
+ * yields the same text.
+ */
 function verifiedClaims(payload: Uint8Array): UnverifiedFromPrior["claims"] {
   let parsed: unknown;
   try {
@@ -443,11 +458,11 @@ export async function verifyFromPrior(jwt: string, issuerLongForm: Did): Promise
  * Bind a verified proof to the receipt it arrived on. A rotation binds
  * when the receipt carries this very token and its authenticated
  * sender is the successor: the successor wrote to the recipient, having
- * rotated from the issuer, so the receipt yields one observation at
- * C(recipient, sub) that carried a rotation from `iss`. An ending binds
- * when the receipt is anonymous and the proof names the recipient as
- * its audience, and yields the peer's ending at C(recipient, iss).
- * Anything else binds nothing.
+ * rotated from the issuer. An ending binds when the receipt is
+ * anonymous and the proof names the recipient as its audience: the
+ * issuer ended what it had with the recipient. The bound change names
+ * the recipient, the issuer and, for a rotation, the successor; the
+ * host projects it into its own model. Anything else binds nothing.
  */
 export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Binding {
   if (receipt.token !== proof.token) return { status: "mismatch", because: "the receipt carries another token than the proof" };
@@ -465,12 +480,12 @@ export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Bindi
     if (sender === null) return { status: "mismatch", because: "a rotation arrives from an authenticated sender" };
     if (sender.canonical !== successor.canonical) return { status: "mismatch", because: `sub is ${successor.presented} but the sender is ${sender.presented}` };
     if (recipient.canonical === successor.canonical) return { status: "mismatch", because: "the recipient is the successor" };
-    return { status: "bound", fact: { kind: "peer-observation", at: { localDid: recipient.canonical, peerDid: successor.canonical }, rotatedFrom: proof.issuer.canonical } };
+    return { status: "bound", change: { kind: "rotate", recipient: recipient.canonical, issuer: proof.issuer.canonical, successor: successor.canonical } };
   }
   if (sender !== null) return { status: "mismatch", because: "an ending arrives without a sender" };
   if (proof.change.audience === null) return { status: "unbound", because: "the ending names no audience; this profile binds an ending only to the recipient it names" };
   if (proof.change.audience.canonical !== recipient.canonical) return { status: "mismatch", because: `aud is ${proof.change.audience.presented} but the recipient is ${recipient.presented}` };
-  return { status: "bound", fact: { kind: "peer-ending", at: { localDid: recipient.canonical, peerDid: proof.issuer.canonical } } };
+  return { status: "bound", change: { kind: "end", recipient: recipient.canonical, issuer: proof.issuer.canonical } };
 }
 
 const encoder = new TextEncoder();
