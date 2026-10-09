@@ -9,7 +9,7 @@
  * several records may support when two replicas decide the same
  * rotation apart or one decides it again over a restored snapshot: the
  * intent already recorded from the predecessor anywhere in its
- * verified peer-only context is reused under its first candidate
+ * verified same-local context is reused under its first candidate
  * record, and no second successor is minted while a record waits for
  * evidence or two intents contradict each other. An admitted receipt must
  * show the peer writing to exactly the predecessor address, since a
@@ -65,7 +65,7 @@ import {
   successorRecipe,
   vaultDraft,
   type Channel,
-  type ScopedConflict,
+  type ContinuityConflict,
   type Did,
   type DidId,
   type EventCid,
@@ -262,9 +262,9 @@ async function rotationRefusal(held: Held, runtime: VaultRuntime, keys: Keys, fo
   return null;
 }
 
-function conflictedChannels(conflicts: readonly ScopedConflict[]): Map<string, ScopedConflict["conflict"]["kind"]> {
-  const reached = new Map<string, ScopedConflict["conflict"]["kind"]>();
-  for (const { conflict, channels } of conflicts) for (const channel of channels) reached.set(channelKey(channel), conflict.kind);
+function conflictedChannels(conflicts: readonly ContinuityConflict[]): Map<string, ContinuityConflict["kind"]> {
+  const reached = new Map<string, ContinuityConflict["kind"]>();
+  for (const conflict of conflicts) for (const channel of conflict.scope) reached.set(channelKey(channel), conflict.kind);
   return reached;
 }
 

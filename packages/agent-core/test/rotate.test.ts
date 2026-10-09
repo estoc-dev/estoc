@@ -434,7 +434,7 @@ describe("a local rotation", () => {
     await receive(bob, { type: BASIC_MESSAGE }, fork.longFormDid, next.longFormDid);
     const healthy = { localDid: next.did, peerDid: fork.did };
     let fold = await foldOf(alice);
-    expect([fold.continuity.conflicts.map(({ conflict }) => conflict.kind), fold.continuity.conflicted(healthy), fold.continuity.head(healthy), fold.continuity.confirmedBy(alice.did, prior.did) !== null]).toEqual([["competing-changes"], false, healthy, true]);
+    expect([fold.continuity.conflicts.map((conflict) => conflict.kind), fold.continuity.conflicted(healthy), fold.continuity.head(healthy), fold.continuity.confirmedBy(alice.did, prior.did) !== null]).toEqual([["competing-changes"], false, healthy, true]);
 
     await expect(rotate(alice.runtime, alice.keys, { localDidId: ALICE, peerDid: prior.did }, options)).rejects.toThrow(/^channel \[.*\] is not usable: the channel's continuity is in conflict$/);
     fold = await foldOf(alice);

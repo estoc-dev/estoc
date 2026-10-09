@@ -220,8 +220,8 @@ describe("the receipt", () => {
     expect([verified!.data.fromPrior, unreadable!.data.fromPrior]).toEqual([proof, "not-a-jwt"]);
     const fold = await foldOf(alice);
     expect(fold.channels.carriers.get(verified!.cid)?.facts).toEqual([
-      { kind: "peer-transition", id: `receipt:${verified!.cid}:transition`, at: { localDid: alice.did, peerDid: prior.did }, change: { kind: "rotate", successor: bob.did }, receipt: verified!.cid },
-      { kind: "address-observed", id: `receipt:${verified!.cid}:observation`, at: { localDid: alice.did, peerDid: bob.did }, carriedTransition: `receipt:${verified!.cid}:transition`, receipt: verified!.cid },
+      { kind: "peer-transition", at: { localDid: alice.did, peerDid: prior.did }, change: { kind: "rotate", successor: bob.did }, evidence: verified!.cid },
+      { kind: "address-observed", at: { localDid: alice.did, peerDid: bob.did }, carried: true, evidence: verified!.cid },
     ]);
     expect(fold.channels.carriers.get(unreadable!.cid)).toMatchObject({ proof: { status: "invalid" }, facts: [] });
     expect([fold.channels.sources.get(verified!.cid)?.status, fold.channels.sources.get(unreadable!.cid)?.status]).toEqual(["complete", "complete"]);
