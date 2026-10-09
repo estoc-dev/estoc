@@ -2,17 +2,33 @@
 
 ## Unreleased
 
-- **Continuity facts are keyed by their evidence** (breaking): the
-  projection follows the `estoc-continuity/2` profile of
-  `@estoc/continuity`, each fact keyed by its kind and the CID of the
-  event it rests on, a decision naming its source by that event's CID.
+- **Continuity facts are identified by their content** (breaking): the
+  projection follows the `estoc-continuity/3` profile of
+  `@estoc/continuity`, one fact per event. A proof-free receipt is an
+  address observation; a receipt whose proof verified and bound is the
+  observation of its successor carrying the rotation from the
+  predecessor, `Carrier.fact` in place of `Carrier.facts`; a decision
+  is a local decision without its source, which the vault still checks
+  before projecting it. Events that say the same thing are one fact,
+  so the model grows with the pairs, rotations and decisions rather
+  than with the messages. `Continuity.index` (`ContinuityIndex`) gives
+  the fact an event projects and the events behind a fact;
+  `projectFacts` yields `[EventCid, ContinuityFact]` pairs.
   `observationFactId`, `transitionFactId` and `decisionFactId` are
   gone, and the support of `PeerRoot` and `SuccessorChoice` is
-  `FactKey[]`. `Continuity.conflicts` lists the model's conflicts, each
-  with its `scope`, exported as `ContinuityConflict` in place of
-  `ScopedConflict`; `Continuity.peerContext` is `sameLocal`.
+  `ContinuityFact[]`. `Continuity.conflicts` lists the model's
+  conflicts, each with its `scope`, exported as `ContinuityConflict` in
+  place of `ScopedConflict`; `Continuity.peerContext` is `sameLocal`.
   `compareUtf8` is the continuity package's, and `channelKey` also keys
   a channel the model returns.
+- **A decision is confirmed by any usable observation of its
+  predecessor**: a sourced decision whose source a conflict masks is
+  confirmed by another receipt the conflict does not reach, as an
+  unsourced one is. `confirmedBy` names the admitted receipt first by
+  event CID among those behind every confirming observation.
+- **`issuerLongFormOf` returns the long form alone** (breaking):
+  `IssuerLongForm` is gone, and the retained resolutions it reads are
+  `peer.resolved` payloads.
 - **A user's message has a creation time** (breaking): a locally
   initiated `message.out` that names no rotation records a non-null
   `createdTime`; a manual notification and an automatic output keep

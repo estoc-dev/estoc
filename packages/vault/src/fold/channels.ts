@@ -67,8 +67,8 @@ export type Proof = { status: "invalid"; because: string } | { status: "unsuppor
 export interface Carrier {
   readonly source: Source;
   readonly proof: Proof;
-  /** the peer transition and the observation of its successor, both of this receipt; empty until the proof is verified and the source placed */
-  readonly facts: readonly ContinuityFact[];
+  /** the observation of the successor, carrying the rotation from its predecessor; null until the proof is verified and bound and the source placed */
+  readonly fact: ContinuityFact | null;
 }
 
 /**
@@ -118,7 +118,7 @@ export function foldChannelEvidence(set: VaultEventSet, dids: DidFold, checks: C
   const positive = (id: EventCid) => {
     const source = sources.get(id);
     if (source === undefined || source.status !== "complete") return false;
-    return source.event.data.fromPrior === null || (carriers.get(id)?.facts.length ?? 0) > 0;
+    return source.event.data.fromPrior === null || (carriers.get(id)?.fact ?? null) !== null;
   };
   return { sources, carriers, decisions: foldDecisions(set, dids, sources, carriers, checks.proofChecks ?? noProofChecks), positive };
 }
@@ -209,8 +209,8 @@ export function foldCarriers(sources: ReadonlyMap<EventCid, Source>, proofChecks
   return carriers;
 }
 
-function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck | undefined): { proof: Proof; facts: readonly ContinuityFact[] } {
-  const refused = (proof: Proof) => ({ proof, facts: [] });
+function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck | undefined): { proof: Proof; fact: ContinuityFact | null } {
+  const refused = (proof: Proof) => ({ proof, fact: null });
   let claims: ReturnType<typeof precheckFromPrior>;
   try {
     claims = precheckFromPrior(jwt, { authenticatedSender: sender });
@@ -224,11 +224,10 @@ function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck |
   if (check === undefined) return refused({ status: "pending-proof" });
   if (check.status === "invalid") return refused({ status: "invalid", because: check.because });
   const proof: Proof = { status: "verified", proof: check.proof };
-  if (source.status !== "complete") return { proof, facts: [] };
-  const { cid } = source.event;
-  const binding = bindFromPrior(check.proof, { ref: cid, token: jwt, recipient: source.channel.localDid, sender });
+  if (source.status !== "complete") return { proof, fact: null };
+  const binding = bindFromPrior(check.proof, { token: jwt, recipient: source.channel.localDid, sender });
   if (binding.status !== "bound") return refused({ status: "invalid", because: binding.because });
-  return { proof, facts: binding.facts };
+  return { proof, fact: binding.fact };
 }
 
 /**
@@ -321,16 +320,7 @@ function decisionStatus(
   }
 
   if (missing.length > 0) return { status: "pending", because: missing[0]! };
-  return {
-    status: "candidate",
-    fact: {
-      kind: "local-decision",
-      at: channel!,
-      change: { kind: "rotate", successor: successor!.did },
-      source: data.sourceEventCid,
-      evidence: event.cid,
-    },
-  };
+  return { status: "candidate", fact: { kind: "local-decision", at: channel!, change: { kind: "rotate", successor: successor!.did } } };
 }
 
 function creationOf(entity: LocalDidEntity | undefined, role: string, missing: string[]): VaultData["did.created"] | string | null {
@@ -352,8 +342,8 @@ function creationOf(entity: LocalDidEntity | undefined, role: string, missing: s
  * refuse.
  */
 export async function verifyProofs(set: VaultEventSet, resolutionChecks: ReadonlyMap<EventCid, EvidenceCheck>, readObject: ReadObject): Promise<Map<EventCid, ProofCheck>> {
-  const retained: { ref: string; data: VaultData["peer.resolved"] }[] = [];
-  for (const event of set.of("peer.resolved")) if (resolutionChecks.get(event.cid) === "verified") retained.push({ ref: event.cid, data: event.data });
+  const retained: VaultData["peer.resolved"][] = [];
+  for (const event of set.of("peer.resolved")) if (resolutionChecks.get(event.cid) === "verified") retained.push(event.data);
   const longForms = new Map<string, ReturnType<typeof issuerLongFormOf>>();
   const longFormOf = (iss: Did) => {
     let longForm = longForms.get(iss);
@@ -373,10 +363,10 @@ export async function verifyProofs(set: VaultEventSet, resolutionChecks: Readonl
     }
   };
   const verify = async (cid: EventCid, jwt: string, iss: Did) => {
-    const evidence = await longFormOf(iss);
-    if (evidence === null) return;
+    const longForm = await longFormOf(iss);
+    if (longForm === null) return;
     try {
-      checks.set(cid, { status: "verified", proof: await verifyFromPrior(jwt, evidence) });
+      checks.set(cid, { status: "verified", proof: await verifyFromPrior(jwt, longForm) });
     } catch (err) {
       if (!(err instanceof InvalidFromPrior)) throw err;
       checks.set(cid, { status: "invalid", because: err.message });

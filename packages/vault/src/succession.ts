@@ -12,9 +12,8 @@
  * beside.
  */
 
-import type { FactKey } from "@estoc/continuity";
+import type { ContinuityFact } from "@estoc/continuity";
 
-import { describeFacts } from "./fold/continuity.js";
 import type { VaultFold } from "./fold/vault.js";
 import { GENERATION_PROFILE, startDidId, successorDidId } from "./ids.js";
 import type { Channel, Did, DidGeneration, DidId } from "./types.js";
@@ -33,7 +32,7 @@ export const generationOf = (recipe: SuccessorRecipe): DidGeneration => ({ ...re
  * where the evidence contradicts, a conflict in the history or
  * generations that do not read.
  */
-export type SuccessorChoice = { status: "ready"; recipe: SuccessorRecipe; support: readonly FactKey[] } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
+export type SuccessorChoice = { status: "ready"; recipe: SuccessorRecipe; support: readonly ContinuityFact[] } | { status: "waiting"; because: string } | { status: "blocked"; because: string };
 
 export function successorRecipe(fold: Pick<VaultFold, "dids" | "continuity">, channel: Channel): SuccessorChoice {
   const didId = fold.dids.entityOfDid(channel.localDid);
@@ -53,7 +52,7 @@ export function successorRecipe(fold: Pick<VaultFold, "dids" | "continuity">, ch
     }
     case "branch": {
       const path = fold.continuity.model.path(lineage.anchor, channel);
-      if (path.status === "conflict") return { status: "blocked", because: `the history from the branch's anchor to the pair is in conflict at ${describeFacts(path.facts)}` };
+      if (path.status === "conflict") return { status: "blocked", because: `the history from the branch's anchor to the pair is in conflict at ${fold.continuity.index.describe(path.facts)}` };
       if (path.status === "none") return { status: "waiting", because: `no usable history leads from the branch's anchor, ${lineage.anchor.localDid} toward ${lineage.anchor.peerDid}, to the pair` };
       return { status: "ready", recipe: { kind: "next", predecessor: channel.localDid }, support: path.support };
     }

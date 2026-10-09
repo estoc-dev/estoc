@@ -118,11 +118,11 @@ event establishes on its own is read by
 is one authenticated `message.in` with its own resolution document, a carrier
 is a source that brought a `from_prior` proof, a decision is a saved
 `did.rotationSelected`. [`packages/vault/src/fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts)
-projects them into the model under IDs every replica derives from the same
-event CIDs and reads the model's answers for the host: each carrier's or
-decision's status, which channels take no new work, the admitted witness by
-which an address is confirmed for new work, and the denials that cover a
-channel. Proof verification is local and appends no verification events.
+projects them into the model as facts identified by their content, keeps its
+own index from event CIDs to those facts, and reads the model's answers for
+the host: each carrier's or decision's status, which channels take no new
+work, the admitted witness by which an address is confirmed for new work, and
+the denials that cover a channel. Proof verification is local and appends no verification events.
 Application admission is a separate durable decision under
 [section 5](#application-admission).
 

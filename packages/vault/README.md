@@ -43,6 +43,7 @@ derives are pinned there too.
 | Is a retained document what its resolution says? | `fold/evidence.ts` | `verifyResolutions` |
 | What does each receipt and each rotation establish on its own? | `fold/channels.ts` | `foldChannelEvidence`, `verifyProofs` |
 | Which channel stands where, now? | `fold/continuity.ts` | `foldContinuity`: `head`, `witness`, `status`, `confirmedBy`, `blocked`, `decisionsIn` |
+| Which events does a continuity fact rest on? | `fold/continuity-index.ts` | `Continuity.index`: `factOf`, `evidenceOf` |
 | Which observations speak for the application? | `admission/model.ts` | `foldAdmissions`, `foldDispositions` |
 | Which inputs are established, through which witness? | `fold/inbound.ts` | `foldInbound` |
 | What has an outbound become, and what does it still need? What did an automatic operation come to? | `fold/outbound.ts` | `foldOutbound`: `outbounds`, `effectResult` |

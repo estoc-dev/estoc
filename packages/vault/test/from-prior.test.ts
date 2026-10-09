@@ -50,20 +50,17 @@ const segments = (jwt: string) => jwt.split(".") as [string, string, string];
 const payloadOf = (jwt: string) => JSON.parse(new TextDecoder().decode(base64urlnopad.decode(segments(jwt)[1]))) as JsonObject;
 
 /** A `peer.resolved` payload retaining a resolution under the spelling the peer presented. */
-function retained(resolution: PeerResolution, presentedDid: Did = resolution.presentedDid): { ref: string; data: VaultData["peer.resolved"] } {
+function retained(resolution: PeerResolution, presentedDid: Did = resolution.presentedDid): VaultData["peer.resolved"] {
   const keyAgreementMethodIds = authorizedMethodIds(resolution.document, "keyAgreement");
   return {
-    ref: `resolved:${presentedDid}`,
-    data: {
-      localKeyName: didKeyName(SUCCESSOR, "key-agreement"),
-      peerPublicKey: methodPublicKey(resolution.document, keyAgreementMethodIds[0]!),
-      presentedDid,
-      did: resolution.did,
-      documentCid: resolution.cid,
-      authenticationMethodIds: authorizedMethodIds(resolution.document, "authentication"),
-      keyAgreementMethodIds,
-      service: null,
-    },
+    localKeyName: didKeyName(SUCCESSOR, "key-agreement"),
+    peerPublicKey: methodPublicKey(resolution.document, keyAgreementMethodIds[0]!),
+    presentedDid,
+    did: resolution.did,
+    documentCid: resolution.cid,
+    authenticationMethodIds: authorizedMethodIds(resolution.document, "authentication"),
+    keyAgreementMethodIds,
+    service: null,
   };
 }
 
@@ -76,7 +73,7 @@ describe("signFromPrior", () => {
     expect(decodeProtectedHeader(jwt)).toEqual({ alg: "EdDSA", typ: "JWT", kid: `${predecessor.longFormDid}${AUTHENTICATION_METHOD}` });
     expect(payloadOf(jwt)).toEqual({ iss: predecessor.longFormDid, sub: successor.longFormDid, iat: IAT });
     expect(segments(jwt)[2]).toBe(EXPECTED_SIGNATURE);
-    const verified = await verifyFromPrior(jwt, { ref: "document", longForm: predecessor.longFormDid });
+    const verified = await verifyFromPrior(jwt, predecessor.longFormDid);
     expect(verified).toMatchObject({ issuer: { presented: predecessor.longFormDid, canonical: predecessor.did }, change: { kind: "rotate", successor: { presented: successor.longFormDid, canonical: successor.did } }, iat: IAT, method: `${predecessor.longFormDid}${AUTHENTICATION_METHOD}` });
   });
 
@@ -100,7 +97,7 @@ describe("signFromPrior over a recorded document", () => {
     await checkDidCreated(keys, recorded, ROUTE);
     const jwt = await signFromPrior(keys, recorded, successor.longFormDid, IAT);
     expect(decodeProtectedHeader(jwt).kid).toBe(`${longFormDid}#auth`);
-    expect((await verifyFromPrior(jwt, { ref: "document", longForm: longFormDid })).method).toBe(`${longFormDid}#auth`);
+    expect((await verifyFromPrior(jwt, longFormDid)).method).toBe(`${longFormDid}#auth`);
   });
 
   it("refuses a recorded predecessor whose document leaks the entity's private key, and signs nothing for it", async () => {
@@ -124,12 +121,12 @@ describe("signFromPrior over a recorded document", () => {
 });
 
 describe("issuerLongFormOf", () => {
-  it("takes a long-form issuer as its own evidence, reading nothing", async () => {
+  it("takes a long-form issuer as its own long form, reading nothing", async () => {
     const { predecessor } = await setup();
     const readObject = async () => {
       throw new Error("no object is read");
     };
-    expect(await issuerLongFormOf(predecessor.longFormDid, [], readObject)).toEqual({ ref: predecessor.longFormDid, longForm: predecessor.longFormDid });
+    expect(await issuerLongFormOf(predecessor.longFormDid, [], readObject)).toBe(predecessor.longFormDid);
   });
 
   it("finds a short-form issuer's long form in a retained resolution of that DID: from the presented long form at once, from a presented short form once the document is here", async () => {
@@ -137,19 +134,18 @@ describe("issuerLongFormOf", () => {
     const other = peerResolution(successor.longFormDid);
     expect(await issuerLongFormOf(predecessor.did, [], noObjects)).toBeNull();
     expect(await issuerLongFormOf(predecessor.did, [retained(other)], noObjects)).toBeNull();
-    expect(await issuerLongFormOf(predecessor.did, [retained(resolution)], noObjects)).toEqual({ ref: `resolved:${predecessor.longFormDid}`, longForm: predecessor.longFormDid });
+    expect(await issuerLongFormOf(predecessor.did, [retained(resolution)], noObjects)).toBe(predecessor.longFormDid);
     expect(await issuerLongFormOf(predecessor.did, [retained(resolution, predecessor.did)], noObjects)).toBeNull();
     const readObject = readerOf(new Map([[resolution.cid, resolution.bytes]]));
-    expect(await issuerLongFormOf(predecessor.did, [retained(other), retained(resolution, predecessor.did)], readObject)).toEqual({ ref: `resolved:${predecessor.did}`, longForm: predecessor.longFormDid });
+    expect(await issuerLongFormOf(predecessor.did, [retained(other), retained(resolution, predecessor.did)], readObject)).toBe(predecessor.longFormDid);
   });
 
   it("passes over a retained resolution whose object is not the document it names", async () => {
     const { predecessor, successor, resolution } = await setup();
     const other = peerResolution(successor.longFormDid);
-    const forged = retained(resolution, predecessor.did);
-    forged.data = { ...forged.data, documentCid: rawCidOfBytes(other.bytes) };
-    const readObject = readerOf(new Map([[forged.data.documentCid, other.bytes], [resolution.cid, resolution.bytes]]));
+    const forged = { ...retained(resolution, predecessor.did), documentCid: rawCidOfBytes(other.bytes) };
+    const readObject = readerOf(new Map([[forged.documentCid, other.bytes], [resolution.cid, resolution.bytes]]));
     expect(await issuerLongFormOf(predecessor.did, [forged], readObject)).toBeNull();
-    expect(await issuerLongFormOf(predecessor.did, [forged, retained(resolution, predecessor.did)], readObject)).toEqual({ ref: `resolved:${predecessor.did}`, longForm: predecessor.longFormDid });
+    expect(await issuerLongFormOf(predecessor.did, [forged, retained(resolution, predecessor.did)], readObject)).toBe(predecessor.longFormDid);
   });
 });
