@@ -1,12 +1,12 @@
 /**
  * The host's side of the DIDComm `from_prior` proof, whose parsing,
- * profile, verification, binding and creation are
- * `@estoc/continuity/from-prior`'s: signing a local rotation with the
- * key the seed derives for the predecessor entity, under the method its
- * own document gives that key; and finding the issuer material a
- * carried proof verifies against, which is the issuer's long form —
- * the spelling itself when the proof presents one, or the one a
- * retained resolution of a short-form issuer holds.
+ * profile, verification, binding and creation are `@estoc/from-prior`'s:
+ * signing a local rotation with the key the seed derives for the
+ * predecessor entity, under the method its own document gives that
+ * key; and finding the issuer material a carried proof verifies
+ * against, which is the issuer's long form — the spelling itself when
+ * the proof presents one, or the one a retained resolution of a
+ * short-form issuer holds.
  */
 
 import { InvalidFromPrior, createFromPrior } from "@estoc/from-prior";

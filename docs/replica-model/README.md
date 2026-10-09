@@ -68,18 +68,24 @@ permits at most one compatible intent per execution.
 
 Ordinary DIDComm messages need no Estoc wire handshake or contact ID.
 
-The [`@estoc/continuity` package](../../packages/continuity/README.md)
-implements shared `from_prior` proof verification, creation and context
-binding alongside a pure continuity model. Its README defines the package
-inputs, queries, replica merge contract and host responsibilities. The
-package owns proof and graph semantics. [Channels](channels.md#continuity)
-states the application model, and
+Two packages hold the shared semantics. The
+[`@estoc/from-prior` package](../../packages/from-prior/README.md) implements
+`from_prior` proof verification, creation and binding to a receipt, and owns
+proof semantics; a bound proof reports the change it establishes. The
+[`@estoc/continuity` package](../../packages/continuity/README.md) is a pure
+continuity model over facts and owns graph semantics. Each README defines its
+package's inputs, answers and host responsibilities.
+[Channels](channels.md#continuity) states the application model, and
 [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts) and
-[`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) implement its use. Keep
-package semantics in its code, public contract and tests; app policy and
-storage integration belong in this suite and its code. The package's
-[illustrated guide](../../packages/continuity/docs/guide.md) explains its queries
-and boundary cases. This app revision supports rotations only, not endings.
+[`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) implement its use:
+the vault projects bound changes, proof-free receipts and saved decisions into
+continuity facts. Keep package semantics in their code, public contracts and
+tests; app policy and storage integration belong in this suite and its code.
+The packages' illustrated guides, for
+[continuity](../../packages/continuity/docs/guide.md) and for
+[from_prior](../../packages/from-prior/docs/guide.md), explain their queries,
+stages and boundary cases. This app revision supports rotations only, not
+endings.
 
 <a id="reading-paths"></a>
 
@@ -104,7 +110,8 @@ DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel
 invitations and the rotation, admission and denial payloads; the continuity
 adapter, operation eligibility, admission and dispatch authority are owned by
 their code in `packages/vault` and `packages/agent-core`.
-The continuity package owns proof verification and graph semantics. VE owns contact selections, display payloads and the remaining
+`@estoc/from-prior` owns proof verification and binding, and
+`@estoc/continuity` owns graph semantics. VE owns contact selections, display payloads and the remaining
 domain payloads, while the folds over them and the procedures that append
 them are owned by their code in `packages/vault` and `packages/agent-core`;
 DD owns runtime ordering and message/effect identity;
