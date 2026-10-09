@@ -121,7 +121,6 @@ export function projectFacts(evidence: ChannelEvidence): ContinuityFact[] {
   return facts;
 }
 
-/** Facts named in a reason: the kind and the event CID of each, in the order given. */
 export const describeFacts = (keys: readonly FactKey[]): string => keys.map(({ kind, evidence }) => `the ${kind} of ${evidence}`).join(", ");
 
 export function foldContinuity(set: VaultEventSet, evidence: ChannelEvidence, admissions: AdmissionFold): Continuity {
