@@ -21,7 +21,7 @@ for which facts are accepted and how, and
 [`model.test.ts`](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/test/model.test.ts)
 for what each query answers in each situation.
 
-The repository's [illustrated guide](docs/guide.md) walks through joins,
+The repository's [illustrated guide](https://github.com/estoc-dev/estoc/blob/main/packages/continuity/docs/guide.md) walks through joins,
 confirmation, contexts, conflicts and endings, with diagrams and links
 to the corresponding tests.
 
