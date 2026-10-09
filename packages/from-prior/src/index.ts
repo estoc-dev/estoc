@@ -385,7 +385,7 @@ function issuerDocument(longForm: Did, issuer: DidSpelling): Record<string, unkn
   return document;
 }
 
-/** What `@estoc/did-peer` refuses to read, as a document that is not the issuer's. */
+/** What `@estoc/did-peer` refuses to read, as a document failure. */
 function read<T>(reading: () => T): T {
   try {
     return reading();

@@ -196,9 +196,10 @@ describe("peerResolution", () => {
     refused(method({ publicKeyMultibase: undefined, publicKeyJwk: "x" }), /verificationMethod\[0\] has an object publicKeyJwk/);
     refused({ ...INPUT, authentication: [{ id: "#embedded", publicKeyMultibase: ED_KEY2 }] }, /authentication\[0\] has a string type/);
     const service = (patch: Record<string, unknown>): JsonObject => ({ ...INPUT, service: [patched({ id: "#service", type: "DIDCommMessaging", serviceEndpoint: "https://a.example" }, patch)] });
-    refused(service({ id: "#bad id" }), /service\[0\]\.id is a DID URL or a fragment reference/);
-    refused(service({ id: "#bad%escape" }), /service\[0\]\.id is a DID URL or a fragment reference/);
-    refused(service({ id: "service" }), /service\[0\]\.id is a DID URL or a fragment reference/);
+    refused(service({ id: "#bad id" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "#bad%escape" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "https://a.exam ple/service" }), /service\[0\]\.id is a URI/);
+    refused(service({ id: "service" }), /service\[0\]\.id is a URI or a fragment or query reference/);
     refused(service({ type: undefined }), /service\[0\] has a type, a string or strings/);
     refused(service({ type: [] }), /service\[0\] has a type, a string or strings/);
     refused({ ...INPUT, service: [...(INPUT["service"] as JsonObject[]), { id: "#service", type: "LinkedDomains", serviceEndpoint: "https://bob.example" }] }, /two services are/);
@@ -239,6 +240,13 @@ describe("peerResolution on key material and service endpoints", () => {
     for (const endpoint of ["https://a.example", { origins: ["https://a.example"] }, ["https://a.example", { uri: "wss://b.example" }]]) {
       const resolved = peerResolution(encodeLongForm(service(endpoint)));
       expect((resolved.document["service"] as JsonObject[])[1]?.["serviceEndpoint"]).toEqual(endpoint);
+    }
+  });
+
+  it("keeps a service whose id is a URI of its own, as a fetched DID document's may be", () => {
+    for (const id of ["https://a.example/service", "urn:example:service", "?service=1"]) {
+      const resolved = peerResolution(encodeLongForm({ ...INPUT, service: [{ id, type: "LinkedDomains", serviceEndpoint: "https://a.example" }] }));
+      expect((resolved.document["service"] as JsonObject[])[0]?.["id"], id).toBe(id);
     }
   });
 

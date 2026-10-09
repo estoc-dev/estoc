@@ -21,7 +21,7 @@ import {
 const LONG_DID = encodeLongForm(PEER_4_INPUT_DOCUMENT);
 
 describe("did:peer:4 encoding", () => {
-  it("matches the spec test vector", () => {
+  it("derives the known short form of a fixed input document, directly and from its long form", () => {
     expect(encodeShortForm(PEER_4_INPUT_DOCUMENT)).toBe(PEER_4_SHORT_DID);
     expect(longToShort(LONG_DID)).toBe(PEER_4_SHORT_DID);
   });
@@ -109,7 +109,7 @@ describe("did:peer:4 resolution", () => {
     }
   });
 
-  it("keeps references relative, per the spec", () => {
+  it("keeps relative references as the input document has them", () => {
     const doc = resolveLongForm(LONG_DID);
 
     expect(doc.authentication).toStrictEqual(["#6MkrCD1c"]);

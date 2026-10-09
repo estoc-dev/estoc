@@ -1,9 +1,13 @@
+import { generateKeyPairSync } from "node:crypto";
+
+import { Message } from "@estoc/didcomm-node";
 import { describe, it, expect } from "vitest";
-import { toDIDCommDIDDoc } from "../src/did-doc.js";
+import { DIDDocConversionError, toDIDCommDIDDoc } from "../src/did-doc.js";
 import {
   encodeLongForm,
   resolveLongForm,
 } from "../src/did-peer-4.js";
+import { resolveDIDCommDoc } from "../src/resolve.js";
 import { PEER_4_INPUT_DOCUMENT } from "./fixtures/peer-did-4.js";
 
 const LONG_DID = encodeLongForm(PEER_4_INPUT_DOCUMENT);
@@ -50,6 +54,36 @@ describe("toDIDCommDIDDoc", () => {
         publicKeyMultibase: "z6MkrCD1csqtgdj8sjrsu8jxcbeyP6m7LiK87NzhfWqio5yr",
       },
     ]);
+  });
+
+  it("hoists a method another relationship embeds, so that a message signed under it as an authentication method unpacks", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const method = { id: "#signing", type: "JsonWebKey2020", publicKeyJwk: publicKey.export({ format: "jwk" }) };
+    const did = encodeLongForm({ assertionMethod: [method], authentication: ["#signing"] });
+    const kid = `${did}#signing`;
+
+    const didDoc = toDIDCommDIDDoc(resolveLongForm(did));
+    expect(didDoc.authentication).toStrictEqual([kid]);
+    expect(didDoc.verificationMethod.map((entry) => entry.id)).toStrictEqual([kid]);
+
+    const resolver = { resolve: resolveDIDCommDoc };
+    const secrets = {
+      get_secret: async (id: string) => (id === kid ? { id, type: "JsonWebKey2020", privateKeyJwk: privateKey.export({ format: "jwk" }) } : null),
+      find_secrets: async (ids: string[]) => ids.filter((id) => id === kid),
+    };
+    const message = new Message({ id: "1", typ: "application/didcomm-plain+json", type: "https://didcomm.org/basicmessage/2.0/message", from: did, body: { content: "hello" } });
+    const [packed] = await message.pack_signed(kid, resolver, secrets);
+    message.free();
+    const [unpacked, metadata] = await Message.unpack(packed, resolver, { get_secret: async () => null, find_secrets: async () => [] }, {});
+    unpacked.free();
+    expect(metadata.sign_from).toBe(kid);
+  });
+
+  it("refuses, as a document that does not convert, a document the reader refuses", () => {
+    const key = (publicKeyMultibase: string) => ({ id: "#key-1", type: "Multikey", publicKeyMultibase });
+    const twice = { id: "did:example:alice", verificationMethod: [key("z6MkrCD1csqtgdj8sjrsu8jxcbeyP6m7LiK87NzhfWqio5yr")], keyAgreement: [key("z6LSqPZfn9krvgXma2icTMKf2uVcYhKXsudCmPoUzqGYW24U")] };
+    expect(() => toDIDCommDIDDoc(twice)).toThrow(DIDDocConversionError);
+    expect(() => toDIDCommDIDDoc({ id: "did:example:alice", authentication: ["#absent"] })).toThrow(/references no verification method/);
   });
 
   it("remaps Multikey to the suite didcomm-rust understands", () => {

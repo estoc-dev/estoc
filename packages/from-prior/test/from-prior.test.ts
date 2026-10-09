@@ -371,6 +371,18 @@ describe("verify", () => {
     }
   });
 
+  it("fails as a document, and in no other way, under an issuer that defines its method twice with a value that has no RFC 8785 form: a lone surrogate or a number beyond a double", async () => {
+    const beyondDouble = (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON("1e400");
+    for (const note of ["\ud800", beyondDouble]) {
+      const issuer = party("unreadable", (key) => {
+        const method = { id: "#key-1", type: "Multikey", publicKeyMultibase: key.multikey, note };
+        return { verificationMethod: [method, method], authentication: ["#key-1"] };
+      });
+      expect((await failure(verifyFromPrior(await rotation(issuer, b1), issuer.longForm))).failure).toBe("document");
+      expect((await failure(verifyFromPrior(`${segments(await rotation(issuer, b1)).slice(0, 2).join(".")}.${unsigned}`, issuer.longForm))).failure).toBe("document");
+    }
+  });
+
   it("distinguishes failures of form, profile, document and signature", async () => {
     const jwt = await rotation(b0, b1);
     const [h, p, s] = segments(jwt);

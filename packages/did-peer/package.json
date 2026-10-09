@@ -25,6 +25,9 @@
     "src"
   ],
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -39,6 +42,7 @@
     "canonicalize": "^5.1.0"
   },
   "devDependencies": {
+    "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "@types/node": "^26.6.2",
     "typescript": "~5.8.0",
     "vitest": "^3.0.0"

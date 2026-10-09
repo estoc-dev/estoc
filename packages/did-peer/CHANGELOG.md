@@ -9,10 +9,28 @@
   beside them; they throw `DIDDocumentError`. Fragment and query
   references resolve against the document's `id`; a reference into the
   document names a method it defines; two different methods, or two
-  services, under one ID are refused. `@estoc/from-prior` verifies with
-  them and `@estoc/vault` signs and retains with them, so both name the
-  same method for a key. The new `canonicalize` dependency compares two
-  definitions under one ID.
+  services, under one ID are refused. Two definitions of one method are
+  compared as RFC 8785 text once their IDs are resolved, so a relative
+  and an absolute spelling of one ID agree, and a value with no RFC 8785
+  form defined twice is refused. `definedMethod` gives the entry with its
+  ID resolved. A service ID is an absolute URI as it stands, or a
+  fragment or query reference resolved against `id`; whether it is a
+  well-formed URI is the application's to check. `@estoc/from-prior`
+  verifies with them and `@estoc/vault` signs and retains with them, so
+  both name the same method for a key. The new `canonicalize` dependency
+  does the comparing.
+- **Node 22 or later** (breaking): `canonicalize` needs
+  `String.prototype.isWellFormed`, so the package declares `engines.node`
+  `>=22`; a browser or worker runtime needs that method too. It was Node
+  18.
+- **`toDIDCommDIDDoc` reads a document as `authorizedMethodIds` and
+  `definedMethod` do** (behaviour change): a method embedded in one
+  relationship and referenced from another, such as an `assertionMethod`
+  key that `authentication` names, is hoisted into `verificationMethod`,
+  so didcomm-rust finds it. A document the reader refuses, with two
+  different methods under one ID or a reference that names no method, is
+  a `DIDDocConversionError`; it used to convert with one of the two
+  methods, or the dangling reference, in it.
 
 ## 0.2.0 — 2026-09-29
 

@@ -73,7 +73,7 @@ describe("authorizedMethodIds", () => {
     expect(() => authorizedMethodIds({ verificationMethod: [] }, "authentication")).toThrow(/document id/);
   });
 
-  it("refuses two different methods under one id, wherever each is defined, and takes one method defined twice alike", () => {
+  it("refuses two different methods under one id, wherever each is defined, and takes one method defined twice alike, its id spelled either way", () => {
     const a = { id: "#a", type: "Multikey", publicKeyMultibase: KEY };
     const other = { ...a, publicKeyMultibase: KEY2 };
     const listed = { id: "did:web:bob.example", verificationMethod: [a, { ...other, id: "did:web:bob.example#a" }], authentication: ["#a"] };
@@ -82,13 +82,34 @@ describe("authorizedMethodIds", () => {
     expect(() => authorizedMethodIds(embedded, "authentication")).toThrow(DIDDocumentError);
     const alike = { id: "did:web:bob.example", verificationMethod: [a], authentication: [{ publicKeyMultibase: KEY, type: "Multikey", id: "#a" }] };
     expect(authorizedMethodIds(alike, "authentication")).toEqual(["did:web:bob.example#a"]);
+    const spelled = { id: "did:web:bob.example", verificationMethod: [a], authentication: [{ ...a, id: "did:web:bob.example#a" }] };
+    expect(authorizedMethodIds(spelled, "authentication")).toEqual(["did:web:bob.example#a"]);
+  });
+
+  it("refuses a method defined twice with a value that has no RFC 8785 form, a lone surrogate or a number beyond a double, and reads that value defined once", () => {
+    const beyondDouble = (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON("1e400");
+    for (const note of ["\ud800", beyondDouble]) {
+      const a = { id: "#a", type: "Multikey", publicKeyMultibase: KEY, note };
+      const twice = resolveLongForm(encodeLongForm({ verificationMethod: [a, a], authentication: ["#a"] }));
+      expect(() => authorizedMethodIds(twice, "authentication")).toThrow(/defined twice, with a value that has no RFC 8785 form/);
+      const once = resolveLongForm(encodeLongForm({ verificationMethod: [a], authentication: ["#a"] }));
+      expect(authorizedMethodIds(once, "authentication")).toEqual([`${once["id"]}#a`]);
+    }
   });
 });
 
 describe("definedMethod", () => {
-  it("gives the exact entry a listed or an embedded method has", () => {
-    expect(definedMethod(DOCUMENT, `${LONG}#key-1`)).toEqual({ id: "#key-1", type: "Multikey", controller: LONG, publicKeyMultibase: KEY });
-    expect(definedMethod(DOCUMENT, `${LONG}#embedded`)).toEqual({ id: "#embedded", type: "Multikey", controller: LONG, publicKeyMultibase: KEY2 });
+  it("gives the entry a listed or an embedded method has, its id resolved", () => {
+    expect(definedMethod(DOCUMENT, `${LONG}#key-1`)).toEqual({ id: `${LONG}#key-1`, type: "Multikey", controller: LONG, publicKeyMultibase: KEY });
+    expect(definedMethod(DOCUMENT, `${LONG}#embedded`)).toEqual({ id: `${LONG}#embedded`, type: "Multikey", controller: LONG, publicKeyMultibase: KEY2 });
+  });
+
+  it("gives one method defined twice alike the same entry, whichever spelling of its id comes first", () => {
+    const a = { id: "#a", type: "Multikey", publicKeyMultibase: KEY };
+    const absolute = { ...a, id: "did:web:bob.example#a" };
+    for (const [first, second] of [[a, absolute], [absolute, a]]) {
+      expect(definedMethod({ id: "did:web:bob.example", verificationMethod: [first], authentication: [second] }, "did:web:bob.example#a")).toEqual(absolute);
+    }
   });
 
   it("refuses an id the document defines no method under, a reference into another DID included", () => {
@@ -103,10 +124,21 @@ describe("serviceIds", () => {
     expect(serviceIds({ id: "did:web:bob.example" })).toEqual([]);
   });
 
-  it("refuses two services under one id, a service that is not an object, and an id that is not a DID URL", () => {
+  it("keeps an absolute URI of any scheme as it stands, and leaves whether an id is a well-formed URI to the application", () => {
+    const service = (id: string) => ({ id, type: "ExampleService", serviceEndpoint: "https://bob.example/messages" });
+    expect(serviceIds({ id: "did:web:bob.example", service: [service("https://bob.example/messages"), service("urn:example:service"), service("?service=1"), service("#a b")] })).toEqual([
+      "https://bob.example/messages",
+      "urn:example:service",
+      "did:web:bob.example?service=1",
+      "did:web:bob.example#a b",
+    ]);
+  });
+
+  it("refuses two services under one id, a service that is not an object, and an id that is neither a URI nor a fragment or query reference", () => {
     const service = { id: "#same", type: "DIDCommMessaging", serviceEndpoint: "https://bob.example" };
     expect(() => serviceIds({ id: "did:web:bob.example", service: [service, { ...service, id: "did:web:bob.example#same" }] })).toThrow(/two services are did:web:bob.example#same/);
     expect(() => serviceIds({ id: "did:web:bob.example", service: ["#same"] })).toThrow(/service\[0\] is an object/);
-    expect(() => serviceIds({ id: "did:web:bob.example", service: [{ ...service, id: "same" }] })).toThrow(DIDDocumentError);
+    expect(() => serviceIds({ id: "did:web:bob.example", service: [{ ...service, id: 1 }] })).toThrow(/service\[0\]\.id is a string/);
+    for (const id of ["same", "/same", "//bob.example/same", "1a:same"]) expect(() => serviceIds({ id: "did:web:bob.example", service: [{ ...service, id }] }), id).toThrow(/service\[0\]\.id is a URI or a fragment or query reference/);
   });
 });

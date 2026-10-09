@@ -7,7 +7,7 @@
  * verification relationships of any retained document, numalgo 4 or
  * not, are read as `@estoc/did-peer` reads every DID document,
  * `from_prior` verification included: references resolved against the
- * document's `id`, keys taken from the exact retained entries.
+ * document's `id`, keys taken from the retained entries.
  */
 
 import { canonicalize, isJsonObject, parseStrict, type JsonObject, type JsonValue } from "@estoc/event-store";
@@ -168,7 +168,7 @@ function withDefaultController(entry: JsonValue, did: Did): JsonValue {
  * everything else, relative references included, kept as the input has
  * it. Its verification relationships and services must read: every
  * reference into the document names a method it defines, and every
- * service has an ID of its own.
+ * service has an ID of its own, a URI once resolved.
  */
 export function retainedDocumentAnew(longFormDid: string): JsonObject {
   const input = inputDocumentOf(longFormDid);
@@ -179,7 +179,9 @@ export function retainedDocumentAnew(longFormDid: string): JsonObject {
     if (Array.isArray(entries)) document[member] = entries.map((entry) => withDefaultController(entry, long));
   }
   for (const relationship of VERIFICATION_RELATIONSHIPS) authorizedMethodIds(document, relationship);
-  read(() => serviceIds(document));
+  read(() => serviceIds(document)).forEach((id, i) => {
+    if (!isUri(id)) throw new InvalidDidDocument(`service[${i}].id is a URI: ${JSON.stringify(id)}`);
+  });
   return document;
 }
 
@@ -226,7 +228,7 @@ export function authorizedMethodIds(document: JsonObject, relationship: Verifica
   return read(() => authorizedIn(document, relationship)) as DidUrl[];
 }
 
-/** The method the document defines under an absolute ID, as the exact retained entry. */
+/** The method the document defines under an absolute ID: its retained entry, with the ID resolved. */
 export function definedMethod(document: JsonObject, id: DidUrl): JsonObject {
   return read(() => definedIn(document, id)) as JsonObject;
 }

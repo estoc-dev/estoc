@@ -2,11 +2,14 @@ import bs58 from "bs58";
 
 import type { DIDDoc, Service, VerificationMethod } from "./types.js";
 import { absolutizeReferences, type PeerDocument } from "./did-peer-4.js";
+import { authorizedMethodIds, definedMethods, DIDDocumentError } from "./document.js";
 
 /**
  * Converts a W3C DID document into the flat DIDDoc shape didcomm-rust expects:
- * absolute DID URLs everywhere, embedded verification methods hoisted into
- * `verificationMethod`, and only DIDCommMessaging services retained.
+ * the relationships and methods as `authorizedMethodIds` and `definedMethod`
+ * read them, every method the document defines hoisted into
+ * `verificationMethod` wherever it is embedded, absolute DID URLs everywhere,
+ * and only DIDCommMessaging services retained.
  */
 
 export class DIDDocConversionError extends Error {
@@ -111,39 +114,6 @@ function toVerificationMethod(
   return normalized;
 }
 
-/**
- * Reads a verification relationship, returning its DID URL references and any
- * verification methods embedded directly in it.
- */
-function collectRelationship(
-  entries: unknown,
-  documentId: string
-): { references: string[]; embedded: VerificationMethod[] } {
-  const references: string[] = [];
-  const embedded: VerificationMethod[] = [];
-
-  if (!Array.isArray(entries)) {
-    return { references, embedded };
-  }
-
-  for (const entry of entries) {
-    if (typeof entry === "string") {
-      references.push(entry);
-      continue;
-    }
-    if (!isRecord(entry)) {
-      continue;
-    }
-    const method = toVerificationMethod(entry, documentId);
-    if (method !== null) {
-      references.push(method.id);
-      embedded.push(method);
-    }
-  }
-
-  return { references, embedded };
-}
-
 function firstEndpoint(serviceEndpoint: unknown): unknown {
   return Array.isArray(serviceEndpoint) ? serviceEndpoint[0] : serviceEndpoint;
 }
@@ -181,44 +151,40 @@ function toService(service: Record<string, unknown>): Service | null {
   return { id, type, serviceEndpoint: normalized };
 }
 
+/** What the document reader refuses, as a document that does not convert. */
+function read<T>(reading: () => T): T {
+  try {
+    return reading();
+  } catch (err) {
+    if (err instanceof DIDDocumentError) throw new DIDDocConversionError(err.message);
+    throw err;
+  }
+}
+
 /**
  * Convert a W3C DID document into the didcomm-rust DIDDoc shape.
  *
- * Relative references are absolutized against the document `id` first, since
- * didcomm-rust derives a DID by splitting a `kid` on `#`.
+ * Relative references are absolutized against the document `id`, since
+ * didcomm-rust derives a DID by splitting a `kid` on `#`. A method another
+ * relationship embeds is hoisted too: didcomm-rust looks a `kid` up in
+ * `verificationMethod` alone.
  */
 export function toDIDCommDIDDoc(document: PeerDocument): DIDDoc {
-  const absolutized = absolutizeReferences(document);
-
-  const id = absolutized.id;
+  const id = document.id;
   if (typeof id !== "string") {
     throw new DIDDocConversionError("DID document has no string `id`");
   }
 
-  const authentication = collectRelationship(absolutized.authentication, id);
-  const keyAgreement = collectRelationship(absolutized.keyAgreement, id);
-
-  const methods = new Map<string, VerificationMethod>();
-  if (Array.isArray(absolutized.verificationMethod)) {
-    for (const entry of absolutized.verificationMethod) {
-      if (!isRecord(entry)) {
-        continue;
-      }
-      const method = toVerificationMethod(entry, id);
-      if (method !== null) {
-        methods.set(method.id, method);
-      }
-    }
-  }
-  for (const method of [...authentication.embedded, ...keyAgreement.embedded]) {
-    if (!methods.has(method.id)) {
-      methods.set(method.id, method);
-    }
-  }
+  const authentication = read(() => authorizedMethodIds(document, "authentication"));
+  const keyAgreement = read(() => authorizedMethodIds(document, "keyAgreement"));
+  const verificationMethod = [...read(() => definedMethods(document)).values()]
+    .map((method) => toVerificationMethod(method, id))
+    .filter((method): method is VerificationMethod => method !== null);
 
   const service: Service[] = [];
-  if (Array.isArray(absolutized.service)) {
-    for (const entry of absolutized.service) {
+  const services = absolutizeReferences(document).service;
+  if (Array.isArray(services)) {
+    for (const entry of services) {
       if (!isRecord(entry)) {
         continue;
       }
@@ -229,11 +195,5 @@ export function toDIDCommDIDDoc(document: PeerDocument): DIDDoc {
     }
   }
 
-  return {
-    id,
-    keyAgreement: keyAgreement.references,
-    authentication: authentication.references,
-    verificationMethod: [...methods.values()],
-    service,
-  };
+  return { id, keyAgreement, authentication, verificationMethod, service };
 }

@@ -4,7 +4,7 @@ import { base64urlToUtf8 } from "./base64.js";
 import type { PeerDocument } from "./did-peer-4.js";
 
 /**
- * did:peer:2 (numalgo 2) — https://identity.foundation/peer-did-method-spec/
+ * did:peer:2 (numalgo 2).
  *
  * The document *is* the identifier: every key and every service is encoded into
  * the DID itself, so resolving is decoding — no network, no store, nothing to
@@ -58,9 +58,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Resolve a did:peer:2 into its document.
  *
- * References are left relative (`#key-1`), as they are for did:peer:4 — the
- * spec resolves them that way, and `toDIDCommDIDDoc` absolutizes for the
- * consumers that need it.
+ * References are left relative (`#key-1`), as they are for did:peer:4, and
+ * `toDIDCommDIDDoc` absolutizes them for the consumers that need it.
  */
 export function resolve(did: string): PeerDocument {
   if (!isPeerDID2(did)) {
@@ -102,8 +101,8 @@ export function resolve(did: string): PeerDocument {
     verificationMethod.push({
       id,
       controller: did,
-      // The spec's own type. didcomm-rust has no Multikey variant, but
-      // toDIDCommDIDDoc remaps it by multicodec prefix.
+      // The type the method names its keys with. didcomm-rust has no
+      // Multikey variant, but toDIDCommDIDDoc remaps it by multicodec prefix.
       type: "Multikey",
       publicKeyMultibase: validateKey(value),
     });

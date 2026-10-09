@@ -34,13 +34,18 @@ function documentId(document: PeerDocument): string {
 }
 
 /**
- * A reference as the document authorizes it, resolved against the
- * document's DID. Only fragment and query references resolve: a DID
- * has no path to resolve a path-relative reference against.
+ * A reference resolved against the document's DID. Only fragment and
+ * query references resolve: a DID has no path to resolve a
+ * path-relative reference against.
  */
+function resolved(reference: string, base: string): string {
+  return reference.startsWith("#") || reference.startsWith("?") ? base + reference : reference;
+}
+
+/** A method reference as the document authorizes it: resolved, and a DID URL. */
 function absolute(reference: unknown, base: string, at: string): string {
   if (typeof reference !== "string") throw new DIDDocumentError(`${at} is a DID URL`);
-  const url = reference.startsWith("#") || reference.startsWith("?") ? base + reference : reference;
+  const url = resolved(reference, base);
   if (!isDidUrl(url)) throw new DIDDocumentError(`${at} is a DID URL or a fragment reference: ${JSON.stringify(reference)}`);
   return url;
 }
@@ -52,14 +57,32 @@ function entriesOf(document: PeerDocument, member: string): readonly unknown[] {
   return entries;
 }
 
-/** Every method the document defines, by absolute ID; two definitions under one ID must be the same entry. */
-function definedMethods(document: PeerDocument, base: string): Map<string, Record<string, unknown>> {
+/**
+ * A definition as RFC 8785 text, to compare it with another under its
+ * ID. A value that has no such text, a lone surrogate or a number
+ * beyond a double, cannot be shown to be the same as another.
+ */
+function comparable(definition: Record<string, unknown>): string {
+  try {
+    return serialize(definition) as string;
+  } catch (err) {
+    throw new DIDDocumentError(`${definition["id"]} is defined twice, with a value that has no RFC 8785 form: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Every method the document defines, by absolute ID, each entry with
+ * its ID resolved. Two definitions under one ID must be the same method:
+ * the same JSON value once their IDs are resolved, however each spells it.
+ */
+export function definedMethods(document: PeerDocument): Map<string, Record<string, unknown>> {
+  const base = documentId(document);
   const methods = new Map<string, Record<string, unknown>>();
   const define = (entry: Record<string, unknown>, at: string) => {
-    const id = absolute(entry["id"], base, `${at}.id`);
-    const known = methods.get(id);
-    if (known !== undefined && serialize(known) !== serialize(entry)) throw new DIDDocumentError(`two different verification methods are ${id}`);
-    methods.set(id, entry);
+    const definition = { ...entry, id: absolute(entry["id"], base, `${at}.id`) };
+    const known = methods.get(definition.id);
+    if (known === undefined) methods.set(definition.id, definition);
+    else if (comparable(known) !== comparable(definition)) throw new DIDDocumentError(`two different verification methods are ${definition.id}`);
   };
   entriesOf(document, "verificationMethod").forEach((entry, i) => {
     if (!isRecord(entry)) throw new DIDDocumentError(`verificationMethod[${i}] is an object`);
@@ -82,7 +105,7 @@ function definedMethods(document: PeerDocument, base: string): Map<string, Recor
  */
 export function authorizedMethodIds(document: PeerDocument, relationship: VerificationRelationship): string[] {
   const base = documentId(document);
-  const defined = definedMethods(document, base);
+  const defined = definedMethods(document);
   const ids = new Set<string>();
   entriesOf(document, relationship).forEach((entry, i) => {
     const at = `${relationship}[${i}]`;
@@ -100,20 +123,32 @@ export function authorizedMethodIds(document: PeerDocument, relationship: Verifi
   return [...ids];
 }
 
-/** The method the document defines under an absolute ID, as the exact entry. */
+/** The method the document defines under an absolute ID: its entry, with the ID resolved. */
 export function definedMethod(document: PeerDocument, id: string): Record<string, unknown> {
-  const method = definedMethods(document, documentId(document)).get(id);
+  const method = definedMethods(document).get(id);
   if (method === undefined) throw new DIDDocumentError(`the document defines no verification method ${id}`);
   return method;
 }
 
-/** The absolute IDs of the document's services, in document order; every service has an ID of its own. */
+/** RFC 3986 §4.3: a reference that begins with a scheme is an absolute URI. */
+const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+/**
+ * The absolute IDs of the document's services, in document order;
+ * every service has an ID of its own. A fragment or query reference
+ * resolves against the document's DID, and any other ID is a URI as it
+ * stands. Whether that URI is well formed, like the rest of a
+ * service's shape, is the application's to check.
+ */
 export function serviceIds(document: PeerDocument): string[] {
   const base = documentId(document);
   const ids = new Set<string>();
   entriesOf(document, "service").forEach((service, i) => {
     if (!isRecord(service)) throw new DIDDocumentError(`service[${i}] is an object`);
-    const id = absolute(service["id"], base, `service[${i}].id`);
+    const reference = service["id"];
+    if (typeof reference !== "string") throw new DIDDocumentError(`service[${i}].id is a string`);
+    const id = resolved(reference, base);
+    if (!SCHEME.test(id)) throw new DIDDocumentError(`service[${i}].id is a URI or a fragment or query reference: ${JSON.stringify(reference)}`);
     if (ids.has(id)) throw new DIDDocumentError(`two services are ${id}`);
     ids.add(id);
   });
