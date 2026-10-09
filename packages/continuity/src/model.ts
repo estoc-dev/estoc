@@ -15,7 +15,7 @@
 
 import { changeKey, channelKey, channelOf, compareChannels, compareUtf8, factIdentity, identityOf, sameChannel, sortedChannels, validateFact, type FactIdentity } from "./facts.js";
 import { closure, Contexts, Graph, type Edge, type Link, type Replaces } from "./graph.js";
-import type { AddressObservation, Change, Channel, ContinuityFact, Did } from "./types.js";
+import type { Change, Channel, ContinuityFact, Did, PeerObservation } from "./types.js";
 
 /** Which endpoint a change replaces: `peer` for the peer's rotation or ending, `local` for ours. */
 export type Side = Replaces;
@@ -72,13 +72,13 @@ export type PathResult =
   | { status: "conflict"; facts: readonly ContinuityFact[] };
 
 /** One observation that confirms the address, with a complete witness: the observation and the usable peer path to the observer. */
-export type Confirmation = { fact: AddressObservation; support: readonly ContinuityFact[] };
+export type Confirmation = { fact: PeerObservation; support: readonly ContinuityFact[] };
 
 export type ConfirmationResult =
   /** the usable observations by which the peer, or a usable successor of it, wrote to exactly this local DID */
   | { status: "confirmed"; observations: readonly Confirmation[] }
   /** no such observation is usable; `unusable` lists the observations to this local DID a usable peer path reaches that are not usable themselves */
-  | { status: "unconfirmed"; unusable: readonly AddressObservation[] }
+  | { status: "unconfirmed"; unusable: readonly PeerObservation[] }
   /** a conflict reaches the pair */
   | { status: "conflict"; facts: readonly ContinuityFact[] };
 
@@ -116,7 +116,7 @@ export type History = { links: readonly PositiveLink[]; endings: readonly Ending
  * verdict: the support re-derives the usable links asserted, or one
  * confirmation, under the same profile. It does not replay the whole
  * answer: an unchanged head or a zero-step path has empty support, and
- * neither establishes an address observation or a rotation; the endings
+ * neither establishes a peer observation or a rotation; the endings
  * an answer lists are assertions, not the context that scopes them. No
  * support proves the absence of a conflict outside the facts. Answers
  * name facts by their content alone: which piece of evidence stands for
@@ -199,9 +199,9 @@ interface Claim {
 
 function claimOf(fact: ContinuityFact): Claim | null {
   switch (fact.kind) {
-    case "address-observed":
+    case "peer-observation":
       return fact.rotatedFrom === null ? null : { side: "peer", at: channelOf(fact.at.localDid, fact.rotatedFrom), change: { kind: "rotate", successor: fact.at.peerDid }, to: fact.at };
-    case "peer-ended":
+    case "peer-ending":
       return { side: "peer", at: fact.at, change: { kind: "end" }, to: null };
     case "local-decision":
       return { side: "local", at: fact.at, change: fact.change, to: fact.change.kind === "end" ? null : channelOf(fact.change.successor, fact.at.peerDid) };
@@ -334,7 +334,7 @@ class Model implements Continuity {
   private writersOf(admits: (entry: Entry) => boolean): Writers {
     const writers: Writers = new Map();
     for (const entry of this.entries.values()) {
-      if (entry.fact.kind !== "address-observed" || !admits(entry)) continue;
+      if (entry.fact.kind !== "peer-observation" || !admits(entry)) continue;
       let peers = writers.get(entry.fact.at.localDid);
       if (peers === undefined) writers.set(entry.fact.at.localDid, (peers = new Map()));
       let observations = peers.get(entry.fact.at.peerDid);
@@ -558,10 +558,10 @@ class Model implements Continuity {
     const conflict = this.conflictFactsAt(channel);
     if (conflict.length > 0) return { status: "conflict", facts: this.factsOf(conflict) };
     const observations: Confirmation[] = [];
-    const unusable: AddressObservation[] = [];
+    const unusable: PeerObservation[] = [];
     const reach = localDid === peerDid ? null : this.usable.reach(channel, "peer");
     for (const entry of this.entries.values()) {
-      if (entry.fact.kind !== "address-observed" || entry.fact.at.localDid !== localDid) continue;
+      if (entry.fact.kind !== "peer-observation" || entry.fact.at.localDid !== localDid) continue;
       const via = reach?.pathTo(entry.fact.at);
       if (via === undefined) continue;
       if (!this.clear(entry)) unusable.push(entry.fact);
@@ -625,7 +625,6 @@ class Model implements Continuity {
     return { status: "waiting", because: "the predecessor is confirmed only through continuity that is not usable" };
   }
 
-  /** The facts of the given identities, each once, in the order of their identities. */
   private factsOf(identities: Iterable<FactIdentity>): ContinuityFact[] {
     return [...new Set(identities)].sort(compareUtf8).map((identity) => this.entries.get(identity)!.fact);
   }

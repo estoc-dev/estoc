@@ -1,14 +1,14 @@
-import { compareUtf8, factIdentity, type AddressObservation, type Channel, type ContinuityFact, type Did, type LocalDecision, type PeerEnding } from "../src/index.js";
+import { compareUtf8, factIdentity, type Channel, type ContinuityFact, type Did, type LocalDecision, type PeerEnding, type PeerObservation } from "../src/index.js";
 
 export const C = (localDid: Did, peerDid: Did): Channel => ({ localDid, peerDid });
 
 /** A receipt from the peer of `at` to its local DID that carried no proof. */
-export const observe = (at: Channel): AddressObservation => ({ kind: "address-observed", at, rotatedFrom: null });
+export const observe = (at: Channel): PeerObservation => ({ kind: "peer-observation", at, rotatedFrom: null });
 
 /** A receipt from the peer of `at` to its local DID that carried the peer's rotation from `from`. */
-export const rotated = (at: Channel, from: Did): AddressObservation => ({ kind: "address-observed", at, rotatedFrom: from });
+export const rotated = (at: Channel, from: Did): PeerObservation => ({ kind: "peer-observation", at, rotatedFrom: from });
 
-export const peerEnd = (at: Channel): PeerEnding => ({ kind: "peer-ended", at });
+export const peerEnd = (at: Channel): PeerEnding => ({ kind: "peer-ending", at });
 
 export const decide = (at: Channel, successor: Did): LocalDecision => ({ kind: "local-decision", at, change: { kind: "rotate", successor } });
 

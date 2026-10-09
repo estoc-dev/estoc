@@ -28,7 +28,7 @@ describe("accepting facts", () => {
   });
 
   it("keeps facts that say the same thing once, whatever the order of their members", () => {
-    const reordered = { rotatedFrom: "B0", at: { peerDid: "B1", localDid: "A0" }, kind: "address-observed" } as unknown as ContinuityFact;
+    const reordered = { rotatedFrom: "B0", at: { peerDid: "B1", localDid: "A0" }, kind: "peer-observation" } as unknown as ContinuityFact;
     expect(deriveContinuity([p1, { ...p1 }, reordered]).facts).toEqual([p1]);
     expect(deriveContinuity([d1, decide(A0B0, "A1"), o0, observe(A0B0)]).facts).toHaveLength(2);
   });
@@ -50,7 +50,7 @@ describe("accepting facts", () => {
     expect(deriveContinuity(facts).facts.map((fact) => fact.at.peerDid)).toEqual(["a", "z", "！", "\u{1F600}"]);
     // at one pair the identities part at the first member after `at`: `change` before `kind`
     const atOnePair = [peerEnd(A0B0), o0, d1];
-    expect(deriveContinuity(atOnePair).facts.map((fact) => fact.kind)).toEqual(["local-decision", "address-observed", "peer-ended"]);
+    expect(deriveContinuity(atOnePair).facts.map((fact) => fact.kind)).toEqual(["local-decision", "peer-ending", "peer-observation"]);
   });
 });
 
@@ -99,7 +99,7 @@ describe("validating a fact", () => {
   });
 
   it("requires explicit nulls", () => {
-    expect(() => validateFact({ kind: "address-observed", at: A0B0 })).toThrow(InvalidFact);
+    expect(() => validateFact({ kind: "peer-observation", at: A0B0 })).toThrow(InvalidFact);
   });
 
   it("reads only its own members, not ones a prototype supplies", () => {

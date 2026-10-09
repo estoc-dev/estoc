@@ -5,7 +5,7 @@
  * side signs, rotation decisions, intents and preparations between them,
  * so a fold over messages can be set up in a few lines.
  */
-import { factIdentity, type AddressObservation, type ContinuityFact, type LocalDecision } from "@estoc/continuity";
+import { factIdentity, type ContinuityFact, type LocalDecision, type PeerObservation } from "@estoc/continuity";
 import { encodeLongForm } from "@estoc/did-peer";
 import type { Event, JsonObject } from "@estoc/event-store";
 import { SignJWT, importJWK } from "jose";
@@ -214,10 +214,10 @@ export async function shortIssuerProof(keys: Keys, predecessor: { didId: DidId; 
 export const channel = (local: { did: Did }, peer: { did: Did }): Channel => channelOf(local.did, peer.did);
 
 /** The fact a proof-free receipt from the peer to the local DID projects. */
-export const seen = (local: { did: Did }, peer: { did: Did }): AddressObservation => ({ kind: "address-observed", at: channel(local, peer), rotatedFrom: null });
+export const seen = (local: { did: Did }, peer: { did: Did }): PeerObservation => ({ kind: "peer-observation", at: channel(local, peer), rotatedFrom: null });
 
 /** The fact a carrier's bound proof projects: the successor's observation, carrying the peer's rotation from the predecessor. */
-export const rotated = (local: { did: Did }, predecessor: { did: Did }, successor: { did: Did }): AddressObservation => ({ kind: "address-observed", at: channel(local, successor), rotatedFrom: predecessor.did });
+export const rotated = (local: { did: Did }, predecessor: { did: Did }, successor: { did: Did }): PeerObservation => ({ kind: "peer-observation", at: channel(local, successor), rotatedFrom: predecessor.did });
 
 /** The fact a decision to continue `from` as `to` toward the peer projects. */
 export const decided = (from: { did: Did }, peer: { did: Did }, to: { did: Did }): LocalDecision => ({ kind: "local-decision", at: channel(from, peer), change: { kind: "rotate", successor: to.did } });

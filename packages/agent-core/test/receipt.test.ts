@@ -219,7 +219,7 @@ describe("the receipt", () => {
     const [verified, unreadable] = await eventsOf(alice, "message.in");
     expect([verified!.data.fromPrior, unreadable!.data.fromPrior]).toEqual([proof, "not-a-jwt"]);
     const fold = await foldOf(alice);
-    expect(fold.channels.carriers.get(verified!.cid)?.fact).toEqual({ kind: "address-observed", at: { localDid: alice.did, peerDid: bob.did }, rotatedFrom: prior.did });
+    expect(fold.channels.carriers.get(verified!.cid)?.fact).toEqual({ kind: "peer-observation", at: { localDid: alice.did, peerDid: bob.did }, rotatedFrom: prior.did });
     expect(fold.channels.carriers.get(unreadable!.cid)).toMatchObject({ proof: { status: "invalid" }, fact: null });
     expect([fold.channels.sources.get(verified!.cid)?.status, fold.channels.sources.get(unreadable!.cid)?.status]).toEqual(["complete", "complete"]);
     await closeAll(alice, bob);
@@ -253,7 +253,7 @@ describe("the receipt", () => {
     expect([first!.data.fromPrior, second!.data.fromPrior]).toEqual(proofs);
     const fold = await foldOf(alice);
     const facts = [first, second].map((event) => fold.channels.carriers.get(event!.cid)!.fact);
-    expect(facts).toEqual([twoServices, untyped].map((iss) => ({ kind: "address-observed", at: { localDid: alice.did, peerDid: bob.did }, rotatedFrom: iss.slice(0, iss.lastIndexOf(":")) })));
+    expect(facts).toEqual([twoServices, untyped].map((iss) => ({ kind: "peer-observation", at: { localDid: alice.did, peerDid: bob.did }, rotatedFrom: iss.slice(0, iss.lastIndexOf(":")) })));
 
     expect((await receiver.receive({ packed: await sealed(honest, alice.longFormDid), source: DIRECT })).outcome).toBe("received");
     expect((await foldOf(alice)).channels.sources.size).toBe(3);

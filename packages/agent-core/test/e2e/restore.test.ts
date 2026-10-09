@@ -121,7 +121,7 @@ describe("a vault restored from a snapshot", () => {
     const fold = await foldOf(restored);
     expect(fold.set.of("message.in")).toHaveLength(1);
     expect(fold.dids.entities.has(ALICE_LATER)).toBe(false);
-    expect(fold.continuity.facts.filter((fact) => fact.kind !== "address-observed" || fact.rotatedFrom !== null)).toEqual([]);
+    expect(fold.continuity.facts.filter((fact) => fact.kind !== "peer-observation" || fact.rotatedFrom !== null)).toEqual([]);
   });
 
   it("predating a rotation the peer has verified selects the same successor when the message that prompted the first is delivered to it again: the peer joins the second proof to the one replacement, keeps its head there and sends on it", { timeout: LONG }, async () => {

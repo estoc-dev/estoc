@@ -464,12 +464,12 @@ export function bindFromPrior(proof: VerifiedFromPrior, receipt: Receipt): Bindi
     if (sender === null) return { status: "mismatch", because: "a rotation arrives from an authenticated sender" };
     if (sender.canonical !== successor.canonical) return { status: "mismatch", because: `sub is ${successor.presented} but the sender is ${sender.presented}` };
     if (recipient.canonical === successor.canonical) return { status: "mismatch", because: "the recipient is the successor" };
-    return { status: "bound", fact: { kind: "address-observed", at: { localDid: recipient.canonical, peerDid: successor.canonical }, rotatedFrom: proof.issuer.canonical } };
+    return { status: "bound", fact: { kind: "peer-observation", at: { localDid: recipient.canonical, peerDid: successor.canonical }, rotatedFrom: proof.issuer.canonical } };
   }
   if (sender !== null) return { status: "mismatch", because: "an ending arrives without a sender" };
   if (proof.change.audience === null) return { status: "unbound", because: "the ending names no audience; this profile binds an ending only to the recipient it names" };
   if (proof.change.audience.canonical !== recipient.canonical) return { status: "mismatch", because: `aud is ${proof.change.audience.presented} but the recipient is ${recipient.presented}` };
-  return { status: "bound", fact: { kind: "peer-ended", at: { localDid: recipient.canonical, peerDid: proof.issuer.canonical } } };
+  return { status: "bound", fact: { kind: "peer-ending", at: { localDid: recipient.canonical, peerDid: proof.issuer.canonical } } };
 }
 
 const encoder = new TextEncoder();

@@ -11,13 +11,14 @@
   Every answer lists facts: support, waiting, endings, conflict facts,
   `status(fact)`, and the `fact` of change records, ending records and
   confirmations.
-- **Three kinds of fact** (breaking): `address-observed` carries the
-  peer's rotation as `rotatedFrom`, so a peer rotation is always the
-  observation of its successor and sits at both pairs; `peer-ended` is
-  the peer's ending; a `local-decision` names no source, and any usable
-  observation confirms its predecessor address. `PeerTransition` is
-  gone. `FactStatus` has no `invalid` or `unresolved`, and
-  `HeadResult.unresolved` lists `waiting` only.
+- **Three kinds of fact** (breaking): `peer-observation`
+  (`PeerObservation`, formerly `address-observed` and
+  `AddressObservation`) carries the peer's rotation as `rotatedFrom`, so
+  a peer rotation is always the observation of its successor and sits
+  at both pairs; `peer-ending` is the peer's ending; a `local-decision`
+  names no source, and any usable observation confirms its predecessor
+  address. `PeerTransition` is gone. `FactStatus` has no `invalid` or
+  `unresolved`, and `HeadResult.unresolved` lists `waiting` only.
 - **The model accepts facts itself** (breaking): `FactSnapshot`,
   `mergeFacts`, `emptySnapshot`, `normalizeSnapshot`, `sameFacts`,
   `IncompatibleSnapshot` and `canonicalFact` are gone.

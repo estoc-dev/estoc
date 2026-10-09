@@ -356,7 +356,7 @@ describe("bind", () => {
     const jwt = await rotation(b0, b1);
     const proof = await verifyFromPrior(jwt, b0.longForm);
     const binding = bindFromPrior(proof, { token: jwt, recipient: a0.longForm, sender: b1.longForm });
-    const fact = { kind: "address-observed", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, rotatedFrom: b0.shortForm } as const;
+    const fact = { kind: "peer-observation", at: { localDid: a0.shortForm, peerDid: b1.shortForm }, rotatedFrom: b0.shortForm } as const;
     expect(binding).toEqual({ status: "bound", fact });
     const model = deriveContinuity([fact]);
     expect(model.head({ localDid: a0.shortForm, peerDid: b0.shortForm })).toEqual({ status: "head", channel: { localDid: a0.shortForm, peerDid: b1.shortForm }, support: [fact] });
@@ -384,7 +384,7 @@ describe("bind", () => {
   it("binds an ending only to the recipient it names, on an anonymous receipt", async () => {
     const addressed = await ending(b0, a0);
     const proof = await verifyFromPrior(addressed, b0.longForm);
-    expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: null })).toEqual({ status: "bound", fact: { kind: "peer-ended", at: { localDid: a0.shortForm, peerDid: b0.shortForm } } });
+    expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: null })).toEqual({ status: "bound", fact: { kind: "peer-ending", at: { localDid: a0.shortForm, peerDid: b0.shortForm } } });
     expect(bindFromPrior(proof, { token: addressed, recipient: b1.longForm, sender: null })).toMatchObject({ status: "mismatch", because: expect.stringContaining("aud") });
     expect(bindFromPrior(proof, { token: addressed, recipient: a0.longForm, sender: b0.longForm })).toMatchObject({ status: "mismatch", because: expect.stringContaining("sender") });
     const unaddressed = await ending(b0, null);

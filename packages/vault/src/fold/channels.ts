@@ -92,7 +92,7 @@ export interface ChannelEvidence {
   readonly carriers: ReadonlyMap<EventCid, Carrier>;
   readonly decisions: ReadonlyMap<EventCid, Decision>;
   /**
-   * Does this observation stand as an address observation? It is
+   * Does this observation stand as a peer observation? It is
    * placed, and any proof it brought is verified and bound. This is
    * what the continuity model is derived from and what intent
    * conflicts are detected over; it authorizes no operation by itself.

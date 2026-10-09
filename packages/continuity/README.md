@@ -49,7 +49,7 @@ host: admission, dispatch, contact policy, successor allocation
 | Is this a valid rotation or ending proof? | Parses the JWT, checks the profile, takes the key from the issuer's own document, verifies the signature | Retains the issuer's long-form DID and the original token |
 | Which pair does this receipt establish? | Binds the verified proof to the recipient and sender the host established | Decrypts and authenticates the envelope |
 | Did B0 become B1 here? Which pair follows both rotating? | Derives links, joins, contexts and a unique head | Uses the answer under its own policy |
-| Does the peer know A1? | Derives confirmation from exact address observations | Supplies authenticated observations |
+| Does the peer know A1? | Derives confirmation from peer observations addressed to the exact local DID | Supplies authenticated observations |
 | Does the evidence conflict? | Keeps every branch and reports the scope; picks no winner | Shows diagnostics, gathers more evidence |
 | May this message be processed, replied to, acknowledged? | A directed path preserving roles, with its support | Admission, ACK targets, threads, user policy |
 | Can the next operation be sent? | Nothing: there is no `canSend` | Keys, routes, locking, commits, dispatch |
@@ -62,13 +62,13 @@ many receipts or saved decisions the host projected them from. Which
 piece of evidence stands for a fact in an answer is the host's to say.
 The types in `src/types.ts` say exactly what each member means.
 
-- `address-observed` — one authenticated receipt from the peer of `at`
+- `peer-observation` — one authenticated receipt from the peer of `at`
   to exactly its local DID. When the receipt carried a verified and
   bound rotation, `rotatedFrom` is the peer's predecessor: the peer of
   `C(at.localDid, rotatedFrom)` became `at.peerDid`. The sender of a
   rotation is its successor, so a peer rotation is always observed this
   way, and such an observation sits at both pairs.
-- `peer-ended` — the peer of `at` ended, as a verified and bound proof
+- `peer-ending` — the peer of `at` ended, as a verified and bound proof
   on an anonymous receipt established.
 - `local-decision` — a saved choice to rotate the local DID of `at`, or
   to end there. A decision names no observation: any usable one
@@ -168,7 +168,7 @@ result type in `src/model.ts` documents its variants.
 Support re-derives the usable links an answer asserts, or one
 confirmation, under the same profile. It does not replay the whole
 answer: an unchanged head or a zero-step path has empty support, and
-neither establishes an address observation or a rotation; the endings
+neither establishes a peer observation or a rotation; the endings
 an `ended` answer lists are the assertions, not the context that scopes
 them. No support proves the absence of a conflict outside the facts
 supplied. Keep the facts, not the support, to replay
@@ -222,9 +222,9 @@ precheck grants no verified type. `verifyFromPrior` applies the same
 document-independent rules and establishes the issuer's declaration.
 `bindFromPrior` turns it into one fact at the pair the receipt
 established: a rotation requires the receipt's own token and an
-authenticated sender equal to `sub`, and yields the address observation
+authenticated sender equal to `sub`, and yields the peer observation
 at `C(recipient, sub)` whose `rotatedFrom` is `iss`. An ending yields
-`peer-ended` at `C(recipient, iss)`. A wrong token, sender or recipient
+`peer-ending` at `C(recipient, iss)`. A wrong token, sender or recipient
 is a `mismatch`.
 
 A received ending has no sender, and the standard's basic form binds it

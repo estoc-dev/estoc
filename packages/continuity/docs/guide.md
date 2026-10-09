@@ -14,10 +14,10 @@ Start with [both parties rotating and joining](#join), then explore
 | --- | --- |
 | `C(A0,B0)` | From A's perspective: A0 is the local DID and B0 is the peer DID. Swapping them changes the question. |
 | A0, A1, B0, B1 | DID abbreviations used in the tests. Numbers identify predecessors and successors in an example; they provide no timestamp or ordering authority. |
-| `p1` | An `address-observed` fact whose receipt carried the peer's verified and bound rotation: B1 wrote to A0, having rotated from B0 (`rotatedFrom: "B0"`). |
-| `o1` | An `address-observed` fact whose receipt carried no proof: an authenticated receipt from the peer to an **exact local DID**. |
+| `p1` | A `peer-observation` fact whose receipt carried the peer's verified and bound rotation: B1 wrote to A0, having rotated from B0 (`rotatedFrom: "B0"`). |
+| `o1` | A `peer-observation` fact whose receipt carried no proof: an authenticated receipt from the peer to an **exact local DID**. |
 | `d1` | A `local-decision`: a local rotation or ending decision the host has saved. |
-| `e` | An ending: a `peer-ended` fact, the peer's verified and bound ending, or a `local-decision` that ends. |
+| `e` | An ending: a `peer-ending` fact, the peer's verified and bound ending, or a `local-decision` that ends. |
 | Dashed `join` edge | An edge derived from the two sides' rotations. It can be usable without another receipt. |
 | Dashed `diagnostic` edge | An edge retained to explain history or ambiguity. It cannot serve as a usable path. |
 | `support` | The facts supporting the asserted links or an individual confirmation, not every fact the answer depends on. |
@@ -34,7 +34,7 @@ flowchart TB
     R["host: receipts, proofs,<br/>DID documents"] --> V["verify + bind"]
     V --> F["Three kinds of fact,<br/>identified by content"]
     D["host: saved local decisions"] --> F
-    O["host: authenticated<br/>address observations"] --> F
+    O["host: authenticated<br/>peer observations"] --> F
     F --> X["host index:<br/>evidence to factIdentity"]
     F --> M["deriveContinuity<br/>accept, then derive"]
     M --> Q["head / path / confirmation<br/>history / conflicts / status"]
@@ -139,9 +139,9 @@ import { deriveContinuity, type ContinuityFact } from "@estoc/continuity";
 
 const C = (localDid: string, peerDid: string) => ({ localDid, peerDid });
 const facts: ContinuityFact[] = [
-  { kind: "address-observed", at: C("A0", "B0"), rotatedFrom: null },
+  { kind: "peer-observation", at: C("A0", "B0"), rotatedFrom: null },
   { kind: "local-decision", at: C("A0", "B0"), change: { kind: "rotate", successor: "A1" } },
-  { kind: "address-observed", at: C("A0", "B1"), rotatedFrom: "B0" },
+  { kind: "peer-observation", at: C("A0", "B1"), rotatedFrom: "B0" },
 ];
 
 const model = deriveContinuity(facts);
@@ -301,7 +301,7 @@ cannot undo messages that have already been sent.
 | A receipt with a rotation and one without, at one pair | Two facts: the first also rests on the pair the peer left. |
 | Different string case | Another fact; the core does not normalize DIDs for the host. |
 | Order of the accepted facts | By identity, the RFC 8785 text, in UTF-8 byte order rather than UTF-16 or locale order. |
-| Extra or inherited members, equal endpoints, or a successor or predecessor equal to either endpoint | `InvalidFact`. |
+| Unknown own enumerable members, required members missing from the object itself, equal endpoints, or a successor or predecessor equal to either endpoint | `InvalidFact`. |
 | Missing or incorrectly typed `rotatedFrom` or `change`, an ending with a successor, or invalid Unicode | `InvalidFact`; a required explicit null cannot be omitted. |
 | An input member is an accessor | Validation captures its value instead of reading a changing member again later. |
 | `factIdentity` or `status` of a value the profile refuses | `InvalidFact`, the same refusal `deriveContinuity` gives. |
@@ -466,7 +466,7 @@ minimal set.
 | `path.support` | Re-derives the asserted usable links under the same profile. |
 | Each `confirmation.observations[n].support` | Re-derives that individual confirmation: the observation and the peer path to it. |
 | `head.support` | Supports the usable links leading to the head; it does not promise to replay the whole query verdict. |
-| An unchanged head or zero-step path, with support `[]` | There is no rotation link to prove; this establishes no address observation. |
+| An unchanged head or zero-step path, with support `[]` | There is no rotation link to prove; this establishes no peer observation. |
 | Positive provenance in `history` | Explains origins and ambiguity; it is not a general usable witness. |
 
 Keep the facts and the profile to replay a query result. Support proves no
@@ -522,7 +522,7 @@ and establishes a fact only when binding succeeds.
 | A qualifying Multikey, JWK or embedded authentication method | Can verify an Ed25519 signature; a key authorized only for keyAgreement cannot. |
 | Altered signed payload, another signing key or incorrect signature bytes | `signature` failure. |
 | A different receipt token, a sender other than the rotation successor, or an ineligible recipient | Binding `mismatch`, producing no fact. |
-| A rotation bound to its receipt | One observation at C(recipient, sub) whose `rotatedFrom` is `iss`; a bound ending yields `peer-ended` at C(recipient, iss). |
+| A rotation bound to its receipt | One observation at C(recipient, sub) whose `rotatedFrom` is `iss`; a bound ending yields `peer-ending` at C(recipient, iss). |
 
 ### A verified ending can still be unbound
 
@@ -538,22 +538,22 @@ flowchart TD
 `sender: null` is the host's assertion of an anonymous receipt, requiring the
 plaintext to contain no `from`. Signed audience is an extension of this
 package's profile. A valid basic ending token alone does not identify which
-recipient's relationship it ends. Ending binding produces no address observation.
+recipient's relationship it ends. Ending binding produces no peer observation.
 
 ### Creation verifies the signer's output too
 
 ```mermaid
 flowchart LR
-    R["ProofRequest"] --> P["Check request / issuer method"]
+    R["ProofRequest"] --> P["Check issuer / change / iat"]
     P --> S["Host-held signer<br/>Sign JWS signing input"]
-    S --> V["Verify against the issuer's long form"]
+    S --> V["Verify issuer document / method / signature"]
     V --> O["VerifiedFromPrior"]
 ```
 
-An inconsistent request is rejected before signing. An unauthorized method,
-another key or invalid signature bytes cannot produce a verified proof. The
-signer can hold a non-exportable key. Creating a proof saves no decision and
-sends no message.
+An inconsistent issuer, change or `iat` is rejected before signing. An
+unauthorized method, another key or invalid signature bytes cannot produce
+a verified proof. The signer can hold a non-exportable key. Creating a
+proof saves no decision and sends no message.
 
 **Tests:** [inspect][test-inspect], [precheck][test-precheck],
 [verify][test-verify], [bind][test-bind], [create][test-create].

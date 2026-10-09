@@ -6,7 +6,7 @@
  * cryptography; that is `@estoc/continuity/from-prior`.
  */
 
-export type { AddressObservation, Change, Channel, ContinuityFact, Did, Ending, FactKind, LocalDecision, PeerEnding, Rotation } from "./types.js";
+export type { Change, Channel, ContinuityFact, Did, Ending, FactKind, LocalDecision, PeerEnding, PeerObservation, Rotation } from "./types.js";
 export { PROFILE_VERSION } from "./types.js";
 export { InvalidFact } from "./errors.js";
 export { channelOf, compareChannels, compareUtf8, factIdentity, sameChannel, validateFact, type FactIdentity } from "./facts.js";

@@ -42,7 +42,7 @@ function picture(vault: VaultFold, probes: readonly Channel[] = []) {
   const note = (c: { localDid: string; peerDid: string }) => channels.set(`${c.localDid} ${c.peerDid}`, c as Channel);
   for (const fact of continuity.facts) {
     note(fact.at);
-    if (fact.kind === "address-observed" && fact.rotatedFrom !== null) note({ localDid: fact.at.localDid, peerDid: fact.rotatedFrom });
+    if (fact.kind === "peer-observation" && fact.rotatedFrom !== null) note({ localDid: fact.at.localDid, peerDid: fact.rotatedFrom });
     if (fact.kind === "local-decision" && fact.change.kind === "rotate") note({ localDid: fact.change.successor, peerDid: fact.at.peerDid });
   }
   for (const c of probes) note(c);
@@ -107,7 +107,7 @@ describe("the projection", () => {
     expect(c.facts).toEqual([seen(a0, b0)]);
     expect(c.index.evidenceOf(seen(a0, b0))).toEqual(receipts.map((event) => event.cid).sort(compareUtf8));
     for (const event of receipts) expect(c.index.factOf(event.cid)).toEqual(seen(a0, b0));
-    expect(c.index.describe([seen(a0, b0)])).toBe(`the address-observed of ${receipts.map((event) => event.cid).sort(compareUtf8).join(", ")}`);
+    expect(c.index.describe([seen(a0, b0)])).toBe(`the peer-observation of ${receipts.map((event) => event.cid).sort(compareUtf8).join(", ")}`);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 

@@ -80,7 +80,7 @@ describe("the successor's recipe", () => {
     ].sort((x, y) => compareUtf8(factIdentity(x.fact), factIdentity(y.fact)));
     expect(successorRecipe(fold, channel(second, b2))).toEqual({
       status: "blocked",
-      because: `the history from the branch's anchor to the pair is in conflict at ${competing.map(({ cid }) => `the address-observed of ${cid}`).join("; ")}`,
+      because: `the history from the branch's anchor to the pair is in conflict at ${competing.map(({ cid }) => `the peer-observation of ${cid}`).join("; ")}`,
     });
   });
 

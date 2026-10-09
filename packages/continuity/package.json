@@ -1,7 +1,7 @@
 {
   "name": "@estoc/continuity",
   "version": "0.1.0",
-  "description": "Continuity between oriented DID pairs: a pure model that derives heads, paths, confirmation and conflicts from facts identified by their content (address observations, peer endings, local decisions), without choosing winners; and a from-prior module that verifies, binds and creates DIDComm v2 from_prior proofs under a did:peer:4 + Ed25519 profile.",
+  "description": "Continuity between oriented DID pairs: a pure model that derives heads, paths, confirmation and conflicts from facts identified by their content (peer observations, peer endings, local decisions), without choosing winners; and a from-prior module that verifies, binds and creates DIDComm v2 from_prior proofs under a did:peer:4 + Ed25519 profile.",
   "license": "Apache-2.0",
   "author": "merely",
   "repository": {

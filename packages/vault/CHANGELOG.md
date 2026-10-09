@@ -5,7 +5,7 @@
 - **Continuity facts are identified by their content** (breaking): the
   projection follows the `estoc-continuity/3` profile of
   `@estoc/continuity`, one fact per event. A proof-free receipt is an
-  address observation; a receipt whose proof verified and bound is the
+  peer observation; a receipt whose proof verified and bound is the
   observation of its successor carrying the rotation from the
   predecessor, `Carrier.fact` in place of `Carrier.facts`; a decision
   is a local decision without its source, which the vault still checks

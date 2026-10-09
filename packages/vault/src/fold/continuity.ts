@@ -117,7 +117,7 @@ export function* projectFacts(evidence: ChannelEvidence): Generator<[EventCid, C
   for (const source of evidence.sources.values()) {
     if (source.status !== "complete") continue;
     const { cid, data } = source.event;
-    if (data.fromPrior === null) yield [cid, { kind: "address-observed", at: source.channel, rotatedFrom: null }];
+    if (data.fromPrior === null) yield [cid, { kind: "peer-observation", at: source.channel, rotatedFrom: null }];
     else {
       const fact = evidence.carriers.get(cid)?.fact ?? null;
       if (fact !== null) yield [cid, fact];
@@ -180,7 +180,6 @@ class ContinuityFold implements Continuity {
     return this.factStatus(cid);
   }
 
-  /** The model's status of the fact an event projects; unknown when it projects none. */
   private modelStatus(cid: EventCid): FactStatus {
     const fact = this.index.factOf(cid);
     return fact === undefined ? { status: "unknown" } : this.model.status(fact);
@@ -324,7 +323,7 @@ class ContinuityFold implements Continuity {
    */
   private unusableReplacement(link: PositiveLink): PeerRoot {
     const failing = link.support
-      .filter((fact) => fact.kind !== "address-observed" || fact.rotatedFrom !== null)
+      .filter((fact) => fact.kind !== "peer-observation" || fact.rotatedFrom !== null)
       .map((fact) => this.model.status(fact))
       .find((status) => status.status !== "usable");
     const because = failing === undefined ? "" : `: ${failing.status}${"because" in failing ? `: ${failing.because}` : ""}`;

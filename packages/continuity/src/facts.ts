@@ -12,8 +12,8 @@ import { InvalidFact } from "./errors.js";
 import type { Change, Channel, ContinuityFact, Did, FactKind } from "./types.js";
 
 const FACT_MEMBERS: Record<FactKind, readonly string[]> = {
-  "address-observed": ["kind", "at", "rotatedFrom"],
-  "peer-ended": ["kind", "at"],
+  "peer-observation": ["kind", "at", "rotatedFrom"],
+  "peer-ending": ["kind", "at"],
   "local-decision": ["kind", "at", "change"],
 };
 
@@ -67,17 +67,17 @@ function change(value: unknown, where: string): Change {
 export function validateFact(value: unknown, where = "fact"): ContinuityFact {
   if (!isPlainObject(value)) throw new InvalidFact(`${where} is an object`);
   const kind = value["kind"];
-  if (kind !== "address-observed" && kind !== "peer-ended" && kind !== "local-decision") throw new InvalidFact(`${where}.kind is address-observed, peer-ended or local-decision`);
+  if (kind !== "peer-observation" && kind !== "peer-ending" && kind !== "local-decision") throw new InvalidFact(`${where}.kind is peer-observation, peer-ending or local-decision`);
   exactMembers(value, FACT_MEMBERS[kind], where);
   const at = channel(value["at"], `${where}.at`);
   switch (kind) {
-    case "address-observed": {
+    case "peer-observation": {
       const rotatedFrom = textOrNull(value["rotatedFrom"], `${where}.rotatedFrom`);
       if (rotatedFrom === at.peerDid) throw new InvalidFact(`${where}: the peer rotated from the DID it rotated to`);
       if (rotatedFrom === at.localDid) throw new InvalidFact(`${where}: the peer rotated from the local DID`);
       return { kind, at, rotatedFrom };
     }
-    case "peer-ended":
+    case "peer-ending":
       return { kind, at };
     case "local-decision": {
       const decided = change(value["change"], `${where}.change`);
