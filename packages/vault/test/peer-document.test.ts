@@ -16,7 +16,6 @@ import {
   methodPublicKey,
   peerResolution,
   rawCidOfBytes,
-  splitDidUrl,
   verifyResolutions,
   type Did,
   type DidUrl,
@@ -301,52 +300,20 @@ describe("canonicalDidOf", () => {
   });
 });
 
-describe("splitDidUrl", () => {
-  it("splits at the first path, query or fragment delimiter", () => {
-    expect(splitDidUrl("did:web:bob.example#key-1")).toEqual(["did:web:bob.example", "#key-1"]);
-    expect(splitDidUrl("did:web:bob.example?versionId=1#key-1")).toEqual(["did:web:bob.example", "?versionId=1#key-1"]);
-    expect(splitDidUrl("did:web:bob.example/path#key-1")).toEqual(["did:web:bob.example", "/path#key-1"]);
-    expect(splitDidUrl("did:web:bob.example")).toEqual(["did:web:bob.example", ""]);
-  });
-});
-
 describe("authorizedMethodIds", () => {
   const document = peerResolution(LONG).document;
 
-  it("lists references resolved against the document id and embedded methods by their own ids, in order", () => {
+  it("lists references resolved against the document id and embedded methods by their own ids, in order, as @estoc/did-peer reads them", () => {
     expect(authorizedMethodIds(document, "authentication")).toEqual([`${LONG}#key-1`, `${LONG}#embedded`]);
     expect(authorizedMethodIds(document, "keyAgreement")).toEqual([`${LONG}#key-2`]);
   });
 
-  it("keeps an absolute reference, into this document or another, and lists a repeated method once", () => {
-    const web: JsonObject = {
-      id: "did:web:bob.example",
-      verificationMethod: [{ id: "did:web:bob.example#a", type: "Multikey", controller: "did:web:bob.example", publicKeyMultibase: ED_KEY }],
-      authentication: ["#a", "did:web:bob.example#a", "did:web:other.example#k"],
-    };
-    expect(authorizedMethodIds(web, "authentication")).toEqual(["did:web:bob.example#a", "did:web:other.example#k"]);
-    expect(authorizedMethodIds(web, "keyAgreement")).toEqual([]);
-  });
-
-  it("refuses a reference into this document that names no method, a path-relative reference, and an entry of another shape", () => {
+  it("refuses as an invalid document what @estoc/did-peer refuses to read: a dangling reference, a path-relative one, two different methods under one id", () => {
     const base = { id: "did:web:bob.example", verificationMethod: [{ id: "#a", type: "Multikey", publicKeyMultibase: ED_KEY }] };
-    expect(() => authorizedMethodIds({ ...base, authentication: ["#b"] }, "authentication")).toThrow(/references no verification method/);
+    expect(() => authorizedMethodIds({ ...base, authentication: ["#b"] }, "authentication")).toThrow(InvalidDidDocument);
     expect(() => authorizedMethodIds({ ...base, authentication: ["a"] }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ ...base, authentication: [1] }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ ...base, authentication: "#a" }, "authentication")).toThrow(InvalidDidDocument);
-    expect(() => authorizedMethodIds({ verificationMethod: [] }, "authentication")).toThrow(/document id/);
-  });
-
-  it("refuses two different methods under one id", () => {
-    const twice: JsonObject = {
-      id: "did:web:bob.example",
-      verificationMethod: [
-        { id: "#a", type: "Multikey", publicKeyMultibase: ED_KEY },
-        { id: "did:web:bob.example#a", type: "Multikey", publicKeyMultibase: ED_KEY2 },
-      ],
-      authentication: ["#a"],
-    };
-    expect(() => authorizedMethodIds(twice, "authentication")).toThrow(/two different verification methods/);
+    const twice: JsonObject = { ...base, verificationMethod: [...base.verificationMethod, { id: "did:web:bob.example#a", type: "Multikey", publicKeyMultibase: ED_KEY2 }], authentication: ["#a"] };
+    expect(() => authorizedMethodIds(twice, "authentication")).toThrow(InvalidDidDocument);
   });
 });
 

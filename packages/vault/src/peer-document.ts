@@ -5,12 +5,26 @@
  * `alsoKnownAs` and omitted controllers filled in — the same RFC 8785
  * bytes and CID whichever spelling the peer presents later. The
  * verification relationships of any retained document, numalgo 4 or
- * not, are read the same way: references resolved against the
+ * not, are read as `@estoc/did-peer` reads every DID document,
+ * `from_prior` verification included: references resolved against the
  * document's `id`, keys taken from the exact retained entries.
  */
 
-import { canonicalText, canonicalize, isJsonObject, parseStrict, type JsonObject, type JsonValue } from "@estoc/event-store";
-import { PeerDID4Error, decodeLongForm, isLongForm, isShortForm, longToShort, validateInputDocument } from "@estoc/did-peer";
+import { canonicalize, isJsonObject, parseStrict, type JsonObject, type JsonValue } from "@estoc/event-store";
+import {
+  DIDDocumentError,
+  PeerDID4Error,
+  VERIFICATION_RELATIONSHIPS,
+  authorizedMethodIds as authorizedIn,
+  decodeLongForm,
+  definedMethod as definedIn,
+  isLongForm,
+  isShortForm,
+  longToShort,
+  serviceIds,
+  validateInputDocument,
+  type VerificationRelationship,
+} from "@estoc/did-peer";
 import { frozen, remembered } from "@estoc/did-peer/remembered";
 import { base58 } from "@scure/base";
 import { varint } from "multiformats";
@@ -18,7 +32,7 @@ import { varint } from "multiformats";
 import { rawCidOfBytes } from "./document.js";
 import { InvalidDidDocument, InvalidPublicKey } from "./errors.js";
 import { canonicalPublicKey } from "./public-key.js";
-import { isDid, isDidUrl, isUri } from "./syntax.js";
+import { isDid, isUri } from "./syntax.js";
 import type { Cid, Did, DidUrl, PublicKey } from "./types.js";
 
 /** The retained resolution of one numalgo-4 long form: the canonical DID, the presented spelling, and the document as object, bytes and root. */
@@ -27,8 +41,7 @@ export type PeerResolution = { did: Did; presentedDid: Did; document: JsonObject
 const PEER4_PREFIX = "did:peer:4";
 const MULTICODEC_JSON = 0x0200;
 
-const RELATIONSHIPS = ["authentication", "assertionMethod", "keyAgreement", "capabilityDelegation", "capabilityInvocation"] as const;
-export type VerificationRelationship = (typeof RELATIONSHIPS)[number];
+export type { VerificationRelationship };
 
 /** The members a JWK carries only when it holds a private or symmetric key. */
 const PRIVATE_JWK_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
@@ -89,16 +102,7 @@ function shaped(document: JsonObject): void {
   each("alsoKnownAs", (entry) => (typeof entry === "string" ? null : "is a string"));
   each("verificationMethod", methodFault);
   each("service", serviceFault);
-  for (const relationship of RELATIONSHIPS) each(relationship, (entry) => (typeof entry === "string" ? null : methodFault(entry)));
-}
-
-function validateServiceIds(document: JsonObject, base: Did): void {
-  const seen = new Set<DidUrl>();
-  entriesOf(document, "service").forEach((service, i) => {
-    const id = absolute((service as JsonObject)["id"], base, `service[${i}].id`);
-    if (seen.has(id)) throw new InvalidDidDocument(`two services are ${id}`);
-    seen.add(id);
-  });
+  for (const relationship of VERIFICATION_RELATIONSHIPS) each(relationship, (entry) => (typeof entry === "string" ? null : methodFault(entry)));
 }
 
 /**
@@ -170,12 +174,12 @@ export function retainedDocumentAnew(longFormDid: string): JsonObject {
   const input = inputDocumentOf(longFormDid);
   const long = longFormDid as Did;
   const document: JsonObject = { ...input, id: long, alsoKnownAs: [...((input["alsoKnownAs"] as string[] | undefined) ?? []), longToShort(longFormDid)] };
-  for (const member of ["verificationMethod", ...RELATIONSHIPS]) {
+  for (const member of ["verificationMethod", ...VERIFICATION_RELATIONSHIPS]) {
     const entries = input[member];
     if (Array.isArray(entries)) document[member] = entries.map((entry) => withDefaultController(entry, long));
   }
-  for (const relationship of RELATIONSHIPS) authorizedMethodIds(document, relationship);
-  validateServiceIds(document, long);
+  for (const relationship of VERIFICATION_RELATIONSHIPS) authorizedMethodIds(document, relationship);
+  read(() => serviceIds(document));
   return document;
 }
 
@@ -207,83 +211,24 @@ export function peerResolution(longFormDid: string): PeerResolution {
   return { did: longToShort(longFormDid) as Did, presentedDid: longFormDid as Did, document, bytes, cid: rawCidOfBytes(bytes) };
 }
 
-export function splitDidUrl(url: string): [did: string, pathQueryFragment: string] {
-  const end = url.search(/[/?#]/);
-  return end < 0 ? [url, ""] : [url.slice(0, end), url.slice(end)];
+/** What `@estoc/did-peer` refuses to read, as a document the vault refuses. */
+function read<T>(reading: () => T): T {
+  try {
+    return reading();
+  } catch (err) {
+    if (err instanceof DIDDocumentError) throw new InvalidDidDocument(err.message);
+    throw err;
+  }
 }
 
-function documentId(document: JsonObject): Did {
-  const id = document["id"];
-  if (!isDid(id)) throw new InvalidDidDocument("the document id is a DID");
-  return id as Did;
-}
-
-/**
- * A reference as the document authorizes it, resolved against the
- * document's DID. Only fragment and query references resolve: a DID
- * has no path to resolve a path-relative reference against.
- */
-function absolute(reference: unknown, base: Did, at: string): DidUrl {
-  if (typeof reference !== "string") throw new InvalidDidDocument(`${at} is a DID URL`);
-  const url = reference.startsWith("#") || reference.startsWith("?") ? base + reference : reference;
-  if (!isDidUrl(url) || !url.startsWith("did:")) throw new InvalidDidDocument(`${at} is a DID URL or a fragment reference: ${JSON.stringify(reference)}`);
-  return url as DidUrl;
-}
-
-function entriesOf(document: JsonObject, member: string): readonly unknown[] {
-  const entries = document[member];
-  if (entries === undefined) return [];
-  if (!Array.isArray(entries)) throw new InvalidDidDocument(`${member} is an array`);
-  return entries;
-}
-
-/** Every method the document defines, by absolute ID; two definitions under one ID must be the same entry. */
-function definedMethods(document: JsonObject, base: Did): Map<DidUrl, JsonObject> {
-  const methods = new Map<DidUrl, JsonObject>();
-  const define = (entry: unknown, at: string) => {
-    if (!isJsonObject(entry)) return;
-    const id = absolute(entry["id"], base, `${at}.id`);
-    const known = methods.get(id);
-    if (known !== undefined && canonicalText(known) !== canonicalText(entry)) throw new InvalidDidDocument(`two different verification methods are ${id}`);
-    methods.set(id, entry);
-  };
-  entriesOf(document, "verificationMethod").forEach((entry, i) => define(entry, `verificationMethod[${i}]`));
-  for (const relationship of RELATIONSHIPS) entriesOf(document, relationship).forEach((entry, i) => define(entry, `${relationship}[${i}]`));
-  return methods;
-}
-
-/**
- * The absolute IDs of the methods a relationship authorizes, each once
- * in document order: a reference resolved against the document's DID,
- * or an embedded method's own ID. A reference into this document must
- * name a method it defines; a reference into another DID is kept as
- * authorized without a key.
- */
+/** The absolute IDs of the methods a relationship authorizes, each once in document order, as `@estoc/did-peer` reads them. */
 export function authorizedMethodIds(document: JsonObject, relationship: VerificationRelationship): DidUrl[] {
-  const base = documentId(document);
-  const defined = definedMethods(document, base);
-  const ids = new Set<DidUrl>();
-  entriesOf(document, relationship).forEach((entry, i) => {
-    const at = `${relationship}[${i}]`;
-    let id: DidUrl;
-    if (typeof entry === "string") {
-      id = absolute(entry, base, at);
-      if (splitDidUrl(id)[0] === base && !defined.has(id)) throw new InvalidDidDocument(`${at} references no verification method: ${id}`);
-    } else if (isJsonObject(entry)) {
-      id = absolute(entry["id"], base, `${at}.id`);
-    } else {
-      throw new InvalidDidDocument(`${at} is a reference or an embedded verification method`);
-    }
-    ids.add(id);
-  });
-  return [...ids];
+  return read(() => authorizedIn(document, relationship)) as DidUrl[];
 }
 
 /** The method the document defines under an absolute ID, as the exact retained entry. */
 export function definedMethod(document: JsonObject, id: DidUrl): JsonObject {
-  const method = definedMethods(document, documentId(document)).get(id);
-  if (method === undefined) throw new InvalidDidDocument(`the document defines no verification method ${id}`);
-  return method;
+  return read(() => definedIn(document, id)) as JsonObject;
 }
 
 /** The canonical public key of the method the document defines under an absolute ID. */
@@ -313,7 +258,9 @@ export function didcommServiceUris(document: JsonObject): string[] {
     if (isJsonObject(endpoint) && typeof endpoint["uri"] === "string") return endpoint["uri"];
     throw new InvalidDidDocument(`${at} is a URI or an object with a uri`);
   };
-  entriesOf(document, "service").forEach((service, i) => {
+  const services = document["service"];
+  if (services !== undefined && !Array.isArray(services)) throw new InvalidDidDocument("service is an array");
+  (services ?? []).forEach((service, i) => {
     if (!isJsonObject(service)) throw new InvalidDidDocument(`service[${i}] is an object`);
     const type = service["type"];
     if (type !== "DIDCommMessaging" && !(Array.isArray(type) && type.includes("DIDCommMessaging"))) return;

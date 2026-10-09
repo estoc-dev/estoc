@@ -28,6 +28,15 @@ DIDComm v2 `from_prior` proofs, split from `@estoc/continuity/from-prior`.
   creation. So is one whose `x` is not the 32-byte key in base64url
   without padding or whitespace, in every runtime; such a key used to
   verify wherever the runtime's JWK import tolerated it.
+- **The issuer's document as `@estoc/did-peer` reads it** (breaking,
+  since `@estoc/continuity` 0.1.0): the authentication method a `kid`
+  names is found with `authorizedMethodIds` and `definedMethod`, the
+  reading the vault chooses the method it signs under with. A document
+  that defines two different methods under one ID, or whose
+  `authentication` holds a reference into the document that names no
+  method or is not a DID URL, is a `document` failure even when the
+  method the `kid` names signed. A query reference resolves against the
+  document's `id`, as a fragment reference does.
 - **The profile**: inspection, precheck, verification, binding and
   creation of `from_prior` under `estoc-from-prior/1`: did:peer:4
   parties, Ed25519, no validity window, no clock. The precheck applies

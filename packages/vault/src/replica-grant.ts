@@ -14,13 +14,14 @@
  * this seed's, are `verifyReplicaGrant`'s.
  */
 
+import { splitDidUrl } from "@estoc/did-peer";
 import { InvalidJson, canonicalText, isJsonObject } from "@estoc/event-store";
 import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
 import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
 import { sameDid } from "./ids.js";
-import { canonicalDidOf, didcommServiceUris, peerResolution, splitDidUrl } from "./peer-document.js";
+import { canonicalDidOf, didcommServiceUris, peerResolution } from "./peer-document.js";
 import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
 import { isCompactJwt, isDerivedId, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";

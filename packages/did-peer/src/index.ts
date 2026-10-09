@@ -1,6 +1,7 @@
 /**
- * @estoc/did-peer — did:peer:2 and did:peer:4, plus conversion to the flat
- * DIDDoc shape didcomm-rust expects.
+ * @estoc/did-peer — did:peer:2 and did:peer:4, what any DID document's
+ * verification relationships authorize, and conversion to the flat DIDDoc
+ * shape didcomm-rust expects.
  *
  * Everything here is pure encoding/decoding: the document *is* the identifier,
  * so resolution never touches the network. One source runs unchanged in Node,
@@ -44,6 +45,17 @@ export {
   validateInputDocument,
   type PeerDocument,
 } from "./did-peer-4.js";
+
+export { isDid, isDidUrl, splitDidUrl } from "./did-url.js";
+
+export {
+  authorizedMethodIds,
+  definedMethod,
+  DIDDocumentError,
+  serviceIds,
+  VERIFICATION_RELATIONSHIPS,
+  type VerificationRelationship,
+} from "./document.js";
 
 export { DIDDocConversionError, toDIDCommDIDDoc } from "./did-doc.js";
 

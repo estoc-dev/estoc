@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2";
 import bs58 from "bs58";
 
+import { VERIFICATION_RELATIONSHIPS } from "./document.js";
 import { frozen, remembered } from "./remembered.js";
 
 /**
@@ -206,14 +207,6 @@ export function decode(did: string): PeerDocument {
 
   return decoded(did);
 }
-
-const VERIFICATION_RELATIONSHIPS = [
-  "authentication",
-  "assertionMethod",
-  "keyAgreement",
-  "capabilityDelegation",
-  "capabilityInvocation",
-] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

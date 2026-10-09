@@ -1,8 +1,8 @@
 import { describe, expect, it, test, vi } from "vitest";
 
-import { encodeLongForm, longToShort, resolveDIDCommDoc, toDIDCommDIDDoc, type DIDDoc } from "@estoc/did-peer";
+import { encodeLongForm, longToShort, resolveDIDCommDoc, splitDidUrl, toDIDCommDIDDoc, type DIDDoc } from "@estoc/did-peer";
 import type { JsonObject, VaultRuntime } from "@estoc/event-store";
-import { didKeyName, inputDocumentOf, scanVault, signFromPrior, splitDidUrl, vaultDraft, type Did, type DidId, type EventReference, type MediationId, type PublicKey } from "@estoc/vault";
+import { didKeyName, inputDocumentOf, scanVault, signFromPrior, vaultDraft, type Did, type DidId, type EventReference, type MediationId, type PublicKey } from "@estoc/vault";
 
 import { liveInput } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";

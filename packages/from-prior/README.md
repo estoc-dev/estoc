@@ -57,7 +57,11 @@ DID equivalence is the did:peer:4 short form; presented spellings are
 kept beside it. The issuer's material is its long-form DID as the host
 retained it: a did:peer:4 is its own document, so the signing key is
 taken from the content the DID's hash covers and a document assembled
-by a caller cannot substitute one. An authorized key is an Ed25519
+by a caller cannot substitute one. That document is read as
+`@estoc/did-peer` reads any DID document, so the method a `kid` names
+is the one a signer finds there: references resolve against the
+document's `id`, a reference into the document names a method it
+defines, and one ID defines one method. An authorized key is an Ed25519
 Multikey or public JWK. A `publicKeyJwk` carries no private member, its
 `x` is the 32-byte key in base64url without padding or whitespace, as
 RFC 8037 writes it, and the `use`, `key_ops` and `alg` it may carry

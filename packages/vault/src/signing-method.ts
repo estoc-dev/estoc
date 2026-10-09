@@ -5,11 +5,12 @@
  * type signs what no mediator takes.
  */
 
+import { splitDidUrl } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
 import { base64urlnopad } from "@scure/base";
 
 import type { LocalKey } from "./identity.js";
-import { authorizedMethodIds, definedMethod, methodPublicKey, splitDidUrl, type PeerResolution } from "./peer-document.js";
+import { authorizedMethodIds, definedMethod, methodPublicKey, type PeerResolution } from "./peer-document.js";
 import { decodePublicKey } from "./public-key.js";
 import type { DidUrl, PublicKey } from "./types.js";
 

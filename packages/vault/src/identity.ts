@@ -11,14 +11,14 @@
  */
 
 import type { JsonObject, WrappedSeed } from "@estoc/event-store";
-import { encodeLongForm, longToShort } from "@estoc/did-peer";
+import { encodeLongForm, longToShort, splitDidUrl } from "@estoc/did-peer";
 import { deriveIdentity, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import { ed25519 } from "@noble/curves/ed25519";
 import { base64urlnopad } from "@scure/base";
 
 import { IdentityMismatch, InvalidPublicKey, Locked } from "./errors.js";
 import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName, replicaKeyName } from "./ids.js";
-import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, splitDidUrl, type PeerResolution } from "./peer-document.js";
+import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, type PeerResolution } from "./peer-document.js";
 import { canonicalPublicKey } from "./public-key.js";
 import { isDid } from "./syntax.js";
 import type { Did, DidId, KeyName, MediationId, PublicKey, ReplicaId, VaultData } from "./types.js";

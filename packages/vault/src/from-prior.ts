@@ -10,13 +10,13 @@
  */
 
 import { InvalidFromPrior, createFromPrior } from "@estoc/from-prior";
-import { isLongForm } from "@estoc/did-peer";
+import { isLongForm, splitDidUrl } from "@estoc/did-peer";
 
 import { InvalidDidDocument } from "./errors.js";
 import { resolvedDocumentOf, type ReadObject } from "./fold/evidence.js";
 import type { Keys } from "./identity.js";
 import { didKeyName } from "./ids.js";
-import { authorizedMethodIds, methodPublicKey, peerResolution, splitDidUrl } from "./peer-document.js";
+import { authorizedMethodIds, methodPublicKey, peerResolution } from "./peer-document.js";
 import type { Did, DidId, VaultData } from "./types.js";
 
 /**

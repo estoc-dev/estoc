@@ -359,6 +359,18 @@ describe("verify", () => {
     await expect(verifyFromPrior(await rotation(embedded, b1), embedded.longForm)).resolves.toMatchObject({ method: embedded.kid });
   });
 
+  it("reads the issuer's document as @estoc/did-peer reads any DID document: a method defined twice differently, or a reference that names no method, is a document failure though the named method signs", async () => {
+    const other = `z${base58.encode(new Uint8Array([0xed, 0x01, ...b1.publicKeyBytes]))}`;
+    const shapes: [string, (key: { multikey: string }) => Input][] = [
+      ["twice", (key) => ({ verificationMethod: [{ id: "#key-1", type: "Multikey", publicKeyMultibase: other }, { id: "#key-1", type: "Multikey", publicKeyMultibase: key.multikey }], authentication: ["#key-1"] })],
+      ["dangling", (key) => ({ verificationMethod: [{ id: "#key-1", type: "Multikey", publicKeyMultibase: key.multikey }], authentication: ["#key-1", "#key-2"] })],
+    ];
+    for (const [name, shape] of shapes) {
+      const issuer = party(name, shape);
+      expect((await failure(verifyFromPrior(await rotation(issuer, b1), issuer.longForm))).failure, name).toBe("document");
+    }
+  });
+
   it("distinguishes failures of form, profile, document and signature", async () => {
     const jwt = await rotation(b0, b1);
     const [h, p, s] = segments(jwt);

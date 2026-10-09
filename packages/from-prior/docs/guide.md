@@ -55,6 +55,7 @@ and reports a change only when binding succeeds.
 | Repeated JSON claim name | The parser's last value is used; inspection and interpretation of the verified payload agree. |
 | Short-form `iss` and `kid` with the matching retained long form | Accepted; presented spellings and canonical short forms are both retained. |
 | Wrong, malformed or hash-mismatched issuer long form, or a key not authorized for authentication | `document` failure; a caller-assembled document cannot substitute another key. |
+| A method defined twice under one ID with different content, or an `authentication` reference into the document that names no method, even when the method the `kid` names signed | `document` failure: the document is read as `@estoc/did-peer` reads any DID document. |
 | A qualifying Multikey, JWK or embedded authentication method | Can verify an Ed25519 signature; a key authorized only for keyAgreement cannot. |
 | Altered signed payload, another signing key or incorrect signature bytes | `signature` failure. |
 | A different receipt token, a sender other than the rotation successor, or an ineligible recipient | Binding `mismatch`, reporting no change. |
