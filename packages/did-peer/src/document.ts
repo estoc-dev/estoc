@@ -130,7 +130,7 @@ export function definedMethod(document: PeerDocument, id: string): Record<string
   return method;
 }
 
-/** RFC 3986 §4.3: a reference that begins with a scheme is an absolute URI. */
+/** An RFC 3986 scheme as a prefix: a reference that begins with one needs no base. */
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 /**

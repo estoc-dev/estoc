@@ -1,7 +1,4 @@
-/**
- * Test vector from the did:peer:4 spec, matching the reference implementation in
- * references/did-peer-4-ts/lib/index.test.ts.
- */
+/** The input document and short form the did:peer:4 reference implementation tests with. */
 export const PEER_4_INPUT_DOCUMENT = {
   "@context": [
     "https://www.w3.org/ns/did/v1",

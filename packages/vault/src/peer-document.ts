@@ -213,7 +213,6 @@ export function peerResolution(longFormDid: string): PeerResolution {
   return { did: longToShort(longFormDid) as Did, presentedDid: longFormDid as Did, document, bytes, cid: rawCidOfBytes(bytes) };
 }
 
-/** What `@estoc/did-peer` refuses to read, as a document the vault refuses. */
 function read<T>(reading: () => T): T {
   try {
     return reading();

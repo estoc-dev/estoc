@@ -7,10 +7,10 @@ import { frozen, remembered } from "./remembered.js";
 /**
  * did:peer:4 (numalgo 4).
  *
- * Port of the reference implementation at references/did-peer-4-ts. The upstream
- * package is not published to npm, so the port lives here instead. The `varint`
- * dependency is dropped: both multicodec prefixes used by the method are
- * constants, so they are inlined below.
+ * Port of the TypeScript reference implementation. The upstream package is not
+ * published to npm, so the port lives here instead. The `varint` dependency is
+ * dropped: both multicodec prefixes used by the method are constants, so they
+ * are inlined below.
  */
 
 /** multicodec `json` (0x0200) as an unsigned varint */

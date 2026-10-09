@@ -151,7 +151,6 @@ function toService(service: Record<string, unknown>): Service | null {
   return { id, type, serviceEndpoint: normalized };
 }
 
-/** What the document reader refuses, as a document that does not convert. */
 function read<T>(reading: () => T): T {
   try {
     return reading();
