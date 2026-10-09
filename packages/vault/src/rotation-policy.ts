@@ -1,6 +1,6 @@
 /**
  * A rotation away from a pair is one intent: this local predecessor,
- * toward the peer anywhere in its verified peer-only context, replaced
+ * toward the peer anywhere in its verified same-local context, replaced
  * by this successor. Several records may support one intent, each
  * under its own author, time, source and proof, when two replicas
  * decide the same rotation apart or one decides it again over a
@@ -26,7 +26,7 @@ import type { Channel, Did, DidId } from "./types.js";
 export interface DecisionGroup {
   readonly fromDidId: DidId;
   readonly toDidId: DidId;
-  /** the verified peer-only context the records' pairs fall in */
+  /** the verified same-local context the records' pairs fall in */
   readonly context: readonly Channel[];
   /** in canonical event order, each under its own status */
   readonly records: readonly Decision[];
@@ -51,7 +51,7 @@ export function decisionGroups(fold: Fold, records: readonly Decision[]): Decisi
       continue;
     }
     const { fromDidId, toDidId } = record.event.data;
-    const context = fold.continuity.peerContext(record.channel);
+    const context = fold.continuity.sameLocal(record.channel);
     const key = canonicalText([fromDidId, toDidId, channelKey(context[0]!)]);
     let group = groups.get(key);
     if (group === undefined) groups.set(key, (group = { fromDidId, toDidId, context, records: [] }));
@@ -88,7 +88,7 @@ export function rotationIntent(fold: Fold, records: readonly Decision[]): Rotati
   return candidate === undefined ? pending(group.records[0]!) : { status: "candidate", candidate, group };
 }
 
-/** The intent a rotation away from the pair reuses: the one recorded from that local DID anywhere in its verified peer-only context. */
+/** The intent a rotation away from the pair reuses: the one recorded from that local DID anywhere in its verified same-local context. */
 export function decisionFor(fold: VaultFold, localDid: Did, peerDid: Did): RotationIntent {
   return rotationIntent(fold, fold.continuity.decisionsIn(channelOf(localDid, peerDid)));
 }

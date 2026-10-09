@@ -23,7 +23,7 @@ import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm }
 import { base58, base64urlnopad } from "@scure/base";
 import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
 
-import type { ContinuityFact, Did, EvidenceRef, FactId } from "../types.js";
+import type { ContinuityFact, Did, EvidenceRef } from "../types.js";
 
 export const FROM_PRIOR_PROFILE = "estoc-from-prior/1";
 export const FROM_PRIOR_ALG = "EdDSA";
@@ -90,8 +90,6 @@ export type ReceiptEvidence = Readonly<{
    */
   sender: Did | null;
 }>;
-
-export type BindingIds = Readonly<{ transitionId: FactId; observationId?: FactId }>;
 
 export type Binding =
   | Readonly<{ status: "bound"; facts: readonly ContinuityFact[] }>
@@ -450,11 +448,13 @@ export async function verifyFromPrior(jwt: string, evidence: IssuerEvidence): Pr
  * Bind a verified proof to the receipt it arrived on. A rotation binds
  * when the receipt carries this very token and its authenticated
  * sender is the successor: the peer of C(recipient, issuer) became the
- * successor, and the successor wrote to the recipient. An ending binds
- * when the receipt is anonymous and the proof names the recipient as
- * its audience. Anything else binds nothing.
+ * successor, and the successor wrote to the recipient, so the receipt
+ * yields both the peer transition and the observation that carried it.
+ * An ending binds when the receipt is anonymous and the proof names the
+ * recipient as its audience, and yields the transition alone. Anything
+ * else binds nothing.
  */
-export function bindFromPrior(proof: VerifiedFromPrior, receipt: ReceiptEvidence, ids: BindingIds): Binding {
+export function bindFromPrior(proof: VerifiedFromPrior, receipt: ReceiptEvidence): Binding {
   if (receipt.token !== proof.token) return { status: "mismatch", because: "the receipt carries another token than the proof" };
   let recipient: DidSpelling;
   let sender: DidSpelling | null;
@@ -471,16 +471,16 @@ export function bindFromPrior(proof: VerifiedFromPrior, receipt: ReceiptEvidence
     if (sender === null) return { status: "mismatch", because: "a rotation arrives from an authenticated sender" };
     if (sender.canonical !== successor.canonical) return { status: "mismatch", because: `sub is ${successor.presented} but the sender is ${sender.presented}` };
     if (recipient.canonical === successor.canonical) return { status: "mismatch", because: "the recipient is the successor" };
-    const facts: ContinuityFact[] = [{ kind: "peer-transition", id: ids.transitionId, at, change: { kind: "rotate", successor: successor.canonical }, receipt: receipt.ref }];
-    if (ids.observationId !== undefined) {
-      facts.push({ kind: "address-observed", id: ids.observationId, at: { localDid: recipient.canonical, peerDid: successor.canonical }, carriedTransition: ids.transitionId, receipt: receipt.ref });
-    }
+    const facts: ContinuityFact[] = [
+      { kind: "peer-transition", at, change: { kind: "rotate", successor: successor.canonical }, evidence: receipt.ref },
+      { kind: "address-observed", at: { localDid: recipient.canonical, peerDid: successor.canonical }, carried: true, evidence: receipt.ref },
+    ];
     return { status: "bound", facts };
   }
   if (sender !== null) return { status: "mismatch", because: "an ending arrives without a sender" };
   if (proof.change.audience === null) return { status: "unbound", because: "the ending names no audience; this profile binds an ending only to the recipient it names" };
   if (proof.change.audience.canonical !== recipient.canonical) return { status: "mismatch", because: `aud is ${proof.change.audience.presented} but the recipient is ${recipient.presented}` };
-  return { status: "bound", facts: [{ kind: "peer-transition", id: ids.transitionId, at, change: { kind: "end" }, receipt: receipt.ref }] };
+  return { status: "bound", facts: [{ kind: "peer-transition", at, change: { kind: "end" }, evidence: receipt.ref }] };
 }
 
 const encoder = new TextEncoder();

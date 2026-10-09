@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { channelOf, generationOf, recipeDidId, startDidId, successorDidId, successorRecipe, type Did, type DidGeneration, type DidId, type Keys } from "../src/index.js";
 import { ENTRY, MEDIATED, type Scene, createdDid } from "./fold/helpers.js";
-import { channel, foldScene, proofFreeReceipt, receiptCarryingProof, rotation, vaults, type Local } from "./fold/scene.js";
+import { channel, decisionKey, foldScene, inModelOrder, proofFreeReceipt, receiptCarryingProof, rotation, transitionKey, vaults, type Local } from "./fold/scene.js";
 
 const start = (predecessor: Did, binding: Did): [DidId, DidGeneration] => [startDidId(predecessor, binding), { kind: "start", profile: "v1", predecessor, binding }];
 const next = (predecessor: Did): [DidId, DidGeneration] => [successorDidId(predecessor), { kind: "next", profile: "v1", predecessor }];
@@ -26,7 +26,7 @@ describe("the successor's recipe", () => {
     await receiptCarryingProof(scene, peerKeys, a1, b1, b2);
     let fold = await foldScene(scene, keys);
     expect(successorRecipe(fold, channel(a0, b0))).toEqual({ status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [] });
-    expect(successorRecipe(fold, channel(a0, b1))).toEqual({ status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [`receipt:${carried.cid}:transition`] });
+    expect(successorRecipe(fold, channel(a0, b1))).toEqual({ status: "ready", recipe: { kind: "start", predecessor: a0.did, binding: b0.did }, support: [transitionKey(carried)] });
     expect(successorRecipe(fold, channel(a1, b2))).toMatchObject({ status: "ready", recipe: { kind: "start", predecessor: a1.did, binding: b1.did } });
     expect(successorRecipe(fold, channel(a1, b0))).toEqual({ status: "ready", recipe: { kind: "start", predecessor: a1.did, binding: b0.did }, support: [] });
     expect(successorRecipe(fold, channel(b0, a0))).toEqual({ status: "blocked", because: `${b0.did} is no consistent DID of ours` });
@@ -50,14 +50,14 @@ describe("the successor's recipe", () => {
     let fold = await foldScene(scene, keys);
     expect(fold.continuity.status(decision.cid)).toEqual({ status: "verified" });
     const anchor = channel(a0, b0);
-    const supportOf = (pair: ReturnType<typeof channel>): readonly string[] => {
+    const supportOf = (pair: ReturnType<typeof channel>) => {
       const path = fold.continuity.model.path(anchor, pair);
       if (path.status !== "path") throw new Error(`no path to ${pair.peerDid}: ${path.status}`);
       return path.support;
     };
-    expect(supportOf(channel(first, b0))).toContain(`decision:${decision.cid}`);
+    expect(supportOf(channel(first, b0))).toContainEqual(decisionKey(decision));
     expect(successorRecipe(fold, channel(first, b0))).toEqual({ status: "ready", recipe: { kind: "next", predecessor: first.did }, support: supportOf(channel(first, b0)) });
-    expect(supportOf(channel(first, b1))).toEqual(expect.arrayContaining([`decision:${decision.cid}`, `receipt:${moved.cid}:transition`]));
+    expect(supportOf(channel(first, b1))).toEqual(expect.arrayContaining([decisionKey(decision), transitionKey(moved)]));
     expect(successorRecipe(fold, channel(first, b1))).toEqual({ status: "ready", recipe: { kind: "next", predecessor: first.did }, support: supportOf(channel(first, b1)) });
     expect(successorRecipe(fold, channel(second, b2))).toEqual({ status: "waiting", because: `no usable history leads from the branch's anchor, ${a0.did} toward ${b0.did}, to the pair` });
     expect(successorRecipe(fold, channel(second, b0))).toMatchObject({ status: "waiting" });
@@ -66,14 +66,18 @@ describe("the successor's recipe", () => {
     proofFreeReceipt(scene, second, b1);
     fold = await foldScene(scene, keys);
     expect(fold.continuity.status(onward.cid)).toEqual({ status: "verified" });
-    expect(supportOf(channel(second, b1))).toEqual(expect.arrayContaining([`decision:${decision.cid}`, `decision:${onward.cid}`, `receipt:${moved.cid}:transition`]));
+    expect(supportOf(channel(second, b1))).toEqual(expect.arrayContaining([decisionKey(decision), decisionKey(onward), transitionKey(moved)]));
     expect(successorRecipe(fold, channel(second, b1))).toEqual({ status: "ready", recipe: { kind: "next", predecessor: second.did }, support: supportOf(channel(second, b1)) });
     expect(successorRecipe(fold, channel(second, b2))).toMatchObject({ status: "waiting" });
 
-    await receiptCarryingProof(scene, peerKeys, second, b1, b2);
-    await receiptCarryingProof(scene, peerKeys, second, b1, b3);
+    const toB2 = await receiptCarryingProof(scene, peerKeys, second, b1, b2);
+    const toB3 = await receiptCarryingProof(scene, peerKeys, second, b1, b3);
     fold = await foldScene(scene, keys);
-    expect(successorRecipe(fold, channel(second, b2))).toMatchObject({ status: "blocked", because: /^the history from the branch's anchor to the pair is in conflict at / });
+    const competing = inModelOrder([transitionKey(toB2), transitionKey(toB3)]);
+    expect(successorRecipe(fold, channel(second, b2))).toEqual({
+      status: "blocked",
+      because: `the history from the branch's anchor to the pair is in conflict at ${competing.map(({ evidence }) => `the peer-transition of ${evidence}`).join(", ")}`,
+    });
   });
 
   it("waits while the generation of the address waits, and is blocked where it is invalid or under another profile", async () => {

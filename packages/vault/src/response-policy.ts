@@ -31,11 +31,11 @@ export function automaticIntent(fold: VaultFold, execution: Execution, effectTyp
 /**
  * Where a built-in reply to an input goes: the carrier's own channel
  * while its local DID may still send there, otherwise the unique
- * verified local-only successor head that keeps the carrier's peer,
- * when that may send. A denied channel, one in conflict, or one whose
- * peer has replaced its DID takes no reply and hands it to no
- * successor; an input that is not established, or whose intents
- * disagree, earns none.
+ * verified successor head, when it keeps the carrier's peer and may
+ * send. A denied channel, one in conflict, or one whose peer has
+ * replaced its DID takes no reply and hands it to no successor; an
+ * input that is not established, or whose intents disagree, earns
+ * none.
  */
 export type ResponseChannel = { status: "selected"; channel: Channel } | { status: "none"; because: string };
 

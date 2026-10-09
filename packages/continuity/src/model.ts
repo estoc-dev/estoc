@@ -1,37 +1,40 @@
 /**
- * The continuity model over a snapshot of facts, derived in the order
- * the evidence depends on itself. First every fact's references are
- * resolved: a missing one stays unresolved, one whose ID has several
- * values is ambiguous. Then the positive closure: every peer rotation,
- * every local rotation whose predecessor address an observation
- * confirms in the graph built without it, and every join they imply,
- * all branches kept, every variant of an identity-conflicted ID
- * included so that no competing continuation can hide. Then contexts and conflicts over
- * that whole graph: competing changes of one endpoint in one context,
- * cycles, joins that would pair a DID with itself. Only then usable
- * continuity: the same closure again over unambiguous facts, admitting
- * no channel a conflict reaches. The positive graph says what
- * replacements the evidence shows; the usable graph says which of them
- * an operation may rely on. Nothing here reads arrival order or time.
+ * The continuity model over a set of facts, derived in the order the
+ * evidence depends on itself. First the facts are accepted: each one
+ * validated, an exact repeat kept once, a second value under one key
+ * refused. Then every fact's reference is resolved: a missing one stays
+ * unresolved. Then the positive closure: every peer rotation, every
+ * local rotation whose predecessor address an observation confirms in
+ * the graph built without it, and every join they imply, all branches
+ * kept. Then contexts and conflicts over that whole graph: competing
+ * changes of one endpoint in one context, cycles, joins that would pair
+ * a DID with itself. Only then usable continuity: the same closure
+ * again, admitting no channel a conflict reaches. The positive graph
+ * says what replacements the evidence shows; the usable graph says
+ * which of them an operation may rely on. Nothing here reads arrival
+ * order or time.
  */
 
-import { changeKey, channelKey, channelOf, compareChannels, compareUtf8, sortedChannels, sortedIds, successorChannel } from "./facts.js";
+import { InvalidFact } from "./errors.js";
+import { canonicalFact, changeKey, channelKey, channelOf, compareChannels, compareKeys, compareUtf8, factKey, keyText, referenceOf, sortedChannels, sortedKeys, successorChannel, validateFact, type KeyText } from "./facts.js";
 import { closure, Contexts, Graph, type Edge, type Link, type Replaces } from "./graph.js";
-import { bucketsOf } from "./merge.js";
-import type { AddressObservation, Change, Channel, ContinuityFact, Did, FactId, LocalDecision, PeerTransition } from "./types.js";
+import type { Change, Channel, ContinuityFact, Did, FactKey, PeerTransition, LocalDecision } from "./types.js";
 
 /** Which endpoint a change replaces: `peer` for the peer's rotation or ending, `local` for ours. */
 export type Side = Replaces;
 
+/**
+ * A contradiction in the evidence, with its scope: the channels it masks
+ * directly, which no usable link enters or leaves. A query that depends
+ * on them may answer `conflict` as well.
+ */
 export type Conflict =
-  /** two different changes of one endpoint claimed in one context, a saved decision counted whether or not it is confirmed yet */
-  | { kind: "competing-changes"; side: Side; context: readonly Channel[]; changes: readonly { change: Change; facts: readonly FactId[] }[] }
-  /** links that lead back to a pair they left */
-  | { kind: "cycle"; channels: readonly Channel[]; facts: readonly FactId[] }
-  /** a join that would pair a DID with itself */
-  | { kind: "identity-collision"; channels: readonly Channel[]; facts: readonly FactId[] }
-  /** one fact ID carrying more than one value; every variant is kept and none is chosen */
-  | { kind: "identity-conflict"; id: FactId; variants: readonly ContinuityFact[] };
+  /** two different changes of one endpoint claimed in one context, a saved decision counted whether or not it is confirmed yet; the scope is the context and the successor pairs its claims name */
+  | { kind: "competing-changes"; side: Side; context: readonly Channel[]; changes: readonly { change: Change; facts: readonly FactKey[] }[]; scope: readonly Channel[] }
+  /** links that lead back to a pair they left; the scope is those pairs */
+  | { kind: "cycle"; channels: readonly Channel[]; facts: readonly FactKey[]; scope: readonly Channel[] }
+  /** a join that would pair a DID with itself; the scope is the pair and its two successor pairs */
+  | { kind: "identity-collision"; channels: readonly Channel[]; facts: readonly FactKey[]; scope: readonly Channel[] };
 
 /**
  * The answer to `head`, in the order the variants take precedence: a
@@ -42,54 +45,52 @@ export type Conflict =
  */
 export type HeadResult =
   /** the unique pair the usable forward links lead to, the queried pair itself when none leads away; `support` re-derives those links */
-  | { status: "head"; channel: Channel; support: readonly FactId[] }
-  /** an unambiguous ending of either side applies to the pair through usable links */
-  | { status: "ended"; endings: readonly FactId[] }
+  | { status: "head"; channel: Channel; support: readonly FactKey[] }
+  /** an ending of either side applies to the pair through usable links */
+  | { status: "ended"; endings: readonly FactKey[] }
   /** saved rotations of the endpoint are not established yet: `waiting` names them, `missing` the exact references they need that are not here */
-  | { status: "unresolved"; waiting: readonly FactId[]; missing: readonly FactId[] }
+  | { status: "unresolved"; waiting: readonly FactKey[]; missing: readonly FactKey[] }
   /** a conflict reaches the pair, or a claim reaches it only through history no usable link vouches for; `facts` are the claims involved */
-  | { status: "conflict"; facts: readonly FactId[] }
+  | { status: "conflict"; facts: readonly FactKey[] }
   /** no fact mentions the pair, not even as a successor */
   | { status: "no-evidence" };
 
-/** What a fact contributes to the snapshot; a change record and an ending record carry it beside the fact. */
+/** What a fact contributes to the facts derived over; a change record and an ending record carry it beside the fact. */
 export type FactStatus =
-  /** no fact has this ID */
+  /** no fact has this key */
   | { status: "unknown" }
-  /** the ID has more than one value */
-  | { status: "identity-conflict"; variants: readonly ContinuityFact[] }
-  /** the exact reference it names is of the wrong kind or the wrong pair, so it can never link */
+  /** the exact reference it names is of the wrong pair, so it can never link */
   | { status: "invalid"; because: string }
-  /** an exact reference it names is not in the snapshot; another replica may supply it */
-  | { status: "unresolved"; missing: readonly FactId[] }
+  /** an exact reference it names is not here; another replica may supply it */
+  | { status: "unresolved"; missing: readonly FactKey[] }
   /** its pair, its successor pair or a reference it names is in conflict */
-  | { status: "conflict"; facts: readonly FactId[]; because: string }
+  | { status: "conflict"; facts: readonly FactKey[]; because: string }
   /** a rotation whose required confirmation of the predecessor address is not established: no usable observation, or a named source that does not confirm it */
   | { status: "waiting"; because: string }
   /** it links or witnesses with authority; `support` is the fact and everything its authority rests on */
-  | { status: "usable"; support: readonly FactId[] };
+  | { status: "usable"; support: readonly FactKey[] };
 
 export type PathResult =
   /** one directed usable path, the queried pair first; `support` re-derives every link on it */
-  | { status: "path"; channels: readonly Channel[]; support: readonly FactId[] }
+  | { status: "path"; channels: readonly Channel[]; support: readonly FactKey[] }
   /** no usable path preserves the roles from one pair to the other */
   | { status: "none" }
   /** a conflict reaches either end */
-  | { status: "conflict"; facts: readonly FactId[] };
+  | { status: "conflict"; facts: readonly FactKey[] };
 
 /** One observation that confirms the address, with a complete witness: the observation, the transition it carried and the usable peer path to the observer. */
-export type Confirmation = { id: FactId; at: Channel; support: readonly FactId[] };
+export type Confirmation = { key: FactKey; at: Channel; support: readonly FactKey[] };
 
 export type ConfirmationResult =
   /** the usable observations by which the peer, or a usable successor of it, wrote to exactly this local DID */
   | { status: "confirmed"; observations: readonly Confirmation[] }
   /** no such observation is usable; `unusable` lists the observations to this local DID a usable peer path reaches that are not usable themselves, whatever their status */
-  | { status: "unconfirmed"; unusable: readonly FactId[] }
+  | { status: "unconfirmed"; unusable: readonly FactKey[] }
   /** a conflict reaches the pair */
-  | { status: "conflict"; facts: readonly FactId[] };
+  | { status: "conflict"; facts: readonly FactKey[] };
 
 /** A rotation or ending as it was claimed, `to` the successor pair it names or null for an ending. */
-export type ChangeRecord = { id: FactId; at: Channel; change: Change; to: Channel | null; status: FactStatus };
+export type ChangeRecord = { key: FactKey; at: Channel; change: Change; to: Channel | null; status: FactStatus };
 
 /**
  * A link of the positive graph: every rotation the evidence shows, and
@@ -97,39 +98,44 @@ export type ChangeRecord = { id: FactId; at: Channel; change: Change; to: Channe
  * on it. `derived` marks a join; `usable` marks a link the usable graph
  * has too.
  */
-export type PositiveLink = { from: Channel; to: Channel; replaces: Side; support: readonly FactId[]; derived: boolean; usable: boolean };
+export type PositiveLink = { from: Channel; to: Channel; replaces: Side; support: readonly FactKey[]; derived: boolean; usable: boolean };
 
-export type EndingRecord = { id: FactId; at: Channel; side: Side; status: FactStatus };
-
-/** Everything the positive graph connects to a channel, and the two contexts the channel is in. */
-export type History = { links: readonly PositiveLink[]; endings: readonly EndingRecord[]; localContext: readonly Channel[]; peerContext: readonly Channel[] };
+export type EndingRecord = { key: FactKey; at: Channel; side: Side; status: FactStatus };
 
 /**
- * Deterministic queries over one snapshot. Every answer is relative to
- * the facts supplied: the model cannot say that unknown history does
+ * Everything the positive graph connects to a channel, and the two
+ * contexts the channel is in: `samePeer`, the pairs local rotations
+ * connect, across which a change of the peer applies; `sameLocal`, the
+ * pairs peer rotations connect, across which a change of ours applies.
+ */
+export type History = { links: readonly PositiveLink[]; endings: readonly EndingRecord[]; samePeer: readonly Channel[]; sameLocal: readonly Channel[] };
+
+/**
+ * Deterministic queries over one set of facts. Every answer is relative
+ * to the facts supplied: the model cannot say that unknown history does
  * not exist, and more facts may expose a conflict that removes an
  * answer given before. Answers preserve support rather than only a
  * verdict: the support re-derives the usable links asserted, or one
- * confirmation, under the same profile. It is not a snapshot that
- * replays the whole answer: an unchanged head or a zero-step path has
- * empty support, and neither establishes an address observation or a
- * rotation; the endings an answer lists are assertions, not the context
- * that scopes them. No support proves the absence of a conflict or a
- * missing reference outside the snapshot. Nothing here authorizes an
- * operation: whether a head may be written to, or a path admits a
- * message, is the host's decision under its own policy.
+ * confirmation, under the same profile. It does not replay the whole
+ * answer: an unchanged head or a zero-step path has empty support, and
+ * neither establishes an address observation or a rotation; the endings
+ * an answer lists are assertions, not the context that scopes them. No
+ * support proves the absence of a conflict or a missing reference
+ * outside the facts. Nothing here authorizes an operation: whether a
+ * head may be written to, or a path admits a message, is the host's
+ * decision under its own policy.
  */
 export interface Continuity {
-  /** the facts as derived over, in canonical order, every variant of a repeated ID included */
+  /** the facts as derived over, each key once, by evidence and then by kind */
   readonly facts: readonly ContinuityFact[];
   /**
    * The unique usable pair the forward changes of `channel` lead to.
    * Saved rotations of the endpoint anywhere in the pair's positive
    * context are answered for: one the same usable change covers is
    * provenance, one at a pair usable links connect is `unresolved`, and
-   * one only diagnostic history connects is `conflict`. A collided or
-   * waiting claim of a change that independent unambiguous facts
-   * establish anyway does not block the head.
+   * one only diagnostic history connects is `conflict`. A waiting claim,
+   * or a link the usable graph lacks, of a change usable links make
+   * anyway in that context does not block the head.
    */
   head(channel: Channel): HeadResult;
   /** the changes of that side's endpoint across the channel's context, whatever their status; a supersession check reads these */
@@ -147,30 +153,52 @@ export interface Continuity {
   history(channel: Channel): History;
   /**
    * Every saved decision rotating away from the channel's local DID, or
-   * ending there, across its peer-only context. Only decisions in the
-   * snapshot: a saved choice the host has not projected yet is invisible
-   * here, so an empty answer alone does not clear allocating a successor.
+   * ending there, across its same-local context. Only decisions among
+   * the facts: a saved choice the host has not projected yet is
+   * invisible here, so an empty answer alone does not clear allocating a
+   * successor.
    */
   localDecisions(channel: Channel): readonly ChangeRecord[];
-  /** every domain conflict with its scope, then every identity conflict; none is resolved and no history is dropped */
+  /** every conflict with its scope; none is resolved and no history is dropped */
   conflicts(): readonly Conflict[];
-  status(factId: FactId): FactStatus;
+  status(key: FactKey): FactStatus;
 }
 
+/** Throws `InvalidFact` for a fact the profile refuses, or for two values under one key. */
 export function deriveContinuity(facts: readonly ContinuityFact[]): Continuity {
   return new Model(facts);
 }
 
-type Standing = { kind: "ok" } | { kind: "missing"; ids: readonly FactId[] } | { kind: "ambiguous"; ids: readonly FactId[] } | { kind: "invalid"; because: string };
+/**
+ * The facts validated and keyed, in canonical order. A repeat of the
+ * same value is kept once, since projecting one piece of evidence again
+ * is ordinary; a second value under a key is refused, since one receipt
+ * or one saved decision says one thing. So the result is the same
+ * whatever order and repetition the facts came in.
+ */
+function accept(facts: readonly unknown[]): Map<KeyText, ContinuityFact> {
+  const accepted = new Map<KeyText, ContinuityFact>();
+  facts.forEach((value, index) => {
+    const where = `facts[${index}]`;
+    const fact = validateFact(value, where);
+    const key = keyText(fact);
+    const held = accepted.get(key);
+    if (held === undefined) accepted.set(key, fact);
+    else if (canonicalFact(held) !== canonicalFact(fact)) throw new InvalidFact(`${where}: the ${fact.kind} of ${JSON.stringify(fact.evidence)} already has another value`);
+  });
+  return new Map([...accepted].sort(([, a], [, b]) => compareKeys(a, b)));
+}
+
+type Standing = { kind: "ok" } | { kind: "missing"; key: FactKey } | { kind: "invalid"; because: string };
 
 interface Entry {
   readonly fact: ContinuityFact;
-  /** the ID has more than one value: this variant may link diagnostically, but gives no usable link or witness */
-  readonly tainted: boolean;
   standing: Standing;
 }
 
-type Writers = Map<Did, Map<Did, FactId[]>>;
+type KnownStatus = Exclude<FactStatus, { status: "unknown" }>;
+
+type Writers = Map<Did, Map<Did, Entry[]>>;
 
 type Candidate = Link & { readonly entry: Entry };
 
@@ -178,39 +206,31 @@ const EVERY_CHANNEL = () => true;
 
 class Model implements Continuity {
   readonly facts: readonly ContinuityFact[];
-  private readonly entries = new Map<FactId, Entry[]>();
+  /** in canonical order */
+  private readonly entries = new Map<KeyText, Entry>();
   private readonly entriesAt = new Map<string, Entry[]>();
   private readonly endings: Entry[] = [];
   private readonly positive: Graph;
-  private readonly positiveWaiting: ReadonlySet<FactId>;
-  private readonly local: Contexts;
-  private readonly peer: Contexts;
-  /** the saved local rotations by the root of their positive peer-only context: the onward choices a head in that context must answer for */
+  private readonly positiveWaiting: ReadonlySet<KeyText>;
+  private readonly samePeer: Contexts;
+  private readonly sameLocal: Contexts;
+  /** the saved local rotations by the root of their positive same-local context: the onward choices a head in that context must answer for */
   private readonly rotationsByContext = new Map<string, { entry: Entry; successor: Did }[]>();
-  private readonly domainConflicts: readonly Conflict[];
-  /** the channels a query answers `conflict` for, by channel key: each domain conflict's context and the successors its own claims name */
-  private readonly conflictsAt = new Map<string, Conflict[]>();
+  private readonly conflictList: readonly Conflict[];
+  /** by channel key, the facts of every conflict whose scope reaches the channel */
+  private readonly conflictsAt = new Map<string, KeyText[]>();
   private readonly usable: Graph;
-  private readonly usableAdmitted: ReadonlyMap<FactId, readonly FactId[]>;
+  private readonly usableAdmitted: ReadonlyMap<KeyText, readonly KeyText[]>;
   private readonly usableWriters: Writers;
-  private readonly usableLocal: Contexts;
-  private readonly usablePeer: Contexts;
+  private readonly usableSamePeer: Contexts;
+  private readonly usableSameLocal: Contexts;
   /** the usable links by the side they replace and the successor DID, for finding the same change made at another pair of a context */
   private readonly usableChanges = new Map<string, Edge[]>();
 
   constructor(facts: readonly ContinuityFact[]) {
-    const buckets = bucketsOf(facts);
-    const ordered: ContinuityFact[] = [];
-    for (const id of [...buckets.keys()].sort(compareUtf8)) {
-      const variants = [...buckets.get(id)!.keys()].sort(compareUtf8).map((canonical) => buckets.get(id)!.get(canonical)!);
-      this.entries.set(
-        id,
-        variants.map((fact) => ({ fact, tainted: variants.length > 1, standing: { kind: "ok" } }))
-      );
-      ordered.push(...variants);
-    }
-    this.facts = ordered;
-    for (const entry of this.all()) {
+    for (const [key, fact] of accept(facts)) this.entries.set(key, { fact, standing: { kind: "ok" } });
+    this.facts = [...this.entries.values()].map((entry) => entry.fact);
+    for (const entry of this.entries.values()) {
       entry.standing = this.standingOf(entry.fact);
       const key = channelKey(entry.fact.at);
       let at = this.entriesAt.get(key);
@@ -227,25 +247,25 @@ class Model implements Continuity {
       (graph, link) => this.confirming(graph, link, positiveWriters, (entry) => this.positiveObservation(entry))
     );
     this.positive = positive.graph;
-    this.positiveWaiting = new Set([...positive.waiting].map((link) => link.id));
-    for (const entry of this.all()) this.positive.vertex(entry.fact.at);
-    this.local = new Contexts(this.positive, "local");
-    this.peer = new Contexts(this.positive, "peer");
-    for (const entry of this.all()) {
+    this.positiveWaiting = new Set([...positive.waiting].map((link) => link.key));
+    for (const entry of this.entries.values()) this.positive.vertex(entry.fact.at);
+    this.samePeer = new Contexts(this.positive, "local");
+    this.sameLocal = new Contexts(this.positive, "peer");
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== "local-decision" || entry.fact.change.kind !== "rotate") continue;
-      const root = this.peer.root(channelKey(entry.fact.at));
+      const root = this.sameLocal.root(channelKey(entry.fact.at));
       let rotations = this.rotationsByContext.get(root);
       if (rotations === undefined) this.rotationsByContext.set(root, (rotations = []));
       rotations.push({ entry, successor: entry.fact.change.successor });
     }
-    const found = this.findConflicts();
-    this.domainConflicts = found.map(({ conflict }) => conflict);
-    for (const { conflict, scope } of found) {
-      for (const channel of scope) {
+    this.conflictList = this.findConflicts();
+    for (const conflict of this.conflictList) {
+      const facts = factsOf(conflict).map(keyText);
+      for (const channel of conflict.scope) {
         const key = channelKey(channel);
         let list = this.conflictsAt.get(key);
         if (list === undefined) this.conflictsAt.set(key, (list = []));
-        list.push(conflict);
+        list.push(...facts);
       }
     }
 
@@ -257,9 +277,9 @@ class Model implements Continuity {
       (graph, link) => this.confirming(graph, link, this.usableWriters, (entry) => this.usableObservation(entry))
     );
     this.usable = usable.graph;
-    this.usableAdmitted = new Map([...usable.admitted].map(([link, support]) => [link.id, support]));
-    this.usableLocal = new Contexts(this.usable, "local");
-    this.usablePeer = new Contexts(this.usable, "peer");
+    this.usableAdmitted = new Map([...usable.admitted].map(([link, support]) => [link.key, support]));
+    this.usableSamePeer = new Contexts(this.usable, "local");
+    this.usableSameLocal = new Contexts(this.usable, "peer");
     for (const edge of this.usable.edges()) {
       const key = changeIndexKey(edge.replaces, edge.replaces === "local" ? edge.to.localDid : edge.to.peerDid);
       let edges = this.usableChanges.get(key);
@@ -268,51 +288,41 @@ class Model implements Continuity {
     }
   }
 
-  private *all(): IterableIterator<Entry> {
-    for (const entries of this.entries.values()) yield* entries;
-  }
-
-  /** The one entry of an ID, undefined when there is none or more than one. */
-  private single(id: FactId): Entry | undefined {
-    const entries = this.entries.get(id);
-    return entries !== undefined && entries.length === 1 ? entries[0] : undefined;
-  }
-
   private standingOf(fact: ContinuityFact): Standing {
-    if (fact.kind === "peer-transition") return { kind: "ok" };
-    const ref = fact.kind === "local-decision" ? fact.source : fact.carriedTransition;
-    if (ref === null) return { kind: "ok" };
-    const entries = this.entries.get(ref);
-    if (entries === undefined) return { kind: "missing", ids: [ref] };
-    if (entries.length > 1) return { kind: "ambiguous", ids: [ref] };
-    const target = entries[0]!.fact;
-    if (fact.kind === "local-decision") {
-      if (target.kind !== "address-observed") return { kind: "invalid", because: `its source ${ref} is no address observation` };
-      if (target.at.localDid !== fact.at.localDid) return { kind: "invalid", because: `its source ${ref} is addressed to ${target.at.localDid}, not to ${fact.at.localDid}` };
-      return { kind: "ok" };
+    const reference = referenceOf(fact);
+    if (reference === null) return { kind: "ok" };
+    const target = this.entries.get(keyText(reference))?.fact;
+    if (target === undefined) return { kind: "missing", key: reference };
+    const invalid = (because: string): Standing => ({ kind: "invalid", because });
+    if (target.kind === "address-observed" && target.at.localDid !== fact.at.localDid) return invalid(`its source ${reference.evidence} is addressed to ${target.at.localDid}, not to ${fact.at.localDid}`);
+    if (target.kind === "peer-transition") {
+      if (target.change.kind !== "rotate") return invalid("the transition its receipt carried is an ending, which observes no address");
+      if (target.at.localDid !== fact.at.localDid) return invalid(`the transition its receipt carried was received by ${target.at.localDid}, not by ${fact.at.localDid}`);
+      if (target.change.successor !== fact.at.peerDid) return invalid(`the transition its receipt carried names the successor ${target.change.successor}, not ${fact.at.peerDid}`);
     }
-    if (target.kind !== "peer-transition") return { kind: "invalid", because: `its carried transition ${ref} is no peer transition` };
-    if (target.receipt !== fact.receipt) return { kind: "invalid", because: `its carried transition ${ref} is of another receipt` };
-    if (target.change.kind !== "rotate") return { kind: "invalid", because: `its carried transition ${ref} is an ending, which observes no address` };
-    if (target.at.localDid !== fact.at.localDid) return { kind: "invalid", because: `its carried transition ${ref} was received by ${target.at.localDid}, not by ${fact.at.localDid}` };
-    if (target.change.successor !== fact.at.peerDid) return { kind: "invalid", because: `its carried transition ${ref} names the successor ${target.change.successor}, not ${fact.at.peerDid}` };
     return { kind: "ok" };
+  }
+
+  /** The entry a fact's reference names; undefined when it names none, or names one that is not here. */
+  private referenced(entry: Entry): Entry | undefined {
+    const reference = referenceOf(entry.fact);
+    return reference === null ? undefined : this.entries.get(keyText(reference));
   }
 
   private peerLinks(admits: (entry: Entry) => boolean): Link[] {
     const links: Link[] = [];
-    for (const entry of this.all()) {
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== "peer-transition" || entry.fact.change.kind !== "rotate" || !admits(entry)) continue;
-      links.push({ id: entry.fact.id, from: entry.fact.at, to: successorChannel(entry.fact)! });
+      links.push({ key: keyText(entry.fact), from: entry.fact.at, to: successorChannel(entry.fact)! });
     }
     return links;
   }
 
   private candidates(admits: (entry: Entry) => boolean): Candidate[] {
     const links: Candidate[] = [];
-    for (const entry of this.all()) {
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== "local-decision" || entry.fact.change.kind !== "rotate" || !admits(entry)) continue;
-      links.push({ id: entry.fact.id, from: entry.fact.at, to: successorChannel(entry.fact)!, entry });
+      links.push({ key: keyText(entry.fact), from: entry.fact.at, to: successorChannel(entry.fact)!, entry });
     }
     return links;
   }
@@ -320,83 +330,87 @@ class Model implements Continuity {
   /** By local DID, then by peer DID, the observations `admits` of the peer writing to exactly that local DID. */
   private writersOf(admits: (entry: Entry) => boolean): Writers {
     const writers: Writers = new Map();
-    for (const entry of this.all()) {
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== "address-observed" || !admits(entry)) continue;
       let peers = writers.get(entry.fact.at.localDid);
       if (peers === undefined) writers.set(entry.fact.at.localDid, (peers = new Map()));
-      let ids = peers.get(entry.fact.at.peerDid);
-      if (ids === undefined) peers.set(entry.fact.at.peerDid, (ids = []));
-      ids.push(entry.fact.id);
+      let observations = peers.get(entry.fact.at.peerDid);
+      if (observations === undefined) peers.set(entry.fact.at.peerDid, (observations = []));
+      observations.push(entry);
     }
     return writers;
   }
 
-  /** An observation that stands on its own: unambiguous, resolved, and its carried transition, when any, unambiguous too. */
+  /** An observation that stands on its own: its carried transition, when it has one, here and consistent with it. */
   private positiveObservation(entry: Entry): boolean {
-    if (entry.fact.kind !== "address-observed" || entry.tainted || entry.standing.kind !== "ok") return false;
-    return entry.fact.carriedTransition === null || this.single(entry.fact.carriedTransition) !== undefined;
+    return entry.fact.kind === "address-observed" && entry.standing.kind === "ok";
   }
 
   private usableTransition(entry: Entry): boolean {
-    if (entry.fact.kind !== "peer-transition" || entry.tainted) return false;
+    if (entry.fact.kind !== "peer-transition") return false;
     const to = successorChannel(entry.fact);
     return !this.affected(entry.fact.at) && (to === null || !this.affected(to));
   }
 
   private usableObservation(entry: Entry): boolean {
     if (!this.positiveObservation(entry) || this.affected(entry.fact.at)) return false;
-    const carried = (entry.fact as AddressObservation).carriedTransition;
-    return carried === null || this.usableTransition(this.single(carried)!);
+    const carried = this.referenced(entry);
+    return carried === undefined || this.usableTransition(carried);
   }
 
   private usableCandidate(entry: Entry): boolean {
-    if (entry.fact.kind !== "local-decision" || entry.tainted || entry.standing.kind !== "ok") return false;
+    if (entry.fact.kind !== "local-decision" || entry.standing.kind !== "ok") return false;
     const to = successorChannel(entry.fact);
     if (this.affected(entry.fact.at) || (to !== null && this.affected(to))) return false;
-    return entry.fact.source === null || this.usableObservation(this.single(entry.fact.source)!);
+    const source = this.referenced(entry);
+    return source === undefined || this.usableObservation(source);
   }
 
   /**
    * What confirms a candidate's predecessor address in the graph so far:
    * the exact source it names, when that observation is of the peer or
-   * of a peer a peer-only path from the predecessor reaches; otherwise
-   * any admitted observation addressed to the predecessor by such a
-   * peer. The support names the observation, the transition it carried
-   * and the path to its peer, so that the support alone re-derives the
-   * confirmation.
+   * of a peer a path of peer rotations from the predecessor reaches;
+   * otherwise any admitted observation addressed to the predecessor by
+   * such a peer. The support names the observation, the transition it
+   * carried and the path to its peer, so that the support alone
+   * re-derives the confirmation.
    */
-  private confirming(graph: Graph, link: Candidate, writers: Writers, admits: (entry: Entry) => boolean): readonly FactId[] | null {
-    const decision = link.entry.fact as LocalDecision;
+  private confirming(graph: Graph, link: Candidate, writers: Writers, admits: (entry: Entry) => boolean): readonly KeyText[] | null {
     const reach = graph.reach(link.from, "peer");
-    const witness = (observationId: FactId, via: readonly Edge[]) => {
-      const carried = (this.single(observationId)!.fact as AddressObservation).carriedTransition;
-      return [observationId, ...(carried === null ? [] : [carried]), ...via.flatMap((edge) => [...edge.support])];
+    const witness = (observation: Entry, via: readonly Edge[]) => {
+      const carried = referenceOf(observation.fact);
+      return [keyText(observation.fact), ...(carried === null ? [] : [keyText(carried)]), ...via.flatMap((edge) => [...edge.support])];
     };
-    if (decision.source !== null) {
-      const source = this.single(decision.source)!;
+    const source = this.referenced(link.entry);
+    if (source !== undefined) {
       if (!admits(source)) return null;
       const via = reach.pathTo(source.fact.at);
-      return via === undefined ? null : sortedIds(witness(source.fact.id, via));
+      return via === undefined ? null : witness(source, via);
     }
     const peers = writers.get(link.from.localDid);
     if (peers === undefined) return null;
-    const support: FactId[] = [];
+    const support: KeyText[] = [];
     for (const channel of reach.channels()) {
-      const ids = peers.get(channel.peerDid);
-      if (ids === undefined) continue;
+      const observations = peers.get(channel.peerDid);
+      if (observations === undefined) continue;
       const via = reach.pathTo(channel)!;
-      for (const id of ids) support.push(...witness(id, via));
+      for (const observation of observations) support.push(...witness(observation, via));
     }
-    return support.length === 0 ? null : sortedIds(support);
+    return support.length === 0 ? null : support;
   }
 
   private affected(channel: Channel): boolean {
     return this.conflictsAt.has(channelKey(channel));
   }
 
+  /** The positive contexts a change of `side` applies across: a peer change keeps the peer, a local one keeps the local DID. */
+  private contextsOf(side: Side): Contexts {
+    return side === "peer" ? this.samePeer : this.sameLocal;
+  }
+
   /** The context of a change of `side` at `channel` as usable links connect it: the pairs the change applies to with authority. */
   private usableContextRoot(channel: Channel, side: Side): string {
-    return (side === "peer" ? this.usableLocal : this.usablePeer).root(channelKey(channel));
+    return (side === "peer" ? this.usableSamePeer : this.usableSameLocal).root(channelKey(channel));
   }
 
   private usablyEstablished(side: Side, at: Channel, successor: Did): boolean {
@@ -406,7 +420,7 @@ class Model implements Continuity {
   }
 
   private contextOf(channel: Channel, side: Side): Channel[] {
-    const contexts = side === "peer" ? this.local : this.peer;
+    const contexts = this.contextsOf(side);
     const root = contexts.root(channelKey(channel));
     const members: Channel[] = [channel];
     for (const [key, vertex] of this.positive.vertices) if (contexts.root(key) === root) members.push(vertex);
@@ -415,21 +429,17 @@ class Model implements Continuity {
 
   /**
    * Competing changes of one endpoint in one context: the peer's across
-   * the local-only context, ours across the peer-only one, every fact
+   * the same-peer context, ours across the same-local one, every fact
    * counted whatever its status, since a saved decision not yet
-   * confirmed is still a fork. Then cycles and refused joins. Each
-   * conflict comes with its scope: the context and the successor pairs
-   * the claims in that context name. A variant of the same ID claiming
-   * something in another context is not in the scope, since it is a
-   * different claim.
+   * confirmed is still a fork. Then cycles and refused joins.
    */
-  private findConflicts(): { conflict: Conflict; scope: readonly Channel[] }[] {
-    const found: { conflict: Conflict; scope: readonly Channel[] }[] = [];
+  private findConflicts(): Conflict[] {
+    const found: Conflict[] = [];
     const competing = (side: Side) => {
       const kind = side === "peer" ? "peer-transition" : "local-decision";
-      const contexts = side === "peer" ? this.local : this.peer;
-      const byContext = new Map<string, { channel: Channel; successors: Channel[]; changes: Map<string, { change: Change; facts: FactId[] }> }>();
-      for (const entry of this.all()) {
+      const contexts = this.contextsOf(side);
+      const byContext = new Map<string, { channel: Channel; successors: Channel[]; changes: Map<string, { change: Change; facts: KeyText[] }> }>();
+      for (const entry of this.entries.values()) {
         if (entry.fact.kind !== kind) continue;
         const root = contexts.root(channelKey(entry.fact.at));
         let group = byContext.get(root);
@@ -437,48 +447,36 @@ class Model implements Continuity {
         const key = changeKey(entry.fact.change);
         let change = group.changes.get(key);
         if (change === undefined) group.changes.set(key, (change = { change: entry.fact.change, facts: [] }));
-        change.facts.push(entry.fact.id);
+        change.facts.push(keyText(entry.fact));
         const to = successorChannel(entry.fact);
         if (to !== null) group.successors.push(to);
       }
       for (const { channel, successors, changes } of byContext.values()) {
         if (changes.size < 2) continue;
-        const listed = [...changes.values()].map(({ change, facts }) => ({ change, facts: sortedIds(facts) })).sort((a, b) => compareUtf8(changeKey(a.change), changeKey(b.change)));
+        const listed = [...changes.values()].map(({ change, facts }) => ({ change, facts: sortedKeys(facts) })).sort((a, b) => compareUtf8(changeKey(a.change), changeKey(b.change)));
         const context = this.contextOf(channel, side);
-        found.push({ conflict: { kind: "competing-changes", side, context, changes: listed }, scope: sortedChannels([...context, ...successors]) });
+        found.push({ kind: "competing-changes", side, context, changes: listed, scope: sortedChannels([...context, ...successors]) });
       }
     };
     competing("peer");
     competing("local");
     for (const channels of this.positive.cycles()) {
       const members = new Set(channels.map(channelKey));
-      const facts: FactId[] = [];
+      const facts: KeyText[] = [];
       for (const channel of channels) for (const edge of this.positive.from(channel)) if (members.has(channelKey(edge.to))) facts.push(...edge.support);
-      found.push({ conflict: { kind: "cycle", channels, facts: sortedIds(facts) }, scope: channels });
+      found.push({ kind: "cycle", channels, facts: sortedKeys(facts), scope: channels });
     }
-    for (const { channels, support } of this.positive.identityCollisions.values()) found.push({ conflict: { kind: "identity-collision", channels, facts: support }, scope: channels });
-    return found.sort((a, b) => compareUtf8(a.conflict.kind, b.conflict.kind) || compareChannels(firstChannelOf(a.conflict), firstChannelOf(b.conflict)));
+    for (const { channels, support } of this.positive.identityCollisions.values()) found.push({ kind: "identity-collision", channels, facts: sortedKeys(support), scope: sortedChannels(channels) });
+    return found.sort((a, b) => compareUtf8(a.kind, b.kind) || compareChannels(firstChannelOf(a), firstChannelOf(b)));
   }
 
-  private factsOf(conflict: Conflict): readonly FactId[] {
-    switch (conflict.kind) {
-      case "competing-changes":
-        return sortedIds(conflict.changes.flatMap(({ facts }) => facts));
-      case "cycle":
-      case "identity-collision":
-        return conflict.facts;
-      case "identity-conflict":
-        return [conflict.id];
-    }
-  }
-
-  private conflictFactsAt(channel: Channel): FactId[] {
-    return (this.conflictsAt.get(channelKey(channel)) ?? []).flatMap((conflict) => this.factsOf(conflict));
+  private conflictFactsAt(channel: Channel): readonly KeyText[] {
+    return this.conflictsAt.get(channelKey(channel)) ?? [];
   }
 
   private endingsAt(channel: Channel, side: Side): Entry[] {
     const kind = side === "peer" ? "peer-transition" : "local-decision";
-    const contexts = side === "peer" ? this.local : this.peer;
+    const contexts = this.contextsOf(side);
     const root = contexts.root(channelKey(channel));
     return this.endings.filter((entry) => entry.fact.kind === kind && contexts.root(channelKey(entry.fact.at)) === root);
   }
@@ -489,29 +487,26 @@ class Model implements Continuity {
 
   /**
    * A local rotation without usable continuation, diagnosed as the fact
-   * query diagnoses it, so that a missing or collided reference anywhere
-   * along the exact chain it names, an observation's carried transition
-   * included, reaches the head the same way it reaches the fact's status.
+   * query diagnoses it, so that a missing or conflicted reference
+   * anywhere along the exact chain it names, an observation's carried
+   * transition included, reaches the head the same way it reaches the
+   * fact's status.
    */
-  private pendingDecision(entry: Entry, conflict: Set<FactId>, waiting: Set<FactId>, missing: Set<FactId>): void {
-    const status = this.status(entry.fact.id);
+  private pendingDecision(entry: Entry, conflict: Set<KeyText>, waiting: Set<KeyText>, missing: Set<KeyText>): void {
+    const status = this.statusOf(entry);
     switch (status.status) {
-      case "identity-conflict":
-        conflict.add(entry.fact.id);
-        return;
       case "conflict":
-        for (const id of status.facts) conflict.add(id);
+        for (const key of status.facts) conflict.add(keyText(key));
         return;
       case "unresolved":
-        waiting.add(entry.fact.id);
-        for (const id of status.missing) missing.add(id);
+        waiting.add(keyText(entry.fact));
+        for (const key of status.missing) missing.add(keyText(key));
         return;
       case "waiting":
       case "invalid":
-        waiting.add(entry.fact.id);
+        waiting.add(keyText(entry.fact));
         return;
       case "usable":
-      case "unknown":
         return;
     }
   }
@@ -530,65 +525,65 @@ class Model implements Continuity {
    * is reported as such.
    */
   head(channel: Channel): HeadResult {
-    const conflict = new Set<FactId>();
-    const waiting = new Set<FactId>();
-    const missing = new Set<FactId>();
+    const conflict = new Set<KeyText>();
+    const waiting = new Set<KeyText>();
+    const missing = new Set<KeyText>();
     if (!this.known(channel)) {
-      for (const id of this.conflictFactsAt(channel)) conflict.add(id);
-      if (conflict.size > 0) return { status: "conflict", facts: sortedIds(conflict) };
-      for (const entry of this.all()) {
+      for (const key of this.conflictFactsAt(channel)) conflict.add(key);
+      if (conflict.size > 0) return { status: "conflict", facts: sortedKeys(conflict) };
+      for (const entry of this.entries.values()) {
         if (entry.fact.kind !== "local-decision" || entry.fact.change.kind !== "rotate") continue;
         if (channelKey(successorChannel(entry.fact)!) === channelKey(channel)) this.pendingDecision(entry, conflict, waiting, missing);
       }
-      if (conflict.size > 0) return { status: "conflict", facts: sortedIds(conflict) };
-      if (waiting.size > 0) return { status: "unresolved", waiting: sortedIds(waiting), missing: sortedIds(missing) };
+      if (conflict.size > 0) return { status: "conflict", facts: sortedKeys(conflict) };
+      if (waiting.size > 0) return { status: "unresolved", waiting: sortedKeys(waiting), missing: sortedKeys(missing) };
       return { status: "no-evidence" };
     }
     const reach = this.positive.reach(channel, "any");
-    for (const current of reach.channels()) for (const id of this.conflictFactsAt(current)) conflict.add(id);
-    if (!this.established(channel)) for (const edge of this.positive.to(channel)) for (const id of edge.support) conflict.add(id);
-    if (conflict.size > 0) return { status: "conflict", facts: sortedIds(conflict) };
-    const endings = new Set<FactId>();
-    const support = new Set<FactId>();
+    for (const current of reach.channels()) for (const key of this.conflictFactsAt(current)) conflict.add(key);
+    if (!this.established(channel)) for (const edge of this.positive.to(channel)) for (const key of edge.support) conflict.add(key);
+    if (conflict.size > 0) return { status: "conflict", facts: sortedKeys(conflict) };
+    const endings = new Set<KeyText>();
+    const support = new Set<KeyText>();
     const usableReach = this.usable.reach(channel, "any");
     for (const current of reach.channels()) {
       if (!usableReach.has(current)) {
-        if (!this.positive.hasOutgoing(current)) for (const edge of this.positive.to(current)) for (const id of edge.support) conflict.add(id);
+        if (!this.positive.hasOutgoing(current)) for (const edge of this.positive.to(current)) for (const key of edge.support) conflict.add(key);
         continue;
       }
       for (const edge of this.positive.from(current)) {
         const usable = this.usable.edge(edge.from, edge.to);
-        if (usable !== undefined) for (const id of usable.support) support.add(id);
-        else if (!this.usablyEstablished(edge.replaces, current, edge.replaces === "local" ? edge.to.localDid : edge.to.peerDid)) for (const id of edge.support) conflict.add(id);
+        if (usable !== undefined) for (const key of usable.support) support.add(key);
+        else if (!this.usablyEstablished(edge.replaces, current, edge.replaces === "local" ? edge.to.localDid : edge.to.peerDid)) for (const key of edge.support) conflict.add(key);
       }
       for (const side of ["peer", "local"] as const) {
         const found = this.endingsAt(current, side);
         const root = this.usableContextRoot(current, side);
-        const affirmative = found.filter((entry) => !entry.tainted && this.usableContextRoot(entry.fact.at, side) === root);
-        for (const entry of affirmative) endings.add(entry.fact.id);
-        if (affirmative.length === 0) for (const entry of found) conflict.add(entry.fact.id);
+        const affirmative = found.filter((entry) => this.usableContextRoot(entry.fact.at, side) === root);
+        for (const entry of affirmative) endings.add(keyText(entry.fact));
+        if (affirmative.length === 0) for (const entry of found) conflict.add(keyText(entry.fact));
       }
       const usableRoot = this.usableContextRoot(current, "local");
-      for (const { entry, successor } of this.rotationsByContext.get(this.peer.root(channelKey(current))) ?? []) {
+      for (const { entry, successor } of this.rotationsByContext.get(this.sameLocal.root(channelKey(current))) ?? []) {
         if (this.usablyEstablished("local", current, successor)) continue;
         if (this.usableContextRoot(entry.fact.at, "local") === usableRoot) this.pendingDecision(entry, conflict, waiting, missing);
-        else conflict.add(entry.fact.id);
+        else conflict.add(keyText(entry.fact));
       }
     }
-    if (conflict.size > 0) return { status: "conflict", facts: sortedIds(conflict) };
-    if (endings.size > 0) return { status: "ended", endings: sortedIds(endings) };
-    if (waiting.size > 0) return { status: "unresolved", waiting: sortedIds(waiting), missing: sortedIds(missing) };
+    if (conflict.size > 0) return { status: "conflict", facts: sortedKeys(conflict) };
+    if (endings.size > 0) return { status: "ended", endings: sortedKeys(endings) };
+    if (waiting.size > 0) return { status: "unresolved", waiting: sortedKeys(waiting), missing: sortedKeys(missing) };
     const ends = [...usableReach.channels()].filter((current) => !this.usable.hasOutgoing(current));
-    if (ends.length !== 1) return { status: "conflict", facts: sortedIds(support) };
-    return { status: "head", channel: ends[0]!, support: sortedIds(support) };
+    if (ends.length !== 1) return { status: "conflict", facts: sortedKeys(support) };
+    return { status: "head", channel: ends[0]!, support: sortedKeys(support) };
   }
 
   changes(channel: Channel, side: Side): readonly ChangeRecord[] {
     const kind = side === "peer" ? "peer-transition" : "local-decision";
-    const contexts = side === "peer" ? this.local : this.peer;
+    const contexts = this.contextsOf(side);
     const root = contexts.root(channelKey(channel));
     const records: ChangeRecord[] = [];
-    for (const entry of this.all()) {
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== kind || contexts.root(channelKey(entry.fact.at)) !== root) continue;
       records.push(this.record(entry));
     }
@@ -597,38 +592,38 @@ class Model implements Continuity {
 
   private record(entry: Entry): ChangeRecord {
     const fact = entry.fact as PeerTransition | LocalDecision;
-    return { id: fact.id, at: fact.at, change: fact.change, to: successorChannel(fact), status: this.status(fact.id) };
+    return { key: factKey(fact), at: fact.at, change: fact.change, to: successorChannel(fact), status: this.statusOf(entry) };
   }
 
   path(from: Channel, to: Channel): PathResult {
     const conflict = [...this.conflictFactsAt(from), ...this.conflictFactsAt(to)];
-    if (conflict.length > 0) return { status: "conflict", facts: sortedIds(conflict) };
+    if (conflict.length > 0) return { status: "conflict", facts: sortedKeys(conflict) };
     if (!this.known(from)) return { status: "none" };
     const edges = this.usable.path(from, to);
     if (edges === null) return { status: "none" };
-    return { status: "path", channels: [from, ...edges.map((edge) => edge.to)], support: sortedIds(edges.flatMap((edge) => [...edge.support])) };
+    return { status: "path", channels: [from, ...edges.map((edge) => edge.to)], support: sortedKeys(edges.flatMap((edge) => [...edge.support])) };
   }
 
   confirmation(localDid: Did, peerDid: Did): ConfirmationResult {
     const channel = channelOf(localDid, peerDid);
     const conflict = this.conflictFactsAt(channel);
-    if (conflict.length > 0) return { status: "conflict", facts: sortedIds(conflict) };
+    if (conflict.length > 0) return { status: "conflict", facts: sortedKeys(conflict) };
     const observations: Confirmation[] = [];
-    const unusable: FactId[] = [];
+    const unusable: KeyText[] = [];
     const reach = localDid === peerDid ? null : this.usable.reach(channel, "peer");
-    for (const entry of this.all()) {
+    for (const entry of this.entries.values()) {
       if (entry.fact.kind !== "address-observed" || entry.fact.at.localDid !== localDid) continue;
       const via = reach?.pathTo(entry.fact.at);
       if (via === undefined) continue;
       if (!this.usableObservation(entry)) {
-        unusable.push(entry.fact.id);
+        unusable.push(keyText(entry.fact));
         continue;
       }
-      const carried = entry.fact.carriedTransition === null ? [] : [entry.fact.carriedTransition];
-      observations.push({ id: entry.fact.id, at: entry.fact.at, support: sortedIds([entry.fact.id, ...carried, ...via.flatMap((edge) => [...edge.support])]) });
+      const carried = referenceOf(entry.fact);
+      observations.push({ key: factKey(entry.fact), at: entry.fact.at, support: sortedKeys([keyText(entry.fact), ...(carried === null ? [] : [keyText(carried)]), ...via.flatMap((edge) => [...edge.support])]) });
     }
-    if (observations.length > 0) return { status: "confirmed", observations: observations.sort((a, b) => compareUtf8(a.id, b.id)) };
-    return { status: "unconfirmed", unusable: sortedIds(unusable) };
+    if (observations.length > 0) return { status: "confirmed", observations };
+    return { status: "unconfirmed", unusable: sortedKeys(unusable) };
   }
 
   history(channel: Channel): History {
@@ -649,17 +644,17 @@ class Model implements Continuity {
       links.push(this.link(edge));
     }
     const endings: EndingRecord[] = [];
-    for (const side of ["peer", "local"] as const) for (const entry of this.endingsAt(channel, side)) endings.push({ id: entry.fact.id, at: entry.fact.at, side, status: this.status(entry.fact.id) });
+    for (const side of ["peer", "local"] as const) for (const entry of this.endingsAt(channel, side)) endings.push({ key: factKey(entry.fact), at: entry.fact.at, side, status: this.statusOf(entry) });
     return {
       links: links.sort((a, b) => compareChannels(a.from, b.from) || compareChannels(a.to, b.to)),
-      endings: endings.sort((a, b) => compareUtf8(a.id, b.id)),
-      localContext: this.contextOf(channel, "peer"),
-      peerContext: this.contextOf(channel, "local"),
+      endings: endings.sort((a, b) => compareKeys(a.key, b.key)),
+      samePeer: this.contextOf(channel, "peer"),
+      sameLocal: this.contextOf(channel, "local"),
     };
   }
 
   private link(edge: Edge): PositiveLink {
-    return { from: edge.from, to: edge.to, replaces: edge.replaces, support: sortedIds(edge.support), derived: edge.derived, usable: this.usable.edge(edge.from, edge.to) !== undefined };
+    return { from: edge.from, to: edge.to, replaces: edge.replaces, support: sortedKeys(edge.support), derived: edge.derived, usable: this.usable.edge(edge.from, edge.to) !== undefined };
   }
 
   localDecisions(channel: Channel): readonly ChangeRecord[] {
@@ -667,50 +662,51 @@ class Model implements Continuity {
   }
 
   conflicts(): readonly Conflict[] {
-    const identity: Conflict[] = [];
-    for (const [id, entries] of this.entries) if (entries.length > 1) identity.push({ kind: "identity-conflict", id, variants: entries.map((entry) => entry.fact) });
-    return [...this.domainConflicts, ...identity];
+    return this.conflictList;
   }
 
-  status(factId: FactId): FactStatus {
-    const entries = this.entries.get(factId);
-    if (entries === undefined) return { status: "unknown" };
-    if (entries.length > 1) return { status: "identity-conflict", variants: entries.map((entry) => entry.fact) };
-    const entry = entries[0]!;
-    const { fact, standing } = entry;
+  status(key: FactKey): FactStatus {
+    const entry = this.entries.get(keyText(key));
+    return entry === undefined ? { status: "unknown" } : this.statusOf(entry);
+  }
+
+  private statusOf({ fact, standing }: Entry): KnownStatus {
     if (standing.kind === "invalid") return { status: "invalid", because: standing.because };
-    if (standing.kind === "missing") return { status: "unresolved", missing: standing.ids };
-    if (standing.kind === "ambiguous") return { status: "conflict", facts: standing.ids, because: `it references ${standing.ids.join(", ")}, which has more than one value` };
+    if (standing.kind === "missing") return { status: "unresolved", missing: [standing.key] };
+    const key = keyText(fact);
     const to = fact.kind === "address-observed" ? null : successorChannel(fact);
     const conflict = [...this.conflictFactsAt(fact.at), ...(to === null ? [] : this.conflictFactsAt(to))];
-    if (conflict.length > 0) return { status: "conflict", facts: sortedIds(conflict), because: "its context is in conflict" };
+    if (conflict.length > 0) return { status: "conflict", facts: sortedKeys(conflict), because: "its context is in conflict" };
+    const reference = referenceOf(fact);
     switch (fact.kind) {
       case "peer-transition":
-        return { status: "usable", support: [fact.id] };
+        return { status: "usable", support: [factKey(fact)] };
       case "local-decision": {
-        if (fact.change.kind === "end") return { status: "usable", support: [fact.id] };
-        const confirming = this.usableAdmitted.get(fact.id);
-        if (confirming !== undefined) return { status: "usable", support: sortedIds([fact.id, ...confirming]) };
-        if (fact.source !== null) {
-          const source = this.status(fact.source);
-          if (source.status === "conflict") return { status: "conflict", facts: source.facts, because: `its source ${fact.source} is in conflict` };
+        if (fact.change.kind === "end") return { status: "usable", support: [factKey(fact)] };
+        const confirming = this.usableAdmitted.get(key);
+        if (confirming !== undefined) return { status: "usable", support: sortedKeys([key, ...confirming]) };
+        if (reference !== null) {
+          const source = this.status(reference);
+          if (source.status === "conflict") return { status: "conflict", facts: source.facts, because: `its source ${reference.evidence} is in conflict` };
           if (source.status === "unresolved") return { status: "unresolved", missing: source.missing };
-          if (source.status !== "usable") return { status: "waiting", because: `its source ${fact.source} is not usable: ${source.status}` };
-          return { status: "waiting", because: `its source ${fact.source} is not addressed to the predecessor by its peer or a usable successor of that peer` };
+          if (source.status !== "usable") return { status: "waiting", because: `its source ${reference.evidence} is not usable: ${source.status}` };
+          return { status: "waiting", because: `its source ${reference.evidence} is not addressed to the predecessor by its peer or a usable successor of that peer` };
         }
-        if (this.positiveWaiting.has(fact.id)) return { status: "waiting", because: "no observation addressed to the predecessor by its peer or a successor of that peer" };
+        if (this.positiveWaiting.has(key)) return { status: "waiting", because: "no observation addressed to the predecessor by its peer or a successor of that peer" };
         return { status: "waiting", because: "the predecessor is confirmed only through continuity that is not usable" };
       }
       case "address-observed": {
-        if (fact.carriedTransition !== null) {
-          const carried = this.status(fact.carriedTransition);
-          if (carried.status !== "usable") return { status: "conflict", facts: carried.status === "conflict" ? carried.facts : [fact.carriedTransition], because: `its carried transition ${fact.carriedTransition} is ${carried.status}` };
-          return { status: "usable", support: sortedIds([fact.id, fact.carriedTransition]) };
-        }
-        return { status: "usable", support: [fact.id] };
+        if (reference === null) return { status: "usable", support: [factKey(fact)] };
+        const carried = this.status(reference);
+        if (carried.status !== "usable") return { status: "conflict", facts: carried.status === "conflict" ? carried.facts : [reference], because: `the transition its receipt carried is ${carried.status}` };
+        return { status: "usable", support: sortedKeys([key, keyText(reference)]) };
       }
     }
   }
+}
+
+function factsOf(conflict: Conflict): readonly FactKey[] {
+  return conflict.kind === "competing-changes" ? conflict.changes.flatMap(({ facts }) => facts) : conflict.facts;
 }
 
 function changeIndexKey(side: Side, successor: Did): string {
@@ -718,13 +714,5 @@ function changeIndexKey(side: Side, successor: Did): string {
 }
 
 function firstChannelOf(conflict: Conflict): Channel {
-  switch (conflict.kind) {
-    case "competing-changes":
-      return conflict.context[0]!;
-    case "cycle":
-    case "identity-collision":
-      return conflict.channels[0]!;
-    case "identity-conflict":
-      return conflict.variants[0]!.at;
-  }
+  return conflict.kind === "competing-changes" ? conflict.context[0]! : conflict.channels[0]!;
 }

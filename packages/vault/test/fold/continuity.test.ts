@@ -1,3 +1,4 @@
+import type { ContinuityFact } from "@estoc/continuity";
 import type { Event } from "@estoc/event-store";
 import { base64urlnopad } from "@scure/base";
 import { SignJWT, importJWK } from "jose";
@@ -25,7 +26,7 @@ import {
   type WireMessageId,
 } from "../../src/index.js";
 import { MEDIATED, OTHER_BODY_CID, createdDid, expectOrderFree, fakeEventCid, type Scene } from "./helpers.js";
-import { IAT, asPeer, blocked, channel, factsOf, noObjects, peerDid, proof, receipt, resolved, rotation, vaults, type Local, type Peer } from "./scene.js";
+import { IAT, asPeer, blocked, channel, decisionKey, factsOf, inModelOrder, noObjects, observationKey, peerDid, proof, receipt, resolved, rotation, transitionKey, vaults, type Local, type Peer } from "./scene.js";
 
 const fold = (scene: Scene, keys: Keys, readObject: ReadObject = noObjects) => foldVaultChecked(scene.set(), keys, readObject);
 
@@ -34,9 +35,7 @@ const proofFreeReceipt = (scene: Scene, local: Local, peer: Peer) => receipt(sce
 const receiptCarryingProof = async (scene: Scene, peerKeys: Keys, local: Local, predecessor: Peer, successor: Peer) =>
   receipt(scene, { local, peer: successor, resolution: resolved(scene, local.didId, successor), fromPrior: await proof(peerKeys, predecessor, successor) });
 
-const observation = (source: Event, local: { did: Channel["localDid"] }, peer: { did: Channel["peerDid"] }) => ({ kind: "address-observed", id: `receipt:${source.cid}:observation`, at: channel(local, peer), carriedTransition: null, receipt: source.cid });
-
-const byId = <T extends { id: string }>(facts: readonly T[]): T[] => [...facts].sort((a, b) => (a.id < b.id ? -1 : 1));
+const observation = (source: Event, local: { did: Channel["localDid"] }, peer: { did: Channel["peerDid"] }): ContinuityFact => ({ kind: "address-observed", at: channel(local, peer), carried: false, evidence: source.cid });
 
 const sortedLinks = <T extends { from: Channel; to: Channel }>(links: readonly T[]): T[] => [...links].sort((a, b) => compareChannels(a.from, b.from) || compareChannels(a.to, b.to));
 
@@ -86,7 +85,7 @@ const encode = (value: unknown) => base64urlnopad.encode(new TextEncoder().encod
 const unsigned = (header: Record<string, unknown>, payload: Record<string, unknown>) => `${encode(header)}.${encode(payload)}.${base64urlnopad.encode(new Uint8Array(64))}`;
 
 describe("the projection", () => {
-  it("names each fact by the CID of the event it derives from, references evidence by that CID, and is the same over every order of the events", async () => {
+  it("keys each fact by the CID of the event it rests on, names a source by its CID, and is the same over every order of the events", async () => {
     const { scene, keys, peerKeys, a0, a1, b0, b1 } = await vaults();
     const old = proofFreeReceipt(scene, a0, b0);
     const carrier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
@@ -94,11 +93,11 @@ describe("the projection", () => {
     const decision = await rotation(scene, keys, { from: a0, peer: b1, to: a1, source: carrier });
     const vault = await fold(scene, keys);
     expect(vault.continuity.facts).toEqual(
-      byId([
+      inModelOrder([
         observation(old, a0, b0),
         ...factsOf(carrier, a0, b0, b1),
         observation(other, a1, b0),
-        { kind: "local-decision", id: `decision:${decision.cid}`, at: channel(a0, b1), change: { kind: "rotate", successor: a1.did }, source: `receipt:${carrier.cid}:observation`, decision: decision.cid },
+        { kind: "local-decision", at: channel(a0, b1), change: { kind: "rotate", successor: a1.did }, source: carrier.cid, evidence: decision.cid },
       ])
     );
     expectSameOverEveryOrder(scene, vault.checks);
@@ -114,7 +113,7 @@ describe("the projection", () => {
     const waiting = receipt(scene, { local: a0, peer: b1, resolution: root, fromPrior: shortIssuer });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
-    expect(c.facts).toEqual(byId([...factsOf(first, a0, b0, b1), ...factsOf(second, a0, b0, b1)]));
+    expect(c.facts).toEqual(inModelOrder([...factsOf(first, a0, b0, b1), ...factsOf(second, a0, b0, b1)]));
     for (const event of [first, second]) {
       expect(c.status(event.cid)).toEqual({ status: "verified" });
       expect(c.witness(event.cid)).toEqual({ status: "complete" });
@@ -122,7 +121,7 @@ describe("the projection", () => {
     expect(c.status(waiting.cid)).toEqual({ status: "pending-proof" });
     expect(c.witness(waiting.cid)).toEqual({ status: "pending", because: "the proof is not yet verified" });
     expect(vault.channels.positive(waiting.cid)).toBe(false);
-    expect(c.model.history(channel(a0, b0)).links).toEqual([{ from: channel(a0, b0), to: channel(a0, b1), replaces: "peer", support: [`receipt:${first.cid}:transition`, `receipt:${second.cid}:transition`].sort(), derived: false, usable: true }]);
+    expect(c.model.history(channel(a0, b0)).links).toEqual([{ from: channel(a0, b0), to: channel(a0, b1), replaces: "peer", support: inModelOrder([transitionKey(first), transitionKey(second)]), derived: false, usable: true }]);
   });
 });
 
@@ -166,7 +165,7 @@ describe("a channel", () => {
     let c = vault.continuity;
     expect(vault.channels.decisions.get(manual.cid)!.status.status).toBe("candidate");
     expect(c.status(manual.cid)).toEqual({ status: "pending-history", because: "no observation addressed to the predecessor by its peer or a successor of that peer" });
-    expect(c.model.head(channel(a0, b0))).toEqual({ status: "unresolved", waiting: [`decision:${manual.cid}`], missing: [] });
+    expect(c.model.head(channel(a0, b0))).toEqual({ status: "unresolved", waiting: [decisionKey(manual)], missing: [] });
     expect(c.head(channel(a0, b0))).toBeNull();
     expect(c.head(channel(a1, b0))).toEqual(channel(a1, b0));
     expect(c.conflicted(channel(a0, b0))).toBe(false);
@@ -195,7 +194,7 @@ describe("a channel", () => {
     const unadmitted = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), admitted: false });
     const decision = await rotation(scene, keys, { from: a0, peer: b0, to: a1 });
     let vault = await fold(scene, keys);
-    expect(vault.continuity.model.confirmation(a0.did, b0.did)).toMatchObject({ status: "confirmed", observations: [{ id: `receipt:${unadmitted.cid}:observation` }] });
+    expect(vault.continuity.model.confirmation(a0.did, b0.did)).toMatchObject({ status: "confirmed", observations: [{ key: observationKey(unadmitted) }] });
     expect(vault.continuity.confirmedBy(a0.did, b0.did)).toBeNull();
     expect(vault.continuity.status(decision.cid)).toEqual({ status: "verified" });
     expect(vault.continuity.head(channel(a0, b0))).toEqual(channel(a1, b0));
@@ -211,11 +210,11 @@ describe("a channel", () => {
     const contradicting = receipt(scene, { local: a0, peer: b0, resolution: resolved(scene, a0.didId, b0), wire: later.data.wireMessageId, overrides: { bodyCid: OTHER_BODY_CID } });
     vault = await fold(scene, keys);
     expect(vault.inbound.ofSource(later.cid)).toMatchObject({ status: "conflict", because: "2 intents are admitted for one input" });
-    const admitted = [later, contradicting].map((source) => observation(source, a0, b0).id);
+    const admitted: string[] = [later.cid, contradicting.cid];
     const confirmation = vault.continuity.model.confirmation(a0.did, b0.did);
-    const firstAdmitted = confirmation.status === "confirmed" ? confirmation.observations.map(({ id }) => id).find((id) => admitted.includes(id)) : undefined;
+    const firstAdmitted = confirmation.status === "confirmed" ? confirmation.observations.map(({ key }) => key.evidence).find((evidence) => admitted.includes(evidence)) : undefined;
     expect(firstAdmitted).toBeDefined();
-    expect(observation(vault.continuity.confirmedBy(a0.did, b0.did)!.event, a0, b0).id).toBe(firstAdmitted);
+    expect(vault.continuity.confirmedBy(a0.did, b0.did)!.event.cid).toBe(firstAdmitted);
     expectSameOverEveryOrder(scene, vault.checks);
   });
 
@@ -225,7 +224,7 @@ describe("a channel", () => {
     const sourced = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
     const { continuity } = await fold(scene, keys);
     expect(continuity.status(sourced.cid)).toEqual({ status: "verified" });
-    expect(continuity.model.status(`decision:${sourced.cid}`)).toEqual({ status: "usable", support: [`decision:${sourced.cid}`, `receipt:${source.cid}:observation`].sort() });
+    expect(continuity.model.status(decisionKey(sourced))).toEqual({ status: "usable", support: inModelOrder([decisionKey(sourced), observationKey(source)]) });
     expect(continuity.head(channel(a0, b0))).toEqual(channel(a1, b0));
   });
 
@@ -259,18 +258,18 @@ describe("a join", () => {
     const vault = await fold(scene, keys);
     const c = vault.continuity;
     expect(c.conflicts).toEqual([]);
-    const local = `decision:${decision.cid}`;
-    const peer = `receipt:${carrier.cid}:transition`;
-    const confirmed = `receipt:${source.cid}:observation`;
+    const local = decisionKey(decision);
+    const peer = transitionKey(carrier);
+    const confirmed = observationKey(source);
     expect(c.model.history(channel(a0, b0)).links).toEqual(
       sortedLinks([
         { from: channel(a0, b0), to: channel(a0, b1), replaces: "peer", support: [peer], derived: false, usable: true },
-        { from: channel(a0, b0), to: channel(a1, b0), replaces: "local", support: [local, confirmed].sort(), derived: false, usable: true },
-        { from: channel(a0, b1), to: channel(a1, b1), replaces: "local", support: [local, peer, confirmed].sort(), derived: true, usable: true },
-        { from: channel(a1, b0), to: channel(a1, b1), replaces: "peer", support: [local, peer, confirmed].sort(), derived: true, usable: true },
+        { from: channel(a0, b0), to: channel(a1, b0), replaces: "local", support: inModelOrder([local, confirmed]), derived: false, usable: true },
+        { from: channel(a0, b1), to: channel(a1, b1), replaces: "local", support: inModelOrder([local, peer, confirmed]), derived: true, usable: true },
+        { from: channel(a1, b0), to: channel(a1, b1), replaces: "peer", support: inModelOrder([local, peer, confirmed]), derived: true, usable: true },
       ])
     );
-    expect(c.model.history(channel(a2, b0)).links).toEqual([{ from: channel(a2, b0), to: channel(a2, b1), replaces: "peer", support: [`receipt:${elsewhere.cid}:transition`], derived: false, usable: true }]);
+    expect(c.model.history(channel(a2, b0)).links).toEqual([{ from: channel(a2, b0), to: channel(a2, b1), replaces: "peer", support: [transitionKey(elsewhere)], derived: false, usable: true }]);
     for (const start of [channel(a0, b0), channel(a0, b1), channel(a1, b0), channel(a1, b1)]) expect(c.head(start)).toEqual(channel(a1, b1));
     expect(c.head(channel(a2, b0))).toEqual(channel(a2, b1));
     expect(c.superseded(channel(a0, b0))).toBe(true);
@@ -289,7 +288,7 @@ describe("a join", () => {
     expectSameOverEveryOrder(scene, vault.checks, [channel(a0, b2)]);
   });
 
-  it("reuses the decision throughout its peer-only context: a second successor from the same predecessor competes, extending the successor needs its own confirmation", async () => {
+  it("reuses the decision throughout its same-local context: a second successor from the same predecessor competes, extending the successor needs its own confirmation", async () => {
     const { scene, keys, peerKeys, a0, a1, a2, b0, b1 } = await vaults();
     const source = proofFreeReceipt(scene, a0, b0);
     const first = await rotation(scene, keys, { from: a0, peer: b0, to: a1, source });
@@ -297,7 +296,7 @@ describe("a join", () => {
     const extension = await rotation(scene, keys, { from: a1, peer: b1, to: a2 });
     let vault = await fold(scene, keys);
     expect(vault.continuity.status(extension.cid)).toMatchObject({ status: "pending-history" });
-    expect(vault.continuity.model.head(channel(a0, b0))).toEqual({ status: "unresolved", waiting: [`decision:${extension.cid}`], missing: [] });
+    expect(vault.continuity.model.head(channel(a0, b0))).toEqual({ status: "unresolved", waiting: [decisionKey(extension)], missing: [] });
     expect(vault.continuity.head(channel(a0, b0))).toBeNull();
     expect(vault.continuity.decisionsIn(channel(a1, b0)).map((d) => d.event)).toEqual([extension]);
     expect(vault.continuity.conflicts).toEqual([]);
@@ -313,16 +312,14 @@ describe("a join", () => {
     const c = vault.continuity;
     expect(c.conflicts).toEqual([
       {
-        conflict: {
-          kind: "competing-changes",
-          side: "local",
-          context: [channel(a0, b0), channel(a0, b1)].sort(compareChannels),
-          changes: [
-            { change: { kind: "rotate", successor: a1.did }, facts: [`decision:${first.cid}`] },
-            { change: { kind: "rotate", successor: a2.did }, facts: [`decision:${competing.cid}`] },
-          ].sort((x, y) => (x.change.successor < y.change.successor ? -1 : 1)),
-        },
-        channels: [channel(a0, b0), channel(a0, b1), channel(a1, b0), channel(a2, b1)].sort(compareChannels),
+        kind: "competing-changes",
+        side: "local",
+        context: [channel(a0, b0), channel(a0, b1)].sort(compareChannels),
+        changes: [
+          { change: { kind: "rotate", successor: a1.did }, facts: [decisionKey(first)] },
+          { change: { kind: "rotate", successor: a2.did }, facts: [decisionKey(competing)] },
+        ].sort((x, y) => (x.change.successor < y.change.successor ? -1 : 1)),
+        scope: [channel(a0, b0), channel(a0, b1), channel(a1, b0), channel(a2, b1)].sort(compareChannels),
       },
     ]);
     expect(c.decisionsIn(channel(a0, b1)).map((d) => d.event)).toEqual([first, competing]);
@@ -340,14 +337,14 @@ describe("a join", () => {
 });
 
 describe("conflicts", () => {
-  test("competing peer successors in one local-only context, straight from one pair or across a local link, mask every channel involved and choose no winner", async () => {
+  test("competing peer successors in one same-peer context, straight from one pair or across a local link, mask every channel involved and choose no winner", async () => {
     const direct = await vaults();
     const one = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b1);
     const two = await receiptCarryingProof(direct.scene, direct.peerKeys, direct.a0, direct.b0, direct.b2);
     let vault = await fold(direct.scene, direct.keys);
     let c = vault.continuity;
     const { a0, a1, b0, b1, b2 } = direct;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0)] }, channels: [channel(a0, b0), channel(a0, b1), channel(a0, b2)].sort(compareChannels) }]);
+    expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "peer", context: [channel(a0, b0)], scope: [channel(a0, b0), channel(a0, b1), channel(a0, b2)].sort(compareChannels) }]);
     for (const event of [one, two]) {
       expect(c.status(event.cid)).toMatchObject({ status: "conflict" });
       expect(c.witness(event.cid)).toMatchObject({ status: "conflict" });
@@ -366,7 +363,7 @@ describe("conflicts", () => {
     const late = await receiptCarryingProof(across.scene, across.peerKeys, across.a1, across.b0, across.b2);
     vault = await fold(across.scene, across.keys);
     c = vault.continuity;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0), channel(a1, b0)].sort(compareChannels) } }]);
+    expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "peer", context: [channel(a0, b0), channel(a1, b0)].sort(compareChannels) }]);
     expect(c.conflicted(channel(a1, b2))).toBe(true);
     expect(c.status(late.cid)).toMatchObject({ status: "conflict" });
     expect(c.head(channel(a0, b0))).toBeNull();
@@ -381,7 +378,7 @@ describe("conflicts", () => {
     const back = await receiptCarryingProof(scene, peerKeys, a0, b1, b0);
     let vault = await fold(scene, keys);
     let c = vault.continuity;
-    expect(c.conflicts).toEqual([{ conflict: { kind: "cycle", channels: [channel(a0, b0), channel(a0, b1)].sort(compareChannels), facts: [`receipt:${forth.cid}:transition`, `receipt:${back.cid}:transition`].sort() }, channels: [channel(a0, b0), channel(a0, b1)].sort(compareChannels) }]);
+    expect(c.conflicts).toEqual([{ kind: "cycle", channels: [channel(a0, b0), channel(a0, b1)].sort(compareChannels), facts: inModelOrder([transitionKey(forth), transitionKey(back)]), scope: [channel(a0, b0), channel(a0, b1)].sort(compareChannels) }]);
     for (const event of [forth, back]) expect(c.status(event.cid)).toMatchObject({ status: "conflict" });
     expect(c.head(channel(a0, b0))).toBeNull();
     expect(c.head(channel(a0, b1))).toBeNull();
@@ -397,7 +394,7 @@ describe("conflicts", () => {
     vault = await fold(identity.scene, identity.keys);
     c = vault.continuity;
     expect(vault.channels.positive(claimed.cid)).toBe(true);
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "identity-collision", channels: [channel(a0, b0), channel(a1, b0), channel(a0, a1)] }, channels: [channel(a0, b0), channel(a1, b0), channel(a0, a1)].sort(compareChannels) }]);
+    expect(c.conflicts).toMatchObject([{ kind: "identity-collision", channels: [channel(a0, b0), channel(a1, b0), channel(a0, a1)], scope: [channel(a0, b0), channel(a1, b0), channel(a0, a1)].sort(compareChannels) }]);
     expect(c.head(channel(a0, b0))).toBeNull();
     expect(c.status(claimed.cid)).toMatchObject({ status: "conflict" });
     expectSameOverEveryOrder(identity.scene, vault.checks);
@@ -413,7 +410,7 @@ describe("conflicts", () => {
       await receiptCarryingProof(scene, peerKeys, a0, b1, b3);
       const vault = await fold(scene, keys);
       const c = vault.continuity;
-      expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b1)] }, channels: [channel(a0, b1), channel(a0, b2), channel(a0, b3)].sort(compareChannels) }]);
+      expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "peer", context: [channel(a0, b1)], scope: [channel(a0, b1), channel(a0, b2), channel(a0, b3)].sort(compareChannels) }]);
       expect(c.conflicted(channel(a0, b0))).toBe(true);
       expect(c.superseded(channel(a0, b0))).toBe(true);
       expect(c.status(first.cid)).toMatchObject({ status: "conflict" });
@@ -431,7 +428,7 @@ describe("conflicts", () => {
       await receiptCarryingProof(scene, peerKeys, a0, b3, b2);
       const vault = await fold(scene, keys);
       const c = vault.continuity;
-      expect(c.conflicts).toMatchObject([{ conflict: { kind: "cycle", channels: [channel(a0, b2), channel(a0, b3)].sort(compareChannels) } }]);
+      expect(c.conflicts).toMatchObject([{ kind: "cycle", channels: [channel(a0, b2), channel(a0, b3)].sort(compareChannels) }]);
       expect(c.status(first.cid)).toEqual({ status: "verified" });
       expect(c.model.path(channel(a0, b0), channel(a0, b1))).toMatchObject({ status: "path" });
       expect(c.ackPath(channel(a0, b0), channel(a0, b1))).toBe(true);
@@ -452,7 +449,7 @@ describe("authority behind a conflict", () => {
     const manual = await rotation(scene, keys, { from: a0, peer: b3, to: a1 });
     let vault = await fold(scene, keys);
     let c = vault.continuity;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0)] } }]);
+    expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "peer", context: [channel(a0, b0)] }]);
     expect(c.status(beyond.cid)).toMatchObject({ status: "conflict" });
     expect(c.witness(beyond.cid)).toMatchObject({ status: "conflict" });
     expect(c.confirmedBy(a0.did, b3.did)).toBeNull();
@@ -526,7 +523,7 @@ describe("authority behind a conflict", () => {
     const forkTwo = await rotation(scene, keys, { from: a3, peer: b3, to: a0, source: forkSource });
     vault = await fold(scene, keys);
     c = vault.continuity;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "local", context: [channel(a3, b3)] }, channels: [channel(a3, b3), channel(a0, b3), channel(a1, b3)].sort(compareChannels) }]);
+    expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "local", context: [channel(a3, b3)], scope: [channel(a3, b3), channel(a0, b3), channel(a1, b3)].sort(compareChannels) }]);
     for (const event of [good, first, next]) expect(c.status(event.cid)).toEqual({ status: "verified" });
     for (const event of [forkOne, forkTwo]) expect(c.status(event.cid)).toMatchObject({ status: "conflict" });
     expect(sortedLinks(c.model.history(channel(a2, b2)).links.filter((link) => link.usable) as unknown as { from: Channel; to: Channel }[]).map((link) => [link.from, link.to])).toEqual(
@@ -577,11 +574,10 @@ describe("the peer's start", () => {
     const second = await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
     vault = await fold(scene, keys);
     const c = vault.continuity;
-    const hop = (carrier: { cid: string }) => `receipt:${carrier.cid}:transition`;
     expect(c.conflicts).toEqual([]);
     expect(c.peerRoot(channel(a0, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
-    expect(c.peerRoot(channel(a0, b1))).toEqual({ status: "found", peerDid: b0.did, support: [hop(first), hop(again)].sort(compareUtf8) });
-    expect(c.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: [hop(first), hop(again), hop(second)].sort(compareUtf8) });
+    expect(c.peerRoot(channel(a0, b1))).toEqual({ status: "found", peerDid: b0.did, support: inModelOrder([transitionKey(first), transitionKey(again)]) });
+    expect(c.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: inModelOrder([transitionKey(first), transitionKey(again), transitionKey(second)]) });
     expect(c.peerRoot(channel(a0, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
     expectSameOverEveryOrder(scene, vault.checks, [channel(a0, b3)]);
   });
@@ -596,8 +592,8 @@ describe("the peer's start", () => {
     const backwardFold = (await fold(backward.scene, backward.keys)).continuity;
     expect(forwardFold.peerRoot(channel(a0, b1))).toMatchObject({ status: "found", peerDid: b0.did });
     expect(backwardFold.peerRoot(channel(a0, b0))).toMatchObject({ status: "found", peerDid: b1.did });
-    expect(forwardFold.peerContext(channel(a0, b1))).toEqual(backwardFold.peerContext(channel(a0, b0)));
-    expect(forwardFold.peerContext(channel(a0, b1))[0]!.peerDid).toBe([b0.did, b1.did].sort(compareUtf8)[0]);
+    expect(forwardFold.sameLocal(channel(a0, b1))).toEqual(backwardFold.sameLocal(channel(a0, b0)));
+    expect(forwardFold.sameLocal(channel(a0, b1))[0]!.peerDid).toBe([b0.did, b1.did].sort(compareUtf8)[0]);
   });
 
   it("is what a join carries to the successor's pair: the peer's replacement toward the predecessor counts there, one made toward a pair the successor never joined does not, however the path to it runs", async () => {
@@ -610,9 +606,9 @@ describe("the peer's start", () => {
       const elsewhere = await receiptCarryingProof(scene, peerKeys, a2, b0, b1);
       const vault = await fold(scene, keys);
       const c = vault.continuity;
-      expect(c.peerRoot(channel(a1, b1))).toEqual({ status: "found", peerDid: b0.did, support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:transition`, `receipt:${source.cid}:observation`].sort(compareUtf8) });
+      expect(c.peerRoot(channel(a1, b1))).toEqual({ status: "found", peerDid: b0.did, support: inModelOrder([decisionKey(decision), transitionKey(carrier), observationKey(source)]) });
       expect(c.peerRoot(channel(a1, b0))).toEqual({ status: "found", peerDid: b0.did, support: [] });
-      expect(c.peerRoot(channel(a2, b1))).toEqual({ status: "found", peerDid: b0.did, support: [`receipt:${elsewhere.cid}:transition`] });
+      expect(c.peerRoot(channel(a2, b1))).toEqual({ status: "found", peerDid: b0.did, support: [transitionKey(elsewhere)] });
       expect(c.model.path(channel(a0, b0), channel(a1, b1))).toMatchObject({ status: "path" });
       expectSameOverEveryOrder(scene, vault.checks);
     }
@@ -633,11 +629,11 @@ describe("the peer's start", () => {
   it("sees only the history here: the predecessor of the one replacement verified is the start, an earlier replacement moves it, and a proof not yet verified adds no address", async () => {
     const { scene, keys, peerKeys, a0, b0, b1, b2 } = await vaults();
     const later = await receiptCarryingProof(scene, peerKeys, a0, b1, b2);
-    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b1.did, support: [`receipt:${later.cid}:transition`] });
+    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b1.did, support: [transitionKey(later)] });
     expect(foldVault(scene.set()).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b2.did, support: [] });
 
     const earlier = await receiptCarryingProof(scene, peerKeys, a0, b0, b1);
-    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: [`receipt:${earlier.cid}:transition`, `receipt:${later.cid}:transition`].sort(compareUtf8) });
+    expect((await fold(scene, keys)).continuity.peerRoot(channel(a0, b2))).toEqual({ status: "found", peerDid: b0.did, support: inModelOrder([transitionKey(earlier), transitionKey(later)]) });
   });
 
   it("refuses a replacement a conflict reaches on the way back, while a successor that joined beyond the conflict starts where it joined: the join carries the replacements leaving that pair, not the history behind it", async () => {
@@ -650,14 +646,14 @@ describe("the peer's start", () => {
     const manual = await rotation(scene, keys, { from: a0, peer: b3, to: a1 });
     const vault = await fold(scene, keys);
     const c = vault.continuity;
-    expect(c.conflicts).toMatchObject([{ conflict: { kind: "competing-changes", side: "peer", context: [channel(a0, b0)] } }]);
+    expect(c.conflicts).toMatchObject([{ kind: "competing-changes", side: "peer", context: [channel(a0, b0)] }]);
     expect(c.status(masked.cid)).toMatchObject({ status: "conflict" });
     expect(c.status(manual.cid)).toEqual({ status: "verified" });
-    expect(c.model.history(channel(a0, b3)).links).toContainEqual({ from: channel(a0, b1), to: channel(a0, b3), replaces: "peer", support: [`receipt:${masked.cid}:transition`], derived: false, usable: false });
+    expect(c.model.history(channel(a0, b3)).links).toContainEqual({ from: channel(a0, b1), to: channel(a0, b3), replaces: "peer", support: [transitionKey(masked)], derived: false, usable: false });
     const behind = { status: "conflict", because: `the replacement of ${b1.did} by ${b3.did} is not usable: conflict: its context is in conflict` };
     expect(c.peerRoot(channel(a0, b3))).toEqual(behind);
     expect(c.peerRoot(channel(a0, b4))).toEqual(behind);
-    expect(c.peerRoot(channel(a1, b4))).toEqual({ status: "found", peerDid: b3.did, support: [`decision:${manual.cid}`, `receipt:${onward.cid}:observation`, `receipt:${onward.cid}:transition`].sort(compareUtf8) });
+    expect(c.peerRoot(channel(a1, b4))).toEqual({ status: "found", peerDid: b3.did, support: inModelOrder([decisionKey(manual), observationKey(onward), transitionKey(onward)]) });
     expect(c.peerRoot(channel(a1, b3))).toEqual({ status: "found", peerDid: b3.did, support: [] });
     expectSameOverEveryOrder(scene, vault.checks, [channel(a1, b4)]);
   });
@@ -702,7 +698,7 @@ describe("the branch path", () => {
       proofFreeReceipt(scene, a0, b3);
       const c = (await fold(scene, keys)).continuity;
       expect(c.conflicts).toEqual([]);
-      expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a1, b0), channel(a1, b1)], support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:transition`, `receipt:${source.cid}:observation`].sort(compareUtf8) });
+      expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a1, b0), channel(a1, b1)], support: inModelOrder([decisionKey(decision), transitionKey(carrier), observationKey(source)]) });
       expect(c.model.path(channel(a0, b0), channel(a1, b0))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a1, b0)] });
       expect(c.model.path(channel(a0, b0), channel(a0, b0))).toEqual({ status: "path", channels: [channel(a0, b0)], support: [] });
       expect(c.model.path(channel(a1, b1), channel(a0, b0))).toEqual({ status: "none" });
@@ -717,9 +713,9 @@ describe("the branch path", () => {
     const later = await receiptCarryingProof(scene, peerKeys, a1, b1, b2);
     const c = (await fold(scene, keys)).continuity;
     expect(c.conflicts).toEqual([]);
-    expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1)], support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:observation`, `receipt:${carrier.cid}:transition`].sort(compareUtf8) });
+    expect(c.model.path(channel(a0, b0), channel(a1, b1))).toEqual({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1)], support: inModelOrder([decisionKey(decision), observationKey(carrier), transitionKey(carrier)]) });
     expect(c.model.path(channel(a0, b0), channel(a1, b2))).toMatchObject({ status: "path", channels: [channel(a0, b0), channel(a0, b1), channel(a1, b1), channel(a1, b2)] });
-    expect(c.model.path(channel(a0, b1), channel(a1, b2))).toMatchObject({ status: "path", support: [`decision:${decision.cid}`, `receipt:${carrier.cid}:observation`, `receipt:${carrier.cid}:transition`, `receipt:${later.cid}:transition`].sort(compareUtf8) });
+    expect(c.model.path(channel(a0, b1), channel(a1, b2))).toMatchObject({ status: "path", support: inModelOrder([decisionKey(decision), observationKey(carrier), transitionKey(carrier), transitionKey(later)]) });
     expect(c.model.path(channel(a0, b0), channel(a1, b0))).toEqual({ status: "none" });
   });
 
@@ -819,7 +815,7 @@ describe("the proof boundary", () => {
       expect(c.status(event.cid)).toEqual({ status: "verified" });
       expect(c.witness(event.cid)).toEqual({ status: "complete" });
     }
-    expect(c.facts).toEqual(byId([...factsOf(shortKid, a0, b0, b1), ...factsOf(shortSubject, a0, b0, b1), ...factsOf(lowerTyp, a0, b0, b1)]));
+    expect(c.facts).toEqual(inModelOrder([...factsOf(shortKid, a0, b0, b1), ...factsOf(shortSubject, a0, b0, b1), ...factsOf(lowerTyp, a0, b0, b1)]));
     expect(vault.channels.carriers.get(shortSubject.cid)!.proof).toMatchObject({ status: "verified", proof: { token: shortSubject.data.fromPrior, change: { successor: { presented: b1.did, canonical: b1.did } } } });
     expect(c.head(channel(a0, b0))).toEqual(channel(a0, b1));
     expectSameOverEveryOrder(scene, vault.checks);
@@ -881,12 +877,12 @@ describe("status and witness", () => {
     expect(c.witness(verified.cid)).toEqual({ status: "complete" });
     expect(c.witness(anonymous.cid)).toEqual({ status: "invalid", because: "the source is anonymous, in no pair" });
     expect(c.witness(fakeEventCid())).toEqual({ status: "pending", because: "the source is not here" });
-    expect(c.facts).toEqual(byId([observation(proofFree, a0, b0), ...factsOf(verified, a0, b0, b1)]));
+    expect(c.facts).toEqual(inModelOrder([observation(proofFree, a0, b0), ...factsOf(verified, a0, b0, b1)]));
     expectSameOverEveryOrder(scene, vault.checks);
 
     const restored = await fold(scene, keys, async (cid) => (cid === b1.resolution.cid ? b1.resolution.bytes : null));
     expect(restored.continuity.status(pendingHistory.cid)).toEqual({ status: "verified" });
-    expect(restored.continuity.facts).toEqual(byId([observation(proofFree, a0, b0), ...factsOf(pendingHistory, a0, b0, b1), ...factsOf(verified, a0, b0, b1)]));
+    expect(restored.continuity.facts).toEqual(inModelOrder([observation(proofFree, a0, b0), ...factsOf(pendingHistory, a0, b0, b1), ...factsOf(verified, a0, b0, b1)]));
   });
 
   test("without the checks beside the fold, every link waits and no channel is replaced", async () => {

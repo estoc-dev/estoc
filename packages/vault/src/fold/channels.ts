@@ -18,7 +18,7 @@ import { isLongForm, longToShort } from "@estoc/did-peer";
 import { InvalidDidDocument, InvalidPublicKey } from "../errors.js";
 import { issuerLongFormOf } from "../from-prior.js";
 import { methodPublicKey } from "../peer-document.js";
-import { channelOf, decisionFactId, didKeyName, inboundMessageId, observationFactId, transitionFactId } from "../ids.js";
+import { channelOf, didKeyName, inboundMessageId } from "../ids.js";
 import { agreementKey, decodePublicKey, type DecodedPublicKey, type KeyType } from "../public-key.js";
 import type { VaultEvent } from "../schema.js";
 import type { Channel, Did, DidId, EventCid, VaultData } from "../types.js";
@@ -226,7 +226,7 @@ function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck |
   const proof: Proof = { status: "verified", proof: check.proof };
   if (source.status !== "complete") return { proof, facts: [] };
   const { cid } = source.event;
-  const binding = bindFromPrior(check.proof, { ref: cid, token: jwt, recipient: source.channel.localDid, sender }, { transitionId: transitionFactId(cid), observationId: observationFactId(cid) });
+  const binding = bindFromPrior(check.proof, { ref: cid, token: jwt, recipient: source.channel.localDid, sender });
   if (binding.status !== "bound") return refused({ status: "invalid", because: binding.because });
   return { proof, facts: binding.facts };
 }
@@ -325,11 +325,10 @@ function decisionStatus(
     status: "candidate",
     fact: {
       kind: "local-decision",
-      id: decisionFactId(event.cid),
       at: channel!,
       change: { kind: "rotate", successor: successor!.did },
-      source: data.sourceEventCid === null ? null : observationFactId(data.sourceEventCid),
-      decision: event.cid,
+      source: data.sourceEventCid,
+      evidence: event.cid,
     },
   };
 }

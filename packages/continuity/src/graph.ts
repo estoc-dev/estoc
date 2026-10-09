@@ -2,11 +2,11 @@
  * The continuity graph: channels as vertices, edges that replace exactly
  * one endpoint, and the joins two opposite-side edges leaving one pair
  * imply. Closure is a fixpoint, so the graph is the same whatever order
- * the edges came in. Nothing here knows what a fact is beyond its ID.
+ * the edges came in. Nothing here knows what a fact is beyond its key.
  */
 
-import { channelKey, compareChannels, sortedIds } from "./facts.js";
-import type { Channel, FactId } from "./types.js";
+import { channelKey, compareChannels, compareUtf8, type KeyText } from "./facts.js";
+import type { Channel } from "./types.js";
 
 export type Replaces = "local" | "peer";
 
@@ -14,13 +14,13 @@ export interface Edge {
   readonly from: Channel;
   readonly to: Channel;
   readonly replaces: Replaces;
-  readonly support: Set<FactId>;
+  readonly support: Set<KeyText>;
   /** derived by a join rather than declared by a fact at `from` */
   derived: boolean;
 }
 
 export interface Link {
-  readonly id: FactId;
+  readonly key: KeyText;
   readonly from: Channel;
   readonly to: Channel;
 }
@@ -67,7 +67,7 @@ export class Reach {
 
 export interface IdentityCollision {
   readonly channels: readonly Channel[];
-  readonly support: readonly FactId[];
+  readonly support: ReadonlySet<KeyText>;
 }
 
 export class Graph {
@@ -84,7 +84,7 @@ export class Graph {
     if (!this.vertices.has(key)) this.vertices.set(key, channel);
   }
 
-  add(from: Channel, to: Channel, replaces: Replaces, support: Iterable<FactId>, derived = false): void {
+  add(from: Channel, to: Channel, replaces: Replaces, support: Iterable<KeyText>, derived = false): void {
     if (!this.admits(from) || !this.admits(to)) return;
     this.vertex(from);
     this.vertex(to);
@@ -103,7 +103,7 @@ export class Graph {
       return;
     }
     const before = existing.support.size;
-    for (const id of support) existing.support.add(id);
+    for (const key of support) existing.support.add(key);
     if (!derived) existing.derived = false;
     if (existing.support.size > before) this.queue.push(existing);
   }
@@ -123,7 +123,7 @@ export class Graph {
   private join(local: Edge, peer: Edge): void {
     const localDid = local.to.localDid;
     const peerDid = peer.to.peerDid;
-    const support = sortedIds([...local.support, ...peer.support]);
+    const support = new Set([...local.support, ...peer.support]);
     if (localDid === peerDid) {
       const channels = [local.from, local.to, peer.to];
       this.identityCollisions.set(channels.map(channelKey).join("\u0001"), { channels, support });
@@ -242,21 +242,19 @@ export class Graph {
  * every candidate still waiting, so nothing it derives can confirm it;
  * the graph is rebuilt until no candidate is admitted any more. The
  * confirming facts of each admitted candidate are returned with it.
- * Candidates are told apart as objects, since two variants of one fact
- * ID are two candidates.
  */
 export function closure<L extends Link>(
   peerLinks: readonly Link[],
   candidates: readonly L[],
   admits: (channel: Channel) => boolean,
-  confirms: (graph: Graph, candidate: L) => readonly FactId[] | null
-): { graph: Graph; admitted: Map<L, readonly FactId[]>; waiting: Set<L> } {
-  const admitted = new Map<L, readonly FactId[]>();
+  confirms: (graph: Graph, candidate: L) => readonly KeyText[] | null
+): { graph: Graph; admitted: Map<L, readonly KeyText[]>; waiting: Set<L> } {
+  const admitted = new Map<L, readonly KeyText[]>();
   const waiting = new Set(candidates);
   const build = () => {
     const graph = new Graph(admits);
-    for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.id]);
-    for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.id, ...support]);
+    for (const link of peerLinks) graph.add(link.from, link.to, "peer", [link.key]);
+    for (const [link, support] of admitted) graph.add(link.from, link.to, "local", [link.key, ...support]);
     graph.close();
     return graph;
   };
@@ -303,7 +301,7 @@ export class Contexts {
     const rb = this.find(b);
     if (ra === rb) return;
     // the smaller key roots the context, so the root is the same whatever the union order
-    if (ra < rb) this.parent.set(rb, ra);
+    if (compareUtf8(ra, rb) < 0) this.parent.set(rb, ra);
     else this.parent.set(ra, rb);
   }
 

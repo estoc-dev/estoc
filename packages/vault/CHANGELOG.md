@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Continuity facts are keyed by their evidence** (breaking): the
+  projection follows the `estoc-continuity/2` profile of
+  `@estoc/continuity`, each fact keyed by its kind and the CID of the
+  event it rests on, a decision naming its source by that event's CID.
+  `observationFactId`, `transitionFactId` and `decisionFactId` are
+  gone, and the support of `PeerRoot` and `SuccessorChoice` is
+  `FactKey[]`. `Continuity.conflicts` lists the model's conflicts, each
+  with its `scope`, exported as `ContinuityConflict` in place of
+  `ScopedConflict`; `Continuity.peerContext` is `sameLocal`.
+  `compareUtf8` is the continuity package's, and `channelKey` also keys
+  a channel the model returns.
 - **A user's message has a creation time** (breaking): a locally
   initiated `message.out` that names no rotation records a non-null
   `createdTime`; a manual notification and an automatic output keep
