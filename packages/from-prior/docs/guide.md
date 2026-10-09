@@ -41,7 +41,7 @@ and reports a change only when binding succeeds.
 | Input boundary exercised by the tests | Result |
 | --- | --- |
 | Wrong JWT segment count or JSON shape, non-integer `iat`, `sub: null`, or array-valued `aud` | `form` failure. |
-| A signature segment that is not base64url or not 64 bytes long | `form` failure at inspection, precheck and verification; a well-formed wrong signature is left to verification. |
+| A segment that is not base64url without padding or whitespace, even under a valid signature, or a signature segment that is not 64 bytes long | `form` failure at inspection, precheck and verification; a well-formed wrong signature is left to verification. |
 | `exp` or `nbf` | Rejected: this profile evaluates no validity window, and verification reads no clock. |
 | Unsupported DID method or algorithm, rotation to the issuer itself, or a rotation with an audience | `profile` failure. |
 | Absent `typ`, or case variants of JWT / application/jwt | Accepted; extra whitespace, parameters and other media types are rejected. |
@@ -49,6 +49,7 @@ and reports a change only when binding succeeds.
 | Unknown critical extension | `profile` failure at the precheck and at verification; inspection still reads the token. |
 | `crit` naming a `b64` the header lacks, or listing a header twice | `form` failure at every stage. |
 | An authorized JWK whose `x` is not a 32-byte Ed25519 key | `document` failure, the same as a Multikey of another type. |
+| An authorized JWK that carries the private key, or whose `use`, `key_ops` or `alg` does not allow verifying EdDSA | `document` failure, at verification and at creation; `use: sig`, `key_ops` with `verify` and `alg: EdDSA` verify. |
 | A rotation whose successor is not the authenticated sender the precheck was given | `binding` failure before any issuer material; an ending is left to `bind`. |
 | A tampered signature | Passes the precheck without a verified type; `signature` failure at verification. |
 | Repeated JSON claim name | The parser's last value is used; inspection and interpretation of the verified payload agree. |

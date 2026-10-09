@@ -12,12 +12,12 @@ type Party = { longForm: string; shortForm: string; kid: string; privateKey: Key
 type Input = Record<string, unknown>;
 
 /** A did:peer:4 party whose input document `shape` builds from its key material. */
-function party(name: string, shape: (key: { multikey: string; jwk: Record<string, string>; bytes: Uint8Array }) => Input = (key) => ({ verificationMethod: [{ id: "#key-1", type: "Multikey", publicKeyMultibase: key.multikey }], authentication: ["#key-1"] })): Party {
+function party(name: string, shape: (key: { multikey: string; jwk: Record<string, string>; bytes: Uint8Array; d: string }) => Input = (key) => ({ verificationMethod: [{ id: "#key-1", type: "Multikey", publicKeyMultibase: key.multikey }], authentication: ["#key-1"] })): Party {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const publicKeyBytes = base64urlnopad.decode(publicKey.export({ format: "jwk" }).x!);
   const multikey = `z${base58.encode(new Uint8Array([0xed, 0x01, ...publicKeyBytes]))}`;
   const input = {
-    ...shape({ multikey, jwk: { kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(publicKeyBytes) }, bytes: publicKeyBytes }),
+    ...shape({ multikey, jwk: { kty: "OKP", crv: "Ed25519", x: base64urlnopad.encode(publicKeyBytes) }, bytes: publicKeyBytes, d: privateKey.export({ format: "jwk" }).d! }),
     service: [{ id: "#service", type: "DIDCommMessaging", serviceEndpoint: { uri: `https://${name}.example`, accept: ["didcomm/v2"] } }],
   };
   const longForm = encodeLongForm(input);
@@ -66,10 +66,14 @@ function refusal(run: () => unknown): InvalidFromPrior {
   throw new Error("accepted");
 }
 
+/** A token signed by `issuer` over the exact signing input given, so a test can shape its segments. */
+function signedInput(issuer: Party, input: string): string {
+  return `${input}.${base64urlnopad.encode(new Uint8Array(nodeSign(null, new TextEncoder().encode(input), issuer.privateKey)))}`;
+}
+
 /** A token signed by `issuer` over the exact header and claims given, so a test can shape both. */
 function signed(issuer: Party, header: Record<string, unknown>, claims: Record<string, unknown>): string {
-  const input = `${encode(header)}.${encode(claims)}`;
-  return `${input}.${base64urlnopad.encode(new Uint8Array(nodeSign(null, new TextEncoder().encode(input), issuer.privateKey)))}`;
+  return signedInput(issuer, `${encode(header)}.${encode(claims)}`);
 }
 
 describe("inspect", () => {
@@ -83,9 +87,10 @@ describe("inspect", () => {
 
   it("refuses what is not a JWT of the expected shape, each case for its own defect", () => {
     const cases: [string, RegExp][] = [
-      ["", /compact JWT/],
-      ["a.b", /compact JWT/],
-      ["a.b.c", /compact JWT/],
+      ["", /three segments/],
+      ["a.b", /three segments/],
+      ["a.b.c", /protected header segment is base64url/],
+      [`${encode("x")}.${encode({ iss: "x", iat: IAT })}.${unsigned}`, /^not a compact JWT/],
       [`${encode({ alg: "EdDSA" })}.${encode({ iss: "x", iat: IAT })}.${unsigned}`, /kid/],
       [`${encode({ alg: "EdDSA", kid: "k" })}.${encode({ iss: "x", iat: 1.5 })}.${unsigned}`, /iat/],
       [`${encode({ alg: "EdDSA", kid: "k" })}.${encode({ iss: "x", sub: null, iat: IAT })}.${unsigned}`, /sub/],
@@ -140,6 +145,29 @@ describe("precheck", () => {
     const wrong = `${h}.${p}.${base64urlnopad.encode(new Uint8Array(64))}`;
     expect(precheckFromPrior(wrong)).toEqual(inspectFromPrior(wrong));
     expect((await failure(verifyFromPrior(wrong, b0.longForm))).failure).toBe("signature");
+  });
+
+  it("refuses a header or payload segment that is not unpadded base64url, though the signature covers it as received", async () => {
+    const padded = (value: Record<string, unknown>) => {
+      for (let filler = ""; ; filler += "x") {
+        const segment = encode({ ...value, filler });
+        if (segment.length % 4 !== 0) return `${segment}${"=".repeat(4 - (segment.length % 4))}`;
+      }
+    };
+    const h = encode(header);
+    const p = encode(claims);
+    const cases: [string, string][] = [
+      ["a line feed in the protected header", `${h.slice(0, 8)}\n${h.slice(8)}.${p}`],
+      ["a space in the payload", `${h}.${p.slice(0, 8)} ${p.slice(8)}`],
+      ["a padded protected header", `${padded(header)}.${p}`],
+      ["a padded payload", `${h}.${padded(claims)}`],
+    ];
+    for (const [what, input] of cases) {
+      const jwt = signedInput(b0, input);
+      expect(refusal(() => inspectFromPrior(jwt)).failure, what).toBe("form");
+      expect(refusal(() => precheckFromPrior(jwt)).failure, what).toBe("form");
+      expect((await failure(verifyFromPrior(jwt, b0.longForm))).failure, what).toBe("form");
+    }
   });
 
   it("refuses a rotation whose successor is not the authenticated sender, before any material arrives", () => {
@@ -285,6 +313,29 @@ describe("verify", () => {
     }
   });
 
+  it("reports a document failure for an authorized JWK that carries the private key, or whose use, key_ops or alg does not allow verifying EdDSA", async () => {
+    const cases: [string, (key: { d: string }) => Record<string, unknown>][] = [
+      ["the private key", (key) => ({ d: key.d })],
+      ["use enc", () => ({ use: "enc" })],
+      ["key_ops without verify", () => ({ key_ops: ["sign"] })],
+      ["empty key_ops", () => ({ key_ops: [] })],
+      ["alg ES256", () => ({ alg: "ES256" })],
+    ];
+    for (const [what, members] of cases) {
+      const jwk = party(`jwk-${what}`, (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, ...members(key) } }], authentication: ["#key-1"] }));
+      const jwt = await rotation(jwk, b1);
+      expect(() => precheckFromPrior(jwt), what).not.toThrow();
+      expect((await failure(verifyFromPrior(jwt, jwk.longForm))).failure, what).toBe("document");
+    }
+  });
+
+  it("accepts a JWK whose use, key_ops and alg allow verifying EdDSA", async () => {
+    for (const members of [{ use: "sig" }, { key_ops: ["verify"] }, { alg: "EdDSA" }, { use: "sig", key_ops: ["verify"], alg: "EdDSA", kid: "key-1" }]) {
+      const jwk = party("jwk-restricted", (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, ...members } }], authentication: ["#key-1"] }));
+      await expect(verifyFromPrior(await rotation(jwk, b1), jwk.longForm), JSON.stringify(members)).resolves.toMatchObject({ method: jwk.kid });
+    }
+  });
+
   it("accepts a JWK method, and an embedded authentication method", async () => {
     const jwk = party("jwk", (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: key.jwk }], authentication: ["#key-1"] }));
     await expect(verifyFromPrior(await rotation(jwk, b1), jwk.longForm)).resolves.toMatchObject({ method: jwk.kid });
@@ -412,6 +463,12 @@ describe("create", () => {
     expect((await failure(createFromPrior(request, signerOf(b1, b0.kid)))).failure).toBe("signature");
     expect((await failure(createFromPrior(request, { methodId: b0.kid, sign: async () => new Uint8Array(3) }))).failure).toBe("signature");
     expect((await failure(createFromPrior(request, { methodId: b0.kid, sign: async () => "sig" as unknown as Uint8Array }))).failure).toBe("signature");
+  });
+
+  it("refuses to create a proof under a document whose JWK carries the private key", async () => {
+    const leaked = party("leaked", (key) => ({ verificationMethod: [{ id: "#key-1", type: "JsonWebKey2020", publicKeyJwk: { ...key.jwk, d: key.d } }], authentication: ["#key-1"] }));
+    const request = { issuer: leaked.longForm, change: { kind: "rotate" as const, successor: b1.longForm }, iat: IAT, issuerLongForm: leaked.longForm };
+    expect((await failure(createFromPrior(request, signerOf(leaked)))).failure).toBe("document");
   });
 
   it("refuses an inconsistent request before signing", async () => {

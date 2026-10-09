@@ -18,6 +18,14 @@ DIDComm v2 `from_prior` proofs, split from `@estoc/continuity/from-prior`.
   `ProofRequest.issuerLongForm`; `IssuerEvidence` and
   `VerifiedFromPrior.document` are gone. `bindFromPrior(proof, receipt)`
   takes a `Receipt` of token, recipient and sender.
+- **Segments and keys as their RFCs write them** (breaking, since
+  `@estoc/continuity` 0.1.0): a header or payload segment with padding,
+  whitespace or another character outside unpadded base64url is a
+  `form` failure even under a valid signature, as the signature segment
+  already was. A `publicKeyJwk` reaches the library whole, so one that
+  carries the private key, or whose `use`, `key_ops` or `alg` does not
+  allow verifying EdDSA, is a `document` failure at verification and at
+  creation.
 - **The profile**: inspection, precheck, verification, binding and
   creation of `from_prior` under `estoc-from-prior/1`: did:peer:4
   parties, Ed25519, no validity window, no clock. The precheck applies

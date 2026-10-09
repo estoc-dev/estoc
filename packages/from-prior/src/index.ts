@@ -22,7 +22,7 @@
 
 import { decodeLongForm, isLongForm, isShortForm, longToShort, resolveLongForm } from "@estoc/did-peer";
 import { base58, base64urlnopad } from "@scure/base";
-import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, type JWK, type JWTPayload } from "jose";
+import { compactVerify, decodeJwt, decodeProtectedHeader, errors, type JWK, type JWTPayload } from "jose";
 
 export type Did = string;
 
@@ -161,6 +161,7 @@ type Decoded = Readonly<{ header: ProtectedHeader; claims: UnverifiedFromPrior["
 
 /** The token's segments decoded and checked for shape: what it says, not what it proves. */
 function decode(jwt: string): Decoded {
+  checkSegments(jwt);
   let header: ReturnType<typeof decodeProtectedHeader>;
   let payload: JWTPayload;
   try {
@@ -173,19 +174,33 @@ function decode(jwt: string): Decoded {
   if (typeof header.kid !== "string") throw form("the protected header names a kid");
   if (header.typ !== undefined && typeof header.typ !== "string") throw form("typ is a string");
   checkHeaderExtensions(header);
-  checkSignatureSegment(jwt.slice(jwt.lastIndexOf(".") + 1));
   return { header: { ...header, alg: header.alg, typ: header.typ, kid: header.kid }, claims: claimsOf(payload) };
 }
 
-/** The third segment decodes and has the length of an Ed25519 signature; whether it verifies needs the issuer's key. */
-function checkSignatureSegment(segment: string): void {
-  let bytes: Uint8Array;
+/**
+ * The three segments as received, each base64url without padding,
+ * whitespace or other characters (RFC 7515 §2, §5.2). They are checked
+ * before the library reads them, because its decoder tolerates some of
+ * what the grammar excludes, and they are not normalized, because the
+ * signing input is the segments as received. The signature has the
+ * length of an Ed25519 signature; whether it verifies needs the
+ * issuer's key.
+ */
+function checkSegments(jwt: string): void {
+  const segments = jwt.split(".");
+  if (segments.length !== 3) throw form("not a compact JWT: the token is three segments");
+  const [header, payload, signature] = segments as [string, string, string];
+  segmentBytes(header, "protected header");
+  segmentBytes(payload, "payload");
+  if (segmentBytes(signature, "signature").length !== ED25519_SIGNATURE_BYTES) throw form(`the signature is ${ED25519_SIGNATURE_BYTES} bytes`);
+}
+
+function segmentBytes(segment: string, what: string): Uint8Array {
   try {
-    bytes = base64urlnopad.decode(segment);
+    return base64urlnopad.decode(segment);
   } catch {
-    throw form("the signature is base64url without padding");
+    throw form(`not a compact JWT: the ${what} segment is base64url without padding or whitespace`);
   }
-  if (bytes.length !== ED25519_SIGNATURE_BYTES) throw form(`the signature is ${ED25519_SIGNATURE_BYTES} bytes`);
 }
 
 function unverifiedOf({ header, claims }: Decoded): UnverifiedFromPrior {
@@ -194,11 +209,11 @@ function unverifiedOf({ header, claims }: Decoded): UnverifiedFromPrior {
 
 /**
  * A token's protected header and claims, decoded and checked for shape
- * only: three segments, the header members and claims this profile
- * reads, the RFC 7797 pairing of `b64` and `crit`, and a signature
- * segment of the right length. What this returns is what the token
- * says, not a proof; it lets the host find the issuer's material, and
- * `precheckFromPrior` applies the profile to it.
+ * only: three unpadded base64url segments, the header members and
+ * claims this profile reads, the RFC 7797 pairing of `b64` and `crit`,
+ * and a signature segment of the right length. What this returns is
+ * what the token says, not a proof; it lets the host find the issuer's
+ * material, and `precheckFromPrior` applies the profile to it.
  */
 export function inspectFromPrior(jwt: string): UnverifiedFromPrior {
   return unverifiedOf(decode(jwt));
@@ -316,6 +331,12 @@ function relativeTo(id: string, documentId: string): string {
   return id.startsWith("#") ? `${documentId}${id}` : id;
 }
 
+/**
+ * The method's key as the JWK the library verifies with. A
+ * `publicKeyJwk` is passed whole, so the library refuses one that
+ * carries a private key, or whose `use`, `key_ops` or `alg`
+ * (RFC 7517 §4.2–4.4) does not allow verifying EdDSA.
+ */
 function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
   const multibase = method["publicKeyMultibase"];
   const jwk = method["publicKeyJwk"];
@@ -332,7 +353,7 @@ function ed25519Jwk(method: Record<string, unknown>, id: string): JWK {
   }
   if (isPlainObject(jwk) && multibase === undefined) {
     if (jwk["kty"] !== "OKP" || jwk["crv"] !== "Ed25519" || typeof jwk["x"] !== "string") throw new InvalidFromPrior(`${id} is not an Ed25519 key`, "document");
-    return { kty: "OKP", crv: "Ed25519", x: jwk["x"] };
+    return { ...jwk };
   }
   throw new InvalidFromPrior(`${id} carries one of publicKeyMultibase and publicKeyJwk`, "document");
 }
@@ -419,27 +440,23 @@ function profileChange(claims: UnverifiedFromPrior["claims"], issuer: DidSpellin
  * encodes, that method's Ed25519 key verifies the JWS, and the claims
  * the signature covers meet the profile. The document-independent rules
  * are the ones `precheckFromPrior` applies, so the two never diverge.
- * The library verifies the signature only; the profile has no
- * time-bound claim and consults no clock. The token is retained as
- * given; a failure says whether form, profile, document or signature
- * failed.
+ * The library checks the key and the signature only: every rule of the
+ * token it applies has been applied before, so a failure other than the
+ * signature's is the key's. The profile has no time-bound claim and
+ * consults no clock. The token is retained as given; a failure says
+ * whether form, profile, document or signature failed.
  */
 export async function verifyFromPrior(jwt: string, issuerLongForm: Did): Promise<VerifiedFromPrior> {
   const decoded = decode(jwt);
   const { issuer } = checkProfile(decoded);
   const document = issuerDocument(issuerLongForm, issuer);
   const method = authenticationMethod(issuerLongForm, document, decoded.header.kid);
-  let key: Awaited<ReturnType<typeof importJWK>>;
-  try {
-    key = await importJWK(method.key, FROM_PRIOR_ALG);
-  } catch (err) {
-    throw new InvalidFromPrior(`${method.id} is not an Ed25519 key: ${err instanceof Error ? err.message : String(err)}`, "document");
-  }
   let payload: Uint8Array;
   try {
-    ({ payload } = await compactVerify(jwt, key, { algorithms: [FROM_PRIOR_ALG] }));
+    ({ payload } = await compactVerify(jwt, method.key, { algorithms: [FROM_PRIOR_ALG] }));
   } catch (err) {
-    throw new InvalidFromPrior(`the signature does not verify under ${method.id}: ${err instanceof Error ? err.message : String(err)}`, "signature");
+    if (err instanceof errors.JWSSignatureVerificationFailed) throw new InvalidFromPrior(`the signature does not verify under ${method.id}`, "signature");
+    throw new InvalidFromPrior(`${method.id} is not a public Ed25519 key that verifies ${FROM_PRIOR_ALG}: ${err instanceof Error ? err.message : String(err)}`, "document");
   }
   const claims = verifiedClaims(payload);
   const signedIssuer = canonicalDid(claims.iss, "iss");

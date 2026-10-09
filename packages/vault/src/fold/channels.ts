@@ -230,12 +230,6 @@ function carrierOf(source: Source, jwt: string, sender: Did, check: ProofCheck |
   return { proof, fact: factOfBinding(binding.change) };
 }
 
-/**
- * The continuity fact a bound proof establishes: a rotation is the
- * successor observed at its pair with the recipient, carrying the
- * rotation from the issuer; an ending is the issuer's ending at its
- * pair with the recipient.
- */
 function factOfBinding(change: BoundChange): ContinuityFact {
   switch (change.kind) {
     case "rotate":

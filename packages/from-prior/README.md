@@ -49,15 +49,20 @@ subjects and audiences, `EdDSA` over Ed25519 authentication keys, an
 integer `iat` and no `exp` or `nbf`: the profile evaluates no validity
 window, and verification consults no clock. Creation writes
 `typ: JWT`; reception takes `typ` as the optional media type it is,
-accepting its absence or `JWT` and `application/jwt` in any case. A
-`b64` header, when present, is `true` and listed in `crit`, as
-RFC 7797 requires of a JWT. DID equivalence is the did:peer:4 short
-form; presented spellings are kept beside it. The issuer's material is
-its long-form DID as the host retained it: a did:peer:4 is its own
-document, so the signing key is taken from the content the DID's
-hash covers and a document assembled by a caller cannot substitute one.
-The package resolves nothing over the network. `InvalidFromPrior.failure`
-tells form, profile, binding, document and signature failures apart.
+accepting its absence or `JWT` and `application/jwt` in any case. Each
+of the token's three segments is base64url without padding or
+whitespace, as RFC 7515 writes a compact JWS. A `b64` header, when
+present, is `true` and listed in `crit`, as RFC 7797 requires of a JWT.
+DID equivalence is the did:peer:4 short form; presented spellings are
+kept beside it. The issuer's material is its long-form DID as the host
+retained it: a did:peer:4 is its own document, so the signing key is
+taken from the content the DID's hash covers and a document assembled
+by a caller cannot substitute one. An authorized key is an Ed25519
+Multikey or public JWK; a `publicKeyJwk` carries no private member, and
+the `use`, `key_ops` and `alg` it may carry allow verifying `EdDSA`.
+The package resolves nothing over the network.
+`InvalidFromPrior.failure` tells form, profile, binding, document and
+signature failures apart.
 
 ## Stages
 
@@ -126,4 +131,5 @@ sends nothing.
 
 - [DIDComm v2.1 DID Rotation](https://identity.foundation/didcomm-messaging/spec/v2.1/#did-rotation) and [Ending a Relationship](https://identity.foundation/didcomm-messaging/spec/v2.1/#ending-a-relationship): the wire proof.
 - [Peer DID method 4](https://identity.foundation/peer-did-method-spec/#method-4-short-form-and-long-form): short and long forms.
-- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html) and [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797.html#section-1): the JWT and its encoded payload.
+- [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html#section-2), [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html) and [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797.html#section-1): the compact JWS, the JWT and its encoded payload.
+- [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html#section-4.2): the `use`, `key_ops` and `alg` of a JWK.
