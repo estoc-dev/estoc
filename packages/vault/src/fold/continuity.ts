@@ -1,23 +1,22 @@
 /**
  * Continuity over the channel evidence, derived by `@estoc/continuity`.
- * The evidence is projected into the package's facts, each resting on
- * the event whose CID is its evidence, so every replica keys the same
- * fact alike: an authenticated proof-free
- * receipt is an address observation at its pair; a receipt whose proof
- * verified and bound is the peer transition and the observation of the
- * successor, both of that one receipt; a decision that passes its own
- * checks is a local decision at its fixed predecessor pair, naming its
- * source's observation when it has one. The package derives the one
- * model over all of them — links, joins, contexts, conflicts, heads,
- * confirmation — and nothing here builds a second graph. What is here
- * is the host's reading of that model beside the evidence's own
- * verdicts: each carrier's or decision's status and each source's
- * standing as a witness, the evidence's refusals first and the model's
- * second; which channels take no new work; the admitted witness by
- * which an address is confirmed for new work, since the model confirms
- * by every usable observation and a saved decision may rest on one no
- * admission names, while nothing new may; the denials that cover a
- * channel through the history; and the saved decisions of a context,
+ * The evidence is projected into the package's facts, each keyed by the
+ * CID of the event it rests on, so every replica keys it alike: an
+ * authenticated proof-free receipt is an address observation at its
+ * pair; a receipt whose proof verified and bound is the peer transition
+ * and the observation of the successor, both of that one receipt; a
+ * decision that passes its own checks is a local decision at its fixed
+ * predecessor pair, naming its source's receipt when it has one. The
+ * package derives the one model over all of them — links, joins,
+ * contexts, conflicts, heads, confirmation — and nothing here builds a
+ * second graph. What is here is the host's reading of that model beside
+ * the evidence's own verdicts: each carrier's or decision's status and
+ * each source's standing as a witness, the evidence's refusals first and
+ * the model's second; which channels take no new work; the admitted
+ * witness by which an address is confirmed for new work, since the model
+ * confirms by every usable observation and a saved decision may rest on
+ * one no admission names, while nothing new may; the denials that cover
+ * a channel through the history; and the saved decisions of a context,
  * projected or not, since a decision still waiting for its evidence
  * already forbids another successor.
  */
