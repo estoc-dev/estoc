@@ -230,8 +230,19 @@ function spellings(did: string, longForm?: string): [string, string] {
 }
 
 const ACTIVE = "removed_at IS NULL";
-/* Every DID that holds blobs: an ordinary account as written, an active replica by its short form. */
-const BLOB_OWNERS = `SELECT did FROM accounts UNION ALL SELECT replica_did FROM replicas WHERE ${ACTIVE}`;
+
+/*
+ * Whether the DID `did` evaluates to holds blobs here: an ordinary account as
+ * written, an active replica by its short form. Each table is searched by its
+ * key, so the check costs the same however many owners the mediator holds.
+ */
+function holdsBlobs(did: string): string {
+  return (
+    `(EXISTS (SELECT 1 FROM accounts WHERE did = ${did}) ` +
+    `OR EXISTS (SELECT 1 FROM replicas WHERE replica_did = ${did} AND ${ACTIVE}))`
+  );
+}
+
 const NOT_ORDINARY =
   "NOT EXISTS (SELECT 1 FROM accounts WHERE did IN (?, ?)) " +
   "AND NOT EXISTS (SELECT 1 FROM keylist WHERE recipient_did IN (?, ?))";
@@ -441,7 +452,7 @@ export class SqlStore implements MediationStore {
     try {
       await this.driver.batch([
         { sql: ENDED_BLOBS },
-        ...SqlStore.endBlobs(`owner_did NOT IN (${BLOB_OWNERS})`, []),
+        ...SqlStore.endBlobs(`NOT ${holdsBlobs("blobs.owner_did")}`, []),
       ]);
     } catch (error) {
       if (!(await this.endedBlobsExist())) {
@@ -1369,32 +1380,33 @@ export class SqlStore implements MediationStore {
     quotaBytes: number
   ): Promise<KeepOutcome> {
     const now = Date.now();
-    const owns = `? IN (${BLOB_OWNERS})`;
+    const owns = holdsBlobs("?");
+    const owner = [ownerDid, ownerDid];
     const room =
       "(SELECT COALESCE(SUM(size), 0) FROM blobs WHERE owner_did = ? AND retain_until > ?) + ? <= ?";
-    const [owner, created, renewed, kept] = await this.batch([
-      { sql: `SELECT 1 AS one WHERE ${owns}`, params: [ownerDid] },
+    const [held, created, renewed, kept] = await this.batch([
+      { sql: `SELECT 1 AS one WHERE ${owns}`, params: owner },
       {
         sql:
           "INSERT INTO blobs (id, owner_did, hash, size, created_at, retain_until) " +
           "SELECT ?, ?, ?, ?, ?, ? " +
           "WHERE NOT EXISTS (SELECT 1 FROM blobs WHERE owner_did = ? AND hash = ?) " +
           `AND ${room} AND ${owns}`,
-        params: [id, ownerDid, hash, size, now, retainUntil, ownerDid, hash, ownerDid, now, size, quotaBytes, ownerDid],
+        params: [id, ownerDid, hash, size, now, retainUntil, ownerDid, hash, ownerDid, now, size, quotaBytes, ...owner],
       },
       {
         sql:
           "UPDATE blobs SET retain_until = MAX(retain_until, ?) " +
           "WHERE owner_did = ? AND hash = ? AND size = ? " +
           `AND (retain_until > ? OR ${room}) AND ${owns}`,
-        params: [retainUntil, ownerDid, hash, size, now, ownerDid, now, size, quotaBytes, ownerDid],
+        params: [retainUntil, ownerDid, hash, size, now, ownerDid, now, size, quotaBytes, ...owner],
       },
       {
         sql: `SELECT ${SqlStore.BLOB_COLUMNS} FROM blobs WHERE owner_did = ? AND hash = ?`,
         params: [ownerDid, hash],
       },
     ]);
-    if (owner.rows.length === 0) {
+    if (held.rows.length === 0) {
       return { outcome: "ended" };
     }
     const row = kept.rows[0] as Record<string, unknown> | undefined;

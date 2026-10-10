@@ -657,6 +657,36 @@ describe("two stores that both open a database from before ended blobs left the 
   });
 });
 
+describe("a blob being kept", () => {
+  it("finds its owner by key, reading no other account or replica", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    const driver = new HeldDriver(path);
+    const batch = vi.spyOn(driver, "batch");
+    const store = new SqlStore(driver);
+    await store.grantMediation(ALICE);
+    await store.grantMediation("did:example:bob");
+
+    await store.keepBlob(
+      { id: "kept", ownerDid: ALICE, hash: "h", size: 10, retainUntil: Date.now() + 60_000 },
+      100
+    );
+
+    const [statements] = batch.mock.calls.at(-1)!;
+    const planner = new Database(path);
+    const scans = statements
+      .flatMap(({ sql, params = [] }) =>
+        planner.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]
+      )
+      .map(({ detail }) => detail)
+      .filter((detail) => /^SCAN (accounts|replicas)\b/.test(detail));
+    expect(scans).toEqual([]);
+    planner.close();
+    store.close();
+    rmSync(dir, { recursive: true });
+  });
+});
+
 /** Runs each batch as one transaction, in which a statement `fails` picks throws. */
 class FailingDriver implements SqlDriver {
   private db: Database.Database;
