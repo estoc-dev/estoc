@@ -270,6 +270,7 @@ export interface MediationStore {
    * whether it holds an ordinary account afterwards.
    */
   grantMediation(did: string): Promise<boolean>;
+  /** Deletes the ordinary account with its recipients and messages, and ends its blobs. */
   revokeMediation(did: string): Promise<void>;
   isMediated(did: string): Promise<boolean>;
 
@@ -295,17 +296,17 @@ export interface MediationStore {
   /**
    * Deletes the account with everything kept for it: its replicas, the
    * removed ones included, its shared recipients, its mail and its execution
-   * registrations, whatever their retention. Every DID it bound is free
-   * again. False, and nothing deleted, without such an account bound to
-   * `mediator`.
+   * registrations, whatever their retention, and ends its replicas' blobs.
+   * Every DID it bound is free again. False, and nothing deleted, without
+   * such an account bound to `mediator`.
    */
   deleteReplicaAccount(accountDid: string, mediator: string): Promise<boolean>;
   addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome>;
   /**
-   * Ends a replica's enrollment and its deliveries, and with them every
-   * package it was the last target of. Its DID stays bound, so it is never
-   * enrolled again while the account exists, and it keeps its place in every
-   * execution registration that lists it.
+   * Ends a replica's enrollment, its blobs and its deliveries, and with them
+   * every package it was the last target of. Its DID stays bound, so it is
+   * never enrolled again while the account exists, and it keeps its place in
+   * every execution registration that lists it.
    */
   removeReplica(accountDid: string, mediator: string, replicaDid: string): Promise<RemoveOutcome>;
   isReplicaAccount(did: string): Promise<boolean>;
@@ -392,7 +393,15 @@ export interface MediationStore {
    * unique, and nothing is shared between mediations — the same hash put by
    * two of them is two rows, two ids, two uploads. Bytes are kept by a
    * BlobStorage under the id; the store only knows what should exist.
+   * Ending a mediation ends the retention of its blobs, in the same
+   * transaction, so they are served no more and the next purge deletes them.
    */
+  /**
+   * The DID a sender holds blobs under: an ordinary account as it holds it,
+   * an active replica by its short form. Null for any other DID, among them
+   * a replica-mediation account, a shared recipient and a removed replica.
+   */
+  blobOwner(sender: string): Promise<string | null>;
   blobOf(ownerDid: string, hash: string): Promise<BlobRow | null>;
   blobById(id: string): Promise<BlobRow | null>;
   /** Bytes of this mediation's live blobs, uploaded or not. */
@@ -411,8 +420,8 @@ export interface MediationStore {
   claimUpload(token: string): Promise<UploadGrant | null>;
   markUploaded(id: string): Promise<void>;
   /**
-   * Drops every blob past its retention or whose mediation has ended, and
-   * expired tokens; returns the ids whose bytes should now be deleted.
+   * Drops every blob past its retention and every expired token; returns the
+   * ids whose bytes should now be deleted.
    */
   purgeBlobs(): Promise<string[]>;
 

@@ -131,8 +131,9 @@ const SCHEMA = [
    )`,
   "CREATE INDEX IF NOT EXISTS messages_owner ON messages(owner_did, created_at)",
   "CREATE INDEX IF NOT EXISTS messages_expiry ON messages(expires_at)",
-  // owner_did deliberately has no foreign key: a blob must outlive its
-  // account's row long enough for purge to learn its id and delete the bytes.
+  // owner_did deliberately has no foreign key: ending a mediation only ends
+  // the retention of its blobs, and each row outlives its owner until purge
+  // has learned its id and deleted the bytes.
   `CREATE TABLE IF NOT EXISTS blobs (
      id           TEXT PRIMARY KEY,
      owner_did    TEXT NOT NULL,
@@ -483,7 +484,10 @@ export class SqlStore implements MediationStore {
 
   async revokeMediation(did: string): Promise<void> {
     // Cascades: the keylist entries and waiting messages go with the account.
-    await this.run("DELETE FROM accounts WHERE did = ?", [did]);
+    await this.batch([
+      SqlStore.endBlobs("SELECT did FROM accounts WHERE did = ?", [did]),
+      { sql: "DELETE FROM accounts WHERE did = ?", params: [did] },
+    ]);
   }
 
   async isMediated(did: string): Promise<boolean> {
@@ -491,6 +495,16 @@ export class SqlStore implements MediationStore {
       did,
     ]);
     return row !== null;
+  }
+
+  async blobOwner(sender: string): Promise<string | null> {
+    const [asWritten, short] = spellings(sender);
+    const row = await this.first<{ owner: string }>(
+      "SELECT did AS owner FROM accounts WHERE did = ? " +
+        `UNION ALL SELECT replica_did FROM replicas WHERE replica_did = ? AND ${ACTIVE}`,
+      [asWritten, short]
+    );
+    return row?.owner ?? null;
   }
 
   async addRecipient(
@@ -637,6 +651,7 @@ export class SqlStore implements MediationStore {
       { sql: `DELETE FROM replica_packages WHERE ${held}`, params: key },
       { sql: `DELETE FROM replica_recipients WHERE ${held}`, params: key },
       { sql: `DELETE FROM replica_executions WHERE ${held}`, params: key },
+      SqlStore.endBlobs(`SELECT replica_did FROM replicas WHERE ${held}`, key),
       { sql: `DELETE FROM replicas WHERE ${held}`, params: key },
       {
         sql: "DELETE FROM replica_accounts WHERE did = ? AND mediator = ?",
@@ -748,9 +763,10 @@ export class SqlStore implements MediationStore {
     const member = [replicaDid, accountDid, mediator];
     const replica = `SELECT replica_did FROM replicas WHERE ${enrolled}`;
 
-    const [bound, , , , , removed] = await this.batch([
+    const [bound, , , , , , removed] = await this.batch([
       account,
       ...SqlStore.endDeliveries(`replica_did IN (${replica})`, member),
+      SqlStore.endBlobs(replica, member),
       {
         sql: `UPDATE replicas SET removed_at = ? WHERE ${enrolled} AND ${ACTIVE}`,
         params: [Math.floor(Date.now() / 1000), ...member],
@@ -1379,13 +1395,19 @@ export class SqlStore implements MediationStore {
     ]);
   }
 
+  private static endBlobs(owners: string, params: SqlValue[]): SqlStatement {
+    const now = Date.now();
+    return {
+      sql: `UPDATE blobs SET retain_until = ? WHERE retain_until > ? AND owner_did IN (${owners})`,
+      params: [now, now, ...params],
+    };
+  }
+
   async purgeBlobs(): Promise<string[]> {
     const now = Date.now();
-    const dead =
-      "retain_until <= ? OR owner_did NOT IN (SELECT did FROM accounts)";
     const [found] = await this.batch([
-      { sql: `SELECT id FROM blobs WHERE ${dead}`, params: [now] },
-      { sql: `DELETE FROM blobs WHERE ${dead}`, params: [now] },
+      { sql: "SELECT id FROM blobs WHERE retain_until <= ?", params: [now] },
+      { sql: "DELETE FROM blobs WHERE retain_until <= ?", params: [now] },
       { sql: "DELETE FROM blob_uploads WHERE expires_at <= ?", params: [now] },
     ]);
     return (found.rows as { id: string }[]).map((row) => row.id);
