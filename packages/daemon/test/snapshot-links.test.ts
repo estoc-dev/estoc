@@ -202,6 +202,28 @@ describe("a snapshot link", () => {
   );
 
   it(
+    "is published when the upload is answered as a browser answers it, a 204 with an empty body",
+    async () => {
+      const mediator = await newMediator();
+      const asABrowser = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => async (input, init) => {
+        const response = await fetch(input, init);
+        if (response.status !== 204) return response;
+        const empty = new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+        return new Proxy(response, {
+          get: (target, key) => {
+            if (key === "body") return empty;
+            const value: unknown = Reflect.get(target, key, target);
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        });
+      };
+      const a = await alice(mediator, { wrap: asABrowser });
+      await expect(a.call("publishSnapshotLink", {})).resolves.toMatchObject({ status: "published" });
+    },
+    LONG
+  );
+
+  it(
     "whose put the mediator never answered stays pending with no retention known, and revoking it asks the mediator to delete it all the same",
     async () => {
       const mediator = await newMediator();

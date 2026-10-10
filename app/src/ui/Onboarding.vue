@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
+import { parseSnapshotLink } from "@estoc/daemon-api/views";
 
-import { createIdentity, heldNow, restoreIdentity, state } from "../core/store.js";
+import { createIdentity, heldNow, restoreFromLink, restoreIdentity, state } from "../core/store.js";
+import QrReader from "./QrReader.vue";
+import { canScanQr } from "./scanner.js";
 import { bytesOf } from "./util.js";
 
 /**
- * First run: mint an identity here, or restore one from a backup file.
- * Both end in the same place, a vault in this browser with its seed
- * sealed under the passphrase typed here. Being reachable comes after,
- * on the You screen.
+ * First run: mint an identity here, or restore one from a backup file
+ * or from a link another device of this vault made. All end in the same
+ * place, a vault in this browser with its seed sealed under the
+ * passphrase typed here. Being reachable comes after, on the You screen.
  */
-const mode = ref<"create" | "restore">("create");
+// `scan` is the Restore tab with the camera reading for a link.
+const mode = ref<"create" | "restore" | "scan">("create");
 
 const name = ref("");
 const passphrase = ref("");
@@ -44,9 +48,26 @@ async function create() {
 }
 
 const backupFile = ref<File | null>(null);
+const snapshotLink = ref("");
 const restorePass = ref("");
 const restoring = ref(false);
 const restoreError = ref<string | null>(null);
+
+watch(
+  () => state.pendingSnapshotLink,
+  (opened) => {
+    if (opened === null) return;
+    mode.value = "restore";
+    if ("link" in opened) {
+      snapshotLink.value = opened.link;
+      restoreError.value = null;
+    } else {
+      snapshotLink.value = "";
+      restoreError.value = `The link this page was opened with cannot be used: ${opened.unreadable}. Open it again, or paste it here.`;
+    }
+  },
+  { immediate: true }
+);
 
 function pickBackup(event: Event) {
   backupFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
@@ -54,12 +75,21 @@ function pickBackup(event: Event) {
 
 async function restore() {
   restoreError.value = null;
-  if (backupFile.value === null) {
-    restoreError.value = "Choose the backup file first.";
+  const link = snapshotLink.value.trim();
+  if (backupFile.value === null && link === "") {
+    restoreError.value = "Choose the backup file, or paste the link your other device made.";
+    return;
+  }
+  if (backupFile.value !== null && link !== "") {
+    restoreError.value = "Restore from the file or from the link, not both: clear one of them.";
     return;
   }
   restoring.value = true;
   try {
+    if (backupFile.value === null) {
+      await restoreFromLink(link, restorePass.value);
+      return;
+    }
     const held = heldNow();
     const backup = await bytesOf(backupFile.value);
     if (!held()) return;
@@ -69,6 +99,27 @@ async function restore() {
   } finally {
     restoring.value = false;
   }
+}
+
+function toggleScan() {
+  restoreError.value = null;
+  mode.value = mode.value === "scan" ? "restore" : "scan";
+}
+
+function takeScanned(rawValue: string): boolean {
+  try {
+    parseSnapshotLink(rawValue);
+  } catch {
+    return false;
+  }
+  snapshotLink.value = rawValue;
+  mode.value = "restore";
+  return true;
+}
+
+function cameraFailed() {
+  mode.value = "restore";
+  restoreError.value = "The camera could not be opened. Paste the link instead.";
 }
 </script>
 
@@ -82,7 +133,7 @@ async function restore() {
 
       <div class="tabs">
         <button class="tab" :class="{ active: mode === 'create' }" type="button" data-tab-create @click="mode = 'create'">New identity</button>
-        <button class="tab" :class="{ active: mode === 'restore' }" type="button" data-tab-restore @click="mode = 'restore'">Restore a backup</button>
+        <button class="tab" :class="{ active: mode !== 'create' }" type="button" data-tab-restore @click="mode = 'restore'">Restore</button>
       </div>
 
       <form v-if="mode === 'create'" class="form" @submit.prevent="create">
@@ -95,11 +146,23 @@ async function restore() {
       </form>
 
       <form v-else class="form" @submit.prevent="restore">
-        <input class="field" type="file" accept=".sqlite,application/vnd.sqlite3" data-backup-file @change="pickBackup" />
-        <input v-model="restorePass" class="field" type="password" placeholder="The backup's passphrase" autocomplete="current-password" data-backup-passphrase />
+        <label class="note" for="backup-file">From a backup file</label>
+        <input id="backup-file" class="field" type="file" accept=".sqlite,application/vnd.sqlite3" data-backup-file @change="pickBackup" />
+        <label class="note" for="snapshot-link">Or from a link your other device made (You › Add a device)</label>
+        <input id="snapshot-link" v-model="snapshotLink" class="field" placeholder="The link" autocomplete="off" data-snapshot-link-input />
+        <template v-if="canScanQr">
+          <QrReader v-if="mode === 'scan'" :take="takeScanned" @failed="cameraFailed" />
+          <button class="link alone" type="button" style="align-self: flex-start" data-scan-snapshot-link @click="toggleScan">
+            {{ mode === "scan" ? "Stop scanning" : "Scan its QR code" }}
+          </button>
+        </template>
+        <input v-model="restorePass" class="field" type="password" placeholder="The vault's passphrase" autocomplete="current-password" data-backup-passphrase />
         <p v-if="restoreError" class="error-text">{{ restoreError }}</p>
         <button class="btn" type="submit" :disabled="restoring" data-restore>{{ restoring ? "Restoring…" : "Restore" }}</button>
-        <p class="note">A backup brings back the moment it was made and nothing after it. What that means for your conversations is explained before anything is sent.</p>
+        <p class="note">
+          A backup or a link brings back the moment it was made and nothing after it. What that means for your conversations is explained before anything is
+          sent.
+        </p>
       </form>
     </div>
   </div>

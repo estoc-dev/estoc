@@ -1,7 +1,7 @@
 import { shallowReactive, toRaw } from "vue";
 import type { Client, ConnectionState, DaemonMethods } from "@estoc/daemon-api/client";
 import type { Epoch, Outcome, StateValue } from "@estoc/daemon-api/contract";
-import { basicMessage, indexSnapshot, invitationOf, invitationUrl, parseInvitation, profileMessage } from "@estoc/daemon-api/views";
+import { basicMessage, indexSnapshot, invitationOf, invitationUrl, parseInvitation, parseSnapshotLink, profileMessage, snapshotLinkUrl } from "@estoc/daemon-api/views";
 
 import { daemonSocket, startDaemon } from "../daemon/client.js";
 import { forgetSeedKey } from "../daemon/keycache.js";
@@ -12,9 +12,11 @@ import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
-import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, SendTarget, Snapshot, SnapshotIndex, TraceLevel } from "./types.js";
+import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, TraceLevel } from "./types.js";
 
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
+/** A `#snapshot=` this page was opened with: the link as it came, or why it is not one. */
+export type OpenedSnapshotLink = { link: string } | { unreadable: string };
 
 /**
  * The one store: the vault as the daemon last published it, plus the
@@ -63,6 +65,13 @@ export const state = shallowReactive({
    */
   pendingInvitation: null as Invitation | null,
   pendingMediatorInvitation: null as string | null,
+  /**
+   * What this page was opened with as `#snapshot=`, until a vault is made
+   * or restored here: the link to another device's vault, offered where
+   * a vault is restored, or why what came is not one. While this device
+   * holds a vault it is only said to be of no use here.
+   */
+  pendingSnapshotLink: null as OpenedSnapshotLink | null,
   /** the invitations made since this page opened, by ID, as the links they were handed over as: the vault keeps the disclosure and not what it was said to be for */
   links: {} as Record<string, string>,
   /** what this device keeps of what its agent observes: this copy's own state, never in a backup */
@@ -149,12 +158,12 @@ function connected(): Client {
   return client;
 }
 
-/** A call of the daemon's, its failure in words for the person. */
-async function call<T>(work: (daemon: DaemonMethods) => Promise<T>): Promise<T> {
+/** A call of the daemon's, its failure in words for the person; `tooLarge` is what to do instead when it is refused as too large. */
+async function call<T>(work: (daemon: DaemonMethods) => Promise<T>, tooLarge?: string): Promise<T> {
   try {
     return await work(connected().daemon);
   } catch (error) {
-    throw explained(error);
+    throw explained(error, tooLarge);
   }
 }
 
@@ -174,6 +183,9 @@ export async function refresh(): Promise<void> {
  */
 export async function boot(): Promise<void> {
   takePendingInvitation();
+  takePendingSnapshotLink();
+  // A link pasted over this page's address changes only the fragment: the page stays, and takes it as it would on opening.
+  window.addEventListener("hashchange", takePendingSnapshotLink);
   setupPwa({
     onUpdateReady: (apply) => (state.applyUpdate = apply),
     onOfflineReady: () => (state.offlineReady = true),
@@ -215,6 +227,22 @@ function takePendingInvitation(): void {
   history.replaceState(null, "", clean);
 }
 
+function takePendingSnapshotLink(): void {
+  if (!new URLSearchParams(location.hash.slice(1)).has("snapshot")) return;
+  try {
+    parseSnapshotLink(location.href);
+    state.pendingSnapshotLink = { link: location.href };
+  } catch (err) {
+    state.pendingSnapshotLink = { unreadable: err instanceof Error ? err.message : String(err) };
+  }
+  // The fragment carries the key to the vault's copy: it leaves the address whether or not it reads as a link.
+  history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+}
+
+export function dismissPendingSnapshotLink(): void {
+  state.pendingSnapshotLink = null;
+}
+
 /**
  * Mint an identity: a fresh seed sealed under `passphrase`, a vault around
  * it. No mediator yet: how it is reached is decided afterwards
@@ -222,11 +250,24 @@ function takePendingInvitation(): void {
  */
 export async function createIdentity(name: string, passphrase: string): Promise<void> {
   await call((daemon) => daemon.createIdentity({ name, passphrase }));
-  state.persisted = state.daemonAt === null ? await persistStorage() : false;
+  await begun();
 }
 
 export async function restoreIdentity(backup: Uint8Array, passphrase: string): Promise<void> {
   await call((daemon) => daemon.restoreIdentity({ backup, passphrase }));
+  await begun();
+}
+
+/** A vault restored from what was pasted or scanned: a link another device made of its own, read and opened by the daemon, then restored as a backup is. */
+export async function restoreFromLink(input: string, passphrase: string): Promise<void> {
+  const link = parseSnapshotLink(input);
+  await call((daemon) => daemon.restoreFromLink({ link, passphrase }));
+  await begun();
+}
+
+/** A vault now here, minted or restored: whatever link the page was opened with has had its turn, and the browser is asked to keep the vault's files. */
+async function begun(): Promise<void> {
+  state.pendingSnapshotLink = null;
   state.persisted = state.daemonAt === null ? await persistStorage() : false;
 }
 
@@ -269,7 +310,7 @@ export async function discardFolderVault(): Promise<void> {
 export async function downloadBackup(): Promise<void> {
   const held = heldNow();
   const anchor = openIndex()?.snapshot.anchor ?? null;
-  const { name, bytes } = await call((daemon) => daemon.exportBackup({}));
+  const { name, bytes } = await call((daemon) => daemon.exportBackup({}), "This version has no way to back up a vault this size, or to move it to another device.");
   if (!held()) {
     log(`${name} was not saved: the vault it backs up is no longer the one here`);
     return;
@@ -277,6 +318,28 @@ export async function downloadBackup(): Promise<void> {
   saveFile(name, bytes);
   if (anchor !== null) markExported(anchor);
   log(`exported ${name} (${(bytes.length / 1024).toFixed(0)} KB)`);
+}
+
+/** The link a snapshot is handed over as: this deployment's origin, like an invitation's; another Estoc reads only the fragment. */
+export function snapshotLinkOf(link: SnapshotLink): string {
+  return snapshotLinkUrl(`${location.origin}${location.pathname}`, link);
+}
+
+/** This vault sealed and put at its mediator, for a new device to restore from the link. */
+export async function publishSnapshotLink(): Promise<PublishedSnapshotLink> {
+  const made = await call((daemon) => daemon.publishSnapshotLink({}), "A link cannot carry this vault: export a backup and restore the file on the new device instead.");
+  log(`put a snapshot for a new device, kept until ${made.retainUntil}`);
+  return made;
+}
+
+/** The snapshots this device put that its mediator may still keep, newest first. */
+export async function snapshotLinks(): Promise<SnapshotLinkRecord[]> {
+  return (await call((daemon) => daemon.snapshotLinks({}))).links.reverse();
+}
+
+export async function revokeSnapshotLink(hash: string): Promise<void> {
+  await call((daemon) => daemon.revokeSnapshotLink({ hash }));
+  log(`revoked the snapshot ${hash}`);
 }
 
 /** Merge a backup file into the open vault; the daemon goes on over the merged vault. */

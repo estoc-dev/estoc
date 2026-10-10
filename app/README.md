@@ -73,6 +73,17 @@ your data never touches the place the app was served from.
   *Import a backup* into a live vault *merges*: events the vault lacks are
   added, nothing already here is touched, so backups from two devices fold
   together. A message a backup holds unsent is not sent on its own.
+- **A new device from a link.** *Add a device*, on the You screen, seals
+  the vault under a key of its own and puts it at the mediator, then shows
+  the link as a QR code and as text. A fresh install opened at the link,
+  or given it pasted or scanned under *Restore*, reads the snapshot, opens
+  it and restores it under the vault's passphrase, as a backup restores.
+  Whoever holds the link reads the messages until the mediator lets the
+  snapshot go or it is revoked; the passphrase still seals the seed. The
+  links made are listed with when they expire, to show again or revoke.
+  The new device starts from that moment: what happens on this one
+  afterwards does not reach it. A vault over what one blob at the mediator
+  holds goes by backup file instead.
 - **Offline.** Installed, Estoc opens with no network at all: the app
   shell and the WASM are cached by a service worker, the vault is on disk.
   Reading history needs nothing. Writing needs nothing either: a message
@@ -148,8 +159,10 @@ to a private one, a rotation by hand with the thread going on over it, a
 link opened before its reader has an identity, history surviving a reload
 with no passphrase, a second tab yielding to the first, lock and unlock
 (a wrong passphrase refused), a backup merged into the live vault with
-nothing new, the same backup restored in a fresh browser where sending
-waits for the restore to be explained, a backup with no conversation in
+nothing new, a link for a new device restoring the vault in a fresh
+browser opened at it and reading nothing once revoked, the same backup
+restored in a fresh browser where sending waits for the restore to be
+explained, a backup with no conversation in
 it restored and explained before a first invitation, and, when a service
 worker is serving, a message written with the network off that is still
 there after an offline reload and goes out by hand once the network is

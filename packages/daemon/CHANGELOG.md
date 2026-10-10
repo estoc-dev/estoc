@@ -19,6 +19,11 @@
   An export over its bound now says `the snapshot file is ... over the
   bound of ...` when the host refuses the file.
 
+- A response of a status with no body (a 204, say) reaches the agent as
+  the host answered it, even when the host hands it over with an empty
+  body, as a browser does: wrapping that body in a new response threw, so
+  a blob upload from the browser failed once its bytes were in.
+
 - The agent keeps its delivery records in the runtime's local options:
   the preparation it selected for each message and an acceptance it has
   not yet recorded, beside the inputs its replica left to another, and a

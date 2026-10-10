@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import { discardFolderVault, forgetIdentity, state } from "./core/store.js";
+import { discardFolderVault, dismissPendingSnapshotLink, forgetIdentity, state } from "./core/store.js";
 import Onboarding from "./ui/Onboarding.vue";
 import Shell from "./ui/Shell.vue";
 import Unlock from "./ui/Unlock.vue";
@@ -21,6 +21,8 @@ const daemonHost = computed(() => (state.daemonAt === null ? "its origin" : new 
 /** A daemon over a socket that has never answered this page: nothing to show but that. */
 const unreachable = computed(() => state.vault.phase === "booting" && state.away !== null);
 const incompatible = computed(() => (state.connection.state === "incompatible" ? state.connection.message : null));
+/** A link to restore a vault from, opened where a vault is held already: it is kept for the screen that restores one, should this vault be removed. */
+const snapshotLinkUnusable = computed(() => state.pendingSnapshotLink !== null && (state.vault.phase === "open" || state.vault.phase === "locked"));
 </script>
 
 <template>
@@ -119,6 +121,11 @@ const incompatible = computed(() => (state.connection.state === "incompatible" ?
   <div v-if="state.applyUpdate" class="update-chip" data-update>
     <span>A new version of Estoc is ready.</span>
     <button class="btn" type="button" @click="state.applyUpdate?.()">Reload</button>
+  </div>
+
+  <div v-if="snapshotLinkUnusable" class="update-chip" data-snapshot-link-unusable>
+    <span>That link restores a vault on a device with none, and this one holds a vault already.</span>
+    <button class="btn" type="button" @click="dismissPendingSnapshotLink">OK</button>
   </div>
 
   <div v-if="unconfirmed" class="update-chip alarm" data-unconfirmed>

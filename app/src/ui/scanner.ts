@@ -86,3 +86,24 @@ export function startScan<V extends VideoSource>({ openCamera, video, detector, 
 
   return { stop };
 }
+
+type BarcodeDetector = new (options: { formats: string[] }) => Detector<HTMLVideoElement>;
+const barcodeDetector = (globalThis as { BarcodeDetector?: BarcodeDetector }).BarcodeDetector;
+
+/** Whether this browser reads QR codes itself: a scan is offered only where it does. */
+export const canScanQr = barcodeDetector !== undefined && typeof navigator !== "undefined" && "mediaDevices" in navigator;
+
+/** The back camera read for QR codes, shown in `video`. */
+export function scanQr(video: HTMLVideoElement, onCode: (rawValue: string) => boolean, onFailure: () => void): Scan {
+  if (barcodeDetector === undefined) {
+    onFailure();
+    return { stop() {} };
+  }
+  return startScan({
+    openCamera: () => navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }),
+    video,
+    detector: new barcodeDetector({ formats: ["qr_code"] }),
+    onCode,
+    onFailure,
+  });
+}
