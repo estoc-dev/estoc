@@ -26,7 +26,7 @@ import { isLongForm, isPeerDID4, isShortForm } from "@estoc/did-peer";
 import { InvalidJson, canonicalize, isJsonObject, parseStrict, type JsonObject } from "@estoc/event-store";
 import { InvalidDidDocument, InvalidPublicKey, authorizedMethodIds, canonicalDidOf, canonicalPublicKey, didcommServiceUris, peerResolution, rawCidOfBytes, type Cid, type Did, type DidUrl, type KeyType, type VaultFold } from "@estoc/vault";
 
-import { bounded } from "./link.js";
+import { bounded, letGo } from "./link.js";
 import type { AgentTrace } from "./trace.js";
 
 /** A resolved peer document, in the exact form the vault retains and the folds check. */
@@ -519,7 +519,7 @@ async function readBounded(response: Response, maxBytes: number): Promise<Uint8A
     if (done) break;
     length += value.length;
     if (length > maxBytes) {
-      reader.cancel().catch(() => undefined);
+      letGo(reader);
       return null;
     }
     chunks.push(value);

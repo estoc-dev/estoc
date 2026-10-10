@@ -318,7 +318,7 @@ export class Agent {
   async blobStore(mediationId: MediationId): Promise<BlobStore> {
     const line = await this.lineOf(mediationId);
     const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await enroll(line.link, this.runtime, this.keys, this.confirmations, mediationId)).replica));
-    return new BlobStore(inbox.link, { fetch: this.options.fetch, timeoutMs: this.options.timeoutMs });
+    return new BlobStore(inbox.link, { timeoutMs: this.options.timeoutMs });
   }
 
   connections(): Connection[] {

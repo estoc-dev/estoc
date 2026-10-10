@@ -30,7 +30,6 @@ export interface SealedBlob extends BlobKey {
   bytes: Uint8Array;
 }
 
-/** The blob name of `bytes`. */
 export async function blobName(bytes: Uint8Array): Promise<string> {
   return base32.encode((await sha256.digest(bytes)).bytes);
 }

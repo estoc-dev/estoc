@@ -2,14 +2,15 @@
  * blob-store/1.0, the client side. Keeping and deleting a blob go to the
  * mediator over a link, as whoever the link speaks for: the blob is that
  * DID's, counted against its quota, and ends with its standing at the
- * mediator. The bytes go over plain HTTP, uploaded where a put says and
- * read back from the blob's URL. Reading needs no identity: anyone with
- * the URL may read the blob, its bytes being ciphertext under a key the
- * store never sees.
+ * mediator. The bytes go over plain HTTP: uploaded where a put says,
+ * over the link's own transport so that nothing goes once the link's
+ * holder has closed, and read back from the blob's URL. Reading needs
+ * no identity: anyone with the URL may read the blob, its bytes being
+ * ciphertext under a key the store never sees.
  */
 
 import { BlobTooLarge, BlobTransferFailed, MediatorRefused } from "./errors.js";
-import { bounded, type MediatorLink } from "./link.js";
+import { bounded, letGo, type MediatorLink } from "./link.js";
 import { BLOB_DELETE, BLOB_DELETE_RESULT, BLOB_PUT, BLOB_PUT_RESULT } from "./protocol/blob-store.js";
 import { control } from "./replica-enrollment.js";
 
@@ -35,23 +36,17 @@ export interface BlobPlacement {
 }
 
 export interface BlobStoreOptions {
-  /** injectable for tests; the global one by default */
-  fetch?: typeof fetch;
   /** how long reading the mediator's limits may take; default 15s */
   timeoutMs?: number;
 }
 
 export class BlobStore {
-  private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
 
   constructor(
     private readonly link: MediatorLink,
     options: BlobStoreOptions = {}
   ) {
-    // wrapped, not assigned: a native fetch called with `this` bound to anything but the global is an "Illegal invocation" in browsers
-    const fetchImpl = options.fetch ?? fetch;
-    this.fetchFn = (input, init) => fetchImpl(input, init);
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
 
@@ -59,8 +54,11 @@ export class BlobStore {
   async limits(): Promise<BlobLimits | null> {
     const signal = AbortSignal.timeout(this.timeoutMs);
     const described = await bounded(signal, async () => {
-      const response = await this.fetchFn(this.link.http(), { headers: { accept: "application/json" }, signal });
-      if (!response.ok) throw new MediatorRefused(`the mediator answered ${response.status} to a request for its limits`);
+      const response = await this.link.request(this.link.http(), { headers: { accept: "application/json" }, signal });
+      if (!response.ok) {
+        letGo(response.body);
+        throw new MediatorRefused(`the mediator answered ${response.status} to a request for its limits`);
+      }
       return (await response.json()) as unknown;
     });
     const blobs = (described as { blobs?: unknown } | null)?.blobs;
@@ -93,8 +91,8 @@ export class BlobStore {
     const { upload } = placement;
     if (upload === null) return;
     const signal = AbortSignal.timeout(Math.max(0, upload.expires - Date.now()));
-    const response = await bounded(signal, () => this.fetchFn(upload.url, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes, signal }));
-    await response.body?.cancel();
+    const response = await bounded(signal, () => this.link.request(upload.url, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes, signal }));
+    letGo(response.body);
     if (!response.ok) throw new BlobTransferFailed("upload", response.status);
   }
 
@@ -128,16 +126,16 @@ export async function readBlob(url: string, options: ReadBlobOptions): Promise<U
     const response = await fetchFn(url, { signal });
     const body = response.body;
     if (!response.ok) {
-      await body?.cancel();
+      letGo(body);
       throw new BlobTransferFailed("read", response.status);
     }
     if (Number(response.headers.get("content-length")) > maxBytes) {
-      await body?.cancel();
+      letGo(body);
       throw new BlobTooLarge(maxBytes);
     }
     if (body === null) return new Uint8Array();
     const reader = body.getReader();
-    const cancel = (): void => void reader.cancel(signal.reason).catch(() => undefined);
+    const cancel = (): void => letGo(reader, signal.reason);
     signal.addEventListener("abort", cancel, { once: true });
     try {
       const chunks: Uint8Array[] = [];
@@ -147,7 +145,7 @@ export async function readBlob(url: string, options: ReadBlobOptions): Promise<U
         if (done) break;
         length += value.byteLength;
         if (length > maxBytes) {
-          await reader.cancel();
+          letGo(reader);
           throw new BlobTooLarge(maxBytes);
         }
         chunks.push(value);

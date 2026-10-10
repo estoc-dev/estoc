@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { scanVault, canonicalDid } from "@estoc/vault";
 
-import { Agent, BLOB_TOO_LARGE, BlobStore, BlobTooLarge, BlobTransferFailed, MediatorRefused, SEAL_OVERHEAD, openBlob, readBlob, sealBlob } from "../src/index.js";
+import { Agent, BLOB_TOO_LARGE, BlobStore, BlobTooLarge, LinkClosed, MediatorLink, MediatorRefused, SEAL_OVERHEAD, openBlob, readBlob, sealBlob } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, newMediator, party, type Party } from "./helpers.js";
 
@@ -15,12 +15,18 @@ afterEach(async () => {
   }
 });
 
-/** A runtime with an arrangement toward `mediator`, its agent open and not connected, and the blob store it speaks to as its replica. */
-async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; store: BlobStore }> {
+/** A runtime with an arrangement toward `mediator`, its agent open and not connected, the blob store it speaks to as its replica, and every request the agent sent. */
+async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; store: BlobStore; sent: string[] }> {
   const p = await party(mediator, 1);
-  const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false });
+  const sent: string[] = [];
+  const transport = p.linkOptions.fetch as typeof fetch;
+  const counting = ((input: RequestInfo | URL, init?: RequestInit) => {
+    sent.push(`${init?.method ?? "GET"} ${String(input)}`);
+    return transport(input, init);
+  }) as typeof fetch;
+  const agent = await Agent.open(p, { didcomm, fetch: counting, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
-  return { ...p, agent, store: await agent.blobStore(p.mediationId) };
+  return { ...p, agent, store: await agent.blobStore(p.mediationId), sent };
 }
 
 const filled = (length: number): Uint8Array => new Uint8Array(length).map((_, i) => (i * 31 + 7) & 0xff);
@@ -43,6 +49,16 @@ function trickling(chunks: number, chunkBytes: number, headers: Record<string, s
       { headers }
     )) as typeof globalThis.fetch;
   return { fetch, seen };
+}
+
+const never = (): Promise<never> => new Promise<never>(() => undefined);
+
+/** Each way letting a body go can come out: at once, failing, or not at all. */
+const lettingGo = [() => undefined, () => Promise.reject(new Error("cancel failed")), never];
+
+/** Every request answered `status`, with a body of two bytes whose cancelling comes to what `cancel` does. */
+function answering(status: number, cancel: () => unknown, headers: Record<string, string> = {}): typeof globalThis.fetch {
+  return (async () => new Response(new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(filled(2)), cancel: cancel as UnderlyingSourceCancelCallback }), { status, headers })) as typeof globalThis.fetch;
 }
 
 describe("the blob store of a runtime's replica", () => {
@@ -109,8 +125,35 @@ describe("the blob store of a runtime's replica", () => {
     const alice = await storing(mediator);
     const sealed = await sealBlob(filled(100));
     const placed = await alice.store.put(sealed.hash, sealed.bytes.length);
-    const unanswered = new BlobStore(alice.link, { fetch: () => new Promise<Response>(() => undefined) });
+    const unanswered = new BlobStore(new MediatorLink({ ...alice.linkOptions, fetch: never }));
     await expect(unanswered.upload({ ...placed, upload: { ...placed.upload!, expires: Date.now() + 50 } }, sealed.bytes)).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  it("settles an upload on the store's answer, whatever letting the answer's body go comes to", async () => {
+    const mediator = await newMediator();
+    const alice = await storing(mediator);
+    const sealed = await sealBlob(filled(100));
+    const placed = await alice.store.put(sealed.hash, sealed.bytes.length);
+    for (const cancel of lettingGo) {
+      const answered = (status: number) => new BlobStore(new MediatorLink({ ...alice.linkOptions, fetch: answering(status, cancel) }));
+      await expect(answered(200).upload(placed, sealed.bytes)).resolves.toBeUndefined();
+      await expect(answered(400).upload(placed, sealed.bytes)).rejects.toMatchObject({ name: "BlobTransferFailed", transfer: "upload", status: 400 });
+    }
+  });
+
+  it("sends nothing once the agent it came from is closed", async () => {
+    const mediator = await newMediator();
+    const alice = await storing(mediator);
+    const sealed = await sealBlob(filled(100));
+    const placed = await alice.store.put(sealed.hash, sealed.bytes.length);
+    const sent = alice.sent.length;
+    alice.agent.close();
+    await expect(alice.store.limits()).rejects.toBeInstanceOf(LinkClosed);
+    await expect(alice.store.put(sealed.hash, sealed.bytes.length)).rejects.toBeInstanceOf(LinkClosed);
+    await expect(alice.store.upload(placed, sealed.bytes)).rejects.toBeInstanceOf(LinkClosed);
+    await expect(alice.store.delete(sealed.hash)).rejects.toBeInstanceOf(LinkClosed);
+    expect(alice.sent).toHaveLength(sent);
+    expect([...mediator.blobs.values()].map(({ bytes }) => bytes)).toEqual([null]);
   });
 });
 
@@ -135,10 +178,12 @@ describe("a blob read", () => {
     expect(seen.cancelled).toBe(true);
   });
 
-  it("fails on an answer that is no 2xx", async () => {
-    const fetch = (async () => new Response("gone", { status: 410 })) as typeof globalThis.fetch;
-    const failed = await readBlob("http://blobs.example/b/x", { maxBytes: 2500, timeoutMs: 1000, fetch }).catch((err: unknown) => err);
-    expect(failed).toBeInstanceOf(BlobTransferFailed);
-    expect(failed).toMatchObject({ transfer: "read", status: 410 });
+  it("fails as the answer, or the most it takes, says, whatever letting the body go comes to", async () => {
+    const read = (fetch: typeof globalThis.fetch) => readBlob("http://blobs.example/b/x", { maxBytes: 1, timeoutMs: 50, fetch });
+    for (const cancel of lettingGo) {
+      await expect(read(answering(410, cancel))).rejects.toMatchObject({ name: "BlobTransferFailed", transfer: "read", status: 410 });
+      await expect(read(answering(200, cancel, { "content-length": "2" }))).rejects.toBeInstanceOf(BlobTooLarge);
+      await expect(read(answering(200, cancel))).rejects.toBeInstanceOf(BlobTooLarge);
+    }
   });
 });

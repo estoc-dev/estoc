@@ -166,6 +166,15 @@ export function bounded<T>(signal: AbortSignal, work: () => Promise<T>): Promise
   });
 }
 
+/**
+ * A body, or its reader, no longer wanted, cancelled without waiting:
+ * cancelling may wait on the source or fail, and neither holds or
+ * changes an answer already settled.
+ */
+export function letGo(stream: { cancel(reason?: unknown): Promise<void> } | null | undefined, reason?: unknown): void {
+  void stream?.cancel(reason).catch(() => undefined);
+}
+
 export class MediatorLink {
   private readonly didcomm: DidcommApi;
   private readonly resolver: { resolve: (did: string) => Promise<DIDDoc | null> };
@@ -365,8 +374,7 @@ export class MediatorLink {
     let response: Response;
     let text: string;
     try {
-      this.refuseClosed();
-      response = await this.fetchFn(endpoint, {
+      response = await this.request(endpoint, {
         method: "POST",
         headers: { "Content-Type": ENCRYPTED_MIME },
         body: packed,
@@ -378,6 +386,17 @@ export class MediatorLink {
       throw err;
     }
     return { ok: response.ok, status: response.status, text, ms: Date.now() - started };
+  }
+
+  /**
+   * A plain HTTP request beside the rituals, such as a blob's bytes put
+   * where the mediator said: sent over the link's transport, unsealed
+   * and untraced, and refused with `LinkClosed`, nothing sent, once the
+   * holder has closed.
+   */
+  async request(url: string, init: RequestInit): Promise<Response> {
+    this.refuseClosed();
+    return this.fetchFn(url, init);
   }
 
   /**

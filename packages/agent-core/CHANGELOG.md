@@ -8,10 +8,15 @@
   ended with it; the runtime is enrolled first when it is not known to
   be. `BlobStore` reads the mediator's `limits()` at its HTTP endpoint,
   `put`s a hash and a size, `upload`s the bytes before the grant
-  expires and `delete`s by hash. `readBlob` reads a blob's URL with no
-  identity, stopping once the bytes run over `maxBytes` (`BlobTooLarge`)
-  or at `timeoutMs`; an answer that is no 2xx, to a read or an upload,
-  is a `BlobTransferFailed`. `sealBlob` encrypts under AES-256-GCM with
+  expires and `delete`s by hash, all of it over the replica's link, so
+  a store sends nothing once its agent is closed (`LinkClosed`);
+  `MediatorLink.request` is that link's plain HTTP request, refused the
+  same way. `readBlob` reads a blob's URL with no identity, stopping
+  once the bytes run over `maxBytes` (`BlobTooLarge`) or at
+  `timeoutMs`; an answer that is no 2xx, to a read or an upload, is a
+  `BlobTransferFailed`. Once an answer is settled, a response body
+  still open is cancelled without waiting, so a slow or failed cancel
+  changes no outcome. `sealBlob` encrypts under AES-256-GCM with
   a fresh key and nonce and names the result by its sha2-256 multihash;
   `openBlob` checks the bytes against that name (`BlobMismatch`) before
   opening them (`BlobUnopened`). Sealing adds `SEAL_OVERHEAD` bytes, so
