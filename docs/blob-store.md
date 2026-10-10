@@ -13,10 +13,12 @@ Design history: `research/notes/2026-08-26-want-and-blob-road.md`.
 
 ## 1. What it is for
 
-Putting a **blob** — bytes the store cannot read — where a contact can
-`GET` it later, so that what does not fit in a DIDComm message (an
-`object-share/1.0` package, `docs/object-share.md` §8) still travels
-while neither side needs the other awake. The store is the mediator: an
+Putting a **blob** — bytes the store cannot read — where whoever is given
+its URL can `GET` it later, so that what does not fit in a DIDComm message
+still travels while neither side needs the other awake: today a replica's
+sealed vault snapshot, which a snapshot link restores from on a new
+device; earlier, an `object-share/1.0` package of the version-2 agent.
+The store is the mediator: an
 agent holding a mediation with it may put blobs; anyone with the URL may
 get them. The bytes are ciphertext under a key the store never sees; it
 holds them for a while, unlisted, and forgets them — the envelope queue's
@@ -51,8 +53,8 @@ refused.
 ```
 
 - **`body.hash`** — a sha2-256 multihash of the bytes, multibase base32
-  lower (`b…`) — the string an object-share package carries as
-  `data.hash`. The store checks the upload against it, and it is the
+  lower (`b…`) — the string a snapshot link carries as its `hash`. The
+  store checks the upload against it, and it is the
   name this mediation refers to the blob by from then on. Required.
 - **`body.size`** — the byte length. Required: the store decides on it
   before a byte moves.
@@ -149,17 +151,17 @@ nothing there. A `hash` that is not a blob name is `e.p.blob.refused`.
 - **Verified on the way in, located by id.** A blob is written only when
   the bytes match the hash; from then on `GET` serves them as they are,
   at an id chosen at random when the row was made. The store never sees
-  inside: to it a blob is `size` bytes with a hash, and what an
-  object-share receiver does with them is between the two agents.
+  inside: to it a blob is `size` bytes with a hash, and what a reader
+  does with them is between the reader and the agent that put them.
 - **Unlisted.** There is no index of blobs, per mediation or at all, and
   no way to ask the store what it holds beyond putting a hash one already
-  knows. A URL is learned from the agent that put the blob, in a message
-  only its recipient can read.
+  knows. A URL is learned from the agent that put the blob, through what
+  that agent hands it in, such as a snapshot link.
 - **Expiring.** A blob past its retention is gone. Before that the store
   does not choose to drop it, but may lose it — a disk, a move, a policy
   it did not foresee: a store is a mediator, not an archive, and
-  `retain_until` is intent, not guarantee. An object-share receiver
-  treats a dead link as a partial object, not a broken share.
+  `retain_until` is intent, not guarantee. A snapshot link that finds
+  nothing tells its reader the snapshot was revoked or let go.
 - **Per-mediation accounting.** Quota is the sum of sizes of a
   mediation's live blobs, uploaded or not.
 - **Not a relay.** The store serves what it was given, to whoever has
@@ -170,8 +172,9 @@ nothing there. A `hash` that is not a blob name is `e.p.blob.refused`.
 ## 4. What is not here
 
 - Who may *read* a blob: anyone with the URL. The bytes are ciphertext
-  and the key went by DIDComm; the key is the access control, and the
-  store does no identity for readers.
+  under a key the store does not hold; whoever hands out the URL hands
+  the key with it, as a snapshot link carries both. The key is the
+  access control, and the store does no identity for readers.
 - Blobs in the clear. The protocol carries no media type and defines no
   use of an unencrypted blob; a store that wished to forbid them could
   not tell.

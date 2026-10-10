@@ -9,6 +9,7 @@ import { PING_TYPE, PURE_ACK_EFFECT } from "@estoc/vault";
 import { mintIdentity } from "../../../mediator/src/identity-core.js";
 import { buildServer, type MediatorServer } from "../../../mediator/src/server.js";
 import { SqliteStore } from "../../../mediator/src/store/sqlite.js";
+import type { AddReplicaOutcome, ReplicaAddition } from "../../../mediator/src/store/types.js";
 import { TEST_CONFIG } from "../../../mediator/test/helpers.js";
 import { DEFAULT_MAX_BACKUP_BYTES, createDaemon, type DaemonCore } from "../src/index.js";
 import { nodeHost } from "../src/node/index.js";
@@ -35,15 +36,29 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
+/** Which replica a runtime is shows in no snapshot of its vault; the mediator's store sees the replicas each account enrolls. */
+class Enrolling extends SqliteStore {
+  readonly enrolled = new Map<string, Set<string>>();
+
+  override async addReplica(addition: ReplicaAddition): Promise<AddReplicaOutcome> {
+    const outcome = await super.addReplica(addition);
+    if (outcome.outcome === "added") this.enrolled.set(addition.accountDid, (this.enrolled.get(addition.accountDid) ?? new Set()).add(addition.replicaDid));
+    return outcome;
+  }
+}
+
 interface Mediator {
   did: string;
   fetch: typeof fetch;
   WebSocket: typeof WebSocket;
+  /** each account's replica DIDs, as the mediator added them */
+  enrolled: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 async function mediator(): Promise<Mediator> {
   const identity = await mintIdentity(CONFIG.publicUrl, "web");
-  const server = buildServer({ identity, store: new SqliteStore(":memory:", CONFIG), config: { ...CONFIG, blobDir: await folder() } });
+  const store = new Enrolling(":memory:", CONFIG);
+  const server = buildServer({ identity, store, config: { ...CONFIG, blobDir: await folder() } });
   servers.push(server);
   const local = `127.0.0.1:${await server.listen()}`;
   const there = (url: string | URL): string => {
@@ -58,7 +73,7 @@ async function mediator(): Promise<Mediator> {
       super(there(url));
     }
   }
-  return { did: identity.did, fetch: (input, init) => fetch(there(input instanceof Request ? input.url : input), init), WebSocket: Reaching };
+  return { did: identity.did, fetch: (input, init) => fetch(there(input instanceof Request ? input.url : input), init), WebSocket: Reaching, enrolled: store.enrolled };
 }
 
 interface Running {
@@ -168,6 +183,7 @@ test(
   async () => {
     const at = await mediator();
     const alice = await person(at, "Alice");
+    const [hers] = at.enrolled.keys();
     const bob = await person(at, "Bob");
     await until("alice's line is live", () => live(alice));
     const { invitation } = await alice.daemon.createInvitation();
@@ -179,6 +195,7 @@ test(
     await elsewhere.daemon.boot();
     await elsewhere.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES);
     await until("the restored runtime's line is live", () => live(elsewhere));
+    expect(at.enrolled.get(hers)?.size).toBe(2);
     expect(elsewhere.snapshot().anchor).toBe(alice.snapshot().anchor);
     expect(holdsPing(elsewhere)).toBe(true);
 
