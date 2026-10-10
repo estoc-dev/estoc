@@ -9,7 +9,10 @@
   whole as `ResourceLimit`. What is put is kept in the runtime's local
   state before the put, so `snapshotLinks` lists it again after a
   restart and a pending one whose upload failed can be revoked;
-  `revokeSnapshotLink` deletes the blob and forgets it.
+  `revokeSnapshotLink` deletes the blob and forgets it, after a publish
+  still under way has settled. A runtime that takes a fresh replica ID
+  in a merge lists what it published before as not `revocable`, and
+  refuses to revoke it: only the replica that put a blob may delete it.
   `restoreFromLink` reads a link's snapshot under `maxBackupBytes` and
   the sealing, follows no redirect, checks and opens it, and restores
   it as `restoreIdentity` does, writing nothing when any of that fails.

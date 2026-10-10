@@ -2,7 +2,7 @@ import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, Media
 import type { Called, Cancelled, Content, Invitation, Selected, TraceLevel } from "@estoc/agent-core";
 import type { Hold } from "@estoc/daemon-api/contract";
 
-import type { PutSnapshot, SnapshotLink } from "./snapshot-links.js";
+import type { PublishedSnapshot, PutSnapshot, SnapshotLink } from "./snapshot-links.js";
 
 /**
  * The daemon in the domain's own terms: the agent and its vault behind
@@ -88,8 +88,14 @@ export interface Daemon {
    * local state before the put, so that a snapshot whose upload failed
    * is still listed, and revocable.
    */
-  publishSnapshotLink(): Promise<Extract<PutSnapshot, { status: "published" }>>;
-  /** A snapshot put from here, pending or published, deleted at the mediator and forgotten: its link reads nothing from then on. */
+  publishSnapshotLink(): Promise<PublishedSnapshot>;
+  /**
+   * A snapshot put from here, pending or published, deleted at the
+   * mediator and forgotten once a publish of it under way has settled:
+   * its link reads nothing from then on. Refused, and kept, when this
+   * runtime has given up the replica ID it was put under: only that
+   * replica may delete it.
+   */
   revokeSnapshotLink(hash: string): Promise<void>;
   /** The snapshots put from here that the mediator keeps or may keep, by when they were put. */
   snapshotLinks(): Promise<PutSnapshot[]>;

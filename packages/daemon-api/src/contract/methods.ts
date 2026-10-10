@@ -139,7 +139,7 @@ export interface Methods {
   explainedRestore: Method<Empty, null>;
   /** The vault's snapshot sealed and put at the selected mediator as this replica's blob, and the link that restores it; one over what a blob there holds once sealed is refused whole, under the common `ResourceLimit`. */
   publishSnapshotLink: Method<Empty, PublishedSnapshotLink>;
-  /** The blob a snapshot of this daemon's was put as, pending or published, deleted at the mediator and its record forgotten: its link reads nothing from then on. */
+  /** The blob a snapshot of this daemon's was put as, pending or published, deleted at the mediator and its record forgotten: its link reads nothing from then on. A publish of it still under way is waited for first; one that is not `revocable` is refused, and stays listed. */
   revokeSnapshotLink: Method<{ hash: string }, null>;
   /** The snapshots this daemon put that the mediator keeps or may keep, by when they were put: published ones until they expire, pending ones until they are revoked or expire. */
   snapshotLinks: Method<Empty, { links: SnapshotLinkRecord[] }>;

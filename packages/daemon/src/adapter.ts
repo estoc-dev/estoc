@@ -97,7 +97,7 @@ const linkOf = ({ url, hash, key }: Link): SnapshotLink => ({ url, hash, key: ke
 function snapshotLinkOf(put: PutSnapshot): SnapshotLinkRecord {
   const { hash, placedAt } = put;
   if (put.status === "pending") return { status: "pending", hash, placedAt: timeOf(placedAt), retainUntil: put.retainUntil === null ? null : timeOf(put.retainUntil) };
-  return { status: "published", hash, placedAt: timeOf(placedAt), retainUntil: timeOf(put.retainUntil), link: linkOf(put.link) };
+  return { status: "published", hash, placedAt: timeOf(placedAt), retainUntil: timeOf(put.retainUntil), revocable: put.revocable, link: linkOf(put.link) };
 }
 
 /** The daemon's methods as the API's table, each answering in the API's terms; `limits` bounds the backup an export delivers. */

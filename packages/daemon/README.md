@@ -144,10 +144,20 @@ until when once the mediator answers, published once the bytes are
 uploaded. `snapshotLinks()` lists what the mediator keeps or may keep,
 pending ones included, so that a link is shown again after a restart
 and a snapshot whose upload failed can still be revoked;
-`revokeSnapshotLink(hash)` deletes the blob and forgets the record. A
-put the mediator refuses leaves nothing kept. Removing the vault removes
-these records and not the blobs: a link not revoked before then reads
-until the mediator lets its blob go.
+`revokeSnapshotLink(hash)` deletes the blob and forgets the record,
+after a publish still under way has settled: once it answers, the link
+reads nothing, however far the upload had got. A put the mediator
+refuses leaves nothing kept. Removing the vault removes these records
+and not the blobs: a link not revoked before then reads until the
+mediator lets its blob go.
+
+Only the replica that put a blob may delete it, so each record keeps
+the replica ID and the arrangement it was put under. A runtime that
+takes a fresh replica ID, as a merge has it do when a copy of it wrote
+under the same one, cannot revoke what it published before: those
+links stay listed as not `revocable`, revoking one is refused, and they
+read until the mediator lets their blobs go. What it had not finished
+putting is dropped, its key having gone to no one.
 
 `restoreFromLink(link, passphrase, maxBytes)`, on a daemon with no
 vault, reads the blob, at most `maxBytes` and the sealing beside it,

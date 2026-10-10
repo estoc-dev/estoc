@@ -7,7 +7,7 @@
 
 export type { CompletionWord, CreatedInvitation, Daemon, DispatchWord, Merged, Outcome, SendResult } from "./api.js";
 export { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
-export type { PutSnapshot, SnapshotLink } from "./snapshot-links.js";
+export type { PublishedSnapshot, PutSnapshot, SnapshotLink } from "./snapshot-links.js";
 export { DAMAGE_RECOURSE, RESTORE_EXPLAINED, createDaemon, type DaemonCore } from "./daemon.js";
 export { InvalidArgument, Refused, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 export { DEFAULT_MAX_BACKUP_BYTES, attachTo, limitsOf, methodsOf } from "./adapter.js";

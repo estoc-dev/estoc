@@ -229,14 +229,16 @@ describe("snapshot links", () => {
     }
   });
 
-  it("are listed pending with no link, answered or not, and published with the link and when the mediator lets it go", () => {
+  it("are listed pending with no link, answered or not, and published with the link, when the mediator lets it go and whether the daemon can still revoke it", () => {
     const records = [
       { status: "pending", hash: "b1", placedAt, retainUntil: null },
       { status: "pending", hash: "b2", placedAt, retainUntil },
-      { status: "published", hash: link.hash, placedAt, retainUntil, link },
+      { status: "published", hash: link.hash, placedAt, retainUntil, revocable: true, link },
+      { status: "published", hash: "b3", placedAt, retainUntil, revocable: false, link: { ...link, hash: "b3" } },
     ];
     expect(ok("snapshotLinks", "result", { links: records })).toBe(true);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil: null, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil: null, revocable: true, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil, link }] })).toBe(false);
     expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, placedAt, retainUntil }] })).toBe(false);
     expect(ok("publishSnapshotLink", "result", records[2])).toBe(true);
     expect(ok("publishSnapshotLink", "result", records[1])).toBe(false);

@@ -63,7 +63,7 @@ import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
-import { SnapshotLinks, shown, type Put } from "./snapshot-links.js";
+import { SnapshotLinks, type Put } from "./snapshot-links.js";
 
 /** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
 export interface DaemonCore extends Daemon {
@@ -112,6 +112,8 @@ const BUSY_RETRY_MS = 2000;
 const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
 /** The answers to a put by which the mediator says it holds nothing of the blob. */
 const PUT_REFUSALS = new Set([BLOB_TOO_LARGE, BLOB_QUOTA, BLOB_REFUSED]);
+/** The queue a runtime's snapshot puts and revocations wait their turns in: a revocation comes after a put under way has settled, so nothing that put writes lands after it. */
+const SNAPSHOT_PUTS = "snapshot-puts";
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
@@ -881,11 +883,12 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     async publishSnapshotLink() {
       const running = vault();
       const { attached, runtime } = running;
-      const { store, maxBytes } = await during(attached, async (agent) => {
-        const store = await agent.blobStore(await preferredMediation(running));
+      const { store, mediationId, maxBytes } = await during(attached, async (agent) => {
+        const mediationId = await preferredMediation(running);
+        const store = await agent.blobStore(mediationId);
         const limits = await store.limits();
         if (limits === null) throw new Unmet("the mediator keeps no blobs");
-        return { store, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
+        return { store, mediationId, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
       });
       // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
       const snapshot = await exclusively(() => {
@@ -893,41 +896,51 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         return exported(running, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
       });
       const sealed = await sealBlob(snapshot);
-      return during(attached, async () => {
-        const links = new SnapshotLinks(runtime.local.options);
-        const placedAt = Date.now();
-        await links.prune(placedAt);
-        const pending: Put = { hash: sealed.hash, key: sealed.key, placedAt, placement: null, uploaded: false };
-        await links.keep(pending);
-        let placement: Awaited<ReturnType<typeof store.put>>;
-        try {
-          placement = await store.put(sealed.hash, sealed.bytes.length);
-        } catch (err) {
-          if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
-          await links.forget(sealed.hash);
-          throw new Unmet(`the mediator refused the snapshot: ${err.message}`);
-        }
-        const { url, retainUntil } = placement;
-        const placed: Put = { ...pending, placement: { url, retainUntil } };
-        await links.keep(placed);
-        await store.upload(placement, sealed.bytes);
-        await links.keep({ ...placed, uploaded: true });
-        return { status: "published" as const, hash: sealed.hash, placedAt, retainUntil, link: { url, hash: sealed.hash, key: sealed.key } };
-      });
+      return during(attached, () =>
+        serially(runtime, SNAPSHOT_PUTS, async () => {
+          const links = new SnapshotLinks(runtime.local.options, runtime.author);
+          const placedAt = Date.now();
+          await links.prune(placedAt);
+          const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, placedAt };
+          await links.keep(asked);
+          let placement: Awaited<ReturnType<typeof store.put>>;
+          try {
+            placement = await store.put(sealed.hash, sealed.bytes.length);
+          } catch (err) {
+            if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
+            await links.forget(sealed.hash);
+            throw new Unmet(`the mediator refused the snapshot: ${err.message}`);
+          }
+          const placed = { ...asked, stage: "placed" as const, url: placement.url, retainUntil: placement.retainUntil };
+          await links.keep(placed);
+          await store.upload(placement, sealed.bytes);
+          const uploaded = { ...placed, stage: "uploaded" as const };
+          await links.keep(uploaded);
+          return links.published(uploaded);
+        })
+      );
     },
 
     revokeSnapshotLink(hash) {
-      const running = vault();
-      return during(running.attached, async (agent) => {
-        const links = new SnapshotLinks(running.runtime.local.options);
-        if ((await links.get(hash)) === null) throw new Unmet(`no snapshot ${hash} was put from here`);
-        await (await agent.blobStore(await preferredMediation(running))).delete(hash);
-        await links.forget(hash);
-      });
+      const { attached, runtime } = vault();
+      return during(attached, (agent) =>
+        serially(runtime, SNAPSHOT_PUTS, async () => {
+          const links = new SnapshotLinks(runtime.local.options, runtime.author);
+          const put = await links.get(hash);
+          if (put === null) throw new Unmet(`no snapshot ${hash} was put from here`);
+          if (!links.owns(put)) {
+            const kept = put.stage === "asked" ? "" : `, which keeps it until ${new Date(put.retainUntil).toISOString()}`;
+            throw new Unmet(`snapshot ${hash} was put under a replica ID this runtime has given up since, and only that replica may delete it at the mediator${kept}`);
+          }
+          await (await agent.blobStore(put.owner.mediationId)).delete(hash);
+          await links.forget(hash);
+        })
+      );
     },
 
     async snapshotLinks() {
-      return (await new SnapshotLinks(vault().runtime.local.options).list(Date.now())).map(shown);
+      const { runtime } = vault();
+      return new SnapshotLinks(runtime.local.options, runtime.author).list(Date.now());
     },
 
     mergeBackup: (bytes) =>

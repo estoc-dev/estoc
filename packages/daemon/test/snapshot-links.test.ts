@@ -1,6 +1,7 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openPortable } from "@estoc/event-store";
@@ -9,7 +10,7 @@ import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
 import type { Channel } from "@estoc/vault";
 
-import { BLOB_PUT, SEAL_OVERHEAD, blobName } from "@estoc/agent-core";
+import { BLOB_DELETE, BLOB_PUT, SEAL_OVERHEAD, blobName } from "@estoc/agent-core";
 import { newMediator } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
@@ -88,7 +89,15 @@ async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemo
   return { root, ...over };
 }
 
-type Published = { status: "published"; hash: string; placedAt: string; retainUntil: string; link: { url: string; hash: string; key: string } };
+type Published = { status: "published"; hash: string; placedAt: string; retainUntil: string; revocable: boolean; link: { url: string; hash: string; key: string } };
+
+function latch(): { reached: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { reached, release };
+}
 
 const exists = (file: string): Promise<boolean> =>
   stat(file).then(
@@ -126,7 +135,7 @@ describe("a snapshot link", () => {
       const a = await alice(mediator);
       const published = (await a.call("publishSnapshotLink", {})) as Published;
       const held = await eventsOf((await a.daemon.exportBackup()).bytes);
-      expect(published).toEqual({ status: "published", hash: published.link.hash, placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
+      expect(published).toEqual({ status: "published", hash: published.link.hash, placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, revocable: true, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
       expect(Date.parse(published.retainUntil)).toBeGreaterThan(Date.parse(published.placedAt));
 
       const b = await newcomer(mediator);
@@ -206,6 +215,83 @@ describe("a snapshot link", () => {
 
       expect(await a.call("revokeSnapshotLink", { hash: links[0]!.hash })).toBeNull();
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
+    },
+    LONG
+  );
+
+  it(
+    "revoked while its put is under way is deleted at the mediator only once that put has settled: the link then reads nothing, and the put writes nothing back",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const put = latch();
+      const answer = latch();
+      const deleted = latch();
+      mediator.intercept = async (msg) => {
+        if (msg.type === BLOB_DELETE) deleted.release();
+        if (msg.type !== BLOB_PUT) return undefined;
+        put.release();
+        await answer.reached;
+        return undefined;
+      };
+      const publishing = a.call("publishSnapshotLink", {}) as Promise<Published>;
+      await put.reached;
+      const { links } = (await a.call("snapshotLinks", {})) as { links: { hash: string }[] };
+      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, placedAt: expect.any(String) as string, retainUntil: null }]);
+      const revoking = a.call("revokeSnapshotLink", { hash: links[0]!.hash });
+      const deletedEarly = await Promise.race([deleted.reached.then(() => true), delay(300).then(() => false)]);
+      answer.release();
+      expect(deletedEarly).toBe(false);
+
+      const published = await publishing;
+      expect(published.hash).toBe(links[0]!.hash);
+      expect(await revoking).toBeNull();
+      expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
+      expect(mediator.blobs.size).toBe(0);
+      expect((await mediator.fetch(published.link.url)).status).toBe(404);
+    },
+    LONG
+  );
+
+  it(
+    "put before its daemon took a fresh replica ID stays listed once published, as not revocable, and revoking it is refused with its record kept; one whose upload failed is dropped, and one put since revokes as before",
+    async () => {
+      const mediator = await newMediator();
+      let failing = false;
+      const flaky = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (failing && init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
+      const original = await alice(mediator);
+      await original.daemon.close();
+      const copy = await folder();
+      await cp(path.join(original.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
+
+      const here = daemonOver(original.root, mediator);
+      await here.daemon.boot();
+      await here.daemon.unlock(PASSPHRASE);
+      await here.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
+      const backup = await here.daemon.exportBackup();
+
+      const there = daemonOver(copy, mediator, { wrap: flaky });
+      await there.daemon.boot();
+      await there.daemon.unlock(PASSPHRASE);
+      await there.daemon.createContact("Dave", [{ localDid: shortForm("Anna"), peerDid: shortForm("Dave") } as Channel]);
+      const before = (await there.call("publishSnapshotLink", {})) as Published;
+      failing = true;
+      await expect(there.call("publishSnapshotLink", {})).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
+      failing = false;
+      expect(((await there.call("snapshotLinks", {})) as { links: unknown[] }).links).toHaveLength(2);
+
+      expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
+      const kept = { links: [{ ...before, revocable: false }] };
+      expect(await there.call("snapshotLinks", {})).toEqual(kept);
+      expect(await there.refused("revokeSnapshotLink", { hash: before.hash })).toEqual({ code: "OperationFailed", message: `snapshot ${before.hash} was put under a replica ID this runtime has given up since, and only that replica may delete it at the mediator, which keeps it until ${before.retainUntil}`, effect: "none", messageId: null });
+      expect(await there.call("snapshotLinks", {})).toEqual(kept);
+      expect((await mediator.fetch(before.link.url)).status).toBe(200);
+
+      const since = (await there.call("publishSnapshotLink", {})) as Published;
+      expect(since.revocable).toBe(true);
+      expect(await there.call("revokeSnapshotLink", { hash: since.hash })).toBeNull();
+      expect((await mediator.fetch(since.link.url)).status).toBe(404);
+      expect(await there.call("snapshotLinks", {})).toEqual(kept);
     },
     LONG
   );

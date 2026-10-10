@@ -5,7 +5,8 @@
 - Snapshot links: the methods `publishSnapshotLink` (answering a
   `PublishedSnapshotLink`), `revokeSnapshotLink` (`{ hash }`),
   `snapshotLinks` (`{ links: SnapshotLinkRecord[] }`, pending or
-  published) and `restoreFromLink` (`{ link, passphrase }`). A
+  published, a published one saying whether the daemon can still
+  revoke it) and `restoreFromLink` (`{ link, passphrase }`). A
   `SnapshotLink` is the sealed snapshot's URL, its name and its key; the
   views' `snapshotLinkUrl` writes one as base64url JSON in the
   `snapshot` parameter of a URL's fragment, and `parseSnapshotLink`

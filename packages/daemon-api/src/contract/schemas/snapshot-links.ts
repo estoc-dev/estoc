@@ -14,7 +14,7 @@ export const snapshotLink: z.ZodType<SnapshotLink> = z.object({
 
 const hash = z.string().min(1);
 const pending = z.object({ status: z.literal("pending"), hash, placedAt: displayTime, retainUntil: displayTime.nullable() });
-const published = z.object({ status: z.literal("published"), hash, placedAt: displayTime, retainUntil: displayTime, link: snapshotLink });
+const published = z.object({ status: z.literal("published"), hash, placedAt: displayTime, retainUntil: displayTime, revocable: z.boolean(), link: snapshotLink });
 
 export const publishedSnapshotLink: z.ZodType<PublishedSnapshotLink> = published;
 

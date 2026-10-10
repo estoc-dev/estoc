@@ -29,9 +29,16 @@ export interface SnapshotLink {
  * holds of it; its `retainUntil` is null while the mediator has not
  * answered the put. `published` once uploaded, with the link to hand
  * over.
+ *
+ * Only the replica that put a blob may delete it at the mediator. A
+ * daemon that gives up its replica ID, as when a merge finds a copy of
+ * it wrote under that ID too, can no longer revoke what it put before:
+ * a published one stays listed with `revocable` false, and its link
+ * reads until `retainUntil`. A pending one is dropped then, its key
+ * having gone to no one.
  */
 export type SnapshotLinkRecord =
   | { status: "pending"; hash: string; placedAt: DisplayTime; retainUntil: DisplayTime | null }
-  | { status: "published"; hash: string; placedAt: DisplayTime; retainUntil: DisplayTime; link: SnapshotLink };
+  | { status: "published"; hash: string; placedAt: DisplayTime; retainUntil: DisplayTime; revocable: boolean; link: SnapshotLink };
 
 export type PublishedSnapshotLink = Extract<SnapshotLinkRecord, { status: "published" }>;
