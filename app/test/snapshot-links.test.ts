@@ -62,33 +62,45 @@ vi.stubGlobal("history", {
 vi.stubGlobal("navigator", { storage: { getDirectory: () => Promise.resolve({}), persist: () => Promise.resolve(false) } });
 
 opened(snapshotLinkUrl("http://app.test/?lang=en", link));
-const { boot, publishSnapshotLink, restoreFromLink, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
+const { boot, createIdentity, publishSnapshotLink, restoreFromLink, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
 await boot();
+
+const heldLink = (): SnapshotLink | null => {
+  const opened = state.pendingSnapshotLink;
+  return opened !== null && "link" in opened ? parseSnapshotLink(opened.link) : null;
+};
 
 const refused = (code: string, message: string): CallError => ({ origin: "daemon", code, message, effect: "none", messageId: null }) as CallError;
 
 describe("a page opened with a snapshot link", () => {
   it("holds the link for the restore and takes it off the address, keeping the query", () => {
-    expect(parseSnapshotLink(state.pendingSnapshotLink ?? "")).toEqual(link);
+    expect(heldLink()).toEqual(link);
     expect(fake.replaced).toEqual(["/?lang=en"]);
     expect(fake.page.hash).toBe("");
   });
 
-  it("takes a link pasted over its address the same way, and passes over a fragment that is not one", () => {
-    state.pendingSnapshotLink = null;
+  it("takes what is pasted over its address the same way, holding why a fragment that is not a link cannot be used in place of the link before it", () => {
     opened("http://app.test/#snapshot=not-a-link");
     fake.listeners.get("hashchange")?.();
-    expect(state.pendingSnapshotLink).toBeNull();
+    expect(state.pendingSnapshotLink).toEqual({ unreadable: expect.stringContaining("the snapshot link") });
     expect(fake.page.hash).toBe("");
     const another = { ...link, hash: "bciqanother" };
     opened(snapshotLinkUrl("http://app.test/", another));
     fake.listeners.get("hashchange")?.();
-    expect(parseSnapshotLink(state.pendingSnapshotLink ?? "")).toEqual(another);
+    expect(heldLink()).toEqual(another);
+  });
+
+  it("lets go of what it held once a vault is minted here instead", async () => {
+    state.pendingSnapshotLink = { unreadable: "the snapshot link does not decode" };
+    fake.answers.set("createIdentity", () => Promise.resolve(null));
+    await createIdentity("Alice", "the passphrase");
+    expect(state.pendingSnapshotLink).toBeNull();
   });
 });
 
 describe("a restore from a link", () => {
   it("hands the daemon the link read from the text and lets go of the one the page was opened with", async () => {
+    state.pendingSnapshotLink = { link: snapshotLinkUrl("http://app.test/", link) };
     fake.answers.set("restoreFromLink", () => Promise.resolve(null));
     await restoreFromLink(`  ${snapshotLinkUrl("https://elsewhere.test/", link)}\n`, "the passphrase");
     expect(fake.calls.at(-1)).toEqual({ method: "restoreFromLink", input: { link, passphrase: "the passphrase" } });

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { parseSnapshotLink } from "@estoc/daemon-api/views";
 
 import { createIdentity, heldNow, restoreFromLink, restoreIdentity, state } from "../core/store.js";
-import { canScanQr, scanQr, type Scan } from "./scanner.js";
+import QrReader from "./QrReader.vue";
+import { canScanQr } from "./scanner.js";
 import { bytesOf } from "./util.js";
 
 /**
@@ -12,7 +13,8 @@ import { bytesOf } from "./util.js";
  * place, a vault in this browser with its seed sealed under the
  * passphrase typed here. Being reachable comes after, on the You screen.
  */
-const mode = ref<"create" | "restore">(state.pendingSnapshotLink === null ? "create" : "restore");
+// `scan` is the Restore tab with the camera reading for a link.
+const mode = ref<"create" | "restore" | "scan">("create");
 
 const name = ref("");
 const passphrase = ref("");
@@ -46,18 +48,25 @@ async function create() {
 }
 
 const backupFile = ref<File | null>(null);
-const snapshotLink = ref(state.pendingSnapshotLink ?? "");
+const snapshotLink = ref("");
 const restorePass = ref("");
 const restoring = ref(false);
 const restoreError = ref<string | null>(null);
 
 watch(
   () => state.pendingSnapshotLink,
-  (link) => {
-    if (link === null) return;
-    snapshotLink.value = link;
+  (opened) => {
+    if (opened === null) return;
     mode.value = "restore";
-  }
+    if ("link" in opened) {
+      snapshotLink.value = opened.link;
+      restoreError.value = null;
+    } else {
+      snapshotLink.value = "";
+      restoreError.value = `The link this page was opened with cannot be used: ${opened.unreadable}. Open it again, or paste it here.`;
+    }
+  },
+  { immediate: true }
 );
 
 function pickBackup(event: Event) {
@@ -92,41 +101,26 @@ async function restore() {
   }
 }
 
-const scanning = ref(false);
-const video = ref<HTMLVideoElement | null>(null);
-let scan: Scan | null = null;
-
-async function startScanning() {
+function toggleScan() {
   restoreError.value = null;
-  scanning.value = true;
-  await nextTick();
-  if (video.value === null) return;
-  scan = scanQr(
-    video.value,
-    (rawValue) => {
-      try {
-        parseSnapshotLink(rawValue);
-      } catch {
-        return false;
-      }
-      snapshotLink.value = rawValue;
-      scanning.value = false;
-      return true;
-    },
-    () => {
-      scanning.value = false;
-      restoreError.value = "The camera could not be opened. Paste the link instead.";
-    }
-  );
+  mode.value = mode.value === "scan" ? "restore" : "scan";
 }
 
-function stopScan() {
-  scan?.stop();
-  scan = null;
-  scanning.value = false;
+function takeScanned(rawValue: string): boolean {
+  try {
+    parseSnapshotLink(rawValue);
+  } catch {
+    return false;
+  }
+  snapshotLink.value = rawValue;
+  mode.value = "restore";
+  return true;
 }
 
-onUnmounted(stopScan);
+function cameraFailed() {
+  mode.value = "restore";
+  restoreError.value = "The camera could not be opened. Paste the link instead.";
+}
 </script>
 
 <template>
@@ -139,7 +133,7 @@ onUnmounted(stopScan);
 
       <div class="tabs">
         <button class="tab" :class="{ active: mode === 'create' }" type="button" data-tab-create @click="mode = 'create'">New identity</button>
-        <button class="tab" :class="{ active: mode === 'restore' }" type="button" data-tab-restore @click="mode = 'restore'">Restore</button>
+        <button class="tab" :class="{ active: mode !== 'create' }" type="button" data-tab-restore @click="mode = 'restore'">Restore</button>
       </div>
 
       <form v-if="mode === 'create'" class="form" @submit.prevent="create">
@@ -157,9 +151,9 @@ onUnmounted(stopScan);
         <label class="note" for="snapshot-link">Or from a link your other device made (You › Add a device)</label>
         <input id="snapshot-link" v-model="snapshotLink" class="field" placeholder="The link" autocomplete="off" data-snapshot-link-input />
         <template v-if="canScanQr">
-          <video v-if="scanning" ref="video" muted playsinline style="width: 100%; border-radius: 12px; background: #000; aspect-ratio: 1"></video>
-          <button class="link alone" type="button" style="align-self: flex-start" data-scan-snapshot-link @click="scanning ? stopScan() : startScanning()">
-            {{ scanning ? "Stop scanning" : "Scan its QR code" }}
+          <QrReader v-if="mode === 'scan'" :take="takeScanned" @failed="cameraFailed" />
+          <button class="link alone" type="button" style="align-self: flex-start" data-scan-snapshot-link @click="toggleScan">
+            {{ mode === "scan" ? "Stop scanning" : "Scan its QR code" }}
           </button>
         </template>
         <input v-model="restorePass" class="field" type="password" placeholder="The vault's passphrase" autocomplete="current-password" data-backup-passphrase />

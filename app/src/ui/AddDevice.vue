@@ -8,12 +8,9 @@ import Sheet from "./Sheet.vue";
 import { dateOf, timeOf } from "./util.js";
 
 /**
- * A new device gets this vault from a link: a sealed copy of it put at
- * the mediator, which the device reads and opens under the passphrase.
- * The links made here are listed for as long as the mediator may keep
- * them, each shown again or revoked; one whose upload never finished
- * has no link and can only be revoked, which frees what the mediator
- * holds of it.
+ * A link to a copy of this vault, sealed under a key the link itself
+ * carries: whoever holds the link reads the vault's messages, while the
+ * seed inside the copy stays sealed under the passphrase.
  */
 const emit = defineEmits<{ close: [] }>();
 
@@ -21,34 +18,41 @@ const reasonOf = (err: unknown): string => (err instanceof Error ? err.message :
 const madeAt = (iso: string): string => `${dateOf(iso)}, ${timeOf(Date.parse(iso))}`;
 
 const links = ref<SnapshotLinkRecord[] | null>(null);
+/** why the list could not be read: what it shows is not what the daemon holds until it is read again */
+const unlisted = ref<string | null>(null);
 const error = ref<string | null>(null);
 
 async function load(held: () => boolean) {
-  const listed = await snapshotLinks();
-  if (held()) links.value = listed;
+  try {
+    const listed = await snapshotLinks();
+    if (!held()) return;
+    links.value = listed;
+    unlisted.value = null;
+  } catch (err) {
+    if (held()) unlisted.value = reasonOf(err);
+  }
 }
 
-onMounted(() => {
-  load(heldNow()).catch((err: unknown) => (error.value = reasonOf(err)));
-});
+onMounted(() => void load(heldNow()));
 
 const making = ref(false);
 const shownHash = ref<string | null>(null);
 
+// A publish or revoke that fails can still have changed what the
+// mediator holds (an upload cut short leaves its pending link behind):
+// the list is read again whatever came of it.
 async function make() {
   making.value = true;
   error.value = null;
   const held = heldNow();
   try {
     const made = await publishSnapshotLink();
-    if (!held()) return;
-    shownHash.value = made.hash;
-    await load(held);
+    if (held()) shownHash.value = made.hash;
   } catch (err) {
-    error.value = reasonOf(err);
-  } finally {
-    making.value = false;
+    if (held()) error.value = reasonOf(err);
   }
+  await load(held);
+  making.value = false;
 }
 
 const revoking = ref<string | null>(null);
@@ -59,14 +63,20 @@ async function revoke(hash: string) {
   const held = heldNow();
   try {
     await revokeSnapshotLink(hash);
-    if (!held()) return;
-    if (shownHash.value === hash) shownHash.value = null;
-    await load(held);
+    if (held() && shownHash.value === hash) shownHash.value = null;
   } catch (err) {
-    error.value = reasonOf(err);
-  } finally {
-    revoking.value = null;
+    if (held()) error.value = reasonOf(err);
   }
+  await load(held);
+  revoking.value = null;
+}
+
+const reloading = ref(false);
+
+async function reload() {
+  reloading.value = true;
+  await load(heldNow());
+  reloading.value = false;
 }
 
 const shown = computed(() => {
@@ -125,7 +135,11 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <button class="btn" type="button" :disabled="making" data-make-snapshot-link @click="make">{{ making ? "Sealing and uploading…" : "Make a link" }}</button>
       <p class="note">Whoever holds the link can read your messages until it expires or you revoke it. Your keys stay sealed under the passphrase.</p>
 
-      <div v-if="links && links.length" class="section" data-snapshot-links>
+      <p v-if="unlisted" class="error-text" data-snapshot-links-unread>
+        The links made here could not be read: {{ unlisted }}.
+        <button class="link" type="button" :disabled="reloading" data-reload-snapshot-links @click="reload">Read them again</button>
+      </p>
+      <div v-else-if="links && links.length" class="section" data-snapshot-links>
         <div class="eyebrow">Links made here</div>
         <div class="group">
           <div v-for="link in links" :key="link.hash" class="row" :data-snapshot-link="link.status">

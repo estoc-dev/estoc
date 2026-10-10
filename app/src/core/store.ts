@@ -15,6 +15,8 @@ import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage
 import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, TraceLevel } from "./types.js";
 
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
+/** A `#snapshot=` this page was opened with: the link as it came, or why it is not one. */
+export type OpenedSnapshotLink = { link: string } | { unreadable: string };
 
 /**
  * The one store: the vault as the daemon last published it, plus the
@@ -64,13 +66,12 @@ export const state = shallowReactive({
   pendingInvitation: null as Invitation | null,
   pendingMediatorInvitation: null as string | null,
   /**
-   * A link to another device's vault this page was opened with
-   * (`#snapshot=` in the URL) and has not restored from yet: offered
-   * where a vault is restored, and only said to be of no use here while
-   * this device holds a vault. Kept here, not in the URL, for the same
-   * reasons as an invitation.
+   * What this page was opened with as `#snapshot=`, until a vault is made
+   * or restored here: the link to another device's vault, offered where
+   * a vault is restored, or why what came is not one. While this device
+   * holds a vault it is only said to be of no use here.
    */
-  pendingSnapshotLink: null as string | null,
+  pendingSnapshotLink: null as OpenedSnapshotLink | null,
   /** the invitations made since this page opened, by ID, as the links they were handed over as: the vault keeps the disclosure and not what it was said to be for */
   links: {} as Record<string, string>,
   /** what this device keeps of what its agent observes: this copy's own state, never in a backup */
@@ -226,15 +227,15 @@ function takePendingInvitation(): void {
   history.replaceState(null, "", clean);
 }
 
-/** A `#snapshot=` in this page's URL: taken off the URL as an invitation is, and held until a vault is restored from it. */
 function takePendingSnapshotLink(): void {
   if (!new URLSearchParams(location.hash.slice(1)).has("snapshot")) return;
   try {
     parseSnapshotLink(location.href);
-    state.pendingSnapshotLink = location.href;
+    state.pendingSnapshotLink = { link: location.href };
   } catch (err) {
-    log(`the link this page was opened with is not a snapshot link: ${err instanceof Error ? err.message : err}`);
+    state.pendingSnapshotLink = { unreadable: err instanceof Error ? err.message : String(err) };
   }
+  // The fragment carries the key to the vault's copy: it leaves the address whether or not it reads as a link.
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
 }
 
@@ -249,18 +250,23 @@ export function dismissPendingSnapshotLink(): void {
  */
 export async function createIdentity(name: string, passphrase: string): Promise<void> {
   await call((daemon) => daemon.createIdentity({ name, passphrase }));
-  state.persisted = state.daemonAt === null ? await persistStorage() : false;
+  await begun();
 }
 
 export async function restoreIdentity(backup: Uint8Array, passphrase: string): Promise<void> {
   await call((daemon) => daemon.restoreIdentity({ backup, passphrase }));
-  state.persisted = state.daemonAt === null ? await persistStorage() : false;
+  await begun();
 }
 
 /** A vault restored from what was pasted or scanned: a link another device made of its own, read and opened by the daemon, then restored as a backup is. */
 export async function restoreFromLink(input: string, passphrase: string): Promise<void> {
   const link = parseSnapshotLink(input);
   await call((daemon) => daemon.restoreFromLink({ link, passphrase }));
+  await begun();
+}
+
+/** A vault now here, minted or restored: whatever link the page was opened with has had its turn, and the browser is asked to keep the vault's files. */
+async function begun(): Promise<void> {
   state.pendingSnapshotLink = null;
   state.persisted = state.daemonAt === null ? await persistStorage() : false;
 }

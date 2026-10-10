@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, openIndex, state } from "../core/store.js";
 import type { Invitation } from "../core/types.js";
@@ -7,7 +7,8 @@ import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
 import { back, go, swap } from "./nav.js";
 import { qrSvgOf } from "./qr.js";
-import { canScanQr, scanQr, type Scan } from "./scanner.js";
+import QrReader from "./QrReader.vue";
+import { canScanQr } from "./scanner.js";
 import Sheet from "./Sheet.vue";
 import { useStatus } from "./status.js";
 
@@ -25,11 +26,6 @@ const ready = computed(() => mediation.value !== null && !sendsClosed.value);
 type Mode = "menu" | "qr" | "scan" | "paste" | "accept";
 const mode = ref<Mode>(state.pendingInvitation === null ? "menu" : "accept");
 const error = ref<string | null>(null);
-
-function close() {
-  stopScan();
-  back();
-}
 
 function show(next: Mode) {
   error.value = null;
@@ -117,38 +113,18 @@ function paste() {
 
 function notNow() {
   dismissPendingInvitation();
-  close();
+  back();
 }
 
-const video = ref<HTMLVideoElement | null>(null);
 const scanned = ref<Invitation | null>(null);
-let scan: Scan | null = null;
 
-async function startScanning() {
-  show("scan");
-  await nextTick();
-  const el = video.value;
-  if (el === null) return;
-  stopScan();
-  scan = scanQr(
-    el,
-    (rawValue) => {
-      const invitation = invitationIn(rawValue);
-      if (invitation === null) return false;
-      scanned.value = invitation;
-      show("accept");
-      return true;
-    },
-    () => (error.value = "The camera could not be opened. Paste their link instead.")
-  );
+function takeScanned(rawValue: string): boolean {
+  const invitation = invitationIn(rawValue);
+  if (invitation === null) return false;
+  scanned.value = invitation;
+  show("accept");
+  return true;
 }
-
-function stopScan() {
-  scan?.stop();
-  scan = null;
-}
-
-onUnmounted(stopScan);
 
 watch(pending, (invitation) => {
   if (invitation !== null) show("accept");
@@ -158,7 +134,7 @@ const offered = computed(() => scanned.value ?? pending.value);
 </script>
 
 <template>
-  <Sheet label="New conversation" data-new-sheet @close="close">
+  <Sheet label="New conversation" data-new-sheet @close="back">
     <template v-if="mode === 'menu'">
       <div class="sheet-title">New conversation</div>
       <p v-if="mediation === null" class="note error">
@@ -182,7 +158,7 @@ const offered = computed(() => scanned.value ?? pending.value);
       <div class="section">
         <div class="eyebrow">Someone invited you</div>
         <div class="group">
-          <button v-if="canScanQr" class="row" type="button" :disabled="!ready" data-scan @click="startScanning">
+          <button v-if="canScanQr" class="row" type="button" :disabled="!ready" data-scan @click="show('scan')">
             <Icon name="scan" class="chevron" style="color: var(--accent)" />
             <span class="row-main">Scan their QR code</span>
           </button>
@@ -200,7 +176,7 @@ const offered = computed(() => scanned.value ?? pending.value);
           <button class="link alone" type="button" @click="shownInvitation = i.oobId; show('qr')">show</button>
         </template>
       </p>
-      <button class="btn-quiet" type="button" data-cancel @click="close">Cancel</button>
+      <button class="btn-quiet" type="button" data-cancel @click="back">Cancel</button>
     </template>
 
     <template v-else-if="mode === 'qr'">
@@ -219,9 +195,9 @@ const offered = computed(() => scanned.value ?? pending.value);
 
     <template v-else-if="mode === 'scan'">
       <div class="sheet-title">Scan their QR code</div>
-      <video ref="video" muted playsinline style="width: 100%; border-radius: 12px; background: #000; aspect-ratio: 1"></video>
+      <QrReader :take="takeScanned" @failed="error = 'The camera could not be opened. Paste their link instead.'" />
       <p v-if="error" class="error-text">{{ error }}</p>
-      <button class="btn-quiet" type="button" @click="stopScan(); show('menu')">Cancel</button>
+      <button class="btn-quiet" type="button" @click="show('menu')">Cancel</button>
     </template>
 
     <template v-else-if="mode === 'paste'">
