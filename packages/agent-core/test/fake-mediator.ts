@@ -7,10 +7,19 @@ import { base64urlToBytes } from "@estoc/did-peer";
 import type { DerivedIdentity } from "@estoc/keystore";
 import { RECIPIENT_PROOF_TYP, canonicalDid, decodePublicKey, methodPublicKey, peerResolution, readReplicaGrant, sameDid, type Did, type DidUrl } from "@estoc/vault";
 import { base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
+import { base32 } from "multiformats/bases/base32";
+import { sha256 } from "multiformats/hashes/sha2";
 
 import {
   ACCOUNT_REGISTER,
   ACCOUNT_REGISTERED,
+  BLOB_DELETE,
+  BLOB_DELETE_RESULT,
+  BLOB_PUT,
+  BLOB_PUT_RESULT,
+  BLOB_QUOTA,
+  BLOB_REFUSED,
+  BLOB_TOO_LARGE,
   DELIVERY,
   DELIVERY_REQUEST,
   EXECUTION_REGISTER,
@@ -34,7 +43,8 @@ import { didOf } from "../src/protocol/didcomm.js";
  * fake WebSocket), routing 2.0 forward, and of replica-mediation the
  * account-register, replica-add and recipient-add controls, the fan-out
  * of a shared address's mail to the account's replicas, each replica's
- * own pickup and its execution-register.
+ * own pickup and its execution-register; and blob-store/1.0 for added
+ * replicas, the bytes at `<http>b/<id>` and its limits at `GET <http>`.
  * It speaks the same wire shapes as mediator-ts's demo-interop test pins,
  * minus everything an in-process double does not need (auth, persistence,
  * problem reports).
@@ -86,6 +96,17 @@ interface Queued {
   id: string;
   packed: string;
 }
+
+export interface FakeBlob {
+  /** the replica DID that put it, by short form */
+  owner: string;
+  hash: string;
+  size: number;
+  /** null until uploaded */
+  bytes: Uint8Array | null;
+}
+
+const UPLOAD_GRANT_MS = 60 * 60 * 1000;
 
 export class FakeSocket {
   onopen: ((ev: unknown) => void) | null = null;
@@ -153,6 +174,12 @@ export class FakeMediator {
   private readonly sockets = new Map<string, FakeSocket>();
   /** every plaintext type the mediator handled, in order — for assertions */
   readonly seenTypes: string[] = [];
+  /** what `GET <http>` says of blobs; null for a mediator that keeps none */
+  blobLimits: { maxBytes: number; quotaBytes: number; retainSeconds: number } | null = { maxBytes: 1 << 20, quotaBytes: 4 << 20, retainSeconds: 30 * 24 * 60 * 60 };
+  /** the blobs kept, by the id their URL ends in */
+  readonly blobs = new Map<string, FakeBlob>();
+  /** upload tokens not yet spent: token → blob id */
+  private readonly uploads = new Map<string, string>();
   /** a test's hand on the dispatch: a reply of its own (null for none), or `undefined` to let the mediator answer as usual */
   intercept: ((msg: IMessage, from: string | null) => Promise<IMessage | null | undefined> | IMessage | null | undefined) | null = null;
   /** the fake `fetch`: the mediator's endpoint, or 404 */
@@ -171,8 +198,14 @@ export class FakeMediator {
     this.secrets = minted.secrets;
     this.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith(`${this.http}b/`)) {
+        return this.handleBlob(url, init);
+      }
       if (url !== this.http) {
         return new Response("not found", { status: 404 });
+      }
+      if ((init?.method ?? "GET") === "GET") {
+        return Response.json(this.blobLimits === null ? {} : { blobs: this.blobLimits });
       }
       const reply = await this.handleHttp(String(init?.body));
       return reply === null
@@ -235,6 +268,68 @@ export class FakeMediator {
 
   private refused(to: string, code: string, thid: string): IMessage {
     return this.reply(PROBLEM_REPORT, to, { code: `e.estoc.replica-mediation.${code}` }, thid);
+  }
+
+  private blobRefused(to: string, code: string, comment: string, thid: string): IMessage {
+    return this.reply(PROBLEM_REPORT, to, { code, comment }, thid);
+  }
+
+  /** The replica a blob-store request came from, by short form; null for any other sender. */
+  private blobOwner(from: string | null): string | null {
+    return from === null ? null : (this.replicas.get(canonicalDid(from))?.replicaDid ?? null);
+  }
+
+  private putBlob(msg: IMessage, from: string): IMessage {
+    const owner = this.blobOwner(from);
+    if (owner === null || this.blobLimits === null) return this.blobRefused(from, BLOB_REFUSED, "no mediation", msg.id);
+    const { hash, size } = msg.body as { hash: string; size: number };
+    const { maxBytes, quotaBytes, retainSeconds } = this.blobLimits;
+    if (size > maxBytes) return this.blobRefused(from, BLOB_TOO_LARGE, `blobs are at most ${maxBytes} bytes`, msg.id);
+    let [id, blob] = [...this.blobs].find(([, kept]) => kept.owner === owner && kept.hash === hash) ?? [];
+    if (blob !== undefined && blob.size !== size) return this.blobRefused(from, BLOB_REFUSED, "size differs from the stored blob", msg.id);
+    if (id === undefined || blob === undefined) {
+      const held = [...this.blobs.values()].filter((kept) => kept.owner === owner).reduce((sum, kept) => sum + kept.size, 0);
+      if (held + size > quotaBytes) return this.blobRefused(from, BLOB_QUOTA, `this mediation may hold ${quotaBytes} bytes`, msg.id);
+      id = crypto.randomUUID();
+      blob = { owner, hash, size, bytes: null };
+      this.blobs.set(id, blob);
+    }
+    const now = Date.now();
+    const body: Record<string, unknown> = { hash, url: `${this.http}b/${id}`, retain_until: new Date(now + retainSeconds * 1000).toISOString() };
+    if (blob.bytes === null) {
+      const token = crypto.randomUUID();
+      this.uploads.set(token, id);
+      body["upload"] = { url: `${this.http}b/${id}?token=${token}`, expires: new Date(now + UPLOAD_GRANT_MS).toISOString() };
+    }
+    return this.reply(BLOB_PUT_RESULT, from, body, msg.id);
+  }
+
+  private deleteBlob(msg: IMessage, from: string): IMessage {
+    const owner = this.blobOwner(from);
+    if (owner === null || this.blobLimits === null) return this.blobRefused(from, BLOB_REFUSED, "no mediation", msg.id);
+    const { hash } = msg.body as { hash: string };
+    for (const [id, kept] of this.blobs) {
+      if (kept.owner === owner && kept.hash === hash) this.blobs.delete(id);
+    }
+    return this.reply(BLOB_DELETE_RESULT, from, { hash }, msg.id);
+  }
+
+  /** The bytes of a blob: one PUT of exactly the declared bytes under a token a put-result handed out, then GET to anyone. */
+  private async handleBlob(url: string, init?: RequestInit): Promise<Response> {
+    const { pathname, searchParams } = new URL(url);
+    const id = pathname.slice(pathname.lastIndexOf("/") + 1);
+    const blob = this.blobs.get(id);
+    if (init?.method === "PUT") {
+      const token = searchParams.get("token");
+      if (blob === undefined || token === null || this.uploads.get(token) !== id) return new Response("no such upload", { status: 404 });
+      this.uploads.delete(token);
+      const bytes = new Uint8Array(await new Response(init.body).arrayBuffer());
+      if (bytes.length !== blob.size || base32.encode((await sha256.digest(bytes)).bytes) !== blob.hash) return new Response("bytes do not match the name", { status: 400 });
+      blob.bytes = bytes;
+      return new Response(null, { status: 204 });
+    }
+    if (blob?.bytes == null) return new Response("no such blob", { status: 404 });
+    return new Response(blob.bytes, { headers: { "content-length": String(blob.bytes.length) } });
   }
 
   /** The queue a pickup sender reads: a replica's own under its short form, whichever spelling it sealed with; any other sender's under the DID it sealed as. */
@@ -356,6 +451,10 @@ export class FakeMediator {
       }
       case LIVE_DELIVERY_CHANGE:
         return this.reply(STATUS, from as string, { live_delivery: (msg.body as { live_delivery: boolean }).live_delivery }, msg.id);
+      case BLOB_PUT:
+        return this.putBlob(msg, from as string);
+      case BLOB_DELETE:
+        return this.deleteBlob(msg, from as string);
       default:
         throw new Error(`fake mediator cannot handle ${msg.type}`);
     }
@@ -414,7 +513,7 @@ export class FakeMediator {
 export function network(...mediators: FakeMediator[]): Pick<FakeMediator, "fetch" | "WebSocket"> {
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const owner = mediators.find((m) => m.http === url);
+    const owner = mediators.find((m) => url === m.http || url.startsWith(`${m.http}b/`));
     return owner === undefined ? new Response("not found", { status: 404 }) : owner.fetch(input, init);
   }) as typeof fetch;
   const WebSocketCtor = class {

@@ -57,6 +57,7 @@ import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, t
 
 import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
+import { BlobStore } from "./blob-store.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
@@ -305,6 +306,19 @@ export class Agent {
     const route = routeOf(didOf(fold, didId));
     const link = route?.kind === "mediated" ? (await this.lineOf(route.mediationId)).link : null;
     return disclose(link, this.runtime, this.keys, didId, disclosure, this.confirmations);
+  }
+
+  /**
+   * blob-store/1.0 at an arrangement's mediator, spoken as this
+   * runtime's replica: a blob put through it is the replica's, counted
+   * against the replica's quota and ended with the replica. This
+   * runtime is enrolled in the arrangement first when it is not known
+   * to be.
+   */
+  async blobStore(mediationId: MediationId): Promise<BlobStore> {
+    const line = await this.lineOf(mediationId);
+    const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await enroll(line.link, this.runtime, this.keys, this.confirmations, mediationId)).replica));
+    return new BlobStore(inbox.link, { timeoutMs: this.options.timeoutMs });
   }
 
   connections(): Connection[] {

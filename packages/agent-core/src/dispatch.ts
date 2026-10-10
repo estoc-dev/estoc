@@ -51,7 +51,7 @@ import type { LiveAction } from "./action.js";
 import { routeOf } from "./dids.js";
 import { UnknownEntity } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
-import { bounded, sealData, type MediatorLink } from "./link.js";
+import { bounded, letGo, sealData, type MediatorLink } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipients, holds } from "./replica-recipients.js";
@@ -319,7 +319,7 @@ async function call({ fetch, closed }: DispatchOptions, { endpoint, body }: Carr
   const started = Date.now();
   try {
     const response = await bounded(deadline, () => fetch(endpoint, { method: "POST", headers: { "Content-Type": ENCRYPTED_MIME }, body, redirect: "manual", cache: "no-store", signal: deadline }));
-    void response.body?.cancel().catch(() => undefined);
+    letGo(response.body);
     return { status: response.status, ms: Date.now() - started };
   } catch (err) {
     return { error: messageOf(err), ms: Date.now() - started };
