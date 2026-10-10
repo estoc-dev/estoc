@@ -172,5 +172,6 @@ export async function control(link: MediatorLink, type: string, body: Record<str
   const name = type.slice(type.lastIndexOf("/") + 1);
   if (reply.type !== PROBLEM_REPORT) throw new MediatorRefused(`expected ${expected.slice(expected.lastIndexOf("/") + 1)} to ${name}, got ${reply.type}`);
   const { code, comment } = reply.body as { code?: unknown; comment?: unknown };
-  throw new MediatorRefused(`${name} was refused: ${typeof code === "string" ? code : "no code"}${typeof comment === "string" ? ` (${comment})` : ""}`);
+  const reported = typeof code === "string" ? code : null;
+  throw new MediatorRefused(`${name} was refused: ${reported ?? "no code"}${typeof comment === "string" ? ` (${comment})` : ""}`, reported);
 }

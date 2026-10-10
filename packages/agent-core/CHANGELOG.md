@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **A replica's blobs at its mediator**: `Agent.blobStore(mediationId)`
+  speaks blob-store/1.0 as this runtime's replica DID, so a blob put
+  through it is the replica's, counted against the replica's quota and
+  ended with it; the runtime is enrolled first when it is not known to
+  be. `BlobStore` reads the mediator's `limits()` at its HTTP endpoint,
+  `put`s a hash and a size, `upload`s the bytes before the grant
+  expires and `delete`s by hash. `readBlob` reads a blob's URL with no
+  identity, stopping once the bytes run over `maxBytes` (`BlobTooLarge`)
+  or at `timeoutMs`; an answer that is no 2xx, to a read or an upload,
+  is a `BlobTransferFailed`. `sealBlob` encrypts under AES-256-GCM with
+  a fresh key and nonce and names the result by its sha2-256 multihash;
+  `openBlob` checks the bytes against that name (`BlobMismatch`) before
+  opening them (`BlobUnopened`). Sealing adds `SEAL_OVERHEAD` bytes, so
+  a blob at the mediator's `maxBytes` holds that much less plaintext.
+- **`MediatorRefused.code`**: a control the mediator refuses with a
+  problem report carries the report's code, null when there was none;
+  a refused put is `BLOB_TOO_LARGE`, `BLOB_QUOTA` or `BLOB_REFUSED`.
 - **The preparation a message carries is this runtime's selection**
   (breaking): the preparation `prepare` commits is selected right after
   the commit and handed to dispatch only once the selection is written;

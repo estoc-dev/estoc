@@ -12,6 +12,7 @@
 export * from "./protocol/spec.js";
 export * from "./protocol/mediation.js";
 export * from "./protocol/replica-mediation.js";
+export * from "./protocol/blob-store.js";
 export { BASIC_MESSAGE } from "./protocol/basicmessage.js";
 export { PROFILE, REQUEST_PROFILE, announcedName } from "./protocol/user-profile.js";
 export {
@@ -30,7 +31,7 @@ export {
 export { GOAL_CONNECT, invitationUrl, parseInvitation, type Invitation } from "./protocol/oob.js";
 export { didHost, resolveMediatorInput } from "./protocol/mediator-input.js";
 
-export { AmbiguousTarget, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
+export { AmbiguousTarget, BlobMismatch, BlobTooLarge, BlobTransferFailed, BlobUnopened, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
 export {
   createVault,
   inspectRuntime,
@@ -66,6 +67,8 @@ export {
   type TraceStream,
 } from "./trace.js";
 export { MediatorLink, bounded, ritual, sealData, sealerOf, senderOf, type LinkOptions, type Opened, type Sealed } from "./link.js";
+export { BlobStore, readBlob, type BlobLimits, type BlobPlacement, type BlobStoreOptions, type ReadBlobOptions } from "./blob-store.js";
+export { SEAL_OVERHEAD, blobName, openBlob, sealBlob, type BlobKey, type SealedBlob } from "./sealed-blob.js";
 export { Pickup, type Delivered, type Drained, type Fate, type Handle, type PickupOptions } from "./pickup.js";
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "@estoc/vault";

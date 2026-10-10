@@ -34,9 +34,12 @@ export class WrongMediator extends Error {
   }
 }
 
-/** The mediator answered something else than the ritual asks for, or refused what was asked. */
+/** The mediator answered something else than the ritual asks for, or refused what was asked; `code` is its problem-report's, when it sent one. */
 export class MediatorRefused extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: string | null = null
+  ) {
     super(message);
     this.name = "MediatorRefused";
   }
@@ -126,5 +129,43 @@ export class NotificationConflict extends Error {
   ) {
     super(`rotation ${rotationEventCid} has ${messageIds.length} notification intents: ${messageIds.join(", ")}`);
     this.name = "NotificationConflict";
+  }
+}
+
+/** A blob's bytes hash to another name than the one they were read under: they are not the blob that was named. */
+export class BlobMismatch extends Error {
+  constructor(
+    readonly expected: string,
+    readonly actual: string
+  ) {
+    super(`the blob's bytes are named ${actual}, not ${expected}`);
+    this.name = "BlobMismatch";
+  }
+}
+
+/** A blob's bytes are the ones named and do not open under the key given: the key is not this blob's. */
+export class BlobUnopened extends Error {
+  constructor() {
+    super("the blob does not open under the key given");
+    this.name = "BlobUnopened";
+  }
+}
+
+/** A blob read ran over the most it may take: the read stopped there, and nothing read is kept. */
+export class BlobTooLarge extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`the blob is over the ${maxBytes} bytes a read takes`);
+    this.name = "BlobTooLarge";
+  }
+}
+
+/** The blob store answered the upload of a blob's bytes, or a read of its URL, with no 2xx; a blob deleted, past its retention or never uploaded answers a read 404. */
+export class BlobTransferFailed extends Error {
+  constructor(
+    readonly transfer: "upload" | "read",
+    readonly status: number
+  ) {
+    super(`the blob store answered ${status} to the ${transfer}`);
+    this.name = "BlobTransferFailed";
   }
 }
