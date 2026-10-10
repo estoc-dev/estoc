@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Snapshot links: the methods `publishSnapshotLink` (answering a
+  `PublishedSnapshotLink`), `revokeSnapshotLink` (`{ hash }`),
+  `snapshotLinks` (`{ links: SnapshotLinkRecord[] }`, pending or
+  published, a published one saying whether the daemon can still
+  revoke it) and `restoreFromLink` (`{ link, passphrase }`). A
+  `SnapshotLink` is the sealed snapshot's URL, its name and its key; the
+  views' `snapshotLinkUrl` writes one as base64url JSON in the
+  `snapshot` parameter of a URL's fragment, and `parseSnapshotLink`
+  reads it from such a URL or the parameter alone.
+
 - A message with several valid preparations is the person's to choose
   for: `PendingOutbound` gains `candidates`, the valid preparations by
   event CID, and `selected`, the one this daemon's calls carry or null,

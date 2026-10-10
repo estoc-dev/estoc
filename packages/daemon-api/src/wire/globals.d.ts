@@ -14,16 +14,22 @@ declare class TextDecoder {
   decode(bytes: Uint8Array): string;
 }
 declare class URLSearchParams {
+  constructor(init?: string | Record<string, string>);
   get(name: string): string | null;
   has(name: string): boolean;
   set(name: string, value: string): void;
+  toString(): string;
 }
 declare class URL {
   constructor(url: string, base?: string);
+  static canParse(url: string, base?: string): boolean;
   readonly host: string;
   readonly origin: string;
+  readonly protocol: string;
   readonly pathname: string;
+  readonly search: string;
   readonly searchParams: URLSearchParams;
+  hash: string;
   toString(): string;
 }
 declare function queueMicrotask(callback: () => void): void;

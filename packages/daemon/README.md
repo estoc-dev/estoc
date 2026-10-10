@@ -65,8 +65,9 @@ beside the vault for that, under SQLite's own lock, so a second daemon
 on the folder says `elsewhere`, refuses what would make, open or remove
 a file, and waits. Within a daemon those calls — `createIdentity`,
 `restoreIdentity`, `unlock`, `lock`, `forgetIdentity`, `exportBackup`,
-`mergeBackup` — run one at a time in the order asked, and `close()`
-ends a wait for files held elsewhere. The vault file has a name for
+`mergeBackup`, and the export of `publishSnapshotLink` and the restore
+of `restoreFromLink` — run one at a time in the order asked, and
+`close()` ends a wait for files held elsewhere. The vault file has a name for
 as long as it stands, the `hold` every published state carries;
 `forgetIdentity(hold)` removes the vault so named and refuses once
 another stands there, so a confirmation one view left open while a
@@ -121,6 +122,50 @@ call of an intent that threw after the intent was committed. An export
 over `maxBackupBytes` (512 MiB unless the host sets it, from which the
 other bounds a view is told follow) is refused whole before the file is
 built, or before one built within it is read.
+
+## Snapshot links
+
+A new device can take the vault from a link instead of a file.
+`publishSnapshotLink()` exports the vault as a backup is exported,
+seals it under an AES-256-GCM key of its own and puts it at the selected
+mediator as this runtime's replica's blob: it counts against that
+replica's quota and goes when the replica is removed. A snapshot over
+what a blob there holds once sealed is refused whole as `ResourceLimit`;
+the backup file is the way to carry that one. The link is the blob's
+URL, the name of the sealed bytes and the key, and not the passphrase:
+whoever holds it reads the vault's events and objects in the clear
+until the mediator lets the blob go, and signs nothing.
+`@estoc/daemon-api/views` writes a link into a URL's fragment and reads
+it back.
+
+What is put is kept in the runtime's local state, the key among it, and
+not in the vault: pending before the put, with where it goes and
+until when once the mediator answers, published once the bytes are
+uploaded. `snapshotLinks()` lists what the mediator keeps or may keep,
+pending ones included, so that a link is shown again after a restart
+and a snapshot whose upload failed can still be revoked;
+`revokeSnapshotLink(hash)` deletes the blob and forgets the record,
+after a publish still under way has settled: once it answers, the link
+reads nothing, however far the upload had got. A put the mediator
+refuses leaves nothing kept. Removing the vault removes these records
+and not the blobs: a link not revoked before then reads until the
+mediator lets its blob go.
+
+Only the replica that put a blob may delete it, so each record keeps
+the replica ID and the arrangement it was put under. A runtime that
+takes a fresh replica ID, as a merge has it do when a copy of it wrote
+under the same one, cannot revoke what it published before: those
+links stay listed as not `revocable`, revoking one is refused, and they
+read until the mediator lets their blobs go. What it had not finished
+putting is dropped, its key having gone to no one.
+
+`restoreFromLink(link, passphrase, maxBytes)`, on a daemon with no
+vault, reads the blob, at most `maxBytes` and the sealing beside it,
+within ten minutes and with no redirect followed, checks the bytes
+against the name, opens them and restores what they hold as
+`restoreIdentity` does. A link that reads nothing, bytes over the
+bound, bytes that are not the ones named, a key that does not open
+them and a wrong passphrase each refuse it with nothing written.
 
 ## The trace
 
