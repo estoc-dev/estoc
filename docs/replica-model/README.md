@@ -156,10 +156,10 @@ events are specified by their code (see
 [vault events section 11](vault-events.md#folds-and-procedures)). The
 [message vectors](message-vectors.md) are fixed inputs with the bytes and
 CIDs the layers must give, and the vault's tests reproduce them.
-Network vault synchronization and mutable channel DIDs have only
-[deferred design notes](deferred/README.md). Those notes reserve no current
-fields, error codes, key names or extension APIs; future features will define
-their schemas when adopted.
+Mutable channel DIDs have only a [deferred design note](deferred/README.md),
+where network vault synchronization is listed as deferred too. Those notes
+reserve no current fields, error codes, key names or extension APIs; future
+features will define their schemas when adopted.
 
 Named anchors support direct links independently of displayed section numbers.
 

@@ -81,7 +81,6 @@ async function alice(mediator: FakeMediator, options: Parameters<typeof daemonOv
   return { root, ...over };
 }
 
-/** A daemon over an empty folder, booted to onboarding. */
 async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemonOver>[2] = {}) {
   const root = await folder();
   const over = daemonOver(root, mediator, options);
@@ -107,7 +106,6 @@ const exists = (file: string): Promise<boolean> =>
 
 const vaultFile = (root: string) => path.join(root, ".estoc", "vault.sqlite");
 
-/** The anchor and the event CIDs of a portable snapshot's bytes. */
 async function eventsOf(bytes: Uint8Array): Promise<{ anchor: string; cids: string[] }> {
   const file = path.join(await folder(), "snapshot.sqlite");
   await writeFile(file, bytes);

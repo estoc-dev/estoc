@@ -50,9 +50,7 @@ interface Told {
   /** `phase` for a state that shows no runtime, `opened` for a runtime's first read and `changed` for the reads after it, `lines` while a runtime is shown, `log`, and `unavailable` for a read that failed */
   events: [string, ...unknown[]][];
   phases(): string[];
-  /** the hold the last state carried */
   hold(): Hold | null;
-  /** the last open state's snapshot */
   snapshot(): Snapshot;
   lines(): Lines | null;
 }

@@ -9,7 +9,6 @@ with the current profile; they must be reconsidered before a feature is adopted.
 | Topic | Candidate draft | Decisions still needed before implementation |
 | --- | --- | --- |
 | Mutable channel DIDs | [Web channel DIDs](did-web-channels.md) | Current-document authorization, lookup/retry limits, proof recovery and any new failure model |
-| Replica-to-replica synchronization | [Vault sync](vault-sync.md) | Transfer model, transport, reconciliation and catch-up execution policy |
 
 The current profile implements immutable `did:peer:4` application channels,
 concurrent writable full runtimes as distinct replicas of one replica-mediation
@@ -28,7 +27,8 @@ protocol's wire contract, and
 with its account-signed grant. A full replica has its own DID and event author;
 the vault seed and communication DIDs are shared. The mediator delivers mail to
 the replicas enrolled when it accepts that mail, so a new replica obtains
-earlier history through portable backup/restore or import.
+earlier history through portable restore, from a backup file or a snapshot
+link, or import.
 
 The client only adds: it enrolls its own replica and adds the communication
 recipients it holds. What remains outside the current profile:
@@ -54,24 +54,12 @@ recipients it holds. What remains outside the current profile:
 
 ### Deferred: vault synchronization
 
-[Vault sync](vault-sync.md) is retained as a candidate design, not a required
-companion protocol for replica mediation. Its event inventories, `want`/`events`/
-`objects` transfers, peer negotiation, staged imports and `stored` receipts are
-outside the current implementation scope. Merkle reconciliation and encrypted
-portable SQLite snapshots over [blob-store](../../blob-store.md) are also future
-options; no synchronization format or transport has been selected for adoption.
-
-When this work resumes, choose the transfer model and its authorization,
-durability, retention, retry and resource bounds together. Reconcile that choice
-with the owning import contracts and define automatic device catch-up. The
-existing candidate's detailed rules must be reconsidered then.
-
-If the event/object candidate is selected, define bounded staged-input imports
-in the owning event store, vault events and SQLite contracts without weakening
-complete portable-source validation. Also define a canonical event byte ceiling,
-including unknown types, and plaintext/mediator wire floors that can carry a
-complete maximum-sized event. Existing larger events need an adoption policy
-that preserves their CIDs; incompatible peers must fail negotiation explicitly.
+History synchronization between replicas remains deferred; a new device
+takes the vault's history once, by restoring from a snapshot link. An existing
+replica seals its portable SQLite snapshot under a random key and puts it at its
+mediator as a [blob](../../blob-store.md) of its own; the link carries the
+blob's URL, name and key, not the passphrase. What one replica commits after
+that reaches no other.
 
 <a id="application-concurrency-adoption"></a>
 
