@@ -581,6 +581,82 @@ describe("two stores that both read tables from before registrations were named"
   });
 });
 
+/** A database as kept before ended blobs left the blobs table: no table for them, and Alice's account. */
+async function databaseBeforeEndedBlobs(path: string, rows: string): Promise<void> {
+  const early = new SqliteStore(path);
+  await early.grantMediation(ALICE);
+  early.close();
+  const old = new Database(path);
+  old.exec(`DROP TABLE ended_blobs; ${rows}`);
+  old.close();
+}
+
+function blobRows(retainUntil: number, ...rows: [id: string, owner: string][]): string {
+  return (
+    "INSERT INTO blobs (id, owner_did, hash, size, created_at, uploaded_at, retain_until) VALUES " +
+    rows.map(([id, owner]) => `('${id}', '${owner}', 'h', 10, 1, 1, ${retainUntil})`).join(", ")
+  );
+}
+
+describe("a database from before ended blobs left the blobs table", () => {
+  it("ends the blobs nobody holds a mediation for as it opens, and keeps every owner's", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    await databaseBeforeEndedBlobs(
+      path,
+      `
+      INSERT INTO replica_accounts (did, mediator, long_form, created_at, registration)
+        VALUES ('did:example:account', 'did:example:mediator', 'long', 1, 'registration');
+      INSERT INTO replicas (replica_did, account_did, ordinal, long_form, grant_jws, registered_at, removed_at)
+        VALUES ('did:example:active', 'did:example:account', 1, 'long', 'grant', 1, NULL),
+               ('did:example:removed', 'did:example:account', 2, 'long', 'grant', 1, 2);
+      ${blobRows(
+        Date.now() + 60_000,
+        ["alices", ALICE],
+        ["actives", "did:example:active"],
+        ["removeds", "did:example:removed"],
+        ["revokeds", "did:example:revoked"]
+      )};
+      `
+    );
+
+    const store = new SqliteStore(path);
+    const served = await Promise.all(
+      ["alices", "actives", "removeds", "revokeds"].map(async (id) => (await store.blobById(id))?.id ?? null)
+    );
+    const purged = await store.purgeBlobs();
+
+    expect(served).toEqual(["alices", "actives", null, null]);
+    expect(purged.sort()).toEqual(["removeds", "revokeds"]);
+    expect(await store.purgeBlobs()).toEqual([]);
+    store.close();
+    rmSync(dir, { recursive: true });
+  });
+});
+
+describe("two stores that both open a database from before ended blobs left the blobs table", () => {
+  it("each answer their first request, and end the blob nobody holds once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mediator-store-"));
+    const path = join(dir, "mediator.db");
+    await databaseBeforeEndedBlobs(path, `${blobRows(Date.now() + 60_000, ["revokeds", "did:example:revoked"])};`);
+
+    const late = new HeldDriver(path, ([statement]) => statement.sql.includes("'ended_blobs'"));
+    const lateStore = new SqlStore(late);
+    const store = new SqlStore(new HeldDriver(path));
+    const lateRead = lateStore.isMediated(ALICE);
+    await late.whenHeld();
+
+    expect(await store.blobById("revokeds")).toBeNull();
+    late.release();
+    expect(await lateRead).toBe(true);
+    expect(await lateStore.purgeBlobs()).toEqual(["revokeds"]);
+    expect(await store.purgeBlobs()).toEqual([]);
+    lateStore.close();
+    store.close();
+    rmSync(dir, { recursive: true });
+  });
+});
+
 /** Runs each batch as one transaction, in which a statement `fails` picks throws. */
 class FailingDriver implements SqlDriver {
   private db: Database.Database;

@@ -241,9 +241,12 @@ export interface BlobKeep {
 /**
  * `kept`: the mediation holds the blob, as the row says. `mismatch`: it holds
  * the hash at another size. `full`: holding it would take the mediation past
- * its quota. Only `kept` wrote anything.
+ * its quota. `ended`: the owner holds no mediation here any more. Only `kept`
+ * wrote anything.
  */
-export type KeepOutcome = { outcome: "kept"; blob: BlobRow } | { outcome: "mismatch" | "full" };
+export type KeepOutcome =
+  | { outcome: "kept"; blob: BlobRow }
+  | { outcome: "mismatch" | "full" | "ended" };
 
 export interface UploadGrant {
   id: string;
@@ -393,8 +396,9 @@ export interface MediationStore {
    * unique, and nothing is shared between mediations — the same hash put by
    * two of them is two rows, two ids, two uploads. Bytes are kept by a
    * BlobStorage under the id; the store only knows what should exist.
-   * Ending a mediation ends the retention of its blobs, in the same
-   * transaction, so they are served no more and the next purge deletes them.
+   * Ending a mediation ends its blobs in the same transaction: nothing
+   * serves, renews or counts them any more, a later put of the hash makes a
+   * new blob, and the next purge deletes their bytes.
    */
   /**
    * The DID a sender holds blobs under: an ordinary account as it holds it,
@@ -408,8 +412,9 @@ export interface MediationStore {
   blobUsage(ownerDid: string): Promise<number>;
   /**
    * Creates the row if absent (under `keep.id`), else extends its retention
-   * and never shortens it, all within `quotaBytes` of live blobs. A blob still
-   * retained renews for nothing; one past its retention counts as new.
+   * and never shortens it, all within `quotaBytes` of live blobs and only
+   * while `keep.ownerDid` holds blobs here. A blob still retained renews for
+   * nothing; one past its retention counts as new.
    */
   keepBlob(keep: BlobKeep, quotaBytes: number): Promise<KeepOutcome>;
   /** Removes the mediation's blob for the hash; returns its id (bytes to delete) or null if there was none. */
@@ -420,8 +425,8 @@ export interface MediationStore {
   claimUpload(token: string): Promise<UploadGrant | null>;
   markUploaded(id: string): Promise<void>;
   /**
-   * Drops every blob past its retention and every expired token; returns the
-   * ids whose bytes should now be deleted.
+   * Drops every blob past its retention or whose mediation has ended, and
+   * every expired token; returns the ids whose bytes should now be deleted.
    */
   purgeBlobs(): Promise<string[]>;
 

@@ -265,6 +265,7 @@ describe("blob-store/1.0", () => {
   it("counts a blob past its retention as new when it is put again", async () => {
     const store = memoryStore();
     const owner = "did:example:a";
+    await store.grantMediation(owner);
     await keep(store, "old", owner, "hold", Date.now() - 1);
     await keep(store, "new", owner, "hnew", Date.now() + 60_000);
 
@@ -319,6 +320,44 @@ describe("blob-store/1.0", () => {
     store.close();
   });
 
+  it("keeps nothing for a mediation that ends after its owner was looked up, new blob or renewal", async () => {
+    const store = memoryStore();
+    await store.grantMediation("did:example:a");
+    await keep(store, "held", "did:example:a", "hheld", Date.now() + 60_000);
+    const owner = (await store.blobOwner("did:example:a"))!;
+
+    await store.revokeMediation("did:example:a");
+    const renewed = await keep(store, "ignored", owner, "hheld", Date.now() + 60_000);
+    const added = await keep(store, "new", owner, "hnew", Date.now() + 60_000);
+
+    expect(renewed.outcome).toBe("ended");
+    expect(added.outcome).toBe("ended");
+    expect(await store.blobById("held")).toBeNull();
+    expect(await store.blobById("new")).toBeNull();
+    expect(await store.purgeBlobs()).toEqual(["held"]);
+    store.close();
+  });
+
+  it("makes a new blob of a hash put again once the mediation ended and was granted anew", async () => {
+    const store = memoryStore();
+    await store.grantMediation("did:example:a");
+    await keep(store, "old", "did:example:a", "h", Date.now() + 60_000);
+    await store.markUploaded("old");
+
+    await store.revokeMediation("did:example:a");
+    await store.grantMediation("did:example:a");
+    const again = await keep(store, "new", "did:example:a", "h", Date.now() + 60_000);
+
+    expect(again).toEqual({
+      outcome: "kept",
+      blob: expect.objectContaining({ id: "new", uploadedAt: null }),
+    });
+    expect(await store.blobById("old")).toBeNull();
+    expect(await store.purgeBlobs()).toEqual(["old"]);
+    expect((await store.blobById("new"))?.ownerDid).toBe("did:example:a");
+    store.close();
+  });
+
   it("resets a database carrying the first, hash-keyed blob schema", async () => {
     const file = join(dir, "old.sqlite");
     const raw = new Database(file);
@@ -331,6 +370,7 @@ describe("blob-store/1.0", () => {
     );
     raw.close();
     const store = new SqliteStore(file);
+    await store.grantMediation("did:example:a");
     await keep(store, "n", "did:example:a", "hn", Date.now() + 1000);
     expect((await store.blobById("n"))?.hash).toBe("hn");
     store.close();

@@ -3116,8 +3116,7 @@ describe("blob-store by a replica", () => {
   const put = (speaker: Speaker, bytes: Uint8Array) =>
     send(speaker, BLOB_PUT, { hash: nameOf(bytes), size: bytes.length });
 
-  /** Puts and uploads the bytes as the speaker; the path they are served at. */
-  async function publish(speaker: Speaker, bytes: Uint8Array): Promise<string> {
+  async function publishedPath(speaker: Speaker, bytes: Uint8Array): Promise<string> {
     const result = await put(speaker, bytes);
     expect(result?.type).toBe(BLOB_PUT_RESULT);
     const upload = new URL((result?.body.upload as { url: string }).url);
@@ -3130,9 +3129,34 @@ describe("blob-store by a replica", () => {
     return pathOf(result?.body.url);
   }
 
+  /** The replies to the puts, every one of them past the check of its sender and none written yet when `ending` runs. */
+  async function putsOvertaken(
+    puts: [Speaker, Uint8Array][],
+    ending: () => Promise<unknown>
+  ): Promise<(IMessage | null)[]> {
+    const lookUp = store.blobOwner.bind(store);
+    const looked = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    let waiting = 0;
+    const owner = vi.spyOn(store, "blobOwner").mockImplementation(async (sender) => {
+      const found = await lookUp(sender);
+      if (++waiting === puts.length) {
+        looked.resolve();
+      }
+      await gate.promise;
+      return found;
+    });
+    const replies = Promise.all(puts.map(([speaker, bytes]) => put(speaker, bytes)));
+    await looked.promise;
+    owner.mockRestore();
+    await ending();
+    gate.resolve();
+    return replies;
+  }
+
   it("keeps an active replica's blob under its short form, whichever spelling put it", async () => {
     const bytes = randomBytes(1000);
-    const path = await publish(known(first.replica), bytes);
+    const path = await publishedPath(known(first.replica), bytes);
 
     const renewed = await put(firstContact(first.replica), bytes);
     const served = await app.request(path);
@@ -3146,8 +3170,8 @@ describe("blob-store by a replica", () => {
 
   it("deletes a replica's own blob and leaves another replica's of the same bytes", async () => {
     const bytes = randomBytes(1000);
-    const firsts = await publish(known(first.replica), bytes);
-    const seconds = await publish(known(second.replica), bytes);
+    const firsts = await publishedPath(known(first.replica), bytes);
+    const seconds = await publishedPath(known(second.replica), bytes);
 
     const deleted = await send(known(first.replica), BLOB_DELETE, { hash: nameOf(bytes) });
 
@@ -3179,7 +3203,7 @@ describe("blob-store by a replica", () => {
   });
 
   it("counts each replica's blobs against that replica's quota alone", async () => {
-    await publish(known(first.replica), randomBytes(TEST_CONFIG.blobMaxBytes));
+    await publishedPath(known(first.replica), randomBytes(TEST_CONFIG.blobMaxBytes));
     const room = TEST_CONFIG.blobQuotaBytes - TEST_CONFIG.blobMaxBytes;
 
     const over = await put(known(first.replica), randomBytes(room + 1));
@@ -3191,7 +3215,7 @@ describe("blob-store by a replica", () => {
 
   it("keeps an active replica's blobs through a purge, until their retention ends", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    const path = await publish(known(first.replica), randomBytes(1000));
+    const path = await publishedPath(known(first.replica), randomBytes(1000));
 
     const purgedWhileRetained = await server.purgeBlobs();
     const servedWhileRetained = (await app.request(path)).status;
@@ -3207,8 +3231,8 @@ describe("blob-store by a replica", () => {
   });
 
   it("ends a replica's blobs with its removal and leaves the other replicas' theirs", async () => {
-    const firsts = await publish(known(first.replica), randomBytes(1000));
-    const seconds = await publish(known(second.replica), randomBytes(1000));
+    const firsts = await publishedPath(known(first.replica), randomBytes(1000));
+    const seconds = await publishedPath(known(second.replica), randomBytes(1000));
 
     await send(known(account), REPLICA_REMOVE, { replica_did: first.replica.did });
     const served = (await app.request(firsts)).status;
@@ -3222,10 +3246,53 @@ describe("blob-store by a replica", () => {
     expect((await app.request(seconds)).status).toBe(200);
   });
 
+  it.each([
+    ["removal", () => send(known(account), REPLICA_REMOVE, { replica_did: first.replica.did })],
+    ["account's deletion", () => send(firstContact(account), ACCOUNT_DELETE, {})],
+  ])("keeps nothing of a replica's puts that its %s overtakes, renewal or new blob", async (_, ending) => {
+    const held = randomBytes(1000);
+    const fresh = randomBytes(8);
+    const path = await publishedPath(known(first.replica), held);
+
+    const replies = await putsOvertaken(
+      [
+        [firstContact(first.replica), held],
+        [firstContact(first.replica), fresh],
+      ],
+      ending
+    );
+    const served = (await app.request(path)).status;
+    const purged = await server.purgeBlobs();
+
+    expect(replies.map((reply) => reply?.body.code)).toEqual(["e.p.blob.refused", "e.p.blob.refused"]);
+    expect(served).toBe(404);
+    expect(await store.blobOf(first.replica.did, nameOf(fresh))).toBeNull();
+    expect(purged).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("puts a hash anew, at a new URL, for a replica enrolled again after its account's deletion", async () => {
+    const bytes = randomBytes(1000);
+    const before = await publishedPath(known(first.replica), bytes);
+
+    await send(firstContact(account), ACCOUNT_DELETE, {});
+    await registerAccount();
+    await addReplica(first.grant);
+    const again = await put(known(first.replica), bytes);
+    const purged = await server.purgeBlobs();
+
+    expect(again?.type).toBe(BLOB_PUT_RESULT);
+    expect(again?.body.upload).toBeDefined();
+    expect(pathOf(again?.body.url)).not.toBe(before);
+    expect((await app.request(before)).status).toBe(404);
+    expect(purged).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
   it("ends every replica's blobs with the account's deletion", async () => {
     const paths = [
-      await publish(known(first.replica), randomBytes(1000)),
-      await publish(known(second.replica), randomBytes(1000)),
+      await publishedPath(known(first.replica), randomBytes(1000)),
+      await publishedPath(known(second.replica), randomBytes(1000)),
     ];
 
     await send(firstContact(account), ACCOUNT_DELETE, {});
