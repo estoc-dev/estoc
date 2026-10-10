@@ -9,7 +9,7 @@
  */
 
 import { NoTarget, Unusable, type Content, type Invitation as DomainInvitation } from "@estoc/agent-core";
-import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, Limits, Lines, MessageId, Snapshot } from "@estoc/daemon-api/contract";
+import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, DisplayTime, Limits, Lines, MessageId, Snapshot, SnapshotLink, SnapshotLinkRecord } from "@estoc/daemon-api/contract";
 import { Refusal, type MethodHandlers, type Session, type Transport } from "@estoc/daemon-api/wire";
 import { DamagedHistory } from "@estoc/event-store";
 import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference } from "@estoc/vault";
@@ -19,6 +19,7 @@ import { InvalidChannelId, channelIdOf, channelOf } from "./channels.js";
 import type { DaemonCore } from "./daemon.js";
 import { Refused } from "./errors.js";
 import { StateChanged, type Publisher, type Subscriber } from "./publisher.js";
+import { keyBytes, keyText, type PutSnapshot, type SnapshotLink as Link } from "./snapshot-links.js";
 
 export const DEFAULT_MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 
@@ -87,6 +88,16 @@ function canonicalPair(localDid: string, peerDid: string): Channel {
   } catch (error) {
     throw invalid(error);
   }
+}
+
+const timeOf = (ms: number): DisplayTime => new Date(ms).toISOString() as DisplayTime;
+
+const linkOf = ({ url, hash, key }: Link): SnapshotLink => ({ url, hash, key: keyText(key) });
+
+function snapshotLinkOf(put: PutSnapshot): SnapshotLinkRecord {
+  const { hash, placedAt } = put;
+  if (put.status === "pending") return { status: "pending", hash, placedAt: timeOf(placedAt), retainUntil: put.retainUntil === null ? null : timeOf(put.retainUntil) };
+  return { status: "published", hash, placedAt: timeOf(placedAt), retainUntil: timeOf(put.retainUntil), link: linkOf(put.link) };
 }
 
 /** The daemon's methods as the API's table, each answering in the API's terms; `limits` bounds the backup an export delivers. */
@@ -161,6 +172,19 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
     mergeBackup: guarded(({ backup }) => core.mergeBackup(backup)),
     explainedRestore: guarded(async () => {
       await core.explainedRestore();
+      return null;
+    }),
+    publishSnapshotLink: guarded(async () => {
+      const put = await core.publishSnapshotLink();
+      return { ...put, placedAt: timeOf(put.placedAt), retainUntil: timeOf(put.retainUntil), link: linkOf(put.link) };
+    }),
+    revokeSnapshotLink: guarded(async ({ hash }) => {
+      await core.revokeSnapshotLink(hash);
+      return null;
+    }),
+    snapshotLinks: guarded(async () => ({ links: (await core.snapshotLinks()).map(snapshotLinkOf) })),
+    restoreFromLink: guarded(async ({ link, passphrase }) => {
+      await core.restoreFromLink({ url: link.url, hash: link.hash, key: keyBytes(link.key) }, passphrase, limits.maxBackupBytes);
       return null;
     }),
 

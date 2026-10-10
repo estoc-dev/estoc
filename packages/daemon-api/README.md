@@ -84,7 +84,9 @@ and `successorOf(trail, after)` follows it to the one conversation now
 showing a channel it showed, and to nothing when several do or the
 snapshot is another vault's. `parseInvitation` reads an out-of-band invitation
 from a link, its `_oob` parameter or its plaintext, `invitationUrl` and
-`invitationOf` write one; `basicMessage` and `profileMessage` are the
+`invitationOf` write one; `snapshotLinkUrl` puts a snapshot link in a
+URL's fragment, which is not sent to the URL's host, and
+`parseSnapshotLink` reads it from such a URL or the parameter alone; `basicMessage` and `profileMessage` are the
 contents a view sends, `announcedName` the name an introduction claims;
 `mediatorInputOf` reads a mediator's DID off what a person pasted, or
 gives the URL to ask at, and `mediatorHost` the host a mediator's DID

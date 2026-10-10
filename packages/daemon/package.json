@@ -44,6 +44,7 @@
     "@estoc/event-store": "workspace:^",
     "@estoc/keystore": "workspace:^",
     "@estoc/vault": "workspace:^",
+    "@scure/base": "^1.2.0",
     "ipaddr.js": "^2.2.0",
     "undici": "^7.29.0",
     "uuid": "^11.1.1",

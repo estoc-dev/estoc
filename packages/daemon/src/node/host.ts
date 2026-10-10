@@ -66,7 +66,7 @@ export function nodeHost(root: string, options: NodeHostOptions = {}): DaemonHos
       open: async (name, mode, kind) => openNodeSqlite(fileOf(name), { mode, journal: kind === "runtime" ? "wal" : "delete" }),
       exportFile: async (name, maxBytes) => {
         const { size } = await stat(fileOf(name));
-        if (maxBytes !== undefined && size > maxBytes) throw new TooLarge(`the backup file is ${size} bytes, over the ${maxBytes} this daemon delivers`);
+        if (maxBytes !== undefined && size > maxBytes) throw new TooLarge(`the snapshot file is ${size} bytes, over the bound of ${maxBytes}`);
         return new Uint8Array(await readFile(fileOf(name)));
       },
       importFile: (name, bytes) => writeFile(fileOf(name), bytes, { flag: "wx", mode: 0o600 }),

@@ -227,7 +227,7 @@ describe("an export", () => {
     expect(await leftover()).toEqual([]);
 
     const loose = methodsOf(daemon, limitsOf("clone", 20_000));
-    expect(await refusalOf(loose.exportBackup({}, session))).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the backup file is \d+ bytes, over the 20000 /) as string, effect: "none", messageId: null });
+    expect(await refusalOf(loose.exportBackup({}, session))).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the snapshot file is \d+ bytes, over the bound of 20000$/) as string, effect: "none", messageId: null });
     expect(reads).toEqual([20_000]);
     expect(await leftover()).toEqual([]);
 
@@ -269,6 +269,6 @@ describe("the methods table", () => {
     expect(names).not.toContain("close");
     expect(names).toContain("refresh");
     expect(names).toContain("resolveChannel");
-    expect(names).toHaveLength(31);
+    expect(names).toHaveLength(35);
   });
 });

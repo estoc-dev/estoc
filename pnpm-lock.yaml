@@ -279,6 +279,9 @@ importers:
       '@estoc/vault':
         specifier: workspace:^
         version: link:../vault
+      '@scure/base':
+        specifier: ^1.2.0
+        version: 1.2.6
       ipaddr.js:
         specifier: ^2.2.0
         version: 2.5.0

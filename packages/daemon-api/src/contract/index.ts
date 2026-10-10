@@ -2,6 +2,7 @@ export * from "./ids.js";
 export * from "./values.js";
 export * from "./protocol.js";
 export * from "./records.js";
+export * from "./snapshot-links.js";
 export * from "./lines.js";
 export * from "./state.js";
 export * from "./methods.js";

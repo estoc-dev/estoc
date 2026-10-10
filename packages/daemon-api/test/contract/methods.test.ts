@@ -9,7 +9,7 @@ const ok = (name: MethodName, side: "input" | "result", value: unknown) => metho
 
 describe("the method table", () => {
   it("names each public operation once, and nothing else is a method", () => {
-    expect(METHOD_NAMES).toHaveLength(32);
+    expect(METHOD_NAMES).toHaveLength(36);
     expect(new Set(METHOD_NAMES).size).toBe(METHOD_NAMES.length);
     expect(isMethodName("send")).toBe(true);
     expect(isMethodName("boot")).toBe(false);
@@ -38,7 +38,7 @@ describe("the method table", () => {
     for (const name of METHOD_NAMES) expect([...COMMON_ERROR_CODES, ...methods[name].errors]).toContain("ResourceLimit");
   });
 
-  it.each(["attach", "refresh", "lock", "exportBackup", "explainedRestore", "publicDid", "reconnect", "traceLevel"] as const)("%s takes an empty input", (name) => {
+  it.each(["attach", "refresh", "lock", "exportBackup", "explainedRestore", "publishSnapshotLink", "snapshotLinks", "publicDid", "reconnect", "traceLevel"] as const)("%s takes an empty input", (name) => {
     expect(ok(name, "input", {})).toBe(true);
     expect(ok(name, "input", null)).toBe(false);
     expect(ok(name, "input", [])).toBe(false);
@@ -56,7 +56,7 @@ describe("the method table", () => {
   });
 
   it("returns null from a method with nothing to say", () => {
-    for (const name of ["createIdentity", "unlock", "lock", "forgetIdentity", "explainedRestore", "renameContact", "setContactChannels", "deleteContact", "blockChannels", "eraseMessage", "reconnect"] as const) {
+    for (const name of ["createIdentity", "unlock", "lock", "forgetIdentity", "explainedRestore", "revokeSnapshotLink", "restoreFromLink", "renameContact", "setContactChannels", "deleteContact", "blockChannels", "eraseMessage", "reconnect"] as const) {
       expect(ok(name, "result", null)).toBe(true);
       expect(ok(name, "result", undefined)).toBe(false);
       expect(ok(name, "result", {})).toBe(false);
@@ -213,5 +213,39 @@ describe("method inputs", () => {
     expect(ok("forgetIdentity", "input", { hold: "hold-1" })).toBe(true);
     expect(ok("forgetIdentity", "input", { hold: null })).toBe(false);
     expect(ok("forgetIdentity", "input", {})).toBe(false);
+  });
+});
+
+describe("snapshot links", () => {
+  const link = { url: "https://mediator.example/b/1", hash: "bciqexample", key: `${"A".repeat(42)}w` };
+  const placedAt = "2026-10-10T12:00:00.000Z";
+  const retainUntil = "2026-11-09T12:00:00.000Z";
+
+  it("restore from the link with the passphrase: an HTTP URL, a name, and a key of 32 bytes", () => {
+    expect(ok("restoreFromLink", "input", { link, passphrase: "pw" })).toBe(true);
+    expect(ok("restoreFromLink", "input", { link })).toBe(false);
+    for (const bad of [{ url: "ftp://mediator.example/b/1" }, { url: "/b/1" }, { hash: "" }, { key: "A".repeat(43) + "=" }, { key: "A".repeat(42) }, { key: "A".repeat(42) + "B" }, { key: "+".repeat(43) }]) {
+      expect(ok("restoreFromLink", "input", { link: { ...link, ...bad }, passphrase: "pw" })).toBe(false);
+    }
+  });
+
+  it("are listed pending with no link, answered or not, and published with the link and when the mediator lets it go", () => {
+    const records = [
+      { status: "pending", hash: "b1", placedAt, retainUntil: null },
+      { status: "pending", hash: "b2", placedAt, retainUntil },
+      { status: "published", hash: link.hash, placedAt, retainUntil, link },
+    ];
+    expect(ok("snapshotLinks", "result", { links: records })).toBe(true);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil: null, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, placedAt, retainUntil }] })).toBe(false);
+    expect(ok("publishSnapshotLink", "result", records[2])).toBe(true);
+    expect(ok("publishSnapshotLink", "result", records[1])).toBe(false);
+    expect(ok("publishSnapshotLink", "result", { ...records[2], placedAt: "2026-10-10" })).toBe(false);
+  });
+
+  it("are revoked by hash alone", () => {
+    expect(ok("revokeSnapshotLink", "input", { hash: link.hash })).toBe(true);
+    expect(ok("revokeSnapshotLink", "input", { hash: "" })).toBe(false);
+    expect(ok("revokeSnapshotLink", "input", { link })).toBe(false);
   });
 });

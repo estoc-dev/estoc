@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Snapshot links**: `publishSnapshotLink` seals the vault's snapshot
+  under a key of its own and puts it at the selected mediator as this
+  replica's blob, answering the link (the blob's URL, its name and its
+  key); a snapshot over what a blob there holds once sealed is refused
+  whole as `ResourceLimit`. What is put is kept in the runtime's local
+  state before the put, so `snapshotLinks` lists it again after a
+  restart and a pending one whose upload failed can be revoked;
+  `revokeSnapshotLink` deletes the blob and forgets it.
+  `restoreFromLink` reads a link's snapshot under `maxBackupBytes` and
+  the sealing, follows no redirect, checks and opens it, and restores
+  it as `restoreIdentity` does, writing nothing when any of that fails.
+  An export over its bound now says `the snapshot file is ... over the
+  bound of ...` when the host refuses the file.
+
 - The agent keeps its delivery records in the runtime's local options:
   the preparation it selected for each message and an acceptance it has
   not yet recorded, beside the inputs its replica left to another, and a

@@ -16,15 +16,25 @@ import {
   type ContactId,
   type Did,
   type DidId,
+  type MediationId,
   type VaultDraft,
   type VaultFold,
 } from "@estoc/vault";
 import {
   Agent,
   AgentTrace,
+  BLOB_QUOTA,
+  BLOB_REFUSED,
+  BLOB_TOO_LARGE,
   BUILT_IN_HANDLERS,
+  BlobMismatch,
+  BlobTooLarge,
+  BlobTransferFailed,
+  BlobUnopened,
   LocalRecords,
   MAX_CONTENT_BYTES,
+  MediatorRefused,
+  SEAL_OVERHEAD,
   createDid,
   createMediation,
   createVault,
@@ -32,9 +42,12 @@ import {
   effectTypesOf,
   inspectRuntime,
   isTraceLevel,
+  openBlob,
   openVault,
+  readBlob,
   recorder,
   sameDid,
+  sealBlob,
   selectMediation,
   serially,
   type AgentLines,
@@ -45,11 +58,12 @@ import {
 } from "@estoc/agent-core";
 
 import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
-import { InvalidArgument, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
+import { InvalidArgument, Refused, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
+import { SnapshotLinks, shown, type Put } from "./snapshot-links.js";
 
 /** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
 export interface DaemonCore extends Daemon {
@@ -94,6 +108,10 @@ const RESTORE_SOURCE = "restore-source.sqlite";
 const MERGE_SOURCE = "merge-source.sqlite";
 const EXPORT_FILE = "export.sqlite";
 const BUSY_RETRY_MS = 2000;
+/** How long reading a snapshot a link names may take, whole: room for one as large as a mediator's blob over a slow line. */
+const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
+/** The answers to a put by which the mediator says it holds nothing of the blob. */
+const PUT_REFUSALS = new Set([BLOB_TOO_LARGE, BLOB_QUOTA, BLOB_REFUSED]);
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
@@ -204,6 +222,15 @@ function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
   if (effect.outcome === "skipped") return { outcome: "skipped", because: effect.code, messageId: null };
   if (effect.outcome === "created") return outcomeOf(effect.dispatched);
   return effect.dispatched === null ? { outcome: "existing", because: null, messageId: effect.messageId } : outcomeOf(effect.dispatched);
+}
+
+/** Why a link's snapshot did not come to plaintext of at most `maxBytes`, refused: nothing is written before it does. */
+function unread(err: unknown, maxBytes: number): Refused {
+  if (err instanceof BlobTooLarge) return new TooLarge(`the snapshot is over the ${maxBytes} bytes this daemon restores`);
+  if (err instanceof BlobTransferFailed) return new Unmet(err.status === 404 ? "no snapshot is at that link any more: it was revoked, or the mediator has let it go" : `the snapshot could not be read: its store answered ${err.status}`);
+  if (err instanceof BlobMismatch) return new Unmet("the bytes at that link are not the snapshot it names");
+  if (err instanceof BlobUnopened) return new Unmet("the link's key does not open the snapshot");
+  return new Unmet(`the snapshot could not be read: ${failure(err)}`);
 }
 
 /**
@@ -365,9 +392,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
   const settle = (): Promise<void> => publisher.refresh().then(() => undefined, () => undefined);
 
+  const hostFetch = host.agentOptions?.fetch ?? globalThis.fetch;
+
   function attach(runtime: SqliteVault, keys: Keys, trace: AgentTrace): Attached {
     const attached = { ended: false, work: new Set<Promise<void>>() };
-    const reach = host.agentOptions?.fetch ?? globalThis.fetch;
     const whileAttached =
       <A extends unknown[]>(say: (...args: A) => void) =>
       (...args: A) => {
@@ -382,7 +410,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           ...host.agentOptions,
           fetch: async (input, init) => {
             if (attached.ended) throw new Error(DETACHED);
-            return answered(attached.work, init?.signal ?? null, () => reach(input, init));
+            return answered(attached.work, init?.signal ?? null, () => hostFetch(input, init));
           },
           didcomm: await host.didcomm(),
           trace,
@@ -557,11 +585,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Unmet(`no contact ${contactId}`);
   }
 
-  async function preferredRoute({ runtime, keys }: Open): Promise<RouteSpec> {
+  async function preferredMediation({ runtime, keys }: Open): Promise<MediationId> {
     const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
     if (preferred === null) throw new Unmet("no mediator is set");
-    return { kind: "mediated", mediationId: preferred };
+    return preferred;
   }
+
+  const preferredRoute = async (running: Open): Promise<RouteSpec> => ({ kind: "mediated", mediationId: await preferredMediation(running) });
 
   /** `presented` as a peer's DID: canonical, and none of this vault's own. */
   async function peerDidOf(running: Open, presented: string): Promise<Did> {
@@ -603,6 +633,88 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       await store.remove(name);
     }
   }
+
+  /**
+   * The running vault's portable snapshot, read off the file it is
+   * exported to and refused whole when its events and objects, or that
+   * file, come to more than `maxBytes`: `bound` is whose bound that is,
+   * for the refusal to say. Runs in the files' turn.
+   */
+  async function exported({ runtime, keys }: Open, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
+    const store = files();
+    await store.remove(EXPORT_FILE);
+    try {
+      await exportVault(runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: vaultHeldRoots(keys, SCAN), maxBytes }).catch((err: unknown) => {
+        if (err instanceof SnapshotTooLarge) throw new TooLarge(`the ${what}'s events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} ${bound}`);
+        throw err;
+      });
+      const bytes = await store.exportFile(EXPORT_FILE, maxBytes);
+      // A host that reads the file without minding the bound is still held to it.
+      if (maxBytes !== undefined && bytes.byteLength > maxBytes) throw new TooLarge(`the ${what} file is ${bytes.byteLength} bytes, over the ${maxBytes} ${bound}`);
+      return bytes;
+    } finally {
+      await store.remove(EXPORT_FILE);
+    }
+  }
+
+  /** A portable snapshot's bytes restored as this daemon's vault, under the passphrase that opens the snapshot's own wrapped seed. */
+  const restore = (bytes: Uint8Array, passphrase: string): Promise<void> =>
+    exclusively(async () => {
+      const store = await refuseOccupied();
+      const unlocked: { seedKey: SeedKey | null } = { seedKey: null };
+      let made = false;
+      let runtime: SqliteVault;
+      let keys: Keys;
+      try {
+        runtime = await withSnapshot(RESTORE_SOURCE, bytes, async (driver) => {
+          const source = openPortable(driver);
+          try {
+            const restored = await restoreVault(
+              source,
+              async (mode) => {
+                const destination = await store.open(VAULT_FILE, mode, "runtime");
+                made = true;
+                held = uuidv7() as Hold;
+                return destination;
+              },
+              {
+                heldRoots: vaultHeldRoots(null, SCAN),
+                anchor: async (wrapped) => {
+                  try {
+                    unlocked.seedKey = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
+                  } catch {
+                    throw new Unmet("that passphrase does not open this backup");
+                  }
+                  return Keys.anchorOf(unlocked.seedKey);
+                },
+              }
+            );
+            return new SqliteVault(restored.runtime, { changed });
+          } finally {
+            source.close();
+          }
+        });
+      } catch (err) {
+        // A destination the restore made and failed on is closed and unready: it opens as nothing, and the next try starts from no file.
+        if (made) {
+          held = null;
+          await store.remove(VAULT_FILE);
+        }
+        throw err;
+      }
+      const { seedKey } = unlocked;
+      try {
+        if (seedKey === null) throw new Error("the restore did not ask for the passphrase");
+        keys = await Keys.open(seedKey, runtime.metadata.anchor);
+      } catch (err) {
+        await runtime.close();
+        held = null;
+        await store.remove(VAULT_FILE);
+        throw err;
+      }
+      await host.cacheSeedKey(seedKey);
+      await start(runtime, keys, seedKey);
+    });
 
   host.onOnline?.(() => {
     const running = open;
@@ -687,63 +799,21 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         await start(created.runtime, created.keys, seedKey);
       }),
 
-    restoreIdentity: (bytes, passphrase) =>
-      exclusively(async () => {
-        const store = await refuseOccupied();
-        const unlocked: { seedKey: SeedKey | null } = { seedKey: null };
-        let made = false;
-        let runtime: SqliteVault;
-        let keys: Keys;
-        try {
-          runtime = await withSnapshot(RESTORE_SOURCE, bytes, async (driver) => {
-            const source = openPortable(driver);
-            try {
-              const restored = await restoreVault(
-                source,
-                async (mode) => {
-                  const destination = await store.open(VAULT_FILE, mode, "runtime");
-                  made = true;
-                  held = uuidv7() as Hold;
-                  return destination;
-                },
-                {
-                  heldRoots: vaultHeldRoots(null, SCAN),
-                  anchor: async (wrapped) => {
-                    try {
-                      unlocked.seedKey = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
-                    } catch {
-                      throw new Unmet("that passphrase does not open this backup");
-                    }
-                    return Keys.anchorOf(unlocked.seedKey);
-                  },
-                }
-              );
-              return new SqliteVault(restored.runtime, { changed });
-            } finally {
-              source.close();
-            }
-          });
-        } catch (err) {
-          // A destination the restore made and failed on is closed and unready: it opens as nothing, and the next try starts from no file.
-          if (made) {
-            held = null;
-            await store.remove(VAULT_FILE);
-          }
-          throw err;
-        }
-        const { seedKey } = unlocked;
-        try {
-          if (seedKey === null) throw new Error("the restore did not ask for the passphrase");
-          keys = await Keys.open(seedKey, runtime.metadata.anchor);
-        } catch (err) {
-          await runtime.close();
-          held = null;
-          await store.remove(VAULT_FILE);
-          throw err;
-        }
-        await host.cacheSeedKey(seedKey);
-        await start(runtime, keys, seedKey);
-      }),
+    restoreIdentity: restore,
+
+    async restoreFromLink(link, passphrase, maxBytes) {
+      // Nothing is read for a daemon that could not restore it; the restore looks again once the snapshot is in.
+      await exclusively(refuseOccupied);
+      let snapshot: Uint8Array;
+      try {
+        // The link's URL is the word of whoever handed it over: no redirect is followed, so the host's fetch checks the one address it reaches.
+        const sealed = await readBlob(link.url, { maxBytes: maxBytes + SEAL_OVERHEAD, timeoutMs: SNAPSHOT_READ_TIMEOUT_MS, fetch: (input, init) => hostFetch(input, { ...init, redirect: "error" }) });
+        snapshot = await openBlob(sealed, link);
+      } catch (err) {
+        throw unread(err, maxBytes);
+      }
+      await restore(snapshot, passphrase);
+    },
 
     async explainedRestore() {
       const { runtime } = vault();
@@ -801,24 +871,64 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
     exportBackup: (maxBytes) =>
       exclusively(async () => {
-        const { runtime, keys } = vault();
-        const store = files();
-        await store.remove(EXPORT_FILE);
-        try {
-          await exportVault(runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: vaultHeldRoots(keys, SCAN), maxBytes }).catch((err: unknown) => {
-            if (err instanceof SnapshotTooLarge) throw new TooLarge(`the backup's events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} this daemon delivers`);
-            throw err;
-          });
-          const label = (await scanVault(runtime.vault, keys, SCAN)).label ?? "";
-          const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
-          const bytes = await store.exportFile(EXPORT_FILE, maxBytes);
-          // A host that reads the file without minding the bound is still held to it.
-          if (maxBytes !== undefined && bytes.byteLength > maxBytes) throw new TooLarge(`the backup file is ${bytes.byteLength} bytes, over the ${maxBytes} this daemon delivers`);
-          return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
-        } finally {
-          await store.remove(EXPORT_FILE);
-        }
+        const running = vault();
+        const bytes = await exported(running, "backup", maxBytes, "this daemon delivers");
+        const label = (await scanVault(running.runtime.vault, running.keys, SCAN)).label ?? "";
+        const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
+        return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
       }),
+
+    async publishSnapshotLink() {
+      const running = vault();
+      const { attached, runtime } = running;
+      const { store, maxBytes } = await during(attached, async (agent) => {
+        const store = await agent.blobStore(await preferredMediation(running));
+        const limits = await store.limits();
+        if (limits === null) throw new Unmet("the mediator keeps no blobs");
+        return { store, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
+      });
+      // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
+      const snapshot = await exclusively(() => {
+        if (open !== running) throw new WrongPhase("the vault was let go of while its snapshot was asked for");
+        return exported(running, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
+      });
+      const sealed = await sealBlob(snapshot);
+      return during(attached, async () => {
+        const links = new SnapshotLinks(runtime.local.options);
+        const placedAt = Date.now();
+        await links.prune(placedAt);
+        const pending: Put = { hash: sealed.hash, key: sealed.key, placedAt, placement: null, uploaded: false };
+        await links.keep(pending);
+        let placement: Awaited<ReturnType<typeof store.put>>;
+        try {
+          placement = await store.put(sealed.hash, sealed.bytes.length);
+        } catch (err) {
+          if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
+          await links.forget(sealed.hash);
+          throw new Unmet(`the mediator refused the snapshot: ${err.message}`);
+        }
+        const { url, retainUntil } = placement;
+        const placed: Put = { ...pending, placement: { url, retainUntil } };
+        await links.keep(placed);
+        await store.upload(placement, sealed.bytes);
+        await links.keep({ ...placed, uploaded: true });
+        return { status: "published" as const, hash: sealed.hash, placedAt, retainUntil, link: { url, hash: sealed.hash, key: sealed.key } };
+      });
+    },
+
+    revokeSnapshotLink(hash) {
+      const running = vault();
+      return during(running.attached, async (agent) => {
+        const links = new SnapshotLinks(running.runtime.local.options);
+        if ((await links.get(hash)) === null) throw new Unmet(`no snapshot ${hash} was put from here`);
+        await (await agent.blobStore(await preferredMediation(running))).delete(hash);
+        await links.forget(hash);
+      });
+    },
+
+    async snapshotLinks() {
+      return (await new SnapshotLinks(vault().runtime.local.options).list(Date.now())).map(shown);
+    },
 
     mergeBackup: (bytes) =>
       exclusively(async () => {
