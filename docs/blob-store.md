@@ -81,11 +81,11 @@ its own URL, its own upload, its own retention and quota.
 ```
 
 - **`body.url`** — where the blob is, or will be once uploaded: the
-  string for a share's `data.links`. Its last segment is a random id the
-  store minted for this blob — not the hash, not the mediation: the URL
-  says nothing about what it serves or who put it, and is unguessable.
-  Serves `GET` and `HEAD`, with `Range`, to anyone; stable for the
-  blob's life.
+  string a snapshot link carries as its `url`. Its last segment is a
+  random id the store minted for this blob — not the hash, not the
+  mediation: the URL says nothing about what it serves or who put it,
+  and is unguessable. Serves `GET` and `HEAD`, with `Range`, to anyone;
+  stable for the blob's life.
 - **`body.retain_until`** — RFC 3339: the store will not choose to
   expire the blob before then (§3, *Expiring*). Chosen by the store — a
   configured period from now (`MEDIATOR_BLOB_RETAIN_SECONDS`, default
