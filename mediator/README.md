@@ -209,7 +209,9 @@ an ordinary (coordinate-mediation) account or recipient here:
   `execution-register` aside, and never picks up mail.
 - A **replica** DID is one device. It picks up, acknowledges and is pushed
   mail under its own key, can be forwarded to directly, and registers for
-  [executions](#executions).
+  [executions](#executions). While active it may also put and delete
+  blob-store/1.0 blobs: they are its own, count against its own quota, and
+  end with its enrollment, when it is removed or its account deleted.
 - A **recipient** DID is an address the owner gave out. Mail forwarded to it
   waits once for every active replica the account holds at that moment.
 
@@ -251,8 +253,8 @@ repeat answers as the first time did, also where
 answered `account-refused`.
 
 **`account-delete`** deletes the account and everything kept for it: its
-replicas, the removed ones included, its recipients, its mail and its
-execution registrations. The sender
+replicas, the removed ones included, their blobs, its recipients, its mail
+and its execution registrations. The sender
 names itself by its long form, since the mediator no longer holds it when it
 seals the reply, and the body is empty. The mediator remembers
 nothing of a deleted account. Its DID, its replicas' and its recipients' are

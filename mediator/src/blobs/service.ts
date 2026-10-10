@@ -74,14 +74,17 @@ export class BlobService {
       },
       this.policy.blobQuotaBytes
     );
-    if (kept.outcome !== "kept") {
-      return kept.outcome === "mismatch"
-        ? { ok: false, code: "refused", comment: "size differs from the stored blob" }
-        : {
-            ok: false,
-            code: "quota",
-            comment: `this mediation may hold ${this.policy.blobQuotaBytes} bytes`,
-          };
+    switch (kept.outcome) {
+      case "ended":
+        return { ok: false, code: "refused", comment: "no mediation" };
+      case "mismatch":
+        return { ok: false, code: "refused", comment: "size differs from the stored blob" };
+      case "full":
+        return {
+          ok: false,
+          code: "quota",
+          comment: `this mediation may hold ${this.policy.blobQuotaBytes} bytes`,
+        };
     }
 
     const { id, uploadedAt, retainUntil } = kept.blob;

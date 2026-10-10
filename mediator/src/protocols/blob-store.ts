@@ -7,7 +7,8 @@ import type { HandlerContext, Reply } from "./types.js";
  * mediator to keep (`put`) or delete (`delete`) a blob named by hash. The
  * bytes go over HTTP (`/b/<id>`, `src/blobs/service.ts`); these messages
  * only say what should exist. Both need a proven sender holding a mediation
- * here — this is a mediation service, not a public one.
+ * here, an ordinary account or an active replica, and act on that
+ * mediation's own blobs: this is a mediation service, not a public one.
  */
 
 export const BLOB_PUT = "https://estoc.dev/blob-store/1.0/put";
@@ -26,13 +27,14 @@ export async function blobPut(
   if (sender === null) {
     return null;
   }
-  if (!(await store.isMediated(sender))) {
+  const owner = await store.blobOwner(sender);
+  if (owner === null) {
     return refused("no mediation");
   }
   if (blobs === null) {
     return refused("this mediator does not store blobs");
   }
-  const outcome = await blobs.put(sender, incoming.message.body.hash, incoming.message.body.size);
+  const outcome = await blobs.put(owner, incoming.message.body.hash, incoming.message.body.size);
   if (!outcome.ok) {
     return {
       type: PROBLEM_REPORT,
@@ -64,13 +66,14 @@ export async function blobDelete(
   if (sender === null) {
     return null;
   }
-  if (!(await store.isMediated(sender))) {
+  const owner = await store.blobOwner(sender);
+  if (owner === null) {
     return refused("no mediation");
   }
   if (blobs === null) {
     return refused("this mediator does not store blobs");
   }
-  const hash = await blobs.remove(sender, incoming.message.body.hash);
+  const hash = await blobs.remove(owner, incoming.message.body.hash);
   if (hash === null) {
     return refused("hash is not a blob name");
   }

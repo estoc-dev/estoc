@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -12,6 +12,7 @@ import canonicalize from "canonicalize";
 import bs58 from "bs58";
 import { bytesToBase64url, encodeLongForm, longToShort } from "@estoc/did-peer";
 
+import { blobName } from "../src/blobs/hash.js";
 import { replicaPolicyFrom, type MediatorConfig } from "../src/config.js";
 import type { DIDCommContext } from "../src/didcomm/didcomm.js";
 import WebSocket from "ws";
@@ -54,6 +55,10 @@ const RECIPIENTS = `${PROTOCOL}/recipients`;
 const EXECUTION_REGISTER = `${PROTOCOL}/execution-register`;
 const EXECUTION_REGISTERED = `${PROTOCOL}/execution-registered`;
 const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
+const BLOB_PUT = "https://estoc.dev/blob-store/1.0/put";
+const BLOB_PUT_RESULT = "https://estoc.dev/blob-store/1.0/put-result";
+const BLOB_DELETE = "https://estoc.dev/blob-store/1.0/delete";
+const BLOB_DELETE_RESULT = "https://estoc.dev/blob-store/1.0/delete-result";
 const MEDIATE_REQUEST = "https://didcomm.org/coordinate-mediation/3.0/mediate-request";
 const MEDIATE_GRANT = "https://didcomm.org/coordinate-mediation/3.0/mediate-grant";
 const MEDIATE_DENY = "https://didcomm.org/coordinate-mediation/3.0/mediate-deny";
@@ -3081,5 +3086,221 @@ describe("a replica-mediation account beside ordinary mediation", () => {
         "replica-required"
       );
     }
+  });
+});
+
+describe("blob-store by a replica", () => {
+  let dir: string;
+  let server: MediatorServer;
+  let first: Enrollment;
+  let second: Enrollment;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "mediator-replica-blobs-"));
+    server = buildServer({ identity: mediator, store, config: { ...TEST_CONFIG, blobDir: dir } });
+    app = server.app;
+    first = await enrollment();
+    second = await enrollment();
+    await enroll(first.grant);
+    await enroll(second.grant);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const nameOf = (bytes: Uint8Array) => blobName(createHash("sha256").update(bytes).digest());
+  const pathOf = (url: unknown) => new URL(url as string).pathname;
+  const idOf = (path: string) => path.slice("/b/".length);
+  const put = (speaker: Speaker, bytes: Uint8Array) =>
+    send(speaker, BLOB_PUT, { hash: nameOf(bytes), size: bytes.length });
+
+  async function publishedPath(speaker: Speaker, bytes: Uint8Array): Promise<string> {
+    const result = await put(speaker, bytes);
+    expect(result?.type).toBe(BLOB_PUT_RESULT);
+    const upload = new URL((result?.body.upload as { url: string }).url);
+    const uploaded = await app.request(upload.pathname + upload.search, {
+      method: "PUT",
+      headers: { "content-length": String(bytes.length) },
+      body: bytes,
+    });
+    expect(uploaded.status).toBe(204);
+    return pathOf(result?.body.url);
+  }
+
+  /** The replies to the puts, every one of them past the check of its sender and none written yet when `ending` runs. */
+  async function putsOvertaken(
+    puts: [Speaker, Uint8Array][],
+    ending: () => Promise<unknown>
+  ): Promise<(IMessage | null)[]> {
+    const lookUp = store.blobOwner.bind(store);
+    const looked = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    let waiting = 0;
+    const owner = vi.spyOn(store, "blobOwner").mockImplementation(async (sender) => {
+      const found = await lookUp(sender);
+      if (++waiting === puts.length) {
+        looked.resolve();
+      }
+      await gate.promise;
+      return found;
+    });
+    const replies = Promise.all(puts.map(([speaker, bytes]) => put(speaker, bytes)));
+    await looked.promise;
+    owner.mockRestore();
+    await ending();
+    gate.resolve();
+    return replies;
+  }
+
+  it("keeps an active replica's blob under its short form, whichever spelling put it", async () => {
+    const bytes = randomBytes(1000);
+    const path = await publishedPath(known(first.replica), bytes);
+
+    const renewed = await put(firstContact(first.replica), bytes);
+    const served = await app.request(path);
+
+    expect(renewed?.body.upload).toBeUndefined();
+    expect(pathOf(renewed?.body.url)).toBe(path);
+    expect((await store.blobOf(first.replica.did, nameOf(bytes)))?.id).toBe(idOf(path));
+    expect(served.status).toBe(200);
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("deletes a replica's own blob and leaves another replica's of the same bytes", async () => {
+    const bytes = randomBytes(1000);
+    const firsts = await publishedPath(known(first.replica), bytes);
+    const seconds = await publishedPath(known(second.replica), bytes);
+
+    const deleted = await send(known(first.replica), BLOB_DELETE, { hash: nameOf(bytes) });
+
+    expect(deleted?.type).toBe(BLOB_DELETE_RESULT);
+    expect(firsts).not.toBe(seconds);
+    expect((await app.request(firsts)).status).toBe(404);
+    expect((await app.request(seconds)).status).toBe(200);
+  });
+
+  it("refuses the account, a shared recipient and a DID nobody enrolled", async () => {
+    const shared = await addition();
+    await add(shared);
+    const stranger = await peer4Agent(mediator.did);
+    const bytes = randomBytes(8);
+
+    for (const speaker of [
+      known(account),
+      firstContact(account),
+      firstContact(shared.recipient),
+      firstContact(stranger),
+    ]) {
+      const putting = await put(speaker, bytes);
+      const deleting = await send(speaker, BLOB_DELETE, { hash: nameOf(bytes) });
+      for (const reply of [putting, deleting]) {
+        expect(reply?.type).toBe(PROBLEM);
+        expect(reply?.body.code).toBe("e.p.blob.refused");
+      }
+    }
+  });
+
+  it("counts each replica's blobs against that replica's quota alone", async () => {
+    await publishedPath(known(first.replica), randomBytes(TEST_CONFIG.blobMaxBytes));
+    const room = TEST_CONFIG.blobQuotaBytes - TEST_CONFIG.blobMaxBytes;
+
+    const over = await put(known(first.replica), randomBytes(room + 1));
+    const beside = await put(known(second.replica), randomBytes(room + 1));
+
+    expect(over?.body.code).toBe("e.p.blob.quota");
+    expect(beside?.type).toBe(BLOB_PUT_RESULT);
+  });
+
+  it("keeps an active replica's blobs through a purge, until their retention ends", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const path = await publishedPath(known(first.replica), randomBytes(1000));
+
+    const purgedWhileRetained = await server.purgeBlobs();
+    const servedWhileRetained = (await app.request(path)).status;
+    vi.setSystemTime(Date.now() + TEST_CONFIG.blobRetainSeconds * 1000);
+    const servedAfter = (await app.request(path)).status;
+    const purgedAfter = await server.purgeBlobs();
+
+    expect(purgedWhileRetained).toBe(0);
+    expect(servedWhileRetained).toBe(200);
+    expect(servedAfter).toBe(404);
+    expect(purgedAfter).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("ends a replica's blobs with its removal and leaves the other replicas' theirs", async () => {
+    const firsts = await publishedPath(known(first.replica), randomBytes(1000));
+    const seconds = await publishedPath(known(second.replica), randomBytes(1000));
+
+    await send(known(account), REPLICA_REMOVE, { replica_did: first.replica.did });
+    const served = (await app.request(firsts)).status;
+    const putting = await put(known(first.replica), randomBytes(8));
+    const purged = await server.purgeBlobs();
+
+    expect(served).toBe(404);
+    expect(putting?.body.code).toBe("e.p.blob.refused");
+    expect(purged).toBe(1);
+    expect(readdirSync(dir)).toEqual([idOf(seconds)]);
+    expect((await app.request(seconds)).status).toBe(200);
+  });
+
+  it.each([
+    ["removal", () => send(known(account), REPLICA_REMOVE, { replica_did: first.replica.did })],
+    ["account's deletion", () => send(firstContact(account), ACCOUNT_DELETE, {})],
+  ])("keeps nothing of a replica's puts that its %s overtakes, renewal or new blob", async (_, ending) => {
+    const held = randomBytes(1000);
+    const fresh = randomBytes(8);
+    const path = await publishedPath(known(first.replica), held);
+
+    const replies = await putsOvertaken(
+      [
+        [firstContact(first.replica), held],
+        [firstContact(first.replica), fresh],
+      ],
+      ending
+    );
+    const served = (await app.request(path)).status;
+    const purged = await server.purgeBlobs();
+
+    expect(replies.map((reply) => reply?.body.code)).toEqual(["e.p.blob.refused", "e.p.blob.refused"]);
+    expect(served).toBe(404);
+    expect(await store.blobOf(first.replica.did, nameOf(fresh))).toBeNull();
+    expect(purged).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("puts a hash anew, at a new URL, for a replica enrolled again after its account's deletion", async () => {
+    const bytes = randomBytes(1000);
+    const before = await publishedPath(known(first.replica), bytes);
+
+    await send(firstContact(account), ACCOUNT_DELETE, {});
+    await registerAccount();
+    await addReplica(first.grant);
+    const again = await put(known(first.replica), bytes);
+    const purged = await server.purgeBlobs();
+
+    expect(again?.type).toBe(BLOB_PUT_RESULT);
+    expect(again?.body.upload).toBeDefined();
+    expect(pathOf(again?.body.url)).not.toBe(before);
+    expect((await app.request(before)).status).toBe(404);
+    expect(purged).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("ends every replica's blobs with the account's deletion", async () => {
+    const paths = [
+      await publishedPath(known(first.replica), randomBytes(1000)),
+      await publishedPath(known(second.replica), randomBytes(1000)),
+    ];
+
+    await send(firstContact(account), ACCOUNT_DELETE, {});
+    const served = await Promise.all(paths.map(async (path) => (await app.request(path)).status));
+    const purged = await server.purgeBlobs();
+
+    expect(served).toEqual([404, 404]);
+    expect(purged).toBe(2);
+    expect(readdirSync(dir)).toEqual([]);
   });
 });
