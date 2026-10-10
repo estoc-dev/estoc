@@ -70,10 +70,9 @@ function putOf(hash: string, value: JsonValue | undefined): Put | null {
 }
 
 export class SnapshotLinks {
-  /** The records in `options` of a runtime under `author`. */
   constructor(
     private readonly options: LocalOptions,
-    private readonly author: AuthorId
+    private readonly currentAuthor: AuthorId
   ) {}
 
   keep(put: Put): Promise<void> {
@@ -92,11 +91,12 @@ export class SnapshotLinks {
 
   /** Whether this runtime is the replica that put it. */
   owns(put: Put): boolean {
-    return put.owner.author === this.author;
+    return put.owner.author === this.currentAuthor;
   }
 
-  published({ hash, key, placedAt, url, retainUntil, owner }: Uploaded): PublishedSnapshot {
-    return { status: "published", hash, placedAt, retainUntil, revocable: owner.author === this.author, link: { url, hash, key } };
+  published(put: Uploaded): PublishedSnapshot {
+    const { hash, key, placedAt, url, retainUntil } = put;
+    return { status: "published", hash, placedAt, retainUntil, revocable: this.owns(put), link: { url, hash, key } };
   }
 
   private shown(put: Put): PutSnapshot {
