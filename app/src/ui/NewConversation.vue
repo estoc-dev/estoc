@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import qrcode from "qrcode-generator";
 
 import { acceptInvitation, addContactFrom, createInvitation, dismissPendingInvitation, heldNow, invitationLink, openIndex, state } from "../core/store.js";
 import type { Invitation } from "../core/types.js";
 import Icon from "./Icon.vue";
 import { invitationIn } from "./invitation-code.js";
 import { back, go, swap } from "./nav.js";
-import { startScan, type Scan } from "./scanner.js";
+import { qrSvgOf } from "./qr.js";
+import { canScanQr, scanQr, type Scan } from "./scanner.js";
 import Sheet from "./Sheet.vue";
 import { useStatus } from "./status.js";
 
@@ -64,17 +64,7 @@ const shownUrl = computed(() => (shownRecord.value === null || shownRecord.value
 
 // A link can outgrow what a QR code holds: its length follows the DID,
 // and so the mediator's endpoints in it. The link is whole either way.
-const qrSvg = computed(() => {
-  if (shownUrl.value === null) return null;
-  try {
-    const qr = qrcode(0, "L");
-    qr.addData(shownUrl.value, "Byte");
-    qr.make();
-    return qr.createSvgTag({ cellSize: 2, margin: 2, scalable: true });
-  } catch {
-    return null;
-  }
-});
+const qrSvg = computed(() => (shownUrl.value === null ? null : qrSvgOf(shownUrl.value)));
 
 async function copy(url: string) {
   try {
@@ -130,12 +120,6 @@ function notNow() {
   close();
 }
 
-// scanning: only where the browser reads barcodes itself
-interface BarcodeDetector {
-  detect(source: HTMLVideoElement): Promise<{ rawValue: string }[]>;
-}
-const detectorOf = (window as { BarcodeDetector?: new (options: { formats: string[] }) => BarcodeDetector }).BarcodeDetector;
-const canScan = detectorOf !== undefined && "mediaDevices" in navigator;
 const video = ref<HTMLVideoElement | null>(null);
 const scanned = ref<Invitation | null>(null);
 let scan: Scan | null = null;
@@ -144,21 +128,19 @@ async function startScanning() {
   show("scan");
   await nextTick();
   const el = video.value;
-  if (el === null || detectorOf === undefined) return;
+  if (el === null) return;
   stopScan();
-  scan = startScan({
-    openCamera: () => navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }),
-    video: el,
-    detector: new detectorOf({ formats: ["qr_code"] }),
-    onCode: (rawValue) => {
+  scan = scanQr(
+    el,
+    (rawValue) => {
       const invitation = invitationIn(rawValue);
       if (invitation === null) return false;
       scanned.value = invitation;
       show("accept");
       return true;
     },
-    onFailure: () => (error.value = "The camera could not be opened. Paste their link instead."),
-  });
+    () => (error.value = "The camera could not be opened. Paste their link instead.")
+  );
 }
 
 function stopScan() {
@@ -200,7 +182,7 @@ const offered = computed(() => scanned.value ?? pending.value);
       <div class="section">
         <div class="eyebrow">Someone invited you</div>
         <div class="group">
-          <button v-if="canScan" class="row" type="button" :disabled="!ready" data-scan @click="startScanning">
+          <button v-if="canScanQr" class="row" type="button" :disabled="!ready" data-scan @click="startScanning">
             <Icon name="scan" class="chevron" style="color: var(--accent)" />
             <span class="row-main">Scan their QR code</span>
           </button>

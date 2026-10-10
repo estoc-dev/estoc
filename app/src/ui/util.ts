@@ -25,6 +25,13 @@ export function whenOf(iso: string, now: Date = new Date()): string {
   return then.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
 }
 
+/** A day as a date, with the year only when it is not this one. */
+export function dateOf(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  return then.toLocaleDateString([], { day: "numeric", month: "short", ...(then.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+}
+
 /** A day heading in a thread. */
 export function dayOf(iso: string, now: Date = new Date()): string {
   const then = new Date(iso);

@@ -5,6 +5,7 @@ import { chooseLook, look, type Look } from "../core/look.js";
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import AddDevice from "./AddDevice.vue";
 import Icon from "./Icon.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useStatus } from "./status.js";
@@ -120,6 +121,8 @@ async function importBackup(event: Event) {
     if (importInput.value !== null) importInput.value.value = "";
   }
 }
+
+const addingDevice = ref(false);
 
 const TRACE_NOTES: Record<TraceLevel, string> = {
   off: "nothing observed is kept",
@@ -239,6 +242,13 @@ function forget() {
             <input ref="importInput" type="file" accept=".sqlite,application/vnd.sqlite3" :disabled="importing" data-import @change="importBackup" />
           </label>
           <p v-if="importNote" class="note" style="padding: 0 16px 12px" data-import-note>{{ importNote }}</p>
+          <button class="row" type="button" :disabled="mediation === null" data-add-device @click="addingDevice = true">
+            <span class="row-main">
+              <span>Add a device</span>
+              <span class="row-sub">{{ mediation === null ? "once a mediator is chosen" : "a link that restores this vault there" }}</span>
+            </span>
+            <Icon name="chevron" class="chevron" :size="20" />
+          </button>
           <button v-if="state.install" class="row" type="button" data-install @click="state.install?.()">
             <span class="row-main">Install as an app</span>
             <Icon name="chevron" class="chevron" :size="20" />
@@ -288,6 +298,8 @@ function forget() {
         </div>
         <p class="note">Gone from this device for good. A backup is the only way back.</p>
       </div>
+
+      <AddDevice v-if="addingDevice" @close="addingDevice = false" />
 
       <p class="footer-note">Estoc {{ version }}<template v-if="state.offlineReady"> · ready to work offline</template></p>
     </div>

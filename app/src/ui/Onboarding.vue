@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, onUnmounted, ref, watch } from "vue";
+import { parseSnapshotLink } from "@estoc/daemon-api/views";
 
-import { createIdentity, heldNow, restoreIdentity, state } from "../core/store.js";
+import { createIdentity, heldNow, restoreFromLink, restoreIdentity, state } from "../core/store.js";
+import { canScanQr, scanQr, type Scan } from "./scanner.js";
 import { bytesOf } from "./util.js";
 
 /**
- * First run: mint an identity here, or restore one from a backup file.
- * Both end in the same place, a vault in this browser with its seed
- * sealed under the passphrase typed here. Being reachable comes after,
- * on the You screen.
+ * First run: mint an identity here, or restore one from a backup file
+ * or from a link another device of this vault made. All end in the same
+ * place, a vault in this browser with its seed sealed under the
+ * passphrase typed here. Being reachable comes after, on the You screen.
  */
-const mode = ref<"create" | "restore">("create");
+const mode = ref<"create" | "restore">(state.pendingSnapshotLink === null ? "create" : "restore");
 
 const name = ref("");
 const passphrase = ref("");
@@ -44,9 +46,19 @@ async function create() {
 }
 
 const backupFile = ref<File | null>(null);
+const snapshotLink = ref(state.pendingSnapshotLink ?? "");
 const restorePass = ref("");
 const restoring = ref(false);
 const restoreError = ref<string | null>(null);
+
+watch(
+  () => state.pendingSnapshotLink,
+  (link) => {
+    if (link === null) return;
+    snapshotLink.value = link;
+    mode.value = "restore";
+  }
+);
 
 function pickBackup(event: Event) {
   backupFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
@@ -54,12 +66,21 @@ function pickBackup(event: Event) {
 
 async function restore() {
   restoreError.value = null;
-  if (backupFile.value === null) {
-    restoreError.value = "Choose the backup file first.";
+  const link = snapshotLink.value.trim();
+  if (backupFile.value === null && link === "") {
+    restoreError.value = "Choose the backup file, or paste the link your other device made.";
+    return;
+  }
+  if (backupFile.value !== null && link !== "") {
+    restoreError.value = "Restore from the file or from the link, not both: clear one of them.";
     return;
   }
   restoring.value = true;
   try {
+    if (backupFile.value === null) {
+      await restoreFromLink(link, restorePass.value);
+      return;
+    }
     const held = heldNow();
     const backup = await bytesOf(backupFile.value);
     if (!held()) return;
@@ -70,6 +91,42 @@ async function restore() {
     restoring.value = false;
   }
 }
+
+const scanning = ref(false);
+const video = ref<HTMLVideoElement | null>(null);
+let scan: Scan | null = null;
+
+async function startScanning() {
+  restoreError.value = null;
+  scanning.value = true;
+  await nextTick();
+  if (video.value === null) return;
+  scan = scanQr(
+    video.value,
+    (rawValue) => {
+      try {
+        parseSnapshotLink(rawValue);
+      } catch {
+        return false;
+      }
+      snapshotLink.value = rawValue;
+      scanning.value = false;
+      return true;
+    },
+    () => {
+      scanning.value = false;
+      restoreError.value = "The camera could not be opened. Paste the link instead.";
+    }
+  );
+}
+
+function stopScan() {
+  scan?.stop();
+  scan = null;
+  scanning.value = false;
+}
+
+onUnmounted(stopScan);
 </script>
 
 <template>
@@ -82,7 +139,7 @@ async function restore() {
 
       <div class="tabs">
         <button class="tab" :class="{ active: mode === 'create' }" type="button" data-tab-create @click="mode = 'create'">New identity</button>
-        <button class="tab" :class="{ active: mode === 'restore' }" type="button" data-tab-restore @click="mode = 'restore'">Restore a backup</button>
+        <button class="tab" :class="{ active: mode === 'restore' }" type="button" data-tab-restore @click="mode = 'restore'">Restore</button>
       </div>
 
       <form v-if="mode === 'create'" class="form" @submit.prevent="create">
@@ -95,11 +152,23 @@ async function restore() {
       </form>
 
       <form v-else class="form" @submit.prevent="restore">
-        <input class="field" type="file" accept=".sqlite,application/vnd.sqlite3" data-backup-file @change="pickBackup" />
-        <input v-model="restorePass" class="field" type="password" placeholder="The backup's passphrase" autocomplete="current-password" data-backup-passphrase />
+        <label class="note" for="backup-file">From a backup file</label>
+        <input id="backup-file" class="field" type="file" accept=".sqlite,application/vnd.sqlite3" data-backup-file @change="pickBackup" />
+        <label class="note" for="snapshot-link">Or from a link your other device made (You › Add a device)</label>
+        <input id="snapshot-link" v-model="snapshotLink" class="field" placeholder="The link" autocomplete="off" data-snapshot-link-input />
+        <template v-if="canScanQr">
+          <video v-if="scanning" ref="video" muted playsinline style="width: 100%; border-radius: 12px; background: #000; aspect-ratio: 1"></video>
+          <button class="link alone" type="button" style="align-self: flex-start" data-scan-snapshot-link @click="scanning ? stopScan() : startScanning()">
+            {{ scanning ? "Stop scanning" : "Scan its QR code" }}
+          </button>
+        </template>
+        <input v-model="restorePass" class="field" type="password" placeholder="The vault's passphrase" autocomplete="current-password" data-backup-passphrase />
         <p v-if="restoreError" class="error-text">{{ restoreError }}</p>
         <button class="btn" type="submit" :disabled="restoring" data-restore>{{ restoring ? "Restoring…" : "Restore" }}</button>
-        <p class="note">A backup brings back the moment it was made and nothing after it. What that means for your conversations is explained before anything is sent.</p>
+        <p class="note">
+          A backup or a link brings back the moment it was made and nothing after it. What that means for your conversations is explained before anything is
+          sent.
+        </p>
       </form>
     </div>
   </div>

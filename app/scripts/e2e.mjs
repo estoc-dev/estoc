@@ -8,7 +8,8 @@
  * yields to the first, a DID handed out on its own reaches its owner, lock asks for the passphrase, a backup file
  * restores the identity in a fresh browser, where sending waits for the
  * restore to be explained, importing a backup into a live vault merges
- * instead of clobbering, and (where a service worker is serving) the shell
+ * instead of clobbering, a link made for a new device restores the vault in
+ * another fresh browser and reads nothing once revoked, and (where a service worker is serving) the shell
  * opens with the network off.
  *
  *   npm run preview        # serves the build on :4173 with the service worker
@@ -415,6 +416,40 @@ try {
   await expectBubble(alice, "hello bob");
   await waitLive(alice);
   ok("importing her own backup merges nothing and leaves the vault as it was");
+
+  // A link for a new device: a fresh browser opened at it restores Alice's vault; revoked, it reads nothing.
+  await alice.click("[data-you]");
+  await alice.click("[data-add-device]");
+  await alice.click("[data-make-snapshot-link]");
+  await alice.waitForSelector("[data-snapshot-qr]", { timeout: 60000 });
+  const snapshotLink = await alice.getAttribute("[data-snapshot-url]", "title");
+  if (snapshotLink === null || !snapshotLink.startsWith(`${new URL(APP_URL).origin}/#snapshot=`)) fail(`the link should open this Estoc with the snapshot in its fragment, not ${snapshotLink}`);
+  await alice.click("[data-snapshot-done]");
+  await alice.waitForSelector('[data-snapshot-link="published"]', { timeout: 15000 });
+  ok("Alice made a link for a new device, shown as a QR code and listed");
+  const restoreAt = async (name, expectation) => {
+    const ctx = await browser.newContext({ colorScheme });
+    const page = await ctx.newPage();
+    watch(page, name);
+    await page.goto(snapshotLink);
+    await page.waitForSelector("[data-snapshot-link-input]", { timeout: 30000 });
+    if ((await page.inputValue("[data-snapshot-link-input]")) !== snapshotLink) fail("the restore should be offered with the link the page was opened at");
+    if (new URL(page.url()).hash !== "") fail("the link should be taken off the page's address");
+    await page.fill("[data-backup-passphrase]", PASS.Alice);
+    await page.click("[data-restore]");
+    await expectation(page);
+    await ctx.close();
+  };
+  await restoreAt("linked", async (page) => {
+    await page.waitForSelector("[data-restore-notice]", { timeout: 60000 });
+    await page.waitForSelector(row("Bob"), { timeout: 45000 });
+  });
+  ok("a fresh browser opened at the link restored Alice's vault from it, the passphrase typed there");
+  await alice.click("[data-revoke-snapshot-link]");
+  await alice.waitForSelector("[data-snapshot-link]", { state: "detached", timeout: 30000 });
+  await restoreAt("revoked", (page) => page.waitForSelector("text=no snapshot is at that link any more", { timeout: 30000 }));
+  ok("once Alice revoked the link, a restore from it reads nothing");
+  await alice.click("[data-add-device-close]");
 
   // One receiver at a time: the original Alice goes away before the restore comes up.
   await aliceCtx.close();

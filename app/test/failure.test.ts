@@ -28,4 +28,12 @@ describe("a call's failure, explained", () => {
     expect(explained(fromClient("NotConnected", "none")).message).toBe("no daemon is connected; nothing was done");
     expect(explained(fromClient("TransportDisconnected", "none")).message).toBe("sdk: TransportDisconnected");
   });
+
+  it("adds what to do instead to the daemon's refusal of something too large, and to nothing else", () => {
+    const tooLarge: CallError = { origin: "daemon", code: "ResourceLimit", message: "over the bound", effect: "none", messageId: null };
+    expect(explained(tooLarge, "Use a file.").message).toBe("over the bound. Use a file.");
+    expect(explained(tooLarge).message).toBe("over the bound");
+    expect(explained(fromClient("ResourceLimit", "none"), "Use a file.").message).toBe("sdk: ResourceLimit");
+    expect(explained(fromDaemon(), "Use a file.").message).toBe("the vault is locked");
+  });
 });

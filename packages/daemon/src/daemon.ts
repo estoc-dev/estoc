@@ -166,6 +166,8 @@ function nonOpen(phase: Exclude<Phase, "open">, hold: Hold | null, detail: strin
   }
 }
 
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
 /**
  * `ask`'s response, kept in `work` until it is over: its body read to
  * the end or let go of by its reader, the request failed, or `deadline`
@@ -185,7 +187,8 @@ async function answered(work: Set<Promise<void>>, deadline: AbortSignal | null, 
     over();
     throw err;
   }
-  if (response.body === null) {
+  // A browser hands a 204 over with an empty body all the same, and a Response of that status cannot be made with one.
+  if (response.body === null || NULL_BODY_STATUSES.has(response.status)) {
     over();
     return response;
   }
