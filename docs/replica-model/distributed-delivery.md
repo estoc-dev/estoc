@@ -61,14 +61,14 @@ business-execution promise.
 - **Full replica** — a writable vault incarnation; one input picked up at a replica-mediation mediator reaches every replica of the account, and one of them answers it.
 - **Outbound message ID** — one committed intent's entity ID and plaintext `id`.
 - **Canonical wire ID** — a wire ID with its ASCII letters in lower case
-  ([section 5.1](#self-references)); comparisons and ID transcripts use it,
+  ([section 5](#canonical-projections-and-hashes)); comparisons and ID transcripts use it,
   stored fields keep the spelling received.
 - **Inbound message ID** — derived from canonical sender, canonical recipient and canonical wire ID.
 - **Execution ID** — stable identity of one channel-local input; identity alone grants no work.
 - **Intent CID** — content identity of one fixed application message
-  ([section 5.2](#intent-projection)); equal content, not one sending.
+  ([section 5](#canonical-projections-and-hashes)); equal content, not one sending.
 - **Plaintext CID** — content identity of one complete DIDComm plaintext as
-  encrypted or decrypted ([section 5.3](#exact-plaintext-hash)); the vault
+  encrypted or decrypted ([section 5](#canonical-projections-and-hashes)); the vault
   keeps the CID, not the plaintext.
 - **Envelope CID** — raw object CID of one normalized encrypted envelope.
 - **Preparation** — one committed `message.prepared`, named by its event CID;
@@ -250,187 +250,79 @@ judges it from the retained evidence under
 showing missing evidence as pending.
 
 <a id="canonical-projections-and-hashes"></a>
+<a id="semantic-projection"></a>
+<a id="self-references"></a>
+<a id="intent-projection"></a>
+<a id="exact-plaintext-hash"></a>
+<a id="envelope-and-event-cids"></a>
+<a id="intent-equality"></a>
 
 ## 5. Message layers and their CIDs
 
 A message has four content identities, one per representation. Each is the
-raw DASL CID of [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over one
-canonical byte string; none is derived from another, and the vault's typed
-fields keep them apart ([types.ts](../../packages/vault/src/types.ts)).
+raw DASL CID of [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over
+one canonical byte string, each has its own nominal type in
+[types.ts](../../packages/vault/src/types.ts) and one constructor, and none
+is derived from another.
 
-| Layer | Field | Bytes named | Equal means |
+| Layer | Type | Bytes | Constructor |
 | --- | --- | --- | --- |
-| Intent | `intentCid` | the intent projection of [5.2](#intent-projection) | the same fixed application message |
-| Plaintext | `plaintextCid` | the complete DIDComm plaintext of [5.3](#exact-plaintext-hash) | the same complete plaintext, own ID, addressing and proof included |
-| Envelope | `envelopeCid` | the normalized encrypted envelope of [document.ts](../../packages/vault/src/document.ts) | the same ciphertext; re-encrypting gives another |
-| Event | event `cid` | the canonical event envelope of [event.ts](../../packages/event-store/src/event.ts) | the same event |
+| Intent | `IntentCid` | `UTF8(RFC8785(["estoc.message.intent", 1, projection]))` | `intentOf` in [projection.ts](../../packages/vault/src/projection.ts) |
+| Plaintext | `PlaintextCid` | `UTF8(RFC8785(plaintext))`: the complete DIDComm plaintext as encrypted or decrypted, own `id`, addressing and proof included, nothing omitted or normalized | `plaintextCidOf` in [projection.ts](../../packages/vault/src/projection.ts) |
+| Envelope | `EnvelopeCid` | `UTF8(RFC8785(parsedEncryptedEnvelope))`, retained as an object and the preparation's root | `envelopeOf` in [document.ts](../../packages/vault/src/document.ts) |
+| Event | `EventCid` | the canonical event envelope | `eventCidOf` in [event.ts](../../packages/event-store/src/event.ts) |
 
-Content equality is not identity. Two independent user sends of equal content
-have different message IDs and may have one intent CID; one intent prepared
-twice has two envelope CIDs; two replicas recording one preparation have two
-event CIDs. A message ID names one sending, an effect key one automatic
-output, a preparation's event CID one envelope. No CID replaces them, and
-none grants admission, dispatch or retry eligibility.
+The intent is the fixed application message: the control headers with every
+reference to the message itself folded to `""`, and the stored document by
+its CID. The own `id`, `typ`, `from`, `to`, `from_prior`, the effect tuple,
+the source and rotation references and every preparation field are not in
+it, so one intent CID may be recorded under any message ID in any channel,
+and a use that needs the sender and recipient carries them beside it. Which
+top-level headers are reserved, how a self reference is folded and written
+back, that `please_ack` absent, `[]` and `[""]` are three intents, and that
+an intent put on the wire reads back to the same intent and CID are
+`RESERVED_HEADERS`, `SELF`, `intentOf`, `readPlaintext` and `wirePlaintext`
+with their tests; [message-vectors.md](message-vectors.md) pins the bytes.
+A change to the projection's fields or encoding is a new version.
 
-<a id="semantic-projection"></a>
-<a id="self-references"></a>
+Wire IDs are compared by canonical wire ID, the spelling with the ASCII
+letters `A`–`Z` replaced by `a`–`z` (`canonicalWireId` and `sameWireId` in
+[ids.ts](../../packages/vault/src/ids.ts)): the self references, thread
+membership, the ACK target of [section 8](#durable-end-to-end-acknowledgment)
+and the transcripts of
+[section 9](#observation-identity-logical-aliasing-and-execution-identity)
+all take it, while a stored field keeps the spelling received. A message
+requests its own ACK only through a self reference in its `please_ack`
+(`requestsAck`); a reference to another message is kept but asks nothing of
+this vault, and the request changes no submission or retry rule.
 
-### 5.1 References to this message
+Content equality is not identity. Two user sends of equal content have
+different message IDs and may have one intent CID; one intent prepared
+twice has two envelope CIDs; two replicas recording one preparation have
+two event CIDs. Records of one message, or of one automatic output, are
+one intent when `sameIntent` in
+[fold/outbound.ts](../../packages/vault/src/fold/outbound.ts) says so: the
+intent CID, the sender, the canonical recipient, the effect tuple with its
+key and the rotation announced agree, while `sourceEventCid` is evidence
+and may differ. Records that disagree are a conflict for good, whichever
+replica wrote them. `delivery.submitted` names its preparation by event CID
+and resolves it by that exact CID; an event of equal payload under another
+CID is another preparation.
 
-DIDComm compares message IDs without regard to case. The canonical wire ID
-of a wire ID is its spelling with the ASCII letters `A`–`Z` replaced by
-`a`–`z`; a DIDComm ID consists of URI unreserved characters, so nothing else
-folds. Wherever one message refers to another, the references are compared
-by canonical wire ID: the self references below, thread membership, the ACK
-target and lookup of [section 8](#durable-end-to-end-acknowledgment), and the
-transcripts of [section 9](#observation-identity-logical-aliasing-and-execution-identity),
-which take the canonical wire ID as their member. A stored field keeps the
-spelling received: `wireMessageId`, the projection's references and the
-plaintext CID differ with case while the identities they name do not.
-
-The intent projection represents a reference to a message as a JSON string:
-the empty string `""` for the message itself, otherwise the referenced wire
-ID as spelled. On the wire, an absent `thid` and a `thid` whose canonical
-wire ID is the message's own are both the self thread, and a `please_ack`
-element `""` and one whose canonical wire ID is the message's own both ask
-for this message's receipt. `pthid` and `ack` refer to other messages and
-are kept as spelled. Nothing is replaced inside `body`, attachments or
-additional headers: an application that writes its own wire ID into content
-changes its intent with the ID, under its own rules.
-
-On the wire a self thread is written by omitting `thid`, and a self ACK
-request as `""`, so that one intent assembles to one plaintext whichever
-spelling it was recorded from.
-
-A message requests its own ACK when its `please_ack` contains a self
-reference. An absent or empty array does not request it. This profile
-acknowledges one message at a time: a receipt is given to the message that
-asks for it, naming that message alone. A reference to any other message is
-preserved but asks nothing of this vault, so a sender that wants a receipt for
-a message asks for it in that message. The request never changes submission
-completion or retry eligibility.
-
-<a id="intent-projection"></a>
-
-### 5.2 Intent CID
-
-```text
-intentCid = rawCid(UTF8(RFC8785(["estoc.message.intent", 1, projection])))
-```
-
-The literal kind and version prefix the projection; a change to the
-projection's fields or encoding is a new version. `projection` is the object:
-
-```json
-{
-  "type": "https://didcomm.org/basicmessage/2.0/message",
-  "thid": "",
-  "pthid": null,
-  "created_time": 1788442800,
-  "expires_time": null,
-  "please_ack": [""],
-  "ack": [],
-  "document": "bafkreifjsojjektsxjm7ap5cq3oy4uf3vijc4l4yxikxrwclndlsany5me",
-  "headers": {}
-}
-```
-
-- `type` is the DIDComm message type.
-- `thid` is the thread reference under 5.1 and never null; `pthid` is null or
-  the parent thread's wire ID.
-- `created_time` and `expires_time` are Epoch-Seconds integers or null. Both
-  are intent: two sends a second apart have different intent CIDs.
-- `please_ack` is null when the header is absent, otherwise the ordered array
-  of references under 5.1, order and repetitions kept: an absent header and
-  an empty array are two intents. `ack` is the ordered array of wire IDs as
-  spelled, `[]` when absent. Neither array is sorted.
-- `document` is the CID of the stored message document of
-  [document.ts](../../packages/vault/src/document.ts): the body and the
-  attachment descriptors in wire order, each with its carrier kind, payload
-  CID or links, `hash` and `jws`. The CID commits to all of it; the content
-  is read from the object the field names.
-- `headers` is every permitted top-level DIDComm field no dedicated field
-  represents. The reserved names, which never appear in it, are `typ`, `id`,
-  `type`, `from`, `to`, `created_time`, `expires_time`, `thid`, `pthid`,
-  `please_ack`, `ack`, `from_prior`, `return_route`, `body` and
-  `attachments`. A difference in any other field is an intent difference.
-
-Excluded are the message's own `id`, `typ`, `from`, `to`, `from_prior`, the
-effect tuple, the source and rotation references and every preparation field.
-The intent names no channel: one intent CID may be recorded in different
-channels, and a use that needs the sender and recipient carries them beside
-it.
-
-An outbound intent is computed from the fields of `message.out`, the message
-ID being the own `id`; an inbound one from the accepted plaintext with its
-`id`, once the stored document is derived. Both are deterministic over their
-inputs alone: no clock, randomness or resolver.
-
-<a id="exact-plaintext-hash"></a>
-
-### 5.3 Plaintext CID
-
-```text
-plaintextCid = rawCid(UTF8(RFC8785(plaintext)))
-```
-
-`plaintext` is the complete innermost DIDComm plaintext exactly as it was
-encrypted, or as it was decrypted and verified: every member, explicit nulls
-included, with `from`, `to`, `from_prior` and the message's own `id` among
-them. Nothing is omitted or normalized before hashing; an absent member and an
-explicit null give different CIDs, while member order and whitespace do not.
-The plaintext is parsed strictly first: duplicate members and invalid I-JSON
-are rejected, and the attachment carrier rule of
-[the stored document](../../packages/vault/src/document.ts) is checked on
-the parsed `data` as received, `json: null` counting as a present carrier.
-The same parsed value then yields the plaintext CID, the stored document and
-the intent projection, and every field the receiver judges, `from` among
-them; no field is read back from another representation of the message.
-
-The vault keeps the plaintext CID and not the plaintext. The stored document
-drops the own `id`, the addressing, the proof and the members this version
-does not store, so no reader recomputes the CID from what the vault retains:
-the field is validated for its form alone. It records the content encrypted
-or decrypted at that moment, is no object root, and this version makes no
-matching, deduplication or admission decision by it.
-
-A plaintext assembled from an intent under 5.1 and read back parses to the
-same intent and the same intent CID.
-
-<a id="envelope-and-event-cids"></a>
-
-### 5.4 Envelope and event CIDs
-
-The envelope CID is the raw CID of `UTF8(RFC8785(parsedEncryptedEnvelope))`
-under [document.ts](../../packages/vault/src/document.ts); the bytes are
-retained as an object and are the event's root. An event CID is
-[event.ts](../../packages/event-store/src/event.ts)'s. `delivery.submitted`
-names its preparation by event CID and resolves it by that exact CID: an
-event of equal payload under another CID is another preparation, present or
-not.
-
-<a id="intent-equality"></a>
-
-### 5.5 Equality of recorded intents
-
-Records of one message under one `messageId`, or of one automatic output under
-one `(executionId, effectType)`, are one intent when they agree on
-`intentCid`, `senderDidId`, the canonical recipient, `executionId`,
-`effectType`, `effectKey` and `rotationEventCid`. `sourceEventCid` is
-evidence, not intent: each record's reference is validated on its own against
-the input the execution names, and two records naming different observations
-of that input are one intent. Records that differ in an agreed field are a
-conflict for good, whichever replica wrote them and however many preparations
-or submissions each has. A preparer reads the intent through its projection,
-so which agreeing record it reads makes no difference to the plaintext.
+No CID grants admission, dispatch or retry eligibility. The vault keeps the
+plaintext CID and not the plaintext, and envelope bytes may be absent, so a
+reader validates `plaintextCid` and `envelopeCid` for their form alone and
+recomputes only `intentCid`, from the fields beside it
+([schema.ts](../../packages/vault/src/schema.ts)); this version makes no
+matching, deduplication or admission decision by the plaintext CID.
 
 <a id="preparing-a-package"></a>
 
 ## 6. Preparing a message
 
 A preparation fixes one exact envelope of a message. Its plaintext is
-assembled from the intent under [sections 5.1](#self-references) and
-[5.2](#intent-projection), with the message ID as `id`, and with `from`, `to`,
+assembled from the intent under [section 5](#canonical-projections-and-hashes),
+with the message ID as `id`, and with `from`, `to`,
 the exact key methods and any frozen proof following the fixed channel's
 evidence; forbidden `return_route`, duplicate JSON members and invalid I-JSON
 are rejected. The plaintext is canonicalized with RFC 8785 and encrypted
@@ -526,103 +418,65 @@ manual action; waiting is not deletion. ACKs have no independent retention
 contribution.
 
 <a id="durable-end-to-end-acknowledgment"></a>
+<a id="the-ack-target"></a>
+<a id="deterministic-pure-ack"></a>
+<a id="applying-ack"></a>
+<a id="duplicate-receipt-handling"></a>
 
 ## 8. Durable end-to-end acknowledgment
 
-<a id="the-ack-target"></a>
+Whether to honor a `please_ack` is local policy, not a durable reply
+obligation. When the vault does, the one target is the carrier's own
+canonical wire ID: the carrier must be the admitted complete witness
+establishing its input, and the input's admitted intents must agree
+(`ackTarget` in [fold/outbound.ts](../../packages/vault/src/fold/outbound.ts)).
+No other message is ever a target, so no receipt order, wire-ID lookup,
+predecessor-channel search or ambiguity rule enters the selection, and
+later discovery cannot change a saved `ack`; a history rebuilt without the
+admission revokes no saved intent, while a new ACK is created only for an
+admitted carrier. An ACK uses retained receipt and header evidence, so body
+erasure alone does not disqualify its source and restores no permission for
+content-derived work; an input with no eligible sender is preserved for
+manual action.
 
-### 8.1 The ACK target
-
-An ACK is created for an admitted complete source witness, in the channel
-[the built-in operation rule](#built-in-independent-operations) selects; an
-unrelated channel in the same contact is never a substitute, and an input with
-no eligible sender is preserved for manual action. An ACK uses retained
-receipt and header evidence, so body erasure alone does not disqualify its
-source; it restores no permission for content-derived work.
-
-Whether to honor `pleaseAck` is local policy, not a durable reply obligation.
-A carrier that does not request its own receipt under
-[section 5.1](#self-references) creates no requested-ACK work, whatever
-other messages its request names. Otherwise the one target is the carrier's
-own canonical wire ID, which names its exact source input: the carrier must
-be the admitted complete witness establishing that input, and the input's
-admitted intents must agree. No other message is ever a target, so no
-receipt order, wire-ID lookup, predecessor-channel search or ambiguity rule
-enters the selection, and later discovery cannot change the saved `ack`.
-
-Validation of a saved pure ACK checks that its `ack` is exactly the carrier's
-canonical wire ID, that the carrier requests its own receipt, and that the
-carrier's input has no independently admitted intent conflict. The intent
-stands on the carrier's complete witness, admitted or not: a history rebuilt
-without the admission revokes no saved intent, while a new ACK is created
-only for an admitted carrier.
-
-The thread of a reply is derived from the carrier's intent projection
-([section 5.2](#intent-projection)), so that every spelling of one input
-gives one reply intent:
+A reply's thread is derived from the carrier's intent, so that every
+spelling of one input gives one reply intent:
 
 ```text
 replyThread(carrier) = projection.thid == "" ? canonicalWireId(carrier.wireMessageId) : projection.thid
 ```
 
-A carrier in its own thread, by an absent `thid` or one that is its own ID in
-any case, is answered in the thread of its canonical wire ID; one in another
-thread is answered in that thread as the projection recorded it. Generic
-replies use `thid = replyThread(carrier)`, copy nullable `pthid`, and follow
-the producing protocol's response rules. No-response errors still do not reply.
-
-The ACK is its own Empty message, under its own tuple, independent of a
-natural reply or rotation notification, which may coexist with it. Built-in
-Ping replies and rotation notifications have `ack == []`; another application
-protocol may define its own explicit ACKs subject to the same target checks.
-There is no execution-wide limit of one ACK-bearing output. Control input may
-supply ACK observations but cannot trigger recursive privacy notifications.
-Never request an ACK for a pure ACK, or answer a pure ACK with another pure
-ACK. Every output follows normal preparation/submission boundaries.
-
-<a id="deterministic-pure-ack"></a>
-
-### 8.2 Deterministic pure ACK
-
-```text
-effectType = https://estoc.dev/distributed-delivery/1.0#pure-ack
-```
-
-Copy the carrier's normalized nullable creation time; expiry is null. Body is
-`{}`, attachments empty, `pleaseAck` null and `headers` empty. The thread is
-`replyThread(carrier)` and the one ACK target follows section 8.1, so the
-six spellings of one self-threaded carrier give one ACK intent
-([message-vectors.md](message-vectors.md#reply-thread-and-pure-ack)). When
-the intent is created, reused or completed by hand is
+The pure ACK is its own Empty message under the effect type
+`https://estoc.dev/distributed-delivery/1.0#pure-ack`, independent of a
+natural reply or rotation notification: body `{}`, no attachments or
+headers, the carrier's nullable creation time, no expiry, `pleaseAck` null,
+`thid = replyThread(carrier)` and `ack` the one target, so that the six
+spellings of one self-threaded carrier give one ACK intent
+([message-vectors.md](message-vectors.md#reply-thread-and-pure-ack)).
+Built-in Ping replies and rotation notifications have `ack == []`; another
+protocol may define its own explicit ACKs under the same target checks.
+Never request an ACK for a pure ACK, or answer one with another. When the
+intent is created, reused or completed by hand is
 [`packages/agent-core/src/effects.ts`](../../packages/agent-core/src/effects.ts).
-
-<a id="applying-ack"></a>
-
-### 8.3 Applying `ack`
 
 An explicit `ack` whose canonical wire ID is an outbound's message ID,
 carried by one admitted complete source witness whose channel is the
 outbound's fixed channel or a verified role-preserving successor of it,
-records that the peer received the message: peer receipt only, not transport
-acceptance and no permission to send again. Undirected graph connectivity,
-group membership, threads and ordinary responses are insufficient; an
-ignored old-peer carrier acknowledges nothing, while an admission recorded
-before supersession remains historical ACK evidence. The carrier's key need
-not equal the old preparation's recipient key. Which witnesses qualify, over
-which path, is [the delivery fold](../../packages/vault/src/fold/outbound.ts)
-over [channel authorization](../../packages/vault/src/fold/continuity.ts);
-each is recorded once as `delivery.acknowledged` by
+records that the peer received the message: peer receipt only, not
+transport acceptance and no permission to send again. Undirected
+connectivity, group membership, threads and ordinary responses are
+insufficient; an ignored old-peer carrier acknowledges nothing, while an
+admission recorded before supersession remains historical ACK evidence.
+Which witnesses qualify, over which path, is the delivery fold over
+[channel authorization](../../packages/vault/src/fold/continuity.ts); each
+is recorded once as `delivery.acknowledged` by
 [`packages/agent-core/src/acknowledgements.ts`](../../packages/agent-core/src/acknowledgements.ts).
 
-<a id="duplicate-receipt-handling"></a>
-
-### 8.4 Duplicate receipt handling
-
-An authenticated duplicate in the same channel is another observation of the
-same input under [the inbound fold](../../packages/vault/src/fold/inbound.ts):
-it creates no new effect, output ID, preparation, proof or dispatch action.
-Another channel has another input identity and is not a duplicate under this
-profile.
+An authenticated duplicate in the same channel is another observation of
+the same input under
+[the inbound fold](../../packages/vault/src/fold/inbound.ts): it creates no
+new effect, output ID, preparation, proof or dispatch action. Another
+channel is another input, not a duplicate.
 
 <a id="observation-identity-logical-aliasing-and-execution-identity"></a>
 <a id="observation-ids-and-vectors"></a>
@@ -634,8 +488,8 @@ profile.
 ## 9. Channel-local message and execution identity
 
 For authenticated input, canonicalize the authenticated sender and actual
-local recipient, take the canonical wire ID of the plaintext `id` under
-[section 5.1](#self-references), then compute:
+local recipient, take the canonical wire ID of the plaintext `id`, then
+compute:
 
 ```text
 messageId = UUIDv5(
@@ -649,11 +503,10 @@ executionId = UUIDv5(
 )
 ```
 
-Use the literal transcript members `sender` and `recipient`; RFC 8785 orders
-object members canonically, and the event schema member names are not
-substitutes for these transcript tags. For inbound work, the peer is the
-sender and the local DID is the recipient. For truly anonymous input, retain
-the independent observation-only derivation:
+The transcript members are the literal tags `sender` and `recipient`, which
+RFC 8785 orders; the event schema member names are no substitute. For
+inbound work the peer is the sender and the local DID the recipient. For
+truly anonymous input, retain the independent observation-only derivation:
 
 ```text
 messageId = UUIDv5(
@@ -665,59 +518,42 @@ messageId = UUIDv5(
 The namespace derivation is [ids.ts](../../packages/vault/src/ids.ts)'s,
 and the naming vectors, the two spellings of one wire ID among them, are
 pinned in [ids.test.ts](../../packages/vault/test/ids.test.ts): `message.in`
-keeps the `id` as received, the transcript takes its canonical form. These
-are identifier fixtures, not authentication or proof fixtures.
+keeps the `id` as received, the transcript takes its canonical form.
 
-Keys and source event CIDs remain exact authentication evidence. Different
-authorized keys in the same immutable DID document can represent the same
-channel input; selected key differences create no new deduplication scope.
-Opposite sender directions cannot collide merely by choosing the same wire
-ID. Each source is validated with its own recipient/key mapping and
-immutable authentication document under
-[the channel evidence fold](../../packages/vault/src/fold/channels.ts);
-equal intent within one sender/recipient/wire-ID input shares one execution,
-and disagreement is
-[the inbound fold](../../packages/vault/src/fold/inbound.ts)'s conflict.
-Continuity links never merge inputs from different channels.
-
-Automatic work requires
+Keys and source event CIDs remain exact authentication evidence; different
+authorized keys in one immutable DID document represent the same channel
+input, and opposite sender directions cannot collide by choosing the same
+wire ID. Equal intent within one input shares one execution, disagreement
+is [the inbound fold](../../packages/vault/src/fold/inbound.ts)'s conflict,
+and continuity links never merge inputs from different channels. Identity
+alone grants no work: automatic work requires
 [an admitted witness](../../packages/vault/src/admission/model.ts) and
-[a live action](../../packages/agent-core/src/action.ts), independently of
-ID derivation. Source, endpoint and proof dependencies must already be
-committed. Anonymous and mediator-control input have no application
-execution.
+[a live action](../../packages/agent-core/src/action.ts), and anonymous and
+mediator-control input have no application execution.
 
 Changing either endpoint produces another channel and another inbound and
-execution ID. The old observation and its effects remain unchanged. Retrying
-an existing outbound does not make this change; only a new send can select
-the new channel. ACK authorization may follow verified successor paths for
-an exact outbound message; that path does not merge the ACK carrier and the
-acknowledged message into one execution.
+execution ID; the old observation and its effects remain unchanged, and only
+a new send can select the new channel. ACK authorization may follow
+verified successor paths for an exact outbound message without merging the
+ACK carrier and the acknowledged message into one execution.
 
 <a id="automatic-effects"></a>
 
 ## 10. Automatic effects
 
-An automatic DIDComm output is identified by `(executionId, effectType)`.
-`executionId` MUST derive from a complete, conflict-free logical carrier under
-[the input fold](../../packages/vault/src/fold/inbound.ts). An intent
+An automatic DIDComm output is identified by `(executionId, effectType)`,
+the execution derived from a complete, conflict-free carrier under
+[the input fold](../../packages/vault/src/fold/inbound.ts); an intent
 conflict between independently admitted observations suppresses all
-automatic work for that execution; making a disagreeing group ineligible
-cannot clear the conflict.
-
-Each protocol MUST assign a fixed `effectType` URI to each operation and define
-its output intent rules. The URI MUST include a scheme and MUST NOT contain
-U+0000. Its exact UTF-8 spelling identifies the operation; implementations MUST
-NOT normalize or dereference it to derive the key. The identifier is shared
-across implementations and MUST remain unchanged when handlers are renamed,
-split or refactored. Distinct operations MUST use different effect types, even
-when they produce the same DIDComm message type. An effect type need not itself
-be a DIDComm message type URI.
-
-Each tuple permits at most one compatible output intent; different effect types
-may independently produce outputs for the same execution. Retries MUST reuse
-the tuple and MUST NOT change effect type to create another output or evade a
-tuple or execution conflict.
+automatic work for that execution, and making a disagreeing group
+ineligible cannot clear it. Each protocol assigns a fixed `effectType` URI
+to each operation: a URI with a scheme and no U+0000, identified by its
+exact UTF-8 spelling, shared across implementations, unchanged when
+handlers are renamed, split or refactored, and distinct per operation even
+when two operations produce the same DIDComm message type. Each tuple
+permits at most one compatible output intent; retries reuse the tuple and
+may not change the effect type to create another output or evade a
+conflict.
 
 ```text
 effectKey = base64url(
@@ -729,42 +565,31 @@ effectKey = base64url(
 )
 ```
 
-The unpadded base64url key determines the outbound message and wire ID under
-[ids.ts](../../packages/vault/src/ids.ts). The
+The unpadded base64url key determines the outbound message and wire ID
+(`effectKey` and `automaticMessageId` in
+[ids.ts](../../packages/vault/src/ids.ts)); the
 [message.out schema](../../packages/vault/src/schema.ts) stores the tuple
-and intent and defines their validation; conflicts follow
-[the delivery fold](../../packages/vault/src/fold/outbound.ts).
+and intent.
 
 Each tuple has one result, read from the vault before anything is decided
-or frozen, before the input's body is read or its handler asked:
-
-- **produced** — a `message.out` under the tuple. It is reused as it is
-  after submission, source erasure, another observation, a handler that would
-  decide otherwise now or a changed clock; the exact source and any rotation
-  decision are retained directly in the intent.
-- **skipped** — an `effect.skipped` under the tuple: the operation's own
-  rule, applied to the admitted input, owes it no output, for good. Only a
-  decision that is a function of the input and the operation is recorded so.
-  A receipt not given under local policy, a channel that takes no reply now,
-  evidence not here yet, a paused runtime or a failed write is no skip and
-  is recorded by nothing.
-- **pending** — neither: the output is still to make, by the live input's
-  responder or by hand.
-
-A produced and a skipped result under one tuple are a conflict of that tuple.
-Several skipped records are one result; several produced records are one
-intent or a conflict under [section 5.5](#intent-equality). An input whose
-tuples are all produced or skipped owes no output; a produced output not yet
-submitted is the message's own unfinished work, not the tuple's. Missing
-evidence or sender leaves an operation pending without blocking another
-independently eligible operation. ACKs and rotation notifications are
-standalone Empty messages, independent of natural protocol responses;
-arrival, dependency completion and handler order never merge their tuples.
-Only eligible live input creates an initial intent on its own, and only on
-the replica answering it; historical unfinished work is completed by hand
-with the same tuples under
-[the live action](../../packages/agent-core/src/action.ts). How each
-operation is decided, committed and dispatched is
+or frozen, before the input's body is read or its handler asked
+(`effectResult` in [fold/outbound.ts](../../packages/vault/src/fold/outbound.ts)):
+**produced**, a `message.out` under the tuple, reused as it is after
+submission, source erasure, another observation, a handler that would
+decide otherwise now or a changed clock; **skipped**, an `effect.skipped`
+under the tuple, the operation's own rule applied to the admitted input
+owing it no output for good; or **pending**, neither. Only a decision that
+is a function of the input and the operation is a skip: a receipt not given
+under local policy, a channel that takes no reply now, evidence not here
+yet, a paused runtime or a failed write is recorded by nothing. A produced
+and a skipped result under one tuple conflict; several produced records are
+one intent or a conflict under [section 5](#intent-equality). An input
+whose tuples are all produced or skipped owes no output; a produced output
+not yet submitted is the message's own unfinished work. Only eligible live
+input creates an initial intent on its own, and only on the replica
+answering it; historical unfinished work is completed by hand with the same
+tuples under [the live action](../../packages/agent-core/src/action.ts).
+How each operation is decided, committed and dispatched is
 [`packages/agent-core/src/effects.ts`](../../packages/agent-core/src/effects.ts).
 
 An input posted directly to a runtime reached it alone, and that runtime
@@ -772,25 +597,22 @@ answers it. An input picked up at a replica-mediation mediator reached every
 replica of the account: each replica that the input still owes an output
 registers under the input's `executionId` at that mediator, the replica the
 registration lists first answers the input, and every other replica creates
-no intent for the execution and keeps, in its runtime's local state, that it
-left the input to that replica. The vault records neither the registration
-nor the leave, so no snapshot, import or restore carries them: a runtime
-whose current replica keeps no leave lists the input's outputs as
-unfinished work, and a missing leave authorizes no registration, intent or
-call. A replica that cannot read the registration as listing itself creates
-no intent and keeps no leave. The registration gives no process-level
-exactly-once execution: the replica listed first may stop before it
-answers, and an explicit completion on any replica may still make the
-outputs; two outputs so made for one tuple are one intent when they agree
-under [section 5.5](#intent-equality), and copying the source's time keeps
-clocks out of the comparison. Who answers an input is
+no intent and keeps, in its runtime's local state, that it left the input
+to that replica. The vault records neither the registration nor the leave,
+so a runtime whose current replica keeps no leave lists the input's outputs
+as unfinished work, and a missing leave authorizes no registration, intent
+or call. The registration gives no process-level exactly-once execution:
+the replica listed first may stop before it answers, an explicit completion
+on any replica may still make the outputs, and two outputs so made for one
+tuple are one intent when they agree under [section 5](#intent-equality).
+Who answers an input is
 [`packages/agent-core/src/responder.ts`](../../packages/agent-core/src/responder.ts);
 the registration the mediator keeps is
 [the mediator's README](../../mediator/README.md#executions).
 
 Other external effects MUST commit their protocol-defined portable intent
-before execution and use that protocol's idempotency or explicit at-least-once
-contract. The message fold does not validate those payloads.
+before execution and use that protocol's idempotency or explicit
+at-least-once contract. The message fold does not validate those payloads.
 
 <a id="built-in-independent-operations"></a>
 
@@ -803,27 +625,19 @@ contract. The message fold does not validate those payloads.
 | Inbound-triggered rotation notification | `https://estoc.dev/distributed-delivery/1.0#rotation-notification` |
 
 Pure ACK and rotation notification both use DIDComm type
-`https://didcomm.org/empty/1.0/empty`. Their distinct effect types keep both
-operations independent for one execution.
-
-A built-in ACK or Ping reply goes by the carrier's own channel while its
-local DID may still send there, else by the unique verified successor that
-keeps the carrier's canonical peer, else not at all:
-[the response policy](../../packages/vault/src/response-policy.ts).
-`recipientDid` is the source's canonical `did`, never its `presentedDid`
-spelling. This is a producer selection rule; import validates the saved
-intent's evidence, not the producer's then-visible lifecycle state. A later
-rotation or retirement never reselects a committed intent; it can prohibit
-dispatch, and no second tuple bypasses the restriction.
-
-A Ping reply is independent of an ACK the Ping requests. A rotation
-notification names the exact `rotationEventCid` of one rotation record in
-its intent and uses that record's trigger source for its execution; one
-record has one notification, and a manual rotation with no trigger source
-mints its notification intent locally. What each reply contains, how a
-record reuses its notification and when a missing one may still be
-completed by hand are [`effects.ts`](../../packages/agent-core/src/effects.ts)
-and [the rotation procedure](../../packages/agent-core/src/rotate.ts).
+`https://didcomm.org/empty/1.0/empty`; their distinct effect types keep the
+two operations independent for one execution, and arrival, dependency
+completion and handler order never merge tuples. A built-in reply goes by
+the carrier's own channel while its local DID may still send there, else by
+the unique verified successor that keeps the carrier's canonical peer, else
+not at all ([the response policy](../../packages/vault/src/response-policy.ts));
+a later rotation or retirement never reselects a committed intent, it can
+only prohibit dispatch. A rotation notification names the exact
+`rotationEventCid` of one rotation record in its intent and uses that
+record's trigger source for its execution; one record has one notification.
+What each reply contains, and how a notification is reused or completed by
+hand, are [`effects.ts`](../../packages/agent-core/src/effects.ts) and
+[the rotation procedure](../../packages/agent-core/src/rotate.ts).
 
 <a id="required-vault-observations"></a>
 <a id="failure-rules"></a>

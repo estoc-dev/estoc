@@ -77,6 +77,13 @@ const publicKey: Check<PublicKey> = (value, at) => {
   }
 };
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
+/**
+ * A layer CID read from a payload is checked for its form here and, for
+ * the intent, recomputed from the fields beside it where the payload is
+ * read. The plaintext and envelope CIDs cannot be recomputed: the vault
+ * keeps no plaintext, and envelope bytes may be absent; nothing is
+ * decided by either, so form is all a reader can and need check.
+ */
 const intentCid: Check<IntentCid> = (value, at) => cid(value, at) as IntentCid;
 const plaintextCid: Check<PlaintextCid> = (value, at) => cid(value, at) as PlaintextCid;
 const envelopeCid: Check<EnvelopeCid> = (value, at) => cid(value, at) as EnvelopeCid;
