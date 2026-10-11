@@ -94,6 +94,27 @@ describe("guardedFetch", () => {
       stopped.abort();
       await expect(guardedFetch(new Request(`${PUBLIC}/inbox`, { signal: stopped.signal }))).rejects.toMatchObject({ name: "AbortError" });
     });
+
+    it("ends a Request whose body has not ended when its signal aborts, before the read or during it, cancelling the body and sending nothing", async () => {
+      for (const during of [false, true]) {
+        const stop = new AbortController();
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+            return new Promise<void>(() => {});
+          },
+        });
+        const init: RequestInit & { duplex: "half" } = { method: "POST", body, duplex: "half", signal: stop.signal };
+        const request = new Request(`${PUBLIC}/upload`, init);
+        if (!during) stop.abort();
+        const sent = guardedFetch(request);
+        if (during) setTimeout(() => stop.abort(), 10);
+        await expect(sent).rejects.toMatchObject({ name: "AbortError" });
+        expect(cancelled).toBe(true);
+      }
+      expect(Agent.prototype.dispatch).not.toHaveBeenCalled();
+    });
   });
 
   it("holds under fetchWebDid: a did:web on loopback that the name check allows is still refused at lookup", async () => {

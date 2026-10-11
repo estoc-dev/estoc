@@ -63,18 +63,22 @@ const dispatcher = new Agent({
  * The URL and init of the request fetch would make, in a form the
  * package's undici takes: a `Request` of Node's own fetch is not one of
  * undici's, so its parts go over one by one, with `init` merged in by
- * fetch's rules first. Its body is read whole so the request still
- * carries its length.
+ * fetch's rules first. Its body is read whole, so that it goes out with
+ * its length as fetch sends a body whose size it knows: a server may
+ * refuse a body without one, as a mediator's blob upload does. The read
+ * is under the request's signal, which ends it and cancels the body
+ * whether the body would have ended or not.
  */
 async function undiciRequest(input: RequestInfo | URL, init: RequestInit | undefined): Promise<[string, UndiciRequestInit]> {
   if (!(input instanceof Request)) return [String(input), { ...(init as UndiciRequestInit) }];
   const request = new Request(input, init);
+  const body = request.body === null ? null : await new Response(request.body.pipeThrough(new TransformStream(), { signal: request.signal })).arrayBuffer();
   return [
     request.url,
     {
       method: request.method,
       headers: [...request.headers],
-      body: request.body === null ? null : await request.arrayBuffer(),
+      body,
       signal: request.signal,
       redirect: request.redirect,
       cache: request.cache,

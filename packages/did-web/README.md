@@ -44,7 +44,8 @@ switch (fetched.outcome) {
   development.
 - **`didWebFromUrl(publicUrl)`**: the inverse, for a service that names
   itself: the did:web whose document `webDidUrl` finds at that URL, or a
-  throw when there is none, as for plain http to a public name.
+  throw when there is none, as for plain http to a public name or a path
+  `webDidUrl` writes otherwise, such as `a:b` where it writes `a%3Ab`.
 - **`fetchWebDid(did, options)`**: the fetch. `fetch` is the transport;
   `maxBytes` bounds the body (`MAX_DOCUMENT_BYTES`, 256 KiB, by default);
   `timeoutMs` bounds the whole fetch, to the parsed document
@@ -89,7 +90,8 @@ to, at lookup, and an IP literal before it is dialled. It refuses a scheme
 other than http and https before anything else. It follows no redirect,
 whatever the request asks: a 3xx is the answer, or an error under
 `redirect: "error"`. A `Request` goes out as fetch would send it, with
-`init` over it, its body read whole first. In a browser or a Worker the
+`init` over it, its body read whole first so that it keeps its length, and
+an abort of its signal ends that read too. In a browser or a Worker the
 platform's `fetch` makes the connection, and the checks on the name are what
 this package holds there.
 

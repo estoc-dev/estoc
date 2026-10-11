@@ -70,7 +70,8 @@ function idchars(segment: string): string {
  * URL that `webDidUrl` would not give back is refused with a throw: an
  * http URL to anything but a loopback host, an https one to a loopback
  * host, an IP literal, a reserved name, a path element that is empty or
- * no segment.
+ * no segment, or one written otherwise than `webDidUrl` writes it, since
+ * a server may tell `a:b` from `a%3Ab`.
  */
 export function didWebFromUrl(publicUrl: string | URL): string {
   const url = new URL(publicUrl);
@@ -80,6 +81,7 @@ export function didWebFromUrl(publicUrl: string | URL): string {
   const did = ["did:web", host, ...elements.map((element) => idchars(decodeURIComponent(element)))].join(":");
   const derived = webDidUrl(did, true);
   if ("refused" in derived) throw new Error(`${url.href} has no did:web: ${derived.refused}`);
-  if (derived.url.origin !== url.origin) throw new Error(`${url.href} has no did:web: its document is fetched from ${derived.url.origin}`);
+  const document = new URL(elements.length === 0 ? "/.well-known/did.json" : `/${elements.join("/")}/did.json`, url);
+  if (derived.url.href !== document.href) throw new Error(`${url.href} has no did:web: its document is fetched from ${derived.url.href}`);
   return did;
 }

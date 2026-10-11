@@ -6,9 +6,10 @@
   `@estoc/did-web/node`**, the transport the mediator uses too. It now
   follows no redirect, as the README said, whatever the request asks: a
   redirect to a private address had been followed. A `Request` keeps its
-  method, headers, body and signal. A refused IP literal or scheme now
-  carries the code `EBLOCKED`, as a refused address at lookup did. The
-  `ipaddr.js` and `undici` dependencies go with it.
+  method, headers, body and signal, and an abort ends the read of its
+  body too. A refused IP literal or scheme now carries the code
+  `EBLOCKED`, as a refused address at lookup did. The `ipaddr.js` and
+  `undici` dependencies go with it.
 - **Snapshot links**: `publishSnapshotLink` seals the vault's snapshot
   under a key of its own and puts it at the selected mediator as this
   replica's blob, answering the link (the blob's URL, its name and its

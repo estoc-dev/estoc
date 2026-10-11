@@ -87,19 +87,32 @@ describe("didWebFromUrl", () => {
       ["http://localhost:8787", "http://localhost:8787/.well-known/did.json"],
       ["http://localhost:443", "http://localhost:443/.well-known/did.json"],
       ["http://127.0.0.1:443/a", "http://127.0.0.1:443/a/did.json"],
+      ["https://bob.example/caf%C3%A9/a!b", "https://bob.example/caf%C3%A9/a!b/did.json"],
     ] as const) {
       expect(urlOf(didWebFromUrl(url), true), url).toBe(document);
     }
   });
 
   it("refuses a URL its did:web would not be fetched from", () => {
-    expect(() => didWebFromUrl("http://mediator.example.com")).toThrow(/its document is fetched from https:\/\/mediator\.example\.com$/);
-    expect(() => didWebFromUrl("https://localhost:8443")).toThrow(/its document is fetched from http:\/\/localhost:8443$/);
+    expect(() => didWebFromUrl("http://mediator.example.com")).toThrow(/its document is fetched from https:\/\/mediator\.example\.com\/\.well-known\/did\.json$/);
+    expect(() => didWebFromUrl("https://localhost:8443")).toThrow(/its document is fetched from http:\/\/localhost:8443\/\.well-known\/did\.json$/);
     expect(() => didWebFromUrl("http://[::1]:8787")).toThrow(/not a did:web/);
     expect(() => didWebFromUrl("https://10.0.0.1")).toThrow(/IP-literal/);
     expect(() => didWebFromUrl("https://printer.local")).toThrow(/reserved name/);
     expect(() => didWebFromUrl("https://bob.example/a%2Fb")).toThrow(/path segment/);
     expect(() => didWebFromUrl("https://bob.example/a//b")).toThrow(/path segment ""/);
     expect(() => didWebFromUrl("https://bob.example//a")).toThrow(/path segment ""/);
+  });
+
+  it("refuses a path that webDidUrl writes otherwise, a delimiter or an escape the server may tell apart", () => {
+    for (const [url, document] of [
+      ["https://bob.example/a:b", "https://bob.example/a%3Ab/did.json"],
+      ["https://bob.example/a@b", "https://bob.example/a%40b/did.json"],
+      ["https://bob.example/a;b", "https://bob.example/a%3Bb/did.json"],
+      ["https://bob.example/alice%21", "https://bob.example/alice!/did.json"],
+      ["https://bob.example/caf%c3%a9", "https://bob.example/caf%C3%A9/did.json"],
+    ] as const) {
+      expect(() => didWebFromUrl(url), url).toThrow(`${url} has no did:web: its document is fetched from ${document}`);
+    }
   });
 });

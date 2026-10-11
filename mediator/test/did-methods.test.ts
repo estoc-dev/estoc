@@ -24,7 +24,7 @@ describe("did:web identity", () => {
   it("is named by the public URL, and refused with the way out where no resolver would fetch it", async () => {
     expect((await mintIdentity("https://mediator.example.com:8443/didcomm", "web")).did).toBe("did:web:mediator.example.com%3A8443:didcomm");
     expect((await mintIdentity("http://localhost:8787", "web")).did).toBe("did:web:localhost%3A8787");
-    await expect(mintIdentity("http://mediator.example.com", "web")).rejects.toThrow(/fetched from https:\/\/mediator\.example\.com; set MEDIATOR_DID_METHODS=peer2/);
+    await expect(mintIdentity("http://mediator.example.com", "web")).rejects.toThrow(/fetched from https:\/\/mediator\.example\.com\/\.well-known\/did\.json; set MEDIATOR_DID_METHODS=peer2/);
   });
 });
 
