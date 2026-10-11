@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **The replica channel** (breaking): replica-channel/1.0 carries mail
+  between the replicas of one vault's seed at one arrangement, and has
+  one type, `snapshot-link` (`SNAPSHOT_LINK`), whose body is exactly
+  `{ replica_id, url, hash, key }` (`snapshotLinkBody`,
+  `readSnapshotLink`). `Agent.sendSnapshotLink(to, link)` sends one from
+  this runtime's replica, which must be a member of a usable
+  arrangement: sealed from the long form of its DID to `to`'s, and
+  forwarded through the arrangement's mediator. `to` is refused with
+  `NotAReplica` unless the seed derives its document for its ID at that
+  mediator. Nothing is recorded and nothing is sent again. Mail naming
+  the runtime's replica DID and no communication DID is the channel's:
+  with `AgentOptions.onSnapshotLink` set, it is taken only from the
+  replica's mailbox and opened with the replica's key, and its link is
+  handed to the host, the delivery then acknowledged, when a long form
+  sealed it with no `from_prior`, its body names another replica ID
+  whose document the seed derives at the arrangement's mediator, and its
+  URL is an https one of that mediator; anything else is terminal.
+  Without the option such mail is acknowledged unopened, as before.
+  `classifyRecipients` gives it the verdict `replica`, `Receiver` takes
+  a `replicaReceipt` (`replicaReceiptOf`), and `Received` has the
+  outcome `handed`. `BlobLink` is a blob's URL with what opens it.
 - **did:web through `@estoc/did-web`** (breaking): the URL a did:web
   names, the fetch and the transport contract are that package's, and
   `webDidUrl`, `DEFINITIVE_TRANSPORT_CODES` and `MAX_DOCUMENT_BYTES` are

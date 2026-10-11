@@ -10,7 +10,8 @@ recorded as one observation under that same lock, and earns automatic
 work only in the call that recorded it. On the wire: the mediator's
 replica-mediation protocol (each runtime a replica of one account),
 messagepickup 3.0 over HTTP and WebSocket, routing 2.0 forwards,
-blob-store 1.0 for blobs the replica keeps at its mediator, channels of
+blob-store 1.0 for blobs the replica keeps at its mediator,
+replica-channel 1.0 between the replicas of one seed, channels of
 did:peer:4 pairs rotated by `from_prior`, invitations, trust-ping,
 basicmessage, user-profile and report-problem.
 
@@ -39,7 +40,7 @@ races, crashes, restore, closing and a hostile peer.
 | Question | Module | Entry points |
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
-| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `blobStore`, `close` |
+| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `blobStore`, `sendSnapshotLink`, `close` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
@@ -49,7 +50,8 @@ races, crashes, restore, closing and a hostile peer.
 | How is the replica's mail fetched and acknowledged? | `pickup.ts` | `Pickup` |
 | How does the replica keep a blob at the mediator, and how is one read back? | `blob-store.ts` | `BlobStore`, `readBlob` |
 | How is a blob sealed, and opened? | `sealed-blob.ts` | `sealBlob`, `openBlob`, `SEAL_OVERHEAD` |
-| Which keys does this runtime hold in hand? | `keyring.ts` | `Keyring`, `secretsOf` |
+| How do the replicas of one seed write to each other, and how is the sender known to hold the seed? | `replica-channel.ts` | `replicaRoute`, `sendOverRoute`, `replicaReceiptOf`, `boundReplica` |
+| Which keys does this runtime hold in hand? | `keyring.ts` | `Keyring`, `secretsOf`, `replicaSecrets` |
 | How is a communication DID minted, disclosed, retired? | `dids.ts` | `createDid`, `disclose`, `retireDid`, `routeOf` |
 | What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `WebResolverOptions` |
 | What is retained of a peer's document, and how does didcomm read it? | `evidence.ts` | `commitResolution`, `readResolution`, `pinnedResolver` |
@@ -82,7 +84,7 @@ races, crashes, restore, closing and a hostile peer.
 2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `ends.ts` for the sealing and carrying beneath them, which read nothing but the two ends, `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
-5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds.
+5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
 
 ## Usage
 

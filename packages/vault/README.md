@@ -35,7 +35,7 @@ derives are pinned there too.
 | How is a public key spelled? | `public-key.ts` | `canonicalPublicKey`, `agreementKey` |
 | Does this payload read? | `schema.ts`, `syntax.ts` | `readVaultEvent`, `readVaultDraft`, `vaultDraft` |
 | What does a message store, and what identifies it? | `document.ts`, `projection.ts` | `storeMessage`, `wireAttachment`, `envelopeOf`, `readPlaintext`, `wirePlaintext`, `intentOf`, `plaintextCidOf`, `requestsAck`, `replyThread` |
-| Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `documentSendsTo` |
+| Which keys and DIDs are ours? | `identity.ts` | `Keys`, `mintDid`, `mintMediationDid`, `mintReplicaDid`, `checkDidCreated`, `checkReplicaDocument`, `documentSendsTo` |
 | What does the vault retain of a peer's document? | `peer-document.ts` | `peerResolution`, `canonicalDidOf`, `authorizedMethodIds`, `methodPublicKey` |
 | How is a proof signed, and what is it verified against? | `from-prior.ts`, `replica-grant.ts`, `recipient-proof.ts` | `signFromPrior`, `issuerLongFormOf`, `signReplicaGrant`, `verifyReplicaGrant`, `signRecipientProof` |
 | Which events are there? | `fold/set.ts` | `VaultEventSet` |

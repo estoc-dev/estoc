@@ -142,7 +142,7 @@ export {
   serviceTargetOf,
   checkDidKeys,
   checkMediationKeys,
-  checkReplicaKeys,
+  checkReplicaDocument,
   checkDidCreated,
   checkMediationCreated,
 } from "./identity.js";

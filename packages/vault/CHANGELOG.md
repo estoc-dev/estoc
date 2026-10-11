@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A replica's document is checked whole** (breaking):
+  `checkReplicaDocument(keys, replicaId, resolution, mediatorDid)`
+  replaces `checkReplicaKeys`. Besides carrying the two keys the seed
+  derives for the replica's ID, the document must send to that mediator
+  alone, the two compared as validated DIDs. `verifyReplicaGrant` checks
+  a grant's replica with it and accepts what it accepted; refusing a
+  replica that sends elsewhere, it now names the mediator it expected.
 - **Verification relationships are read by `@estoc/did-peer`**
   (breaking): `authorizedMethodIds`, `definedMethod` and the service IDs
   of a retained document come from `@estoc/did-peer`, which

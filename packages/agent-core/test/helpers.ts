@@ -10,10 +10,8 @@ import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type Seed
 import {
   AUTHENTICATION_METHOD,
   PLAINTEXT_TYP,
-  authorizedMethodIds,
   didKeyName,
   inboundMessageId,
-  peerResolution,
   readPlaintext,
   scanVault,
   vaultDraft,
@@ -32,6 +30,7 @@ import {
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type DIDResolver, type IMessage } from "../src/protocol/didcomm.js";
+import { FORWARD } from "../src/protocol/spec.js";
 import {
   AgentTrace,
   Keyring,
@@ -56,7 +55,7 @@ import {
   type Timers,
   type RouteSpec,
 } from "../src/index.js";
-import { secretsOf } from "../src/keyring.js";
+import { replicaSecrets } from "../src/keyring.js";
 import { FakeMediator, MEDIATOR_HTTP } from "./fake-mediator.js";
 
 export const didcomm = { Message };
@@ -142,10 +141,9 @@ export async function party(mediator: FakeMediator, fill = 1, over: Partial<Link
 
 /** A link speaking as the runtime's replica DID with that DID's keys alone, under both its spellings: what picks the replica's mail up. */
 export async function replicaLink(p: Pick<Party, "keys" | "linkOptions">, replica: Replica): Promise<MediatorLink> {
-  const { did, longFormDid } = replica;
-  if (did === null || longFormDid === null) throw new Error(`the replica ${replica.replicaId} has no DID`);
-  const { document } = peerResolution(longFormDid);
-  const secrets = secretsOf(await p.keys.replicaKeys(replica.replicaId), [longFormDid, did], { authentication: authorizedMethodIds(document, "authentication"), keyAgreement: authorizedMethodIds(document, "keyAgreement") });
+  const { replicaId, did, longFormDid } = replica;
+  if (did === null || longFormDid === null) throw new Error(`the replica ${replicaId} has no DID`);
+  const secrets = await replicaSecrets(p.keys, { replicaId, did, longFormDid });
   return new MediatorLink({ ...p.linkOptions, me: longFormDid, secrets: () => secrets });
 }
 
@@ -244,6 +242,13 @@ export async function sealed(from: Sealer | null, to: string, extra: Partial<IMe
   const plain = { id: crypto.randomUUID(), typ: PLAIN_TYP, type: BASIC_MESSAGE, ...(from === null ? {} : { from: from.did }), to: [to], body: { content: "hello" }, ...extra } as IMessage;
   const [packed] = await packEncrypted(didcomm, plain, to, from?.did ?? null, null, from?.resolver ?? { resolve: resolveDIDCommDoc }, secretsResolverFor(from?.secrets ?? []), { forward: false });
   return packed;
+}
+
+/** An envelope left at the mediator for `next`, by no one in particular. */
+export async function forwarded(mediator: FakeMediator, next: string, packed: string): Promise<void> {
+  const forward = { id: crypto.randomUUID(), typ: PLAIN_TYP, type: FORWARD, to: [mediator.did], body: { next }, attachments: [{ id: crypto.randomUUID(), data: { json: JSON.parse(packed) as unknown } }] } as IMessage;
+  const [outer] = await packEncrypted(didcomm, forward, mediator.did, null, null, { resolve: resolveDIDCommDoc }, secretsResolverFor([]), { forward: false });
+  await mediator.handleHttp(outer);
 }
 
 export const kidOf = (packed: string): string => (JSON.parse(packed) as { recipients: { header: { kid: string } }[] }).recipients[0]!.header.kid;

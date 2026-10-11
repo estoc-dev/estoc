@@ -18,7 +18,7 @@ import { base64urlnopad } from "@scure/base";
 
 import { IdentityMismatch, InvalidPublicKey, Locked } from "./errors.js";
 import { ANCHOR_KEY_NAME, didKeyName, mediationKeyName, replicaKeyName } from "./ids.js";
-import { authorizedMethodIds, didcommServiceUris, methodPublicKey, peerResolution, type PeerResolution } from "./peer-document.js";
+import { authorizedMethodIds, canonicalDidOf, didcommServiceUris, methodPublicKey, peerResolution, type PeerResolution } from "./peer-document.js";
 import { canonicalPublicKey } from "./public-key.js";
 import { isDid } from "./syntax.js";
 import type { Did, DidId, KeyName, MediationId, PublicKey, ReplicaId, VaultData } from "./types.js";
@@ -247,12 +247,23 @@ export async function checkMediationKeys(keys: Keys, mediationId: MediationId, r
   holdsKey(resolution, "keyAgreement", keyAgreement, entity);
 }
 
-/** A replica's document against the seed: its methods must carry the two keys the replica's name derives. */
-export async function checkReplicaKeys(keys: Keys, replicaId: ReplicaId, resolution: PeerResolution): Promise<void> {
+/**
+ * A replica's document against the seed and the mediator of its
+ * arrangement: its methods must carry the two keys the replica's name
+ * derives, and it must send to that mediator alone. The mediator may be
+ * spelled differently here and in the service: each did:peer:4 long
+ * form among them is validated against its hash before the two are
+ * compared, since resolving the replica's document validates nothing
+ * nested in its service URI. `IdentityMismatch` or `InvalidDidDocument`
+ * otherwise.
+ */
+export async function checkReplicaDocument(keys: Keys, replicaId: ReplicaId, resolution: PeerResolution, mediatorDid: Did): Promise<void> {
   const entity = `replica ${replicaId}`;
   const { authentication, keyAgreement } = await keys.replicaKeys(replicaId);
   holdsKey(resolution, "authentication", authentication, entity);
   holdsKey(resolution, "keyAgreement", keyAgreement, entity);
+  const uris = didcommServiceUris(resolution.document);
+  if (uris.length !== 1 || canonicalDidOf(uris[0]!) !== canonicalDidOf(mediatorDid)) throw new IdentityMismatch(`${entity} sends to ${JSON.stringify(uris)}, not the mediator ${mediatorDid}`);
 }
 
 /**

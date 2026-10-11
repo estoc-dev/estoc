@@ -85,6 +85,18 @@ export class MismatchedEnds extends Error {
   }
 }
 
+/** What a send to another replica was given is not a replica of this vault's seed at the arrangement this runtime's replica belongs to: nothing was sent. */
+export class NotAReplica extends Error {
+  constructor(
+    readonly replicaId: string,
+    readonly did: string,
+    reason: string
+  ) {
+    super(`${did} is not replica ${replicaId} of this vault at this runtime's arrangement: ${reason}`);
+    this.name = "NotAReplica";
+  }
+}
+
 /** The key an observation or a selection names is not one the resolved document authorizes for any use. */
 export class UnauthorizedKey extends Error {
   constructor(did: string, publicKey: string) {

@@ -16,8 +16,10 @@
  * account holds no queue of its own: its mail waits for each replica,
  * and is picked up, acknowledged and pushed under this runtime's own
  * replica DID. An envelope naming that DID and no communication DID
- * of the vault is no application mail and is acknowledged unopened,
- * since no protocol addressed to a replica is supported.
+ * of the vault is no application mail: it is the replica channel's,
+ * from another replica of the seed, and what it carries goes to the
+ * host, never to the vault; a host that takes none of it has it
+ * acknowledged unopened.
  *
  * Only two things here authorize a transport call by themselves: the
  * user's send, and the first observation the vault holds of an input,
@@ -53,7 +55,7 @@
 
 import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
-import { authorizedMethodIds, peerResolution, requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
+import { requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
 
 import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
@@ -64,14 +66,17 @@ import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
-import { Keyring, secretsOf } from "./keyring.js";
+import { Keyring, replicaSecrets } from "./keyring.js";
 import { MediatorLink } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { mediationOf } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
+import { plainMessage } from "./protocol/didcomm.js";
 import { STATUS } from "./protocol/mediation.js";
+import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
 import { enroll, type Confirmations, type Enrolled } from "./replica-enrollment.js";
+import { replicaReceiptOf, replicaRoute, sendOverRoute, type ReplicaAddress, type SnapshotLinkReceived } from "./replica-channel.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
@@ -80,6 +85,7 @@ import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
 import type { PendingWork, Recorder } from "./records.js";
 import { knownLongForms, resolve } from "./resolver.js";
+import type { BlobLink } from "./sealed-blob.js";
 import { send, type Content, type SendOptions, type Sent, type Target } from "./send.js";
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
@@ -113,6 +119,14 @@ export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectT
   localOptions?: LocalStore;
   /** told of every delivery once everything that follows it is done */
   onInbound?: (inbound: Inbound) => void;
+  /**
+   * Told of a snapshot link another replica of this vault's seed sent
+   * this runtime's replica, inside the turn its delivery came in: the
+   * delivery is acknowledged once this returns, so what the link is
+   * then used for runs off it. Left out, mail to the replica is
+   * acknowledged unopened.
+   */
+  onSnapshotLink?: (received: SnapshotLinkReceived) => void | Promise<void>;
   /** told the lines, whole, once they changed — a connection made or dropped, a pickup ended, a delivery come to wait or discarded — and once for every change of one turn */
   onLines?: (lines: AgentLines) => void;
 }
@@ -226,11 +240,17 @@ export class Agent {
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
     const dispatcher = new Dispatcher(runtime, keys, { ...options, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
-    const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log } = options;
+    const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
     let linesChanged = (): void => undefined;
+    const mediatorEndpoint = (mediationId: MediationId): string => {
+      const line = lines.get(mediationId);
+      if (line === undefined) throw new Error(`no line to the mediator of ${mediationId}`);
+      return line.link.http();
+    };
     const receiver = new Receiver(runtime, keys, ring, {
       didcomm,
       receipt: receiptOf(runtime, keys),
+      replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
         const inbox = lines.get(mediationId)?.inbox ?? null;
         if (inbox === null) throw new Error(`no line to the mediator of ${mediationId}`);
@@ -330,6 +350,25 @@ export class Agent {
     this.refuseClosed();
     const sent = await send(this.runtime, this.keys, target, content, { now: this.options.now, ...options });
     return { ...sent, dispatched: await this.call(sent.action) };
+  }
+
+  /**
+   * A snapshot link sent to another replica of this vault's seed, at
+   * the arrangement this runtime's replica is a member of, through that
+   * arrangement's mediator. Which replica to write to is the caller's
+   * to know — the mediator's list, the fold — and `to` is written to
+   * only when the seed bears it out as another replica there. Nothing is
+   * recorded and nothing is sent again: the link asks `to` to import
+   * what the vault already says, so a lost one costs another send.
+   * Throws what `replicaRoute` and `sendOverRoute` throw.
+   */
+  async sendSnapshotLink(to: ReplicaAddress, link: BlobLink): Promise<void> {
+    this.refuseClosed();
+    const fold = await scanVault(this.runtime.vault, this.keys);
+    const route = await replicaRoute(this.keys, fold, this.runtime.author, to);
+    const plaintext = plainMessage(SNAPSHOT_LINK, route.ends.sender.did, route.ends.recipient.did, snapshotLinkBody({ replicaId: route.from.replicaId, link }));
+    const { link: line } = await this.lineOf(route.from.mediationId);
+    await sendOverRoute(line, route, plaintext, knownLongForms(fold), this.options);
   }
 
   /** An envelope posted straight to this runtime. */
@@ -611,10 +650,9 @@ export class Agent {
    */
   private async pickUpAs(mediationId: MediationId, line: Line, replica: Replica): Promise<Inbox> {
     if (line.inbox !== null) return line.inbox;
-    const { did, longFormDid } = replica;
-    if (did === null || longFormDid === null) throw new Error(`the replica ${replica.replicaId} has no DID to pick up as`);
-    const { document } = peerResolution(longFormDid);
-    const secrets = secretsOf(await this.keys.replicaKeys(replica.replicaId), [longFormDid, did], { authentication: authorizedMethodIds(document, "authentication"), keyAgreement: authorizedMethodIds(document, "keyAgreement") });
+    const { replicaId, did, longFormDid } = replica;
+    if (did === null || longFormDid === null) throw new Error(`the replica ${replicaId} has no DID to pick up as`);
+    const secrets = await replicaSecrets(this.keys, { replicaId, did, longFormDid });
     if (line.inbox !== null) return line.inbox;
     const link = line.linkAs(longFormDid, () => secrets);
     line.inbox = { link, pickup: new Pickup(link, this.handleOf(mediationId), { log: this.options.log }) };
