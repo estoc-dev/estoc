@@ -35,12 +35,14 @@ Each module answers one question. Its leading comment states its
 responsibility, its exports are the entry points, and `test/` mirrors
 `src/`; `test/e2e/` runs two agents against an in-process mediator over
 file vaults, one scenario per test: first contact, rotation, admission,
-races, crashes, restore, closing and a hostile peer.
+races, crashes, restore, closing, an agent closed mid-work and a hostile
+peer.
 
 | Question | Module | Entry points |
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
 | What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `blobStore`, `sendSnapshotLink`, `close` |
+| What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
@@ -83,7 +85,7 @@ races, crashes, restore, closing and a hostile peer.
 1. `action.ts` and `procedure.ts`: what authorizes a transport call, and the shape of every procedure that writes the vault.
 2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `ends.ts` for the sealing and carrying beneath them, which read nothing but the two ends, `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
-4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
+4. `agent.ts`: how open, connect and each delivery put these together; `lifetime.ts` for what a close stops, and where; `records.ts` for what the host is shown.
 5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
 
 ## Usage
@@ -125,12 +127,18 @@ you inject.
 
 `fetch` and `WebSocket` are injectable too; the tests run two agents
 against an in-process fake mediator that way (`test/fake-mediator.ts`).
+An agent, and each link and dispatcher, reaches them through a lifetime
+of its own, so that nothing goes out once it closed. Only a link given
+none and the host helpers that run outside any agent,
+`resolveMediatorInput` and `readBlob`, fall back to the global ones; the
+lint forbids them anywhere else in `src/`.
 
 ## Development
 
 ```
 pnpm test       # vitest: every module against an in-process fake mediator, and test/e2e/ over file vaults
 pnpm build      # tsc → dist/
+pnpm lint       # from the repository root: no global fetch or WebSocket in src/
 ```
 
 ## License

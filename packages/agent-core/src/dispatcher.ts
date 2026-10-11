@@ -17,6 +17,7 @@ import { scanVault, unfinishedWork, type EventReference, type Keys, type Message
 
 import { LiveAction, type ActionKind } from "./action.js";
 import { cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
+import { Lifetime, type Timer, type Timers } from "./lifetime.js";
 import { scanOptions } from "./prepare.js";
 
 export interface RetryPolicy {
@@ -33,20 +34,9 @@ export const RETRY_POLICY: RetryPolicy = { firstWaitMs: 30_000, longestWaitMs: 2
 /** Timers take no longer delay; a wait further off is reached by waits of this length. */
 export const LONGEST_TIMER_MS = 2 ** 31 - 1;
 
-/** What waits are kept by: the global timers by default, a test's own otherwise. */
-export interface Timers {
-  set(fire: () => void, ms: number): unknown;
-  clear(handle: unknown): void;
-}
-
-export const GLOBAL_TIMERS: Timers = {
-  set: (fire, ms) => setTimeout(fire, ms),
-  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
-/** The dispatcher reads its own closed state before each call, so the caller does not say when it has closed: `close()` does. */
-export interface DispatcherOptions extends Omit<DispatchOptions, "closed"> {
+export interface DispatcherOptions extends DispatchOptions {
   retry?: Partial<RetryPolicy>;
+  /** what the waits between attempts are kept by; the global timers when left out */
   timers?: Timers;
   /** a line for the human log: an attempt that threw, an action given up on */
   log?: (line: string) => void;
@@ -71,24 +61,26 @@ export interface PendingOutbound {
 
 interface Wait extends Waiting {
   action: LiveAction;
-  timer: unknown;
+  timer: Timer | null;
 }
 
+/** Its transport and its waits are reached through a lifetime of its own, which `close()` closes; the links it is given are its holder's. */
 export class Dispatcher {
+  private readonly options: DispatcherOptions;
   private readonly policy: RetryPolicy;
-  private readonly timers: Timers;
+  private readonly lifetime: Lifetime;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private readonly waits = new Map<MessageId, Wait>();
-  private closed = false;
 
   constructor(
     private readonly runtime: VaultRuntime,
     private readonly keys: Keys,
-    private readonly options: DispatcherOptions
+    options: DispatcherOptions
   ) {
+    this.lifetime = new Lifetime(options.timers);
+    this.options = { ...options, fetch: this.lifetime.fetch(options.fetch) };
     this.policy = { ...RETRY_POLICY, ...options.retry };
-    this.timers = options.timers ?? GLOBAL_TIMERS;
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
   }
@@ -101,7 +93,7 @@ export class Dispatcher {
    */
   run(action: LiveAction): Promise<Dispatched> {
     const { messageId } = action;
-    if (this.closed) return Promise.resolve({ outcome: "none", messageId, because: "the dispatcher is closed" });
+    if (this.lifetime.closed) return Promise.resolve({ outcome: "none", messageId, because: "the dispatcher is closed" });
     this.drop(messageId);
     const wait: Wait = { messageId, kind: action.kind, action, attempts: 0, nextAt: null, reason: null, timer: null };
     this.waits.set(messageId, wait);
@@ -135,10 +127,9 @@ export class Dispatcher {
     return [...this.waits.keys()].map((messageId) => this.waitingOn(messageId) as Waiting);
   }
 
-  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. */
+  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. The links it was given stay open. */
   close(): void {
-    this.closed = true;
-    for (const wait of this.waits.values()) this.clear(wait);
+    this.lifetime.close();
     this.waits.clear();
   }
 
@@ -152,12 +143,12 @@ export class Dispatcher {
     wait.nextAt = null;
     let result: Dispatched;
     try {
-      result = await dispatch(this.runtime, this.keys, wait.action, { ...this.options, closed: () => this.closed });
+      result = await dispatch(this.runtime, this.keys, wait.action, this.options);
     } catch (err) {
       this.forget(wait);
       throw err;
     }
-    if (result.outcome === "pending" && this.waits.get(wait.messageId) === wait && !this.closed) this.schedule(wait, result.because);
+    if (result.outcome === "pending" && this.waits.get(wait.messageId) === wait) this.schedule(wait, result.because);
     else this.forget(wait);
     return result;
   }
@@ -172,7 +163,7 @@ export class Dispatcher {
     }
     const delay = Math.min(this.policy.longestWaitMs, this.policy.firstWaitMs * 2 ** (wait.attempts - 1));
     wait.nextAt = this.now() + delay;
-    wait.timer = this.timers.set(
+    wait.timer = this.lifetime.setTimer(
       () => {
         wait.timer = null;
         this.attempt(wait).catch((err: unknown) => this.log(`the outbound message ${wait.messageId} could not be worked on: ${err instanceof Error ? err.message : String(err)}`));
@@ -192,8 +183,7 @@ export class Dispatcher {
   }
 
   private clear(wait: Wait): void {
-    if (wait.timer === null) return;
-    this.timers.clear(wait.timer);
+    wait.timer?.cancel();
     wait.timer = null;
   }
 }

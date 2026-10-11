@@ -204,11 +204,26 @@ interface HeldDelivery {
 
 type Ended = Exclude<Received, { outcome: "deferred" }>;
 
+/**
+ * What a delivery ends after: the gate, short of its receipt, or the
+ * receipt. One that ends at the gate is refused once the receiver
+ * closed, since it then stays wherever it came from; one whose receipt
+ * was called ends as the receipt said, since the receipt may have
+ * recorded it.
+ */
+type After = "gate" | "receipt";
+
+/** A receipt that threw: the delivery is not kept. */
+type Failed = { outcome: "failed"; reason: string };
+
 const utf8 = new TextEncoder();
 
 const receivers = new WeakMap<VaultRuntime, Receiver>();
 
 export class Receiver {
+  private readonly options: Omit<ReceiverOptions, "receipt" | "replicaReceipt">;
+  private readonly receipt: (authenticated: Authenticated) => Promise<ReceiptOutcome | Failed>;
+  private readonly replicaReceipt: ((mail: ReplicaAuthenticated) => Promise<ReplicaReceiptOutcome | Failed>) | null;
   private readonly log: (line: string) => void;
   private readonly maxWaiting: number;
   private readonly maxHeldBytes: number;
@@ -226,10 +241,15 @@ export class Receiver {
     private readonly runtime: VaultRuntime,
     private readonly keys: Keys,
     private readonly ring: Keyring,
-    private readonly options: ReceiverOptions
+    options: ReceiverOptions
   ) {
     if (receivers.has(runtime)) throw new ReceiverInUse();
     receivers.set(runtime, this);
+    const { receipt, replicaReceipt, ...rest } = options;
+    this.options = rest;
+    const closed = (): boolean => this.closed;
+    this.receipt = whileOpen(closed, receipt);
+    this.replicaReceipt = replicaReceipt === undefined ? null : whileOpen(closed, replicaReceipt);
     this.log = options.log ?? (() => undefined);
     this.maxWaiting = options.maxWaiting ?? MAX_WAITING;
     this.maxHeldBytes = options.maxHeldBytes ?? MAX_HELD_BYTES;
@@ -261,10 +281,7 @@ export class Receiver {
       }
       this.refuseClosed();
       const key = pickupKey(mediationId, delivered.attachmentId);
-      await this.inTurn(key, () => {
-        this.refuseClosed();
-        return this.finish(key, { packed: "", source, parent: delivered.parent }, `the attachment does not read: ${delivered.unreadable}`);
-      });
+      await this.inTurn(key, () => this.finish(key, { packed: "", source, parent: delivered.parent }, `the attachment does not read: ${delivered.unreadable}`, "gate"));
       return "acked";
     };
     const acknowledged = (attachmentIds: readonly string[]): void => {
@@ -287,11 +304,10 @@ export class Receiver {
     const fold = await this.foldOrNull();
     const results: Received[] = [];
     for (const [key, wait] of waiting) {
-      if (this.closed) break;
       if (fold !== null && wait.watch(fold) === wait.seen) continue;
       const received = await this.inTurn(key, () => {
         if (this.waits.get(key) !== wait) return Promise.resolve(null);
-        return fold === null ? this.leave(key, wait, "the vault is not read to tell what changed") : this.retry(key, wait);
+        return fold === null ? this.leave(key, wait, "the vault is not read to tell what changed", "gate") : this.retry(key, wait);
       });
       if (received !== null) results.push(received);
     }
@@ -317,17 +333,21 @@ export class Receiver {
    * have another receiver.
    */
   close(): void {
-    if (this.closed) return;
     this.closed = true;
     this.waits.clear();
     this.held.clear();
     this.heldBytes = 0;
     this.ended.clear();
-    receivers.delete(this.runtime);
+    if (receivers.get(this.runtime) === this) receivers.delete(this.runtime);
   }
 
   private refuseClosed(): void {
     if (this.closed) throw new ReceiverClosed();
+  }
+
+  /** An ending told only while the receiver is open, when the delivery's receipt was not called. */
+  private reporting(after: After): void {
+    if (after === "gate") this.refuseClosed();
   }
 
   /** Steps for one delivery run one at a time under its runtime, so that a receiver closed while finishing one still goes before the next receiver's. */
@@ -344,7 +364,6 @@ export class Receiver {
   }
 
   private enter(key: string, delivery: Delivery): Promise<Received> {
-    this.refuseClosed();
     const ended = this.ended.get(key);
     if (ended !== undefined) return Promise.resolve(ended.outcome === "received" ? { ...ended, live: null } : ended);
     const wait = this.waits.get(key);
@@ -358,7 +377,7 @@ export class Receiver {
   /** A waiting delivery retried off a pickup's turn: from its bytes, acknowledged when it ends; without its bytes, left for its next redelivery. */
   private async retry(key: string, wait: Wait): Promise<Received | null> {
     const delivery = this.held.get(key)?.delivery;
-    if (delivery === undefined || this.closed) {
+    if (delivery === undefined) {
       wait.retry = true;
       return null;
     }
@@ -382,28 +401,24 @@ export class Receiver {
 
   private async attempt(key: string, delivery: Delivery): Promise<Received> {
     const observed = this.changes;
-    const defer = (reason: string, watch: Watch, fold: VaultFold): Promise<Received> => this.defer(key, delivery, observed, { reason, watch, fold });
+    const defer = (reason: string, watch: Watch, fold: VaultFold, after: After): Promise<Received> => this.defer(key, delivery, observed, { reason, watch, fold }, after);
     let fold: VaultFold;
     try {
       fold = await scanVault(this.runtime.vault, this.keys);
     } catch (err) {
-      this.refuseClosed();
-      return this.leave(key, delivery, `the vault is not read: ${messageOf(err)}`);
+      return this.leave(key, delivery, `the vault is not read: ${messageOf(err)}`, "gate");
     }
-    this.refuseClosed();
     const header = envelopeHeader(delivery.packed);
-    if (header.kind !== "authcrypt" && header.kind !== "anoncrypt") return this.finish(key, delivery, `not an envelope encrypted to its recipients (${header.kind})`);
+    if (header.kind !== "authcrypt" && header.kind !== "anoncrypt") return this.finish(key, delivery, `not an envelope encrypted to its recipients (${header.kind})`, "gate");
     const recipients = classifyRecipients(fold, header.kids ?? [], this.runtime.author);
-    if (recipients.verdict === "terminal") return this.finish(key, delivery, recipients.reason);
-    if (recipients.verdict === "pending") return defer(recipients.reason, recipientWatch(recipients.waitingOn), fold);
+    if (recipients.verdict === "terminal") return this.finish(key, delivery, recipients.reason, "gate");
+    if (recipients.verdict === "pending") return defer(recipients.reason, recipientWatch(recipients.waitingOn), fold, "gate");
     if (recipients.verdict === "replica") return this.attemptReplica(key, delivery, fold, header, recipients);
     await this.ring.reload(fold);
-    this.refuseClosed();
     const secrets: Secret[] = this.ring.secrets().filter((secret) => secret.id === recipients.kid);
-    if (secrets.length === 0) return defer(`no key in hand for ${recipients.kid}`, recipientWatch([recipients.didId]), fold);
+    if (secrets.length === 0) return defer(`no key in hand for ${recipients.kid}`, recipientWatch([recipients.didId]), fold, "gate");
     const opened = await this.open(key, delivery, fold, header, secrets, recipients.did);
     if ("ended" in opened) return opened.ended;
-    this.refuseClosed();
     const { unpacked, sender } = opened;
 
     const authenticated: Authenticated = {
@@ -414,19 +429,16 @@ export class Receiver {
       sender,
       fromPrior: unpacked.fromPrior,
     };
-    let outcome: ReceiptOutcome;
-    try {
-      outcome = await this.options.receipt(authenticated);
-    } catch (err) {
-      return this.leave(key, delivery, `the receipt failed: ${messageOf(err)}`);
-    }
+    const outcome = await this.receipt(authenticated);
     switch (outcome.outcome) {
       case "received":
         return this.record(key, delivery, outcome.cid, outcome.live);
       case "terminal":
-        return this.finish(key, delivery, outcome.reason);
+        return this.finish(key, delivery, outcome.reason, "receipt");
       case "deferred":
-        return defer(outcome.reason, outcome.watch, fold);
+        return defer(outcome.reason, outcome.watch, fold, "receipt");
+      case "failed":
+        return this.leave(key, delivery, `the receipt failed: ${outcome.reason}`, "receipt");
     }
   }
 
@@ -440,28 +452,29 @@ export class Receiver {
    */
   private async attemptReplica(key: string, delivery: Delivery, fold: VaultFold, header: EnvelopeHeader, recipients: Extract<Recipients, { verdict: "replica" }>): Promise<Received> {
     const { kid, replica } = recipients;
-    const receipt = this.options.replicaReceipt;
-    if (receipt === undefined) return this.finish(key, delivery, `the envelope names a key-agreement method of this runtime's own replica DID ${replica.did} and no communication DID of this vault, and this runtime takes no mail addressed to its replica; the delivery was discarded`);
+    const receipt = this.replicaReceipt;
+    const terminal = (reason: string): Promise<Received> => this.finish(key, delivery, reason, "gate");
+    if (receipt === null) return terminal(`the envelope names a key-agreement method of this runtime's own replica DID ${replica.did} and no communication DID of this vault, and this runtime takes no mail addressed to its replica; the delivery was discarded`);
     const { source } = delivery;
-    if (source.kind !== "pickup" || source.mediationId !== replica.mediationId) return this.finish(key, delivery, `mail to the replica DID ${replica.did} is taken only from its mailbox at ${replica.mediationId}`);
-    if (header.skid === undefined) return this.finish(key, delivery, `the envelope to the replica DID ${replica.did} is anonymous`);
+    if (source.kind !== "pickup" || source.mediationId !== replica.mediationId) return terminal(`mail to the replica DID ${replica.did} is taken only from its mailbox at ${replica.mediationId}`);
+    if (header.skid === undefined) return terminal(`the envelope to the replica DID ${replica.did} is anonymous`);
     const [sealer] = splitDidUrl(header.skid);
-    if (isShortForm(sealer)) return this.finish(key, delivery, `the sender names itself by the short form ${sealer}, and a replica's mail is taken only from a long form`);
+    if (isShortForm(sealer)) return terminal(`the sender names itself by the short form ${sealer}, and a replica's mail is taken only from a long form`);
     const secrets = (await replicaSecrets(this.keys, replica)).filter((secret) => secret.id === kid);
-    this.refuseClosed();
     const opened = await this.open(key, delivery, fold, header, secrets, replica.did);
     if ("ended" in opened) return opened.ended;
-    this.refuseClosed();
     const { unpacked, sender } = opened;
-    if (sender === null) return this.finish(key, delivery, `the envelope to the replica DID ${replica.did} is anonymous`);
-    if (unpacked.fromPrior !== null) return this.finish(key, delivery, "a replica DID does not rotate, and the plaintext carries from_prior");
-    let outcome: ReplicaReceiptOutcome;
-    try {
-      outcome = await receipt({ source, plaintext: unpacked.plaintext, recipient: replica, sender });
-    } catch (err) {
-      return this.leave(key, delivery, `the replica receipt failed: ${messageOf(err)}`);
+    if (sender === null) return terminal(`the envelope to the replica DID ${replica.did} is anonymous`);
+    if (unpacked.fromPrior !== null) return terminal("a replica DID does not rotate, and the plaintext carries from_prior");
+    const outcome = await receipt({ source, plaintext: unpacked.plaintext, recipient: replica, sender });
+    switch (outcome.outcome) {
+      case "handed":
+        return this.hand(key, delivery);
+      case "terminal":
+        return this.finish(key, delivery, outcome.reason, "receipt");
+      case "failed":
+        return this.leave(key, delivery, `the replica receipt failed: ${outcome.reason}`, "receipt");
     }
-    return outcome.outcome === "handed" ? this.hand(key, delivery) : this.finish(key, delivery, outcome.reason);
   }
 
   /**
@@ -471,7 +484,7 @@ export class Receiver {
    * the delivery ended short of that.
    */
   private async open(key: string, delivery: Delivery, fold: VaultFold, header: EnvelopeHeader, secrets: Secret[], recipient: Did): Promise<{ unpacked: Unpacked; sender: AuthenticatedSender | null } | { ended: Received }> {
-    const ended = async (reason: string): Promise<{ ended: Received }> => ({ ended: await this.finish(key, delivery, reason) });
+    const ended = async (reason: string): Promise<{ ended: Received }> => ({ ended: await this.finish(key, delivery, reason, "gate") });
     const sender = await senderEvidence(fold, header.skid ?? null);
     if ("terminal" in sender) return ended(sender.terminal);
     const trace = this.options.trace ?? null;
@@ -480,12 +493,10 @@ export class Receiver {
       unpacked = await unpack(this.options.didcomm, delivery.packed, pinnedResolver(fold, { current: sender.resolution === null ? [] : [sender.resolution] }), secretsResolverFor(secrets));
     } catch (err) {
       await note(trace, { stream: "envelope", what: "error", data: { ...header, parent: delivery.parent, error: messageOf(err) } });
-      this.refuseClosed();
       return ended(`the envelope does not open: ${messageOf(err)}`);
     }
     const proof = senderProof(unpacked, sealingOf(delivery.packed), sender.resolution);
     await note(trace, { stream: "envelope", what: "open", data: { ...header, parent: delivery.parent, type: unpacked.plaintext.type, from_prior: unpacked.fromPrior !== null } });
-    this.refuseClosed();
     if ("refused" in proof) return ended(proof.refused);
     if (proof.sender !== null && sameDid(proof.sender.resolution.did, recipient)) return ended(`the sender ${proof.sender.resolution.did} is the recipient itself`);
     const refused = this.options.admit?.({ source: delivery.source, recipient, sender: proof.sender?.resolution.did ?? null, bytes: utf8.encode(delivery.packed).length }) ?? null;
@@ -498,20 +509,22 @@ export class Receiver {
    * told of while the attempt read the vault may have changed that: the
    * vault is read again, and only when the watch says something else
    * does the delivery go through the gate again. Past as many as may
-   * wait, it is left where it came from instead.
+   * wait, it is left where it came from instead, and so is one a closed
+   * receiver was told to wait by its receipt.
    */
-  private async defer(key: string, delivery: Delivery, observed: number, deferral: { reason: string; watch: Watch; fold: VaultFold }): Promise<Received> {
+  private async defer(key: string, delivery: Delivery, observed: number, deferral: { reason: string; watch: Watch; fold: VaultFold }, after: After): Promise<Received> {
     const reason = bounded(deferral.reason);
     const { watch } = deferral;
     const seen = watch(deferral.fold);
-    while (!this.closed && this.changes !== observed) {
+    while (this.changes !== observed) {
       observed = this.changes;
       const fold = await this.foldOrNull();
-      if (fold === null) return this.leave(key, delivery, "the vault is not read to tell what changed");
+      if (fold === null) return this.leave(key, delivery, "the vault is not read to tell what changed", after);
       if (watch(fold) !== seen) return this.attempt(key, delivery);
     }
-    if (this.closed) return this.leave(key, delivery, reason);
-    if (!this.waits.has(key) && this.waits.size >= this.maxWaiting) return this.leave(key, delivery, `${reason}; as many deliveries wait as may`);
+    this.reporting(after);
+    if (this.closed) return this.leave(key, delivery, reason, after);
+    if (!this.waits.has(key) && this.waits.size >= this.maxWaiting) return this.leave(key, delivery, `${reason}; as many deliveries wait as may`, after);
     this.hold(key, delivery);
     this.waits.set(key, { source: delivery.source, reason, watch, seen, retry: false });
     this.options.changed?.();
@@ -520,7 +533,8 @@ export class Receiver {
   }
 
   /** A delivery not kept: a wait it had is let go with its bytes, and it comes again from where it came. */
-  private async leave(key: string, delivery: Pick<Delivery, "source" | "parent">, reason: string): Promise<Received> {
+  private async leave(key: string, delivery: Pick<Delivery, "source" | "parent">, reason: string, after: After): Promise<Received> {
+    this.reporting(after);
     this.stopWaiting(key);
     this.release(key);
     const left = bounded(`${reason}; the delivery is left where it came from`);
@@ -546,7 +560,8 @@ export class Receiver {
     return ended;
   }
 
-  private async finish(key: string, delivery: Delivery, reason: string): Promise<Received> {
+  private async finish(key: string, delivery: Delivery, reason: string, after: After): Promise<Received> {
+    this.reporting(after);
     this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "terminal", key, reason: bounded(reason) };
@@ -601,6 +616,19 @@ export class Receiver {
     const via: TraceData = source.kind === "pickup" ? { via: "pickup", mediationId: source.mediationId, deliveryId: source.deliveryId } : { via: "direct" };
     return note(this.options.trace ?? null, { stream: "diag", what: "receive", data: { ...via, parent: delivery.parent, ...data } });
   }
+}
+
+/**
+ * A receipt called only while the receiver is open. Once `closed`, the
+ * receipt is not called and `ReceiverClosed` is thrown in the step that
+ * would have called it; once called, what the receipt throws comes back
+ * as its failure, so that a closing is never taken for one.
+ */
+function whileOpen<T, O>(closed: () => boolean, receipt: (taken: T) => Promise<O>): (taken: T) => Promise<O | Failed> {
+  return (taken) => {
+    if (closed()) return Promise.reject(new ReceiverClosed());
+    return (async () => receipt(taken))().catch((err: unknown): Failed => ({ outcome: "failed", reason: messageOf(err) }));
+  };
 }
 
 /** Watches what keeps each of these entities from receiving: a delivery waiting on them is retried when that changes for any of them. */

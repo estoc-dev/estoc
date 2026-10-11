@@ -22,13 +22,14 @@ import { sameDid } from "@estoc/vault";
 import { ENCRYPTED_MIME, didOf, endpointOf, packEncrypted, plainMessage, secretsResolverFor, unpackMessage, type DidcommApi, type IMessage, type UnpackMetadata } from "./protocol/didcomm.js";
 import { envelopeHeader } from "./protocol/envelope.js";
 import { LIVE_DELIVERY_CHANGE } from "./protocol/mediation.js";
-import { LinkClosed, UnverifiedReply } from "./errors.js";
+import { UnverifiedReply } from "./errors.js";
+import { Lifetime, type Fetch, type Socket, type Sockets } from "./lifetime.js";
 import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
 
 export interface LinkOptions {
   didcomm: DidcommApi;
   resolveDid: (did: string) => Promise<DIDDoc | null>;
-  /** transports, injectable for tests; default to the globals */
+  /** the host's transports; the globals when left out. The link reaches them through a lifetime of its own, which `close()` closes. */
   fetch?: typeof fetch;
   WebSocket?: typeof WebSocket;
   trace: AgentTrace;
@@ -43,14 +44,6 @@ export interface LinkOptions {
   timeoutMs?: number;
   /** a line for the human log: a trace that could not be written is reported here, not thrown, and a socket frame that failed */
   log?: (line: string) => void;
-  /**
-   * Whether the holder of the link has closed. Read right before a
-   * request goes on the wire and before a socket is opened, so that a
-   * close during the sealing or the noting of a request still sends
-   * nothing; the request fails with `LinkClosed`. Never closed when
-   * left out.
-   */
-  closed?: () => boolean;
 }
 
 /** An envelope opened: the plaintext and what the envelope itself proves. */
@@ -178,25 +171,25 @@ export function letGo(stream: { cancel(reason?: unknown): Promise<void> } | null
 export class MediatorLink {
   private readonly didcomm: DidcommApi;
   private readonly resolver: { resolve: (did: string) => Promise<DIDDoc | null> };
-  private readonly fetchFn: typeof fetch;
-  private readonly WebSocketCtor: typeof WebSocket;
+  private readonly lifetime = new Lifetime();
+  private readonly fetchFn: Fetch;
+  private readonly sockets: Sockets;
   readonly trace: AgentTrace;
   private readonly secrets: () => Secret[];
   readonly me: string;
   private readonly mediatorDoc: DIDDoc;
   private readonly timeoutMs: number;
   private readonly log: (line: string) => void;
-  private readonly holderClosed: () => boolean;
   readonly mediatorDid: string;
-  private socket: WebSocket | null = null;
+  private socket: Socket | null = null;
 
   constructor(options: LinkOptions) {
     this.didcomm = options.didcomm;
     this.resolver = { resolve: (did) => options.resolveDid(did) };
-    // wrapped, not assigned: a native fetch called with `this` bound to anything but the global is an "Illegal invocation" in browsers
-    const fetchImpl = options.fetch ?? fetch;
-    this.fetchFn = (input, init) => fetchImpl(input, init);
-    this.WebSocketCtor = options.WebSocket ?? WebSocket;
+    // eslint-disable-next-line no-restricted-globals -- a link given no transports speaks over the host's global ones
+    const { fetch: transport = fetch, WebSocket: Socket = WebSocket } = options;
+    this.fetchFn = this.lifetime.fetch(transport);
+    this.sockets = this.lifetime.sockets(Socket);
     this.trace = options.trace;
     this.secrets = options.secrets;
     this.me = options.me;
@@ -204,7 +197,6 @@ export class MediatorLink {
     this.mediatorDoc = options.mediatorDoc;
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.log = options.log ?? (() => undefined);
-    this.holderClosed = options.closed ?? (() => false);
   }
 
   /** The mediator's HTTP endpoint; throws when its document lists none. */
@@ -308,7 +300,7 @@ export class MediatorLink {
    * the deadline: `timeoutMs` runs from entry and covers the whole
    * ritual, pack and unpack with their resolutions included. Before
    * the POST every wait fails the ritual at the deadline, nothing
-   * having been sent, and so does the holder closing (`LinkClosed`);
+   * having been sent, and so does the link closing (`LinkClosed`);
    * once the answer is in hand, only the noting of it can still lose
    * the race, and it loses alone.
    */
@@ -364,7 +356,7 @@ export class MediatorLink {
    * POST a frame already traced as `out` (`traceOut`) and read what
    * came back: the status, the text, and how long the wire took.
    * Throws when the line is cut, with `wire.error` written, and before
-   * anything is sent when the holder has closed; a status that is no
+   * anything is sent once the link closed; a status that is no
    * 2xx is the caller's to judge. `signal` bounds the wait, and the
    * caller races the whole call too, since an injected fetch may
    * ignore the signal.
@@ -392,10 +384,9 @@ export class MediatorLink {
    * A plain HTTP request beside the rituals, such as a blob's bytes put
    * where the mediator said: sent over the link's transport, unsealed
    * and untraced, and refused with `LinkClosed`, nothing sent, once the
-   * holder has closed.
+   * link closed.
    */
   async request(url: string, init: RequestInit): Promise<Response> {
-    this.refuseClosed();
     return this.fetchFn(url, init);
   }
 
@@ -410,20 +401,19 @@ export class MediatorLink {
    * is the caller's whatever becomes of the socket. `onClose` is told
    * when the socket closed on its own, not when `closeSocket` closed it,
    * so reconnecting, and when, is the caller's. Throws `LinkClosed`
-   * when the holder has closed.
+   * once the link closed.
    */
   openSocket(onFrame: (opened: Opened) => Promise<void> | void, onClose?: () => void): void {
-    this.refuseClosed();
     const uri = this.ws();
     this.closeSocket();
-    const socket = new this.WebSocketCtor(uri);
+    const socket = this.sockets.open(uri);
     this.socket = socket;
 
     socket.onopen = async () => {
       try {
         const plain = plainMessage(LIVE_DELIVERY_CHANGE, this.me, this.mediatorDid, { live_delivery: true });
         const { packed, seal } = await this.pack(plain);
-        if (this.socket !== socket || this.holderClosed()) return;
+        if (this.socket !== socket) return;
         socket.send(packed);
         await this.traceSeal(seal, await this.traceOut("ws", uri, packed, { type: plain.type }), plain);
       } catch (err) {
@@ -433,7 +423,7 @@ export class MediatorLink {
       }
     };
 
-    socket.onmessage = async (event: MessageEvent) => {
+    socket.onmessage = async (event) => {
       if (this.socket !== socket) return;
       const text = typeof event.data === "string" ? event.data : await (event.data as Blob).text();
       let opened: Opened;
@@ -476,8 +466,16 @@ export class MediatorLink {
     socket?.close();
   }
 
-  private refuseClosed(): void {
-    if (this.holderClosed()) throw new LinkClosed();
+  /**
+   * The socket closed, and nothing sent over the link from now on: a
+   * request is refused at the call, a socket at its opening and at each
+   * send, with `LinkClosed`, however far the request had got, so that a
+   * close during the sealing or the noting of a request still sends
+   * nothing. A request already made is still answered.
+   */
+  close(): void {
+    this.lifetime.close();
+    this.closeSocket();
   }
 
   /** A frame going out: its header on `wire`, its bytes on `bytes`; returns the frame's sequence number. */

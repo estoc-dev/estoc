@@ -69,7 +69,7 @@ export class UnverifiedReply extends Error {
   }
 }
 
-/** The holder of the link closed before the request was sent: nothing went out, and nothing is begun over the link again. */
+/** What a request or a socket goes through, a link, a dispatcher or an agent, closed before it was made: nothing went out, and nothing is begun through it again. */
 export class LinkClosed extends Error {
   constructor() {
     super("the holder of the link is closed");

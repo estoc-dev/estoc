@@ -137,18 +137,17 @@ describe("adding recipients", () => {
     await p.runtime.close();
   });
 
-  test("a run whose link's holder closes while a proof is being signed begins no request for it", async () => {
+  test("a run whose link closes while a proof is being signed begins no request for it", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
     const a = await address(p);
-    let closed = false;
+    const link = new MediatorLink(p.linkOptions);
     const keys = Object.assign(Object.create(p.keys) as typeof p.keys, {
       didKeys: async (didId: DidId) => {
-        closed = true;
+        link.close();
         return p.keys.didKeys(didId);
       },
     });
-    const link = new MediatorLink({ ...p.linkOptions, closed: () => closed });
     await expect(addRecipients(link, p.runtime, keys, p.confirmations, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
     expect(mediator.sharedRecipients.size).toBe(0);

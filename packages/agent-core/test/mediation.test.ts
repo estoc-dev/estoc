@@ -213,22 +213,23 @@ describe("the line to the mediator", () => {
   });
 });
 
-describe("the line to a holder that closed", () => {
-  it("sends nothing once its holder closed, however far the request got: the frame is traced as not sent, the ritual fails, and no socket is opened", async () => {
+describe("a line closed", () => {
+  it("sends nothing once closed, however far the request got: the frame is traced as not sent, the ritual fails, no socket is opened, and another link of the account still speaks", async () => {
     const mediator = await newMediator();
     const p = await party(mediator);
-    let closed = false;
     const tracing = Object.create(p.trace) as AgentTrace;
+    const link = new MediatorLink({ ...p.linkOptions, trace: tracing });
     (tracing as { append: AgentTrace["append"] }).append = (stream, what, data) => {
-      if (stream === "wire" && what === "out") closed = true;
+      if (stream === "wire" && what === "out") link.close();
       return p.trace.append(stream, what, data);
     };
-    const link = new MediatorLink({ ...p.linkOptions, trace: tracing, closed: () => closed });
     await expect(link.roundTrip(ACCOUNT_REGISTER, {})).rejects.toBeInstanceOf(LinkClosed);
     expect(mediator.seenTypes).toEqual([]);
     expect((await p.trace.read({ type: "wire.error" })).map((entry) => entry.data["error"])).toEqual(["the holder of the link is closed"]);
     expect(() => link.openSocket(() => undefined)).toThrow(LinkClosed);
     expect(link.live).toBe(false);
+    await p.link.roundTrip(ACCOUNT_REGISTER, {});
+    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
     await p.runtime.close();
   });
 

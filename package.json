@@ -9,6 +9,7 @@
     "build": "pnpm -r run build",
     "test": "vitest run",
     "typecheck": "pnpm -r run typecheck",
+    "lint": "eslint packages/agent-core/src",
     "dev": "pnpm -r --parallel run dev",
     "e2e": "pnpm --filter @estoc/app run e2e",
     "release-check": "node scripts/release-check.mjs",
@@ -16,7 +17,10 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "eslint": "^10.12.0",
     "semver": "^7.8.5",
+    "typescript": "~5.8.0",
+    "typescript-eslint": "^8.71.1",
     "vitest": "^3.2.7",
     "wrangler": "^4.122.0"
   },
