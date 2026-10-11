@@ -5,7 +5,7 @@ import type {
   SecretsResolver,
   UnpackMetadata,
 } from "@estoc/didcomm-node";
-import { isDecodable, resolveDIDCommDoc } from "./did-resolver.js";
+import { isDecodable, resolveDIDCommDoc, type WebDids } from "./did-resolver.js";
 import { isShortForm, longToShort, resolveShortForm, toDIDCommDIDDoc } from "@estoc/did-peer";
 import type { DIDDoc, Secret } from "@estoc/did-peer";
 import type { OwnIdentity } from "../identity-core.js";
@@ -33,13 +33,14 @@ class ChainedResolver implements DIDResolver {
 
   constructor(
     didDocs: DIDDoc[],
-    private resolutionMaterial: ResolutionMaterial | null
+    private resolutionMaterial: ResolutionMaterial | null,
+    private web: WebDids | null
   ) {
     this.pinned = new Map(didDocs.map((doc) => [doc.id, doc]));
   }
 
   async resolve(did: string): Promise<DIDDoc | null> {
-    return this.pinned.get(did) ?? (await this.kept(did)) ?? (await resolveDIDCommDoc(did));
+    return this.pinned.get(did) ?? (await this.kept(did)) ?? (await resolveDIDCommDoc(did, this.web));
   }
 
   private async kept(did: string): Promise<DIDDoc | null> {
@@ -151,6 +152,8 @@ export interface ContextOptions {
   pinned?: DIDDoc[];
   /** Where short-form did:peer:4 DIDs this mediator has enrolled resolve from. */
   resolutionMaterial?: ResolutionMaterial;
+  /** How a did:web is fetched; without it none is resolved. */
+  web?: WebDids;
 }
 
 export class DIDCommContext {
@@ -163,12 +166,13 @@ export class DIDCommContext {
     readonly did: string,
     didDoc: DIDDoc,
     secrets: Secret[],
-    { aliases = [], pinned = [], resolutionMaterial }: ContextOptions = {}
+    { aliases = [], pinned = [], resolutionMaterial, web }: ContextOptions = {}
   ) {
     this.dids = [did, ...aliases.map((alias) => alias.did)];
     this.didResolver = new ChainedResolver(
       [didDoc, ...aliases.map((alias) => alias.didDoc), ...pinned],
-      resolutionMaterial ?? null
+      resolutionMaterial ?? null,
+      web ?? null
     );
     this.secretsResolver = new InMemorySecretsResolver(secrets);
   }

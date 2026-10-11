@@ -136,11 +136,11 @@ export function endpointsOf(publicUrl: string): string[] {
  * The did:web name of the mediator's public URL: host (with an %3A-encoded
  * port), then one colon-joined segment per path element.
  *
- * https is a hard requirement, not a SHOULD — resolvers (web-did-resolver
- * included) only ever fetch `https://…/did.json`, so a did:web minted from an
- * http URL would be unresolvable by everyone else. The one exception is
- * localhost: `wrangler dev` serves plain http, our own resolver knows to
- * fetch such a DID over http, and a loopback name was never resolvable by
+ * https is a hard requirement, not a SHOULD — resolvers fetch only
+ * `https://…/did.json`, so a did:web minted from an http URL would be
+ * unresolvable by everyone else. The one exception is localhost: `wrangler
+ * dev` serves plain http, our own resolver fetches such a DID over http for
+ * a client that allows loopback, and a loopback name was never resolvable by
  * the outside world anyway.
  */
 export function didWebFromUrl(publicUrl: string): string {
@@ -253,7 +253,7 @@ export function didDocumentSkeleton(
 
 /**
  * The document a did:web identity serves at did.json. References are made
- * absolute here rather than left to the reader: web-did-resolver insists the
+ * absolute here rather than left to the reader: a resolver insists the
  * document's `id` equal the DID it derived, and not every consumer absolutizes
  * relative fragments correctly.
  */

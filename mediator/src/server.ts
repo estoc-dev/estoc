@@ -8,6 +8,8 @@ import { FsBlobStorage } from "./blobs/fs-storage.js";
 import { BlobService } from "./blobs/service.js";
 import type { MediatorConfig } from "./config.js";
 import { DIDCommContext } from "./didcomm/didcomm.js";
+import { WebDids } from "./didcomm/did-resolver.js";
+import { guardedFetch } from "./guarded-fetch.js";
 import type { MediatorIdentity } from "./identity-core.js";
 import { dispatch } from "./protocols/dispatch.js";
 import type { MediationStore } from "./store/types.js";
@@ -45,6 +47,7 @@ export function buildServer({
   const ctx = new DIDCommContext(identity.did, identity.didDoc, identity.secrets, {
     aliases: identity.aliases,
     resolutionMaterial: (did) => store.resolutionMaterial(did),
+    web: new WebDids({ fetch: guardedFetch }),
   });
   const sessions = new Sessions();
   const blobs =

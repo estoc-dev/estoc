@@ -154,6 +154,15 @@ mediator kept and reads back for a short one. An envelope that needs such a
 DID to be opened fails like any other that cannot be unpacked: a **400** over
 HTTP, dropped on a socket.
 
+A did:web the mediator meets in an envelope is fetched under one policy on
+both runtimes. Only https to a public name is fetched: an IP literal, a
+loopback host or a reserved name such as `.local` or `.internal` is refused
+before any request. No redirect is followed, at most 64 KiB is read, the whole
+fetch has 10 seconds, and the document's `id` must be the DID byte for byte.
+On Node every address the name resolves to must be public unicast, checked at
+each connection. On Workers the connection is the platform's. A did:web that
+is refused or fails is a DID that does not resolve.
+
 ### What a forward must be
 
 A forward is queued whole or not at all, and the HTTP status of the call says

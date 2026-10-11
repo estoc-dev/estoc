@@ -7,7 +7,7 @@ import { v5 as uuidv5, v7 as uuidv7 } from "uuid";
 import WebSocket from "ws";
 
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
-import { resolveDIDCommDoc } from "../src/didcomm/did-resolver.js";
+import { WebDids, resolveDIDCommDoc } from "../src/didcomm/did-resolver.js";
 import { blobName } from "../src/blobs/hash.js";
 import { mintIdentity } from "../src/identity-core.js";
 import { RECIPIENT_PROOF_TYP, peer4Agent, signedBy, type Peer4Agent } from "../test/helpers.js";
@@ -68,7 +68,8 @@ console.log(`mediator: ${mediatorDid}`);
 }
 
 const alice = await mintIdentity("https://smoke-alice.test/didcomm");
-const ctx = new DIDCommContext(alice.did, alice.didDoc, alice.secrets);
+const web = new WebDids({ fetch, insecureLoopback: true });
+const ctx = new DIDCommContext(alice.did, alice.didDoc, alice.secrets, { web });
 
 interface Speaker {
   did: string;
@@ -108,7 +109,7 @@ async function send(
 }
 
 const ANONYMOUS = {
-  resolver: { resolve: resolveDIDCommDoc },
+  resolver: { resolve: (did: string) => resolveDIDCommDoc(did, web) },
   secrets: { get_secret: async () => null, find_secrets: async () => [] },
 };
 
@@ -150,7 +151,7 @@ async function forwardAnonymously(next: string, inner: unknown, id: string = ran
     mediatorDid,
     null,
     null,
-    { resolve: resolveDIDCommDoc },
+    { resolve: (did: string) => resolveDIDCommDoc(did, web) },
     { get_secret: async () => null, find_secrets: async () => [] },
     { forward: false }
   );
@@ -288,7 +289,7 @@ const PROBLEM = "https://didcomm.org/report-problem/2.0/problem-report";
 /** The short form, sealed with the long form's keys: how an account or a replica speaks once the mediator holds its long form. */
 const known = (who: Peer4Agent): Speaker => ({ did: who.did, ctx: who.shortCtx });
 
-const account = await peer4Agent(null);
+const account = await peer4Agent(null, undefined, { web });
 const registered = await send(`${REPLICA}/account-register`, {}, { did: account.longForm, ctx: account.ctx });
 if (registered.type === PROBLEM) {
   throw new Error(
@@ -305,7 +306,7 @@ const mediationId = uuidv5(
   new TextEncoder().encode(canonicalize(["v1", isLongForm(mediatorDid) ? longToShort(mediatorDid) : mediatorDid])!),
   uuidv5("https://estoc.dev/uuid/v1/mediation", uuidv5.URL)
 );
-const replica = await peer4Agent(mediatorDid);
+const replica = await peer4Agent(mediatorDid, undefined, { web });
 const replicaGrant = await signedBy(account, {
   account: account.did,
   mediation_id: mediationId,
@@ -320,7 +321,7 @@ check(
   "replica added under the account's grant"
 );
 
-const recipient = await peer4Agent(mediatorDid);
+const recipient = await peer4Agent(mediatorDid, undefined, { web });
 const proof = await signedBy(recipient, { account: account.did, aud: mediatorDid, recipient: recipient.did }, { typ: RECIPIENT_PROOF_TYP });
 const recipientAdded = await send(
   `${REPLICA}/recipient-add`,

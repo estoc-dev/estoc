@@ -9,6 +9,7 @@ import {
   type MediatorPolicy,
 } from "../config.js";
 import { DIDCommContext } from "../didcomm/didcomm.js";
+import { WebDids } from "../didcomm/did-resolver.js";
 import {
   identityFor,
   loadOrCreateSecrets,
@@ -75,6 +76,11 @@ export function storeFromEnv(env: Env): D1Store {
   });
 }
 
+// A Worker has no DNS lookup to hook, so the resolver's checks on the name are
+// what this code holds there; the connection is the platform's. The fetch is
+// wrapped because workerd refuses one called with another `this`.
+const webDids = new WebDids({ fetch: (input, init) => fetch(input, init) });
+
 // The keys are one row in D1, loaded (minted, on very first contact) once per
 // isolate. A failed load is not cached — the next request retries.
 let cachedSecrets: Promise<Secret[]> | null = null;
@@ -113,6 +119,7 @@ export async function depsForOrigin(env: Env, origin: string): Promise<WorkerDep
     ctx: new DIDCommContext(identity.did, identity.didDoc, identity.secrets, {
       aliases: identity.aliases,
       resolutionMaterial: (did) => store.resolutionMaterial(did),
+      web: webDids,
     }),
     store,
     policy,
