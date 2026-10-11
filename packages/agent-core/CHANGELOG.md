@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **This runtime's replica, bound** (breaking): `Agent.membership()`
+  hands the host this runtime's replica at its arrangement as a
+  `Membership`, with `replicaId`, `mediationId`, `blobs` (blob-store/1.0
+  spoken as the replica) and `sendSnapshotLink(to, link)`, bound once to
+  this runtime, its keys and the agent's line to the arrangement's
+  mediator. A runtime has one replica, bound to one arrangement for good,
+  so the call takes no arrangement. Taking it reads the vault alone and
+  needs the replica's creation (`UnknownEntity` until this runtime has
+  enrolled somewhere); the mediator is resolved and reached only once an
+  operation has to. Each blob request enrolls this runtime first, each
+  step only when it is not known to be done, and then needs the replica
+  a member of an arrangement that is usable; a snapshot link needs the
+  same, without enrolling. Once the agent closes, an operation that has
+  to reach the mediator is refused with `LinkClosed`.
+  `Agent.blobStore(mediationId)` and `Agent.sendSnapshotLink(to, link)`
+  are removed. A snapshot link is posted over the replica's own link;
+  what reaches the mediator is the same anonymous forward.
+
 - **The index exports what a host acts through** (breaking): an
   operation that acts as the vault reaches a host only through an
   object. The index exports `Agent`, `AgentTrace`, `LocalRecords`,
@@ -23,7 +41,7 @@
   built-in handlers with `handlerFor` and `handlersOf`, `readRecords`,
   `transientOptions`, `MAX_ENVELOPE_BYTES` and `LONGEST_TIMER_MS`.
   `BlobStore`, `LiveAction` and `LiveInput` remain as types, since
-  `Agent.blobStore()`, `Agent.manual` and `onInbound` hand them out.
+  `Membership.blobs`, `Agent.manual` and `onInbound` hand them out.
   `canonicalDid` and `sameDid` are `@estoc/vault`'s, and are imported
   from there. `protocol/mediator-input.ts` (`didHost`,
   `resolveMediatorInput`) is deleted: nothing called it.

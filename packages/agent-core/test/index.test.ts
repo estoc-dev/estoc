@@ -173,6 +173,7 @@ describe("the package index", () => {
         index.LocalStore,
         index.Manual,
         index.ManualEntry,
+        index.Membership,
         index.MessageHeaders,
         index.MessageRecord,
         index.ObservationRecord,

@@ -36,6 +36,7 @@ import {
   MAX_CONTENT_BYTES,
   MediatorRefused,
   SEAL_OVERHEAD,
+  UnknownEntity,
   createDid,
   createMediation,
   createVault,
@@ -54,6 +55,7 @@ import {
   type Called,
   type EffectOutcome,
   type InspectedRuntime,
+  type Membership,
   type RouteSpec,
 } from "@estoc/agent-core";
 
@@ -598,6 +600,23 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
   const preferredRoute = async (running: Open): Promise<RouteSpec> => ({ kind: "mediated", mediationId: await preferredMediation(running) });
 
+  /**
+   * The runtime's replica at its arrangement. A runtime restored, or past
+   * an identity reset, holds the vault's arrangement and no replica of its
+   * own until a connection enrolls it: it is enrolled at the preferred
+   * arrangement first. A vault that never had a mediator set has no
+   * preferred arrangement to enroll in.
+   */
+  async function membershipOf(running: Open, agent: Agent): Promise<Membership> {
+    try {
+      return await agent.membership();
+    } catch (err) {
+      if (!(err instanceof UnknownEntity)) throw err;
+    }
+    await agent.enroll(await preferredMediation(running));
+    return agent.membership();
+  }
+
   /** `presented` as a peer's DID: canonical, and none of this vault's own. */
   async function peerDidOf(running: Open, presented: string): Promise<Did> {
     let peerDid: Did;
@@ -886,12 +905,11 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     async publishSnapshotLink() {
       const running = vault();
       const { attached, runtime } = running;
-      const { store, mediationId, maxBytes } = await during(attached, async (agent) => {
-        const mediationId = await preferredMediation(running);
-        const store = await agent.blobStore(mediationId);
-        const limits = await store.limits();
+      const { blobs, mediationId, maxBytes } = await during(attached, async (agent) => {
+        const { blobs, mediationId } = await membershipOf(running, agent);
+        const limits = await blobs.limits();
         if (limits === null) throw new Unmet("the mediator keeps no blobs");
-        return { store, mediationId, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
+        return { blobs, mediationId, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
       });
       // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
       const snapshot = await exclusively(() => {
@@ -906,9 +924,9 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           await links.prune(placedAt);
           const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, placedAt };
           await links.keep(asked);
-          let placement: Awaited<ReturnType<typeof store.put>>;
+          let placement: Awaited<ReturnType<typeof blobs.put>>;
           try {
-            placement = await store.put(sealed.hash, sealed.bytes.length);
+            placement = await blobs.put(sealed.hash, sealed.bytes.length);
           } catch (err) {
             if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
             await links.forget(sealed.hash);
@@ -916,7 +934,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           }
           const placed = { ...asked, stage: "placed" as const, url: placement.url, retainUntil: placement.retainUntil };
           await links.keep(placed);
-          await store.upload(placement, sealed.bytes);
+          await blobs.upload(placement, sealed.bytes);
           const uploaded = { ...placed, stage: "uploaded" as const };
           await links.keep(uploaded);
           return links.published(uploaded);
@@ -935,7 +953,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
             const kept = put.stage === "asked" ? "" : `, which keeps it until ${new Date(put.retainUntil).toISOString()}`;
             throw new Unmet(`snapshot ${hash} was put under a replica ID this runtime has given up since, and only that replica may delete it at the mediator${kept}`);
           }
-          await (await agent.blobStore(put.owner.mediationId)).delete(hash);
+          await (await agent.membership()).blobs.delete(hash);
           await links.forget(hash);
         })
       );

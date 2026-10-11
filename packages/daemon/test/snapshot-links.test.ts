@@ -10,7 +10,7 @@ import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
 import type { Channel } from "@estoc/vault";
 
-import { BLOB_DELETE, BLOB_PUT, SEAL_OVERHEAD, blobName } from "@estoc/agent-core";
+import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName } from "@estoc/agent-core";
 import { newMediator } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
@@ -341,6 +341,47 @@ describe("a snapshot link", () => {
 
       mediator.blobLimits = null;
       expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: "the mediator keeps no blobs", effect: "none", messageId: null });
+    },
+    LONG
+  );
+
+  it(
+    "is published at once after its daemon took a fresh replica ID, the new replica added at the preferred arrangement before the put",
+    async () => {
+      const mediator = await newMediator();
+      const original = await alice(mediator);
+      await original.daemon.close();
+      const copy = await folder();
+      await cp(path.join(original.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
+
+      const here = daemonOver(original.root, mediator);
+      await here.daemon.boot();
+      await here.daemon.unlock(PASSPHRASE);
+      await here.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
+      const backup = await here.daemon.exportBackup();
+
+      const there = daemonOver(copy, mediator);
+      await there.daemon.boot();
+      await there.daemon.unlock(PASSPHRASE);
+      await there.daemon.createContact("Dave", [{ localDid: shortForm("Anna"), peerDid: shortForm("Dave") } as Channel]);
+      const asked = mediator.seenTypes.length;
+      expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
+      expect(await there.call("publishSnapshotLink", {})).toMatchObject({ status: "published", revocable: true });
+      const since = mediator.seenTypes.slice(asked);
+      expect(since).toContain(REPLICA_ADD);
+      expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
+    },
+    LONG
+  );
+
+  it(
+    "is refused while no mediator was ever set, and nothing is asked of one",
+    async () => {
+      const mediator = await newMediator();
+      const a = await newcomer(mediator);
+      await a.daemon.createIdentity("Alice", PASSPHRASE);
+      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: "no mediator is set", effect: "none", messageId: null });
+      expect(a.fetched).toEqual([]);
     },
     LONG
   );

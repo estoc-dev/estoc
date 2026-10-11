@@ -71,6 +71,7 @@ export type { Drained } from "./pickup.js";
 export { decide, serially, type Decided } from "./procedure.js";
 export { createMediation, selectMediation } from "./mediation.js";
 export type { Arrangement } from "./arrangement.js";
+export type { Membership } from "./membership.js";
 export type { EnrollStep, Enrolled } from "./replica-enrollment.js";
 export { LocalRecords, type LeftTo, type LocalStore } from "./local-records.js";
 export type { RecipientsAdded } from "./replica-recipients.js";

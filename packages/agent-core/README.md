@@ -36,9 +36,9 @@ one of the vault's DIDs or writing the vault, reaches a host only through
 an object and the entry points that hand it out. The parts those objects
 are assembled from stay inside the package. The index exports:
 
-- The objects and how a host gets them: `Agent` (and the `Arrangement` it
-  hands out), `AgentTrace`, `LocalRecords`, `createVault`, `openVault`,
-  `inspectRuntime`, `inspectSnapshot`.
+- The objects and how a host gets them: `Agent` (and the `Arrangement` and
+  `Membership` it hands out), `AgentTrace`, `LocalRecords`, `createVault`,
+  `openVault`, `inspectRuntime`, `inspectSnapshot`.
 - The errors, so that a host can catch what those objects throw.
 - The wire vocabulary of `protocol/`, whole: the type URIs, reading and
   writing bodies, `unpack`, `parseInvitation`, `secretsResolverFor`. These
@@ -74,12 +74,13 @@ peer.
 | Question | Module | Entry points |
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
-| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `blobStore`, `sendSnapshotLink`, `close` |
+| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `membership`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
 | What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf`, `accountOf` |
 | What speaks as an arrangement's account, and with what? | `arrangement.ts` | `Arrangement`, `Account` |
+| What speaks as this runtime's replica at its arrangement, and with what? | `membership.ts` | `Membership`, `Member`, `bindingOf` |
 | How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica` |
 | Which addresses does the account hold? | `replica-recipients.ts` | `addRecipients`, `holds` |
 | Which replicas has the account added, and which of them is this runtime? | `replica-list.ts` | `listReplicas` |
@@ -87,7 +88,7 @@ peer.
 | How is the replica's mail fetched and acknowledged? | `pickup.ts` | `Pickup` |
 | How does the replica keep a blob at the mediator, and how is one read back? | `blob-store.ts` | `BlobStore`, `readBlob` |
 | How is a blob sealed, and opened? | `sealed-blob.ts` | `sealBlob`, `openBlob`, `SEAL_OVERHEAD` |
-| How do the replicas of one seed write to each other, and how is the sender known to hold the seed? | `replica-channel.ts` | `replicaRoute`, `sendOverRoute`, `replicaReceiptOf`, `boundReplica` |
+| How do the replicas of one seed write to each other, and how is the sender known to hold the seed? | `replica-channel.ts` | `replicaRoute`, `sendOverRoute`, `replicaReceiptOf`, `boundReplica`, `usableReplica` |
 | Which keys does this runtime hold in hand? | `keyring.ts` | `Keyring`, `secretsOf`, `replicaSecrets` |
 | How is a communication DID minted, disclosed, retired? | `dids.ts` | `createDid`, `disclose`, `retireDid`, `routeOf` |
 | What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `WebResolverOptions` |
@@ -121,7 +122,7 @@ peer.
 2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `ends.ts` for the sealing and carrying beneath them, which read nothing but the two ends, `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `lifetime.ts` for what a close stops, and where; `records.ts` for what the host is shown.
-5. `mediation.ts`, `arrangement.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `replica-list.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side, `arrangement.ts` binding what speaks as the account; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
+5. `mediation.ts`, `arrangement.ts`, `membership.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `replica-list.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side, `arrangement.ts` binding what speaks as the account and `membership.ts` what speaks as this runtime's replica; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
 
 ## Usage
 

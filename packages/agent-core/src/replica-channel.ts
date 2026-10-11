@@ -45,6 +45,22 @@ export function boundReplica(fold: VaultFold, replicaId: ReplicaId): BoundReplic
   return mediatorDid === null ? null : { replicaId, mediationId: replica.mediationId, mediatorDid, did: replica.did, longFormDid: replica.longFormDid };
 }
 
+/**
+ * The replica `replicaId` as the fold binds it, fit to speak at its
+ * arrangement's mediator: a member of an arrangement that is usable.
+ * `UnknownEntity` when the fold has no such replica, `Unusable` when it
+ * cannot speak there.
+ */
+export function usableReplica(fold: VaultFold, replicaId: ReplicaId): BoundReplica {
+  const recorded = fold.replicas.replicas.get(replicaId);
+  if (recorded === undefined) throw new UnknownEntity("replica", replicaId);
+  const bound = boundReplica(fold, replicaId);
+  if (bound === null) throw new Unusable("replica", replicaId, recorded.faults.length > 0 ? recorded.faults : [recorded.status]);
+  const mediation = mediationOf(fold, bound.mediationId);
+  if (mediation.status !== "usable") throw new Unusable("mediation", bound.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
+  return bound;
+}
+
 /** Another replica of this vault's seed, as the caller learned of it: its ID, and the long form of its DID, which alone carries its document. */
 export interface ReplicaAddress {
   replicaId: ReplicaId;
@@ -69,12 +85,7 @@ export interface ReplicaRoute {
  * replica cannot send, `NotAReplica` when `to` is no one to send to.
  */
 export async function replicaRoute(keys: Keys, fold: VaultFold, author: ReplicaId, to: ReplicaAddress): Promise<ReplicaRoute> {
-  const recorded = fold.replicas.replicas.get(author);
-  if (recorded === undefined) throw new UnknownEntity("replica", author);
-  const from = boundReplica(fold, author);
-  if (from === null) throw new Unusable("replica", author, recorded.faults.length > 0 ? recorded.faults : [recorded.status]);
-  const mediation = mediationOf(fold, from.mediationId);
-  if (mediation.status !== "usable") throw new Unusable("mediation", from.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
+  const from = usableReplica(fold, author);
   const key = (await keys.replicaKeys(author)).keyAgreement;
   const sender = senderEndOf(from.longFormDid, peerResolution(from.longFormDid), key);
   if (sender === null) throw new Unusable("replica", author, ["its document authorizes no key-agreement method didcomm seals from with the key the seed derives"]);
