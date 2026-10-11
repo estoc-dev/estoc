@@ -457,9 +457,12 @@ The pure ACK is its own Empty message under the effect type
 `https://estoc.dev/distributed-delivery/1.0#pure-ack`, independent of a
 natural reply or rotation notification: body `{}`, no attachments or
 headers, the carrier's nullable creation time, no expiry, `pleaseAck` null,
-`thid = replyThread(carrier)` and `ack` the one target, so that the six
+`thid = replyThread(carrier)` and `ack` the one target, so that equivalent
 spellings of one self-threaded carrier give one ACK intent
-([message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)).
+([projection.test.ts](../../packages/vault/test/projection.test.ts) for
+`replyThread`,
+[message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)
+for the ACK's bytes and CID).
 Built-in Ping replies and rotation notifications have `ack == []`; another
 protocol may define its own explicit ACKs under the same target checks.
 Never request an ACK for a pure ACK, or answer one with another. When the
