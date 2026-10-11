@@ -6,7 +6,8 @@ import { AUTHENTICATION_METHOD, didKeyName, inboundMessageId, scanVault, signFro
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, Receiver, acknowledgementDrafts, afterReceipt, createDid, disclose, prepare, receiptOf, recordAcks, recordOwed, recordReceipt, send, type Authenticated, type Content, type ReceiptOutcome, type Source, routeOf } from "../src/index.js";
+import { AgentTrace, Keyring, Receiver, acknowledgementDrafts, afterReceipt, createDid, prepare, receiptOf, recordAcks, recordOwed, recordReceipt, send, type Authenticated, type Content, type ReceiptOutcome, type Source, routeOf } from "../src/index.js";
+import { disclose } from "../src/dids.js";
 import { didcomm, directParty, peerSealer, refuseCommits, sealed, type DirectParty, type Fresh } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;

@@ -9,16 +9,16 @@
  * beside it: whether the list is kept, and where, is the host's.
  */
 
-import { isJsonObject, type VaultRuntime } from "@estoc/event-store";
-import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, scanVault, verifyReplicaGrant, type Did, type Keys, type MediationId, type VaultFold } from "@estoc/vault";
+import { isJsonObject } from "@estoc/event-store";
+import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, scanVault, verifyReplicaGrant, type Did } from "@estoc/vault";
 
-import { MediatorRefused, Unusable } from "./errors.js";
-import type { MediatorLink } from "./link.js";
-import { toward } from "./mediation.js";
+import type { Account } from "./arrangement.js";
+import { MediatorRefused } from "./errors.js";
+import { control, type MediatorLink } from "./link.js";
+import { registeredAccountOf } from "./mediation.js";
 import type { IMessage } from "./protocol/didcomm.js";
 import { INVALID_MESSAGE, REPLICA_LIST, REPLICAS } from "./protocol/replica-mediation.js";
 import type { ReplicaAddress } from "./replica-channel.js";
-import { accountOf, control } from "./replica-enrollment.js";
 
 /** Whether the account still holds the replica, and when the mediator removed one it no longer holds, in seconds since the epoch by the mediator's clock. */
 type Standing = { state: "active"; removedTime: null } | { state: "removed"; removedTime: number };
@@ -40,22 +40,22 @@ type Entry = Standing & { grant: string; addedTime: number };
 const PAGE = 16;
 
 /**
- * Every replica the account of the arrangement ever added, in the
- * order the mediator added them, each under the grant it was added
- * with: those whose grant the seed and the arrangement's creation bear
- * out, with `self` set on this runtime's own. A grant that does not
- * stand is left out and its reason traced. Needs the arrangement
- * created toward the link's mediator, neither retired nor in conflict,
- * and its account registered. Throws `MediatorRefused` when the
- * mediator refuses the listing or answers with no listing.
+ * Every replica the account ever added, in the order the mediator added
+ * them, each under the grant it was added with: those whose grant the
+ * seed and the arrangement's creation bear out, with `self` set on this
+ * runtime's own. A grant that does not stand is left out and its reason
+ * traced. Needs the arrangement neither retired nor in conflict, and its
+ * account registered; the mediator is not reached otherwise. Throws
+ * `MediatorRefused` when the mediator refuses the listing or answers
+ * with no listing.
  */
-export async function listReplicas(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<ListedReplica[]> {
-  const mediation = listableAccountOf(await scanVault(runtime.vault, keys), mediationId);
-  toward(link, mediation);
+export async function listReplicas(account: Account): Promise<ListedReplica[]> {
+  const { runtime, keys, mediationId } = account;
+  const mediation = registeredAccountOf(await scanVault(runtime.vault, keys), mediationId);
   // a grant has more than one encoding that verifies, so a replica is told apart by its DID and not by its grant's characters
   const listed = new Map<Did, ListedReplica>();
   const refused: string[] = [];
-  for (const { grant: jws, ...entry } of await everyEntry(link)) {
+  for (const { grant: jws, ...entry } of await everyEntry(await account.link(mediation))) {
     try {
       const grant = await verifyReplicaGrant(keys, jws, mediation.me.did);
       if (grant.mediationId !== mediationId || !sameDid(grant.mediator, mediation.mediatorDid)) throw new IdentityMismatch(`the grant binds its replica to mediation ${grant.mediationId} at ${grant.mediator}`);
@@ -66,15 +66,8 @@ export async function listReplicas(link: MediatorLink, runtime: VaultRuntime, ke
     }
   }
   const replicas = [...listed.values()];
-  await link.observe("diag", "replica-list", { mediationId, listed: replicas.map(({ did }) => did), refused });
+  await account.observe("replica-list", { mediationId, listed: replicas.map(({ did }) => did), refused });
   return replicas;
-}
-
-/** The arrangement as the fold has it, fit to be listed: fit to be enrolled in, and its account registered. */
-export function listableAccountOf(fold: VaultFold, mediationId: MediationId): ReturnType<typeof accountOf> {
-  const mediation = accountOf(fold, mediationId);
-  if (mediation.routingDid === null) throw new Unusable("mediation", mediationId, ["its account is not registered"]);
-  return mediation;
 }
 
 /**

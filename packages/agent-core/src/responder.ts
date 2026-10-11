@@ -32,11 +32,10 @@ import { InvalidDidDocument, canonicalDidOf, scanVault, type Did, type Execution
 import { responding, type LiveInput, type Responding } from "./action.js";
 import { owesEffects, messageOf, type EffectOptions } from "./effects.js";
 import { LinkClosed, MediatorRefused } from "./errors.js";
-import type { MediatorLink } from "./link.js";
+import { control, type MediatorLink } from "./link.js";
 import type { LocalRecords } from "./local-records.js";
 import type { IMessage } from "./protocol/didcomm.js";
 import { EXECUTION_REGISTER, EXECUTION_REGISTERED } from "./protocol/replica-mediation.js";
-import { control } from "./replica-enrollment.js";
 import { note } from "./trace.js";
 
 export interface ExecutionRegistration {

@@ -10,9 +10,8 @@
  */
 
 import { BlobTooLarge, BlobTransferFailed, MediatorRefused } from "./errors.js";
-import { bounded, letGo, type MediatorLink } from "./link.js";
+import { bounded, control, letGo, type MediatorLink } from "./link.js";
 import { BLOB_DELETE, BLOB_DELETE_RESULT, BLOB_PUT, BLOB_PUT_RESULT } from "./protocol/blob-store.js";
-import { control } from "./replica-enrollment.js";
 
 /** What the mediator says of its blobs. */
 export interface BlobLimits {

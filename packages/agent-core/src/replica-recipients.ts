@@ -15,16 +15,16 @@
  * is mail this runtime never sees.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { IdentityMismatch, scanVault, signRecipientProof, type Did, type DidId, type Keys, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
+import { IdentityMismatch, scanVault, signRecipientProof, type Did, type DidId, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
 
+import type { Account } from "./arrangement.js";
 import { RECIPIENT_ADD, RECIPIENT_ADDED } from "./protocol/replica-mediation.js";
 import { MediatorRefused, Unusable } from "./errors.js";
-import type { MediatorLink } from "./link.js";
-import { toward } from "./mediation.js";
-import { serially } from "./procedure.js";
-import { accountOf, confirmed, control, echoes, replicaAdded, type Confirmations } from "./replica-enrollment.js";
+import { control, echoes } from "./link.js";
+import { registeredAccountOf } from "./mediation.js";
+import { replicaAdded } from "./replica-enrollment.js";
 
+/** That a recipient was added is kept under the arrangement and the DID entity, since the account holds it for every replica: it stays for as long as the runtime's local options do. */
 const recipientAddedKey = (mediationId: MediationId, didId: DidId): string => `replica-mediation/recipient-added/${mediationId}/${didId}`;
 
 type SharedAddress = LocalDidEntity & { created: VaultData["did.created"] };
@@ -56,25 +56,19 @@ export function holds(recipients: RecipientsAdded, did: Did): boolean {
 
 /**
  * One recipient-add for each DID the account is to hold that has no
- * confirmation kept. Needs a replica-mediation arrangement toward the
- * link's mediator, its account registered and this runtime's replica
- * confirmed added. A DID the mediator refuses, or one whose document
- * names no method to sign a proof under, stops none of the others; a
- * request that gets no answer throws, and leaves what was confirmed
- * before it confirmed. Runs as the account's one procedure at a time.
+ * confirmation kept. Needs the account registered and this runtime's
+ * replica confirmed added. A DID the mediator refuses, or one whose
+ * document names no method to sign a proof under, stops none of the
+ * others; a request that gets no answer throws, and leaves what was
+ * confirmed before it confirmed. For a caller holding the account's
+ * turn.
  */
-export function addRecipients(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<RecipientsAdded> {
-  return serially(runtime, mediationId, () => addRecipientsNow(link, runtime, keys, confirmations, mediationId));
-}
-
-/** `addRecipients` for a caller that already holds the account's turn. */
-export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime, keys: Keys, confirmations: Confirmations, mediationId: MediationId): Promise<RecipientsAdded> {
+export async function addRecipients(account: Account): Promise<RecipientsAdded> {
+  const { runtime, keys, mediationId } = account;
   const fold = await scanVault(runtime.vault, keys);
-  const mediation = accountOf(fold, mediationId);
-  toward(link, mediation);
-  if (mediation.routingDid === null) throw new Unusable("mediation", mediationId, ["its account is not registered"]);
+  const mediation = registeredAccountOf(fold, mediationId);
   const replica = fold.replicas.replicas.get(runtime.author);
-  if (replica === undefined || replica.status !== "member" || replica.did === null || replica.mediationId !== mediationId || !(await replicaAdded(confirmations, mediationId, runtime.author, replica.did))) {
+  if (replica === undefined || replica.status !== "member" || replica.did === null || replica.mediationId !== mediationId || !(await replicaAdded(account, runtime.author, replica.did))) {
     throw new Unusable("replica", runtime.author, [`not confirmed added to mediation ${mediationId}`]);
   }
 
@@ -83,20 +77,20 @@ export async function addRecipientsNow(link: MediatorLink, runtime: VaultRuntime
   const refused: RecipientsAdded["refused"] = [];
   for (const { didId, created } of addresses) {
     const key = recipientAddedKey(mediationId, didId);
-    if (await confirmed(confirmations, key, "recipientDid", created.did)) continue;
+    if (await account.confirmed(key, "recipientDid", created.did)) continue;
     try {
       const proof = await signRecipientProof(keys, created, mediation.me.did, mediation.mediatorDid);
-      const answer = await control(link, RECIPIENT_ADD, { recipient_did: created.did, resolution_material: created.longFormDid, proof }, RECIPIENT_ADDED);
+      const answer = await control(await account.link(mediation), RECIPIENT_ADD, { recipient_did: created.did, resolution_material: created.longFormDid, proof }, RECIPIENT_ADDED);
       if (!echoes(answer, "recipient_did", created.did)) throw new MediatorRefused("recipient-added names another recipient than the one asked for");
     } catch (err) {
       if (!(err instanceof MediatorRefused || err instanceof IdentityMismatch)) throw err;
       refused.push({ did: created.did, because: err.message });
       continue;
     }
-    await confirmations.set(key, { recipientDid: created.did });
+    await account.confirm(key, { recipientDid: created.did });
     added.push(created.did);
   }
   const recipients: RecipientsAdded = { mediationId, wanted: addresses.map(({ created }) => created.did), added, refused };
-  await link.observe("diag", "recipients", { ...recipients });
+  await account.observe("recipients", { ...recipients });
   return recipients;
 }

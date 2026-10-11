@@ -18,15 +18,14 @@ import {
   canonicalDid,
   createMediation,
   createReplica,
-  enroll,
   selectMediation,
   transientOptions,
-  type Confirmations,
   type LocalStore,
 } from "../src/index.js";
+import type { Confirmations } from "../src/arrangement.js";
 import { decide } from "../src/procedure.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { didcomm, freshVault, newMediator, party, type Party } from "./helpers.js";
+import { accountOver, didcomm, freshVault, newMediator, party, type Party } from "./helpers.js";
 
 const account = (mediator: FakeMediator, fill = 1): Promise<Party> => party(mediator, fill);
 const fold = (p: Pick<Party, "runtime" | "keys">): Promise<VaultFold> => scanVault(p.runtime.vault, p.keys);
@@ -68,8 +67,7 @@ describe("creating a replica", () => {
     await decide(p.runtime, p.keys, () => [vaultDraft("replica.created", { replicaId: p.runtime.author, mediationId: p.mediationId, grant })]);
     expect((await fold(p)).replicas.replicas.get(p.runtime.author)?.status).toBe("conflict");
     await expect(createReplica(p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
-    const link = new MediatorLink(p.linkOptions);
-    await expect(enroll(link, p.runtime, p.keys, transientOptions(), p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    await expect(accountOver(p, { confirmations: transientOptions() }).enroll()).rejects.toBeInstanceOf(Unusable);
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();
   });
@@ -80,14 +78,13 @@ describe("enrolling", () => {
   it("registers the account once, records the grant, adds its own replica, and asks for neither again", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const confirmations = p.runtime.local.options;
-    const first = await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId);
+    const first = await p.account.enroll();
     expect(first.steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     expect(first.mediation).toMatchObject({ status: "usable", routingDid: mediator.did });
     expect(mediator.replicaAccounts.has(canonicalDid(p.created.data.me.did))).toBe(true);
     expect(mediator.replicas.get(first.replica.did as Did)).toMatchObject({ replicaDid: first.replica.did, grant: first.replica.grants[0] });
     const asked = mediator.seenTypes.length;
-    expect((await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).steps).toEqual([]);
+    expect((await p.account.enroll()).steps).toEqual([]);
     expect(mediator.seenTypes).toHaveLength(asked);
     expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
     expect((await p.trace.read({ stream: "diag" })).map((entry) => entry.type)).toEqual(["diag.enroll", "diag.enroll"]);
@@ -98,12 +95,12 @@ describe("enrolling", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     p.offline.reason = "no route to host";
-    await expect(enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).rejects.toThrow(/no route to host/);
+    await expect(p.account.enroll()).rejects.toThrow(/no route to host/);
     const left = await fold(p);
     expect(left.mediations.mediations.get(p.mediationId)?.status).toBe("pending");
     expect(left.replicas.replicas.has(p.runtime.author)).toBe(false);
     p.offline.reason = null;
-    expect((await enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
+    expect((await p.account.enroll()).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     await p.runtime.close();
   });
 
@@ -117,12 +114,12 @@ describe("enrolling", () => {
       return answer;
     };
     const link = new MediatorLink({ ...p.linkOptions, fetch: fetchOnce });
-    await expect(enroll(link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
+    await expect(accountOver(p, { link }).enroll()).rejects.toBeInstanceOf(LinkClosed);
     const left = await fold(p);
     expect(left.mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);
     expect(left.replicas.replicas.get(p.runtime.author)?.status).toBe("member");
     expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER]);
-    expect((await enroll(p.link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).steps).toEqual(["replica-added"]);
+    expect((await p.account.enroll()).steps).toEqual(["replica-added"]);
     await p.runtime.close();
   });
 
@@ -132,11 +129,12 @@ describe("enrolling", () => {
     const options = p.runtime.local.options;
     let fails = 1;
     const failing: Confirmations = { get: options.get, set: (...args) => (fails-- > 0 ? Promise.reject(new Error("the disk is full")) : options.set(...args)) };
-    await expect(enroll(p.link, p.runtime, p.keys, failing, p.mediationId)).rejects.toThrow("the disk is full");
-    expect((await enroll(p.link, p.runtime, p.keys, failing, p.mediationId)).steps).toEqual(["replica-added"]);
+    const flaky = accountOver(p, { confirmations: failing });
+    await expect(flaky.enroll()).rejects.toThrow("the disk is full");
+    expect((await flaky.enroll()).steps).toEqual(["replica-added"]);
     await selectMediation(p.runtime, p.keys, p.mediationId);
     await p.runtime.local.clearCaches();
-    expect((await enroll(p.link, p.runtime, p.keys, options, p.mediationId)).steps).toEqual([]);
+    expect((await p.account.enroll()).steps).toEqual([]);
     expect(sent(mediator, ACCOUNT_REGISTER)).toBe(1);
     expect(sent(mediator, REPLICA_ADD)).toBe(2);
     expect(mediator.replicas.size).toBe(1);
@@ -146,12 +144,12 @@ describe("enrolling", () => {
   it("adds a second replica of the vault under its own grant, registering nothing and adding no one else", async () => {
     const mediator = await newMediator();
     const first = await account(mediator);
-    await enroll(first.link, first.runtime, first.keys, first.runtime.local.options, first.mediationId);
+    await first.account.enroll();
     const second = await freshVault(1, "second replica");
     await second.runtime.ingest(await eventsOf(first.runtime));
     const ring = await Keyring.load(second.keys, await fold(second));
     const link = new MediatorLink({ ...first.linkOptions, secrets: () => ring.secrets() });
-    const enrolled = await enroll(link, second.runtime, second.keys, second.runtime.local.options, first.mediationId);
+    const enrolled = await accountOver({ ...second, mediationId: first.mediationId, trace: first.trace, confirmations: second.runtime.local.options, link }).enroll();
     expect(enrolled.steps).toEqual(["replica-created", "replica-added"]);
     expect(enrolled.replica.replicaId).toBe(second.runtime.author);
     expect(sent(mediator, ACCOUNT_REGISTER)).toBe(1);
@@ -164,28 +162,28 @@ describe("enrolling", () => {
   it("records no grant and keeps no confirmation over an answer that names something else, or a refusal", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const confirmations = transientOptions();
+    const forgetful = accountOver(p, { confirmations: transientOptions() });
     mediator.intercept = (msg, from) => (msg.type === ACCOUNT_REGISTER ? mediator.reply(`${ACCOUNT_REGISTER}ed`, from as string, { account: canonicalDid(from as string), routing_did: "did:web:elsewhere.example" }, msg.id) : undefined);
-    await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toBeInstanceOf(MediatorRefused);
+    await expect(forgetful.enroll()).rejects.toBeInstanceOf(MediatorRefused);
     expect((await fold(p)).mediations.mediations.get(p.mediationId)?.routingDid).toBeNull();
 
     mediator.intercept = (msg, from) => (msg.type === REPLICA_ADD ? mediator.reply(`${REPLICA_ADD}ed`, from as string, { replica_did: canonicalDid(from as string), state: "active" }, msg.id) : undefined);
-    await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toBeInstanceOf(MediatorRefused);
+    await expect(forgetful.enroll()).rejects.toBeInstanceOf(MediatorRefused);
 
     mediator.intercept = null;
     mediator.replicaAccounts.clear();
-    await expect(enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).rejects.toThrow("replica-add was refused: e.estoc.replica-mediation.unknown-account");
+    await expect(forgetful.enroll()).rejects.toThrow("replica-add was refused: e.estoc.replica-mediation.unknown-account");
     mediator.replicaAccounts.add(canonicalDid(p.created.data.me.did));
-    expect((await enroll(p.link, p.runtime, p.keys, confirmations, p.mediationId)).steps).toEqual(["replica-added"]);
+    expect((await forgetful.enroll()).steps).toEqual(["replica-added"]);
     await p.runtime.close();
   });
 
   it("refuses an unknown arrangement, and a link to another mediator, asking nothing", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    await expect(enroll(p.link, p.runtime, p.keys, transientOptions(), "019b0000-0000-5000-8000-000000000000" as MediationId)).rejects.toThrow(/no mediation/);
+    await expect(accountOver({ ...p, mediationId: "019b0000-0000-5000-8000-000000000000" as MediationId }).enroll()).rejects.toThrow(/no mediation/);
     const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
-    await expect(enroll(p.link, p.runtime, p.keys, transientOptions(), other.data.mediationId)).rejects.toBeInstanceOf(WrongMediator);
+    await expect(accountOver({ ...p, mediationId: other.data.mediationId }).enroll()).rejects.toBeInstanceOf(WrongMediator);
     expect((await fold(p)).replicas.replicas.size).toBe(0);
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();

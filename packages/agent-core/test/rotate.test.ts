@@ -45,9 +45,6 @@ import {
   completeNotification,
   createDid,
   createMediation,
-  disclose,
-  dispatch,
-  enroll,
   manualNotificationDraft,
   pinnedResolver,
   privateAddress,
@@ -64,6 +61,8 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
+import { disclose } from "../src/dids.js";
+import { dispatch } from "../src/dispatch.js";
 import { after, copyOf, didcomm, directParty, mediatedParty, merged, newMediator, party, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -305,7 +304,7 @@ describe("a local rotation", () => {
     const { options: theirs } = await rotating({ ...nowhere, didId: ALICE, did: alice.did, longFormDid: alice.longFormDid });
     await expect(rotate(nowhere.runtime, nowhere.keys, { localDidId: ALICE, peerDid: charlie.did }, theirs)).rejects.toThrow(new Unusable("DID", ALICE, [`this runtime is not enrolled in the arrangement ${alice.mediationId}, which routes the predecessor`]));
     const other = await party(await newMediator(201, "https://other.example/didcomm"), 1);
-    await enroll(other.link, other.runtime, other.keys, other.confirmations, other.mediationId);
+    await other.account.enroll();
     await other.runtime.ingest([...fold.set.all()]);
     const { options: hers } = await rotating({ ...other, didId: ALICE, did: alice.did, longFormDid: alice.longFormDid });
     await expect(rotate(other.runtime, other.keys, { localDidId: ALICE, peerDid: charlie.did }, hers)).rejects.toThrow(new Unusable("DID", ALICE, [`this runtime is a replica of the arrangement ${other.mediationId}, not of ${alice.mediationId}, which routes the predecessor`]));

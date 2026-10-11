@@ -22,7 +22,8 @@ import { sameDid } from "@estoc/vault";
 import { ENCRYPTED_MIME, didOf, endpointOf, packEncrypted, plainMessage, secretsResolverFor, unpackMessage, type DidcommApi, type IMessage, type UnpackMetadata } from "./protocol/didcomm.js";
 import { envelopeHeader } from "./protocol/envelope.js";
 import { LIVE_DELIVERY_CHANGE } from "./protocol/mediation.js";
-import { UnverifiedReply } from "./errors.js";
+import { PROBLEM_REPORT } from "./protocol/spec.js";
+import { MediatorRefused, UnverifiedReply } from "./errors.js";
 import { Lifetime, type Fetch, type Socket, type Sockets } from "./lifetime.js";
 import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
 
@@ -511,11 +512,6 @@ export class MediatorLink {
     void this.note("mediation", "in", { parent: opened.seq, msg: ritual(opened.msg) });
   }
 
-  /** One entry of what a caller did over the link, waited for no longer than a round trip may take: what it records stands whether or not the entry lands. */
-  observe(stream: TraceStream, what: string, data: TraceData): Promise<number | undefined> {
-    return this.noted(AbortSignal.timeout(this.timeoutMs), () => this.note(stream, what, data));
-  }
-
   /** One entry of the trace. A trace that cannot be written is not a reason to stop sending: the failure is logged and the entry has no number. */
   private async note(stream: TraceStream, what: string, data: TraceData): Promise<number | undefined> {
     try {
@@ -536,4 +532,21 @@ export class MediatorLink {
       return undefined;
     }
   }
+}
+
+/** One control and its reply; a problem-report, or any other answer, is the mediator refusing. */
+export async function control(link: MediatorLink, type: string, body: Record<string, unknown>, expected: string): Promise<IMessage> {
+  const reply = await link.roundTrip(type, body);
+  if (reply.type === expected) return reply;
+  const name = type.slice(type.lastIndexOf("/") + 1);
+  if (reply.type !== PROBLEM_REPORT) throw new MediatorRefused(`expected ${expected.slice(expected.lastIndexOf("/") + 1)} to ${name}, got ${reply.type}`);
+  const { code, comment } = reply.body as { code?: unknown; comment?: unknown };
+  const reported = typeof code === "string" ? code : null;
+  throw new MediatorRefused(`${name} was refused: ${reported ?? "no code"}${typeof comment === "string" ? ` (${comment})` : ""}`, reported);
+}
+
+/** Does the reply name `did` as its `member`, under either spelling? */
+export function echoes(reply: IMessage, member: string, did: string): boolean {
+  const echoed = reply.body[member];
+  return typeof echoed === "string" && sameDid(echoed, did);
 }
