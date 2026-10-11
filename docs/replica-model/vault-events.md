@@ -98,8 +98,8 @@ by the reference alone.
 3. **Portable folds have no current-runtime parameter.** Event `author` is
    provenance, not ownership of communication state.
 4. **Mediation and communication keys are vault-scoped.** They are derived
-   from the seed by name and nothing derived is stored. Key names are never
-   renamed or reused, and a version bump renames none.
+   from the seed by name, and no derived private key material is persisted.
+   Key names are never renamed or reused, and a version bump renames none.
 5. **Stable IDs identify exact manual retries.** A logical message, a
    preparation and a mediator delivery have different identities and
    different lifetimes.
@@ -177,9 +177,10 @@ Version 5 has:
   arrangement affects newly created entries only.
 - **no second arrangement with one mediator.** The arrangement ID is the one
   the mediator's DID derives and outlives retirement.
-- **no mediator confirmation in the event set.** A replica's enrollment
-  records membership, not remote acceptance; what the mediator confirmed is
-  runtime state, and no event repeats per attempt.
+- **no replica-enrollment confirmation event.** `mediation.granted` records
+  the account the mediator granted; `replica.created` records membership in
+  the arrangement, not the mediator's acceptance of that replica. What a
+  replica-add confirmed is runtime state, and no event repeats per attempt.
 - **no second `wireMessageId` on an outbound.** An outbound `messageId` is
   its plaintext `id`; inbound wire IDs have the sender's scope and are
   stored apart.

@@ -330,8 +330,10 @@ withdraw an already effective admission or its ACK evidence.
 `contact.channelsSet` directly selects a contact's channels under
 [the contact selection schema](../../packages/vault/src/schema.ts).
 Two channels sharing a peer DID at different local addresses remain independently
-selectable. [Contact creation](../../packages/vault/src/schema.ts) records a non-empty
-initial set; clearing it leaves no contact-based send choice. The history a
+selectable. Creation commits `contact.created` and a non-empty
+`contact.channelsSet` in one batch
+([createContact](../../packages/daemon/src/daemon.ts)); clearing the set later
+leaves no contact-based send choice. The history a
 contact shows beyond its selected channels, and the heads a new send from it
 may go to, are [the contact view](../../packages/vault/src/fold/views.ts); a selected channel
 stays told apart from a derived one.

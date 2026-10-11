@@ -358,7 +358,7 @@ fields keep them apart ([types.ts](../../packages/vault/src/types.ts)).
 | --- | --- | --- | --- |
 | Intent | `intentCid` | the intent projection of [5.2](#intent-projection) | the same fixed application message |
 | Plaintext | `plaintextCid` | the complete DIDComm plaintext of [5.3](#exact-plaintext-hash) | the same complete plaintext, own ID, addressing and proof included |
-| Envelope | `envelopeCid` | the normalized encrypted envelope of [the preparation](../../packages/vault/src/schema.ts) | the same ciphertext; re-encrypting gives another |
+| Envelope | `envelopeCid` | the normalized encrypted envelope of [document.ts](../../packages/vault/src/document.ts) | the same ciphertext; re-encrypting gives another |
 | Event | event `cid` | the canonical event envelope of [event.ts](../../packages/event-store/src/event.ts) | the same event |
 
 Content equality is not identity. Two independent user sends of equal content
@@ -500,7 +500,7 @@ same intent and the same intent CID.
 ### 5.4 Envelope and event CIDs
 
 The envelope CID is the raw CID of `UTF8(RFC8785(parsedEncryptedEnvelope))`
-under [the preparation](../../packages/vault/src/schema.ts); the bytes are
+under [document.ts](../../packages/vault/src/document.ts); the bytes are
 retained as an object and are the event's root. An event CID is
 [event.ts](../../packages/event-store/src/event.ts)'s. `delivery.submitted` names its
 preparation by event CID and resolves it by that exact CID: an event of equal
@@ -591,8 +591,9 @@ forwardId = UUIDv5(
 ```
 
 Every call of one preparation carries one forward ID, and no mediator-visible
-ID carries an event CID. The namespace derivation and the test vector are in
-[ids.ts](../../packages/vault/src/ids.ts).
+ID carries an event CID. The namespace derivation is
+[ids.ts](../../packages/vault/src/ids.ts)'s; its vector is pinned in
+[ids.test.ts](../../packages/vault/test/ids.test.ts).
 
 <a id="runtime-local-delivery-records"></a>
 

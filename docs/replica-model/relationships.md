@@ -118,9 +118,10 @@ contacts directly select those pairs.
 ### 5.1 Contact IDs
 
 Contacts use UUIDv7 and are created or assigned only by explicit product policy.
-Creation records a non-empty set of complete channel pairs under
-[the contact schema](../../packages/vault/src/schema.ts), possibly before receipt or peer
-resolution. A discovered peer DID therefore needs a local-DID choice first.
+Creation commits `contact.created` and a non-empty `contact.channelsSet` of
+complete channel pairs in one batch
+([createContact](../../packages/daemon/src/daemon.ts)), possibly before receipt
+or peer resolution. A discovered peer DID therefore needs a local-DID choice first.
 
 <a id="102-binding-and-contact-policy"></a>
 <a id="binding-and-contact-policy"></a>
