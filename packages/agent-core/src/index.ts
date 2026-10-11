@@ -77,6 +77,7 @@ export { createMediation, mediationOf, selectMediation } from "./mediation.js";
 export { createReplica, enroll, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export { LocalRecords, transientOptions, type LeftTo, type LocalStore } from "./local-records.js";
 export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
+export { listReplicas, type ListedReplica } from "./replica-list.js";
 export {
   createDid,
   didOf,

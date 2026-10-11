@@ -30,8 +30,10 @@ import {
   PLAIN_TYP,
   RECIPIENT_ADD,
   RECIPIENT_ADDED,
+  REPLICAS,
   REPLICA_ADD,
   REPLICA_ADDED,
+  REPLICA_LIST,
   STATUS,
   STATUS_REQUEST,
   secretsResolverFor,
@@ -41,7 +43,7 @@ import { didOf } from "../src/protocol/didcomm.js";
 /**
  * A mediator that lives inside the test: messagepickup 3.0 (HTTP and a
  * fake WebSocket), routing 2.0 forward, and of replica-mediation the
- * account-register, replica-add and recipient-add controls, the fan-out
+ * account-register, replica-add, replica-list and recipient-add controls, the fan-out
  * of a shared address's mail to the account's replicas, each replica's
  * own pickup and its execution-register; and blob-store/1.0 for added
  * replicas, the bytes at `<http>b/<id>` and its limits at `GET <http>`.
@@ -162,8 +164,16 @@ export class FakeMediator {
   answerAsShortForm = false;
   /** replica-mediation accounts, by their short form */
   readonly replicaAccounts = new Set<string>();
-  /** the replicas added, by replica DID: the account and the grant each was added with */
-  readonly replicas = new Map<string, { account: string; replicaDid: string; grant: string }>();
+  /**
+   * The replicas added, by replica DID, in the order they were added:
+   * the account and the grant each was first added with, and when it
+   * was removed, null while active. The fake takes no replica-remove: a
+   * test removes one by setting the time, and a removed replica is
+   * listed as such and has no share of the account's mail.
+   */
+  readonly replicas = new Map<string, { account: string; replicaDid: string; grant: string; removedTime: number | null }>();
+  /** the largest `limit` a replica-list may ask for */
+  maxMembershipPage = 16;
   /** the communication DIDs replica-mediation accounts hold: recipient DID → account, both by short form */
   readonly sharedRecipients = new Map<string, string>();
   /** recipient DIDs every recipient-add of which is answered `quota` */
@@ -364,7 +374,7 @@ export class FakeMediator {
     const canonical = canonicalDid(next);
     if (this.replicas.has(canonical)) return [canonical];
     const account = this.sharedRecipients.get(canonical);
-    return account === undefined ? [] : [...this.replicas.values()].filter((replica) => replica.account === account).map((replica) => replica.replicaDid);
+    return account === undefined ? [] : [...this.replicas.values()].filter((replica) => replica.account === account && replica.removedTime === null).map((replica) => replica.replicaDid);
   }
 
   private deliveryFor(account: string, items: Queued[]): IMessage {
@@ -400,7 +410,7 @@ export class FakeMediator {
       case ACCOUNT_REGISTER: {
         const account = canonicalDid(from as string);
         this.replicaAccounts.add(account);
-        return this.reply(ACCOUNT_REGISTERED, from as string, { account, routing_did: this.did, registered_time: 1, limits: {} }, msg.id);
+        return this.reply(ACCOUNT_REGISTERED, from as string, { account, routing_did: this.did, registered_time: 1, limits: { max_membership_page: this.maxMembershipPage } }, msg.id);
       }
       case REPLICA_ADD: {
         const account = canonicalDid(from as string);
@@ -409,9 +419,24 @@ export class FakeMediator {
         const grant = readReplicaGrant(jws);
         if (grant.account !== account || !sameDid(grant.mediator, this.did)) return this.refused(from as string, "invalid-grant", msg.id);
         const added = this.replicas.get(grant.replicaDid);
-        if (added !== undefined && added.account !== account) return this.refused(from as string, "identity-conflict", msg.id);
-        this.replicas.set(grant.replicaDid, { account, replicaDid: grant.replicaDid, grant: jws });
+        if (added !== undefined && (added.account !== account || added.removedTime !== null)) return this.refused(from as string, "identity-conflict", msg.id);
+        if (added === undefined) this.replicas.set(grant.replicaDid, { account, replicaDid: grant.replicaDid, grant: jws, removedTime: null });
         return this.reply(REPLICA_ADDED, from as string, { replica_did: grant.replicaDid, state: "active", added_time: 1 }, msg.id);
+      }
+      case REPLICA_LIST: {
+        const account = canonicalDid(from as string);
+        if (!this.replicaAccounts.has(account)) return this.refused(from as string, "unknown-account", msg.id);
+        const { cursor, limit } = msg.body as { cursor: string | null; limit: number };
+        const roster = [...this.replicas.values()].filter((replica) => replica.account === account);
+        // a cursor is the roster's size when the listing began and how much of it was listed: one listing is the replicas added before it
+        const written = cursor === null ? null : /^(\d+)\.(\d+)$/.exec(cursor);
+        const [through, after] = written === null ? [roster.length, 0] : [Number(written[1]), Number(written[2])];
+        const held = cursor === null || (written !== null && after < through && through <= roster.length);
+        if (!held || !Number.isSafeInteger(limit) || limit < 1 || limit > this.maxMembershipPage) return this.refused(from as string, "invalid-message", msg.id);
+        const page = roster.slice(after, Math.min(after + limit, through));
+        const listed = after + page.length;
+        const entries = page.map((replica) => ({ grant: replica.grant, state: replica.removedTime === null ? "active" : "removed", added_time: 1, removed_time: replica.removedTime }));
+        return this.reply(REPLICAS, from as string, { entries, next_cursor: listed < through ? `${through}.${listed}` : null }, msg.id);
       }
       case RECIPIENT_ADD: {
         const account = canonicalDid(from as string);

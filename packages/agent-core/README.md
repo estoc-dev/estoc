@@ -48,6 +48,7 @@ peer.
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
 | How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica` |
 | Which addresses does the account hold? | `replica-recipients.ts` | `addRecipients`, `holds` |
+| Which replicas has the account added, and which of them is this runtime? | `replica-list.ts` | `listReplicas` |
 | What is the line to a mediator? | `link.ts` | `MediatorLink`, `ritual`, `bounded` |
 | How is the replica's mail fetched and acknowledged? | `pickup.ts` | `Pickup` |
 | How does the replica keep a blob at the mediator, and how is one read back? | `blob-store.ts` | `BlobStore`, `readBlob` |
@@ -86,7 +87,7 @@ peer.
 2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `ends.ts` for the sealing and carrying beneath them, which read nothing but the two ends, `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `lifetime.ts` for what a close stops, and where; `records.ts` for what the host is shown.
-5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
+5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `replica-list.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds, `replica-channel.ts` for the mail between the replicas themselves.
 
 ## Usage
 
