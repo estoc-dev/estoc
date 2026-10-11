@@ -202,7 +202,7 @@ indefinitely paused streams, concurrent writers or seamless online repair.
 ## 7. Event roots and retention
 
 An event root means keep that exact object while the event contributes a live
-reference under [vault-events.md](vault-events.md). Only explicit roots create
+reference under [fold/held.ts](../../packages/vault/src/fold/held.ts). Only explicit roots create
 retention edges. CIDs elsewhere in data or object content do not retain or fetch
 anything. Unknown valid event types retain every listed root. Collection treats
 roots as a set and never follows embedded links; type-specific array ordering

@@ -8,11 +8,11 @@ Status: **vectors**. Fixed inputs with the canonical bytes and CIDs the
 message layers of
 [distributed-delivery.md section 5](distributed-delivery.md#canonical-projections-and-hashes)
 give over them. The rules live there and in
-[vault-events.md](vault-events.md); this appendix is what the tests
+[`@estoc/vault`](../../packages/vault/README.md); this appendix is what the tests
 reproduce. Every CID is the raw DASL CID of
 [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over the UTF-8 of the
 RFC 8785 text shown, and every UUIDv5 follows
-[vault-events.md section 3.4](vault-events.md#entity-ids-and-reproducible-uuidv5-namespaces).
+[ids.ts](../../packages/vault/src/ids.ts).
 
 ## Fixture
 
@@ -119,7 +119,7 @@ forwardId = bc21dc07-fd00-54de-9ee6-eba82a332b94
 
 The preparation event CID here is an arbitrary raw CID standing in for a
 `message.prepared` event's; the rule is in
-[vault-events.md](vault-events.md#forward-id-rule).
+[ids.ts](../../packages/vault/src/ids.ts).
 
 ## Reply thread and pure ACK
 

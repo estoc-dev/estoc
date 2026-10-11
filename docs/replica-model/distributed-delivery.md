@@ -215,7 +215,7 @@ Every instruction to append an event in this document means
 A full vault runtime MUST be able to commit a send while DNS, DID resolution
 and every mediator are unavailable. Before a message's own network work,
 resolving its recipient, preparing its envelope and submitting it, commit the
-content and [message.out](vault-events.md#message-out), freezing its ID,
+content and [message.out](../../packages/vault/src/schema.ts), freezing its ID,
 channel, headers and user or automatic-effect decision. Deciding an automatic
 output may wait on the network itself: the replica answering an input picked
 up at a replica-mediation mediator is registered for there before any of the
@@ -281,7 +281,7 @@ but not yet recorded is kept in the runtime's local state until it is
 ([section 6.2](#runtime-local-delivery-records)). Every other transport outcome stays in the runtime's
 local trace and MUST NOT produce `delivery.failed`, which only explicit
 cancellation and expiry append under
-[termination](vault-events.md#delivery-failed); failure or uncertainty
+[termination](../../packages/vault/src/schema.ts); failure or uncertainty
 grants no next call. A crash loses the live action, whether or not
 transport was called; reopen cannot replay it.
 
@@ -352,13 +352,13 @@ content-derived effect.
 A message has four content identities, one per representation. Each is the
 raw DASL CID of [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over one
 canonical byte string; none is derived from another, and the vault's typed
-fields keep them apart ([vault-events.md section 3.5](vault-events.md#identifier-and-reference-vocabulary)).
+fields keep them apart ([types.ts](../../packages/vault/src/types.ts)).
 
 | Layer | Field | Bytes named | Equal means |
 | --- | --- | --- | --- |
 | Intent | `intentCid` | the intent projection of [5.2](#intent-projection) | the same fixed application message |
 | Plaintext | `plaintextCid` | the complete DIDComm plaintext of [5.3](#exact-plaintext-hash) | the same complete plaintext, own ID, addressing and proof included |
-| Envelope | `envelopeCid` | the normalized encrypted envelope of [the preparation](vault-events.md#message-prepared) | the same ciphertext; re-encrypting gives another |
+| Envelope | `envelopeCid` | the normalized encrypted envelope of [document.ts](../../packages/vault/src/document.ts) | the same ciphertext; re-encrypting gives another |
 | Event | event `cid` | the canonical event envelope of [event.ts](../../packages/event-store/src/event.ts) | the same event |
 
 Content equality is not identity. Two independent user sends of equal content
@@ -443,7 +443,7 @@ projection's fields or encoding is a new version. `projection` is the object:
   an empty array are two intents. `ack` is the ordered array of wire IDs as
   spelled, `[]` when absent. Neither array is sorted.
 - `document` is the CID of the stored message document of
-  [vault-events.md section 7](vault-events.md#stored-message-document): the
+  [document.ts](../../packages/vault/src/document.ts): the
   body and the attachment descriptors in wire order, each with its carrier
   kind, payload CID or links, `hash` and `jws`. The CID commits to all of it;
   the content is read from the object the field names.
@@ -479,7 +479,7 @@ them. Nothing is omitted or normalized before hashing; an absent member and an
 explicit null give different CIDs, while member order and whitespace do not.
 The plaintext is parsed strictly first: duplicate members and invalid I-JSON
 are rejected, and the attachment carrier rule of
-[the stored document](vault-events.md#stored-message-document) is checked on
+[the stored document](../../packages/vault/src/document.ts) is checked on
 the parsed `data` as received, `json: null` counting as a present carrier.
 The same parsed value then yields the plaintext CID, the stored document and
 the intent projection, and every field the receiver judges, `from` among
@@ -500,7 +500,7 @@ same intent and the same intent CID.
 ### 5.4 Envelope and event CIDs
 
 The envelope CID is the raw CID of `UTF8(RFC8785(parsedEncryptedEnvelope))`
-under [the preparation](vault-events.md#message-prepared); the bytes are
+under [document.ts](../../packages/vault/src/document.ts); the bytes are
 retained as an object and are the event's root. An event CID is
 [event.ts](../../packages/event-store/src/event.ts)'s. `delivery.submitted` names its
 preparation by event CID and resolves it by that exact CID: an event of equal
@@ -535,7 +535,7 @@ through maintained DIDComm APIs, and the normalized envelope object, the peer
 resolution it used under
 [the address profile](relationships.md#recipient-resolution-freshness) and
 `message.prepared` are committed in one lock before transport under
-[the preparation schema](vault-events.md#message-prepared), the event carrying
+[the preparation schema](../../packages/vault/src/schema.ts), the event carrying
 the intent, plaintext and envelope CIDs with its evidence references. The
 commit freezes that envelope: later confirmation, rotation, resolution or
 termination cannot replace it, and changing the content or the channel
@@ -591,8 +591,9 @@ forwardId = UUIDv5(
 ```
 
 Every call of one preparation carries one forward ID, and no mediator-visible
-ID carries an event CID. The namespace derivation and the test vector are in
-[vault-events.md](vault-events.md#entity-ids-and-reproducible-uuidv5-namespaces).
+ID carries an event CID. The namespace derivation is
+[ids.ts](../../packages/vault/src/ids.ts)'s; its vector is pinned in
+[ids.test.ts](../../packages/vault/test/ids.test.ts).
 
 <a id="runtime-local-delivery-records"></a>
 
@@ -644,7 +645,7 @@ One naming a preparation that is here but pending or in conflict completes
 nothing and is judged with that preparation. Missing submission does not prove
 nondelivery; pending work follows [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 Expiry, at equality, and explicit cancellation terminate the entire intent
-under [the termination rules](vault-events.md#delivery-failed), without
+under [the termination rules](../../packages/vault/src/schema.ts), without
 depending on preparation evidence and without claiming nondelivery; a
 complete submission takes precedence, and later ACK evidence reports receipt
 without reopening anything. Known endpoint replacement prohibits preparation
@@ -655,7 +656,7 @@ observed, and what each leaves of the content and the envelope, is
 [`packages/agent-core/src/dispatch.ts`](../../packages/agent-core/src/dispatch.ts).
 
 Prepared-envelope retention is owned solely by
-[vault-events.md](vault-events.md#held-roots): every envelope the message's
+[fold/held.ts](../../packages/vault/src/fold/held.ts): every envelope the message's
 preparations name is held until the message is submitted or terminated under a
 consistent intent, and released then all at once. A paused/unconfirmed
 eligible preparation remains retained for possible manual action; waiting is
@@ -856,7 +857,7 @@ Use the literal transcript members `sender` and `recipient`; RFC 8785 orders
 object members canonically. `canonicalWireId` is the canonical wire ID of
 the plaintext `id`. For inbound work, the peer is the sender and the
 local DID is the recipient. Namespace derivation
-is in [vault-events.md](vault-events.md#entity-ids-and-reproducible-uuidv5-namespaces).
+is in [ids.ts](../../packages/vault/src/ids.ts).
 The event schema member names are not substitutes for these transcript tags.
 
 <a id="local-rotation-scope-vector"></a>
@@ -914,7 +915,7 @@ effectKey = base64url(
 ```
 
 The unpadded base64url key determines the outbound message and wire ID under
-[vault events](vault-events.md#ids). The [message.out schema](vault-events.md#message-out)
+[ids.ts](../../packages/vault/src/ids.ts). The [message.out schema](../../packages/vault/src/schema.ts)
 stores the tuple and intent and defines their validation; conflicts follow
 [the delivery fold](../../packages/vault/src/fold/outbound.ts).
 
@@ -924,8 +925,8 @@ or frozen, before the input's body is read or its handler asked:
 - **produced** — a `message.out` under the tuple. It is reused as it is
   after submission, source erasure, another observation, a handler that would
   decide otherwise now or a changed clock; the exact source and any rotation
-  decision are retained directly in the [intent](vault-events.md#message-out).
-- **skipped** — an [`effect.skipped`](vault-events.md#effect-skipped) under
+  decision are retained directly in the [intent](../../packages/vault/src/schema.ts).
+- **skipped** — an [`effect.skipped`](../../packages/vault/src/schema.ts) under
   the tuple: the operation's own rule, applied to the admitted input, owes it
   no output, for good. Only a decision that is a function of the input and
   the operation is recorded so. A receipt not given under local policy, a
@@ -1059,9 +1060,9 @@ channel.blocked            local channel/successor denial
 ```
 
 Continuity links and verification status are fold results, not events.
-Contact events are not delivery observations. Schemas are owned by
-[vault events](vault-events.md) and [channels](channels.md); the folds over
-them are owned by the modules those documents link.
+Contact events are not delivery observations. Schemas are
+[schema.ts](../../packages/vault/src/schema.ts)'s and [channels](channels.md)'s; the folds over
+them are the modules [`@estoc/vault`](../../packages/vault/README.md) lists.
 
 <a id="failure-rules"></a>
 

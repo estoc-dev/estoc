@@ -3,7 +3,7 @@
 Status: **version 5**. The folds over the vault's events and the procedures
 that append them are specified by the code under
 [`packages/`](../../packages/) and its tests, see
-[vault events section 11](vault-events.md#folds-and-procedures).
+[`packages/vault/README.md`](../../packages/vault/README.md).
 The suite has seven specifications and one vectors appendix. A vault may run
 one writable full runtime or several as distinct replicas of one
 replica-mediation arrangement. SQLite is the sole persistent vault and portable
@@ -61,7 +61,7 @@ permits at most one compatible intent per execution.
 | --- | --- | --- |
 | Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event identity, commit durability and versioning; object bytes and retention; the event API and the stores are code |
 | Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
-| Domain facts | [Vault events](vault-events.md) | Message, delivery, contact and local policy payloads; the folds over them are code |
+| Domain facts | [Vault events](vault-events.md) | The vault model, its principles and boundaries; payloads, identifiers, held roots and the folds over them are code |
 | Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, invitations, channel event payloads, DID profiles and address policy; the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Message layers and CIDs, channel-local identity, ACK paths, preparations, runtime-local delivery records and live dispatch actions |
 | Vectors | [Message vectors](message-vectors.md) | Fixed inputs with their canonical bytes and CIDs for the message layers |
@@ -95,7 +95,7 @@ endings.
 | --- | --- |
 | Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [address/contact policy](relationships.md#what-it-is-for) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
 | Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [event store contracts](event-store.md) → [EventStore/Vault](../../packages/event-store/README.md) → [SQLite](vault-sqlite.md#reading-guide) |
-| Implement application state | [Identifier vocabulary](vault-events.md#identifier-and-reference-vocabulary) → [schemas](vault-events.md#reading-guide) → [folds and procedures](vault-events.md#folds-and-procedures) |
+| Implement application state | [Vault model](vault-events.md#model) → [types.ts](../../packages/vault/src/types.ts) → [schema.ts](../../packages/vault/src/schema.ts) → [folds and procedures](../../packages/vault/README.md) |
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](relationships.md#ordinary-sending-and-birth-selection) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
 | Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
@@ -112,37 +112,37 @@ invitations and the rotation, admission and denial payloads; the continuity
 adapter, operation eligibility, admission and dispatch authority are owned by
 their code in `packages/vault` and `packages/agent-core`.
 `@estoc/from-prior` owns proof verification and binding, and
-`@estoc/continuity` owns graph semantics. VE owns contact selections, display payloads and the remaining
-domain payloads, while the folds over them and the procedures that append
-them are owned by their code in `packages/vault` and `packages/agent-core`;
+`@estoc/continuity` owns graph semantics. VE owns the vault model, its principles and its boundaries, while the
+domain payloads, the folds over them and the procedures that append them
+are owned by their code in `packages/vault` and `packages/agent-core`;
 DD owns runtime ordering and message/effect identity;
 RZ owns the DID profiles, local resolution and address/display policy; the
 receive gate, the private-address policy and retry are code.
 
 | Rule | Definition | Consumers |
 | --- | --- | --- |
-| Event envelope and ordering | [event.ts](../../packages/event-store/src/event.ts), [ES identity](event-store.md#invariants) | [VE vocabulary](vault-events.md#identifier-and-reference-vocabulary) |
+| Event envelope and ordering | [event.ts](../../packages/event-store/src/event.ts), [ES identity](event-store.md#invariants) | [vault types](../../packages/vault/src/types.ts) |
 | Commit durability | [ES](event-store.md#commit-and-durability-terminology) | [DD boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
 | Storage ownership and recovery | [SQ](vault-sqlite.md#ownership-and-lifecycle) | [agent open](../../packages/agent-core/src/identity.ts) |
-| Object identity and held roots | [DO](dasl-objects.md#accepted-dasl-cids), [VE retention](vault-events.md#held-roots) | [SQ objects](vault-sqlite.md#objects-and-streams) |
-| Channel pair and selectors | [CH identity](channels.md#channel-identity) | [VE vocabulary](vault-events.md#identifier-and-reference-vocabulary), [contact selection](vault-events.md#contact-channelsset) |
+| Object identity and held roots | [DO](dasl-objects.md#accepted-dasl-cids), [held roots](../../packages/vault/src/fold/held.ts) | [SQ objects](vault-sqlite.md#objects-and-streams) |
+| Channel pair and selectors | [CH identity](channels.md#channel-identity) | [vault types](../../packages/vault/src/types.ts), [contact selection](../../packages/vault/src/schema.ts) |
 | Proof verification and binding | [from-prior package](../../packages/from-prior/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [vault proofs](../../packages/vault/src/from-prior.ts) |
 | Links, joins and query semantics | [Continuity package](../../packages/continuity/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [continuity fold](../../packages/vault/src/fold/continuity.ts) |
 | Source projection, admitted confirmation and query policy | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [rotation](../../packages/agent-core/src/rotate.ts), [DD receive](distributed-delivery.md#receive-a-message) |
 | New-send head selection | [contact view](../../packages/vault/src/fold/views.ts) | [DD built-in replies](distributed-delivery.md#built-in-independent-operations), [RZ sending](relationships.md#ordinary-sending-and-birth-selection), [rotation](../../packages/agent-core/src/rotate.ts) |
-| Deferred-proof adapter boundary | [DIDComm API](../../packages/agent-core/README.md#didcomm-api) | [receive gate](../../packages/agent-core/src/receive/gate.ts), [DD receipt](distributed-delivery.md#receive-a-message), [VE carrier](vault-events.md#message-in) |
+| Deferred-proof adapter boundary | [DIDComm API](../../packages/agent-core/README.md#didcomm-api) | [receive gate](../../packages/agent-core/src/receive/gate.ts), [DD receipt](distributed-delivery.md#receive-a-message), [receipt schema](../../packages/vault/src/schema.ts) |
 | Receipt verification status | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [DD recovery](distributed-delivery.md#receive-recovery) |
 | Durable application admission and operation eligibility | [CH](channels.md#application-admission), [admission model](../../packages/vault/src/admission/model.ts) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Fixed intent, preparation and manual dispatch | [live action](../../packages/agent-core/src/action.ts), [dispatch](../../packages/agent-core/src/dispatch.ts), [DD selected preparation](distributed-delivery.md#the-selected-preparation) | [VE intent](vault-events.md#message-out), [preparation](vault-events.md#message-prepared), [DD send](distributed-delivery.md#send-an-ordinary-message) |
+| Fixed intent, preparation and manual dispatch | [live action](../../packages/agent-core/src/action.ts), [dispatch](../../packages/agent-core/src/dispatch.ts), [DD selected preparation](distributed-delivery.md#the-selected-preparation) | [intent and preparation](../../packages/vault/src/schema.ts), [DD send](distributed-delivery.md#send-an-ordinary-message) |
 | Inbound/execution IDs | [DD identity](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Message layers and their CIDs | [DD layers](distributed-delivery.md#canonical-projections-and-hashes), [VE stored content](vault-events.md#stored-message-document), [vectors](message-vectors.md) | [VE intent](vault-events.md#message-out), [preparation](vault-events.md#message-prepared), [receipt](vault-events.md#message-in) |
-| Effect results | [DD automatic effects](distributed-delivery.md#automatic-effects) | [VE skipped effect](vault-events.md#effect-skipped), [effects](../../packages/agent-core/src/effects.ts) |
+| Message layers and their CIDs | [DD layers](distributed-delivery.md#canonical-projections-and-hashes), [stored document](../../packages/vault/src/document.ts), [vectors](message-vectors.md) | [intent, preparation and receipt](../../packages/vault/src/schema.ts) |
+| Effect results | [DD automatic effects](distributed-delivery.md#automatic-effects) | [skipped effect](../../packages/vault/src/schema.ts), [effects](../../packages/agent-core/src/effects.ts) |
 | Runtime-local delivery records | [DD local records](distributed-delivery.md#runtime-local-delivery-records) | [responder](../../packages/agent-core/src/responder.ts), [prepare](../../packages/agent-core/src/prepare.ts), [dispatch](../../packages/agent-core/src/dispatch.ts) |
-| ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [VE ACK witness](vault-events.md#delivery-acknowledged) |
+| ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [ACK witness](../../packages/vault/src/schema.ts) |
 | Complete witnesses | [continuity fold](../../packages/vault/src/fold/continuity.ts), [inbound fold](../../packages/vault/src/fold/inbound.ts) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
 | Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
-| Invitations | [VE disclosure](vault-events.md#did-disclosed), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
-| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [VE contact selection](vault-events.md#contact-channelsset), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
+| Invitations | [disclosure](../../packages/vault/src/schema.ts), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
+| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [contact selection](../../packages/vault/src/schema.ts), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
 
@@ -154,7 +154,7 @@ The seven documents above define the current contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
-[vault events section 11](vault-events.md#folds-and-procedures)). The
+[`packages/vault/README.md`](../../packages/vault/README.md)). The
 [message vectors](message-vectors.md) are fixed inputs with the bytes and
 CIDs the layers must give, and the vault's tests reproduce them.
 Mutable channel DIDs have only a [deferred design note](deferred/README.md),

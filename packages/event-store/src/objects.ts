@@ -16,7 +16,7 @@ import type { Cid } from "./event.js";
 /** Bytes as a store takes them: whole, or as a stream of chunks in order. */
 export type ByteSource = Uint8Array | AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>;
 
-/** What a store knows of an accepted object without reading it: its CID, its codec — only `raw` in phase 1 — and its size in bytes. */
+/** What a store knows of an accepted object without reading it: its CID, its codec, only `raw`, and its size in bytes. */
 export type ObjectInfo = {
   cid: Cid;
   codec: "raw";

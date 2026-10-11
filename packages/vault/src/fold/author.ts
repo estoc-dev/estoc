@@ -1,8 +1,7 @@
 /**
  * The vault-level scalars: which authors wrote and when, and the
  * identity's display name. An author is provenance, never ownership of
- * any communication state; the fold reports each one's span so a
- * runtime can see a second writer where phase 1 expects one.
+ * any communication state.
  */
 
 import type { AuthorId } from "@estoc/event-store";

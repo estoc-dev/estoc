@@ -12,8 +12,9 @@ The capitalized requirement words in this document have their BCP 14 meanings.
 versioning, and the API is [event.ts](../../packages/event-store/src/event.ts) and
 [vault.ts](../../packages/event-store/src/vault.ts)'s;
 [dasl-objects.md](dasl-objects.md) owns CID identity and object verification;
-[vault-events.md](vault-events.md) owns payloads and held roots, and the folds
-over them are code. This file owns SQLite storage and recovery, not a second implementation of SQLite's
+[vault-events.md](vault-events.md) owns the vault model and its boundaries;
+payloads, held roots and the folds over them are
+[`@estoc/vault`](../../packages/vault/README.md)'s. This file owns SQLite storage and recovery, not a second implementation of SQLite's
 transaction or version-management machinery.
 
 <!-- reading-guide:start -->
@@ -480,28 +481,70 @@ and every held object. Rebuilding copies validated logical values without copyin
 pages or adopting source SQL. Assign fresh replica/generation IDs and local
 positions. Keep it unready until integrity/completeness checks pass; publish readiness in one transaction.
 A failed construction is not an empty vault and cannot silently mint another seed.
-What the open then does over the restored runtime, and that it mints no
-dispatch action for restored messages or historical automatic effects, is
-[the open](../../packages/agent-core/src/agent.ts) under
-[vault restore](vault-events.md#restore).
+
+The restored runtime is another replica of the vault: it derives the keys
+its retained entity records name, enrolls at each arrangement it must keep
+receiving on, has the account hold every address the arrangement routes, and
+picks up its own mailbox; mail the mediator fanned out to the earlier replica
+before the restore stays with that replica. It holds none of the earlier
+runtime's local delivery records under
+[distributed-delivery.md section 6.2](distributed-delivery.md#runtime-local-delivery-records):
+a message with several preparations waits for the user's choice, and one
+whose acceptance the earlier runtime saw but never recorded stays
+unconfirmed. The open is
+[`packages/agent-core/src/agent.ts`](../../packages/agent-core/src/agent.ts)
+over [`identity.ts`](../../packages/agent-core/src/identity.ts); it records
+what the vault owes on its own, observations already pickup-ACKed before the
+snapshot included, mints no initial or retry dispatch authority, even after
+an exact local move, and shows what it finds unfinished for manual action.
+Local queue state is not a recovery source.
 
 Recovery from a damaged runtime restores only the snapshot's history. Salvaging
-history absent from that snapshot is outside the phase-1 contract.
+history absent from that snapshot is outside this version's contract.
 
 Before enabling new user sends or manual dispatch after restore, the product
 MUST explain that local DIDs, peer addresses and continuity learned after the
-snapshot may be missing. The seed alone cannot recover those missing local
-addresses. Messages for unknown local recipients or from
-unknown short-form senders can therefore be discarded under
-[the receiver](../../packages/agent-core/src/receive/receiver.ts), even if those addresses
-were previously confirmed. Expose that gate's bounded visible diagnostics. Pickup,
-recipient addition and local projection recovery need not wait for this
-explanation to be presented or acknowledged.
+snapshot may be missing. The seed alone cannot reconstruct a missing entry,
+whose entity ID is minted; a missing start or next is made again from the
+same recipe, the same entity under the same keys and document, once the
+rotation that made it is decided again. Messages for unknown local recipients
+or from unknown short-form senders can therefore be discarded under
+[the receiver](../../packages/agent-core/src/receive/receiver.ts), even if
+those addresses were previously confirmed; such an address stays held by the
+account under [the DID fold](../../packages/vault/src/fold/dids.ts), and
+nothing is taken off the mediator. Expose that gate's bounded visible
+diagnostics. Pickup, recipient addition and local projection recovery need
+not wait for this explanation to be presented or acknowledged.
 
-Recovery may require importing a newer complete snapshot or establishing an
-independent channel from a fresh local DID. What traffic at a snapshot-era
-address can still do, the fork it can leave and why phase 1 keeps that fork
-visible are [vault restore](vault-events.md#restore).
+A snapshot can omit a known peer rotation and its admission history. Restore
+cannot reconstruct the missing restriction or the exact past acceptance
+boundary from the seed or timestamps: import newer evidence when available,
+and never claim rollback-safe rejection from an old snapshot alone. Existing
+old-peer admissions preserve historical state, not permission to send to a
+peer whose replacement is now known. A snapshot can likewise predate a peer's
+successor long form while the peer already sends its short form; waiting does
+not recover it, a new long-form disclosure can enable sender authentication
+but recovers no continuity history or discarded delivery, and otherwise the
+channel may need to be established again.
+
+Traffic at a snapshot-era address is not a guaranteed repair. Supersession
+can prevent a reply, and eligible live input, including an already queued
+message, can trigger another privacy rotation when the snapshot lacks a later
+decision. Where the restored vault leads back to the same start of the peer,
+the recipe derives the lost decision's own successor and the new record joins
+the lost intent once the histories merge; the peer verifies one replacement
+under two proofs. Where it sees another start of the peer, the successor
+differs, and a peer that already verified the lost decision's successor then
+retains two valid replacements of the same endpoint in one context. That
+fork stays a visible conflict under [channels.md](channels.md#continuity),
+with no default send head in the affected context and no authority through
+conflicted continuity; restoring the lost decision does not choose between
+the branches, and communication established from a fresh entry does not
+resolve the old context. Recovery may require importing a newer complete
+snapshot. No previous process must be online, and mediator retention still
+bounds messages that were never committed to the vault. The seed recovery
+credential must be retained independently of the active runtime; recovery
+verification follows [section 4.2](#recovery-material-and-product-requirement).
 
 <a id="import"></a>
 
@@ -514,7 +557,7 @@ and `ForkedAuthor` checks. Union events by CID without rewriting envelopes.
 Let `targetBeforeImport` be the
 complete accepted target inventory under that lock before any import writes,
 and `union` the prospective event union. Compute `heldRoots` for both sets
-under [VE §10.2](vault-events.md#held-roots). Newly accepted source events are
+under [fold/held.ts](../../packages/vault/src/fold/held.ts). Newly accepted source events are
 those whose CIDs are absent from the target.
 
 ```text
