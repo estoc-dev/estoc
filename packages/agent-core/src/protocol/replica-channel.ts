@@ -2,9 +2,11 @@
  * replica-channel/1.0: what one replica of a vault tells another
  * replica of the same seed. Nothing it carries is a fact of the vault:
  * a message asks its recipient to fetch what the vault's events already
- * say, so any message may be lost, repeated or reordered without harm,
- * and none is acknowledged or sent again. A type added here keeps to
- * that: what would do harm if it were lost is made a vault event first.
+ * say, so any message may be lost, repeated or reordered without harm.
+ * The channel has no receipt of its own and sends nothing again by
+ * itself; pickup acknowledges a delivery to the mediator once the host
+ * has it, as it does any other. A type added here keeps to that: what
+ * would do harm if it were lost is made a vault event first.
  */
 
 import { isAuthorId, isJsonObject, type JsonObject } from "@estoc/event-store";

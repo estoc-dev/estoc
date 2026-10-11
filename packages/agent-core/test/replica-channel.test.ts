@@ -1,15 +1,55 @@
+import { CompactSign, base64url, decodeProtectedHeader, importJWK, type CompactJWSHeaderParameters } from "jose";
 import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, it, test } from "vitest";
 
-import type { JsonObject } from "@estoc/event-store";
+import { encodeLongForm, longToShort } from "@estoc/did-peer";
+import { canonicalText, type JsonObject } from "@estoc/event-store";
 import { importSeed } from "@estoc/keystore";
-import { KEY_AGREEMENT_METHOD, Keys, mintDid, mintReplicaDid, peerResolution, scanVault, signFromPrior, vaultDraft, type Did, type DidId, type DidUrl, type MediationId, type ReplicaId } from "@estoc/vault";
+import {
+  KEY_AGREEMENT_METHOD,
+  Keys,
+  inputDocumentOf,
+  mintDid,
+  mintReplicaDid,
+  peerResolution,
+  scanVault,
+  signFromPrior,
+  signReplicaGrant,
+  vaultDraft,
+  type Did,
+  type DidId,
+  type DidUrl,
+  type MediationId,
+  type PublicKey,
+  type ReplicaId,
+} from "@estoc/vault";
 
 import { recipientEndOf, seal, type Ends } from "../src/ends.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { plainMessage } from "../src/protocol/didcomm.js";
 import { resolve } from "../src/resolver.js";
-import { Agent, AgentTrace, NotAReplica, SNAPSHOT_LINK, UnknownEntity, Unusable, blobName, createMediation, readSnapshotLink, selectMediation, snapshotLinkBody, type BlobLink, type Inbound, type SnapshotLinkReceived } from "../src/index.js";
+import {
+  Agent,
+  AgentTrace,
+  Keyring,
+  NotAReplica,
+  Receiver,
+  ReceiverClosed,
+  SNAPSHOT_LINK,
+  UnknownEntity,
+  Unusable,
+  blobName,
+  createMediation,
+  deliveryKey,
+  readSnapshotLink,
+  replicaReceiptOf,
+  selectMediation,
+  snapshotLinkBody,
+  type BlobLink,
+  type Delivery,
+  type Inbound,
+  type SnapshotLinkReceived,
+} from "../src/index.js";
 import { network, type FakeMediator } from "./fake-mediator.js";
 import { copyOf, didcomm, forwarded, newMediator, party, sealed, seedOf, type Fresh } from "./helpers.js";
 
@@ -81,6 +121,33 @@ async function another(of: Running, transport: Transport): Promise<Running> {
 }
 
 const addressOf = (r: Pick<Running, "runtime" | "replica">) => ({ replicaId: r.runtime.author, longFormDid: r.replica.longFormDid });
+
+type ReplicaInput = { verificationMethod: JsonObject[]; keyAgreement: string[] };
+
+/**
+ * Another runtime holding everything `of` holds, its replica bound to
+ * `of`'s arrangement by a grant the seed signs for the document the
+ * seed's template gives with `edit` made to it: a document another
+ * implementation might have written.
+ */
+async function boundBy(of: Running, mediatorDid: string, edit: (input: ReplicaInput, keyAgreement: PublicKey) => void): Promise<Fresh> {
+  const copy = await copyOf(1, of);
+  const replicaId = copy.runtime.author;
+  const replicaKeys = await copy.keys.replicaKeys(replicaId);
+  const input = inputDocumentOf(replicaKeys, mediatorDid);
+  edit(input as unknown as ReplicaInput, replicaKeys.keyAgreement.publicKey);
+  const longFormDid = encodeLongForm(input);
+  const creation = (await scanVault(copy.runtime.vault, copy.keys)).set.of("mediation.created").find((event) => event.data.mediationId === of.mediationId);
+  if (creation === undefined) throw new Error("the arrangement is not recorded");
+  const template = await signReplicaGrant(copy.keys, creation.data, replicaId);
+  const payload = { ...(JSON.parse(new TextDecoder().decode(base64url.decode(template.split(".")[1] as string))) as JsonObject), replica_did: longToShort(longFormDid), replica_long_form: longFormDid };
+  const account = (await copy.keys.mediationKeys(of.mediationId)).authentication;
+  const grant = await new CompactSign(new TextEncoder().encode(canonicalText(payload)))
+    .setProtectedHeader(decodeProtectedHeader(template) as CompactJWSHeaderParameters)
+    .sign(await importJWK(account.privateJwk(), "EdDSA"));
+  await copy.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId, mediationId: of.mediationId, grant })]);
+  return copy;
+}
 
 async function snapshotAt(base: string): Promise<BlobLink> {
   const hash = await blobName(crypto.getRandomValues(new Uint8Array(64)));
@@ -273,6 +340,60 @@ describe("the replica channel", () => {
 
     await expect(a.agent.sendSnapshotLink(addressOf(c), await snapshotAt("https://m1.example/"))).rejects.toThrow(/not the mediator/);
     expect([queued(m1), queued(m2)]).toEqual(before);
+  });
+
+  test("a replica sends from the first key-agreement method of its document that didcomm seals from, and with none it sends nothing", async () => {
+    const mediator = await newMediator(200, MEDIATOR);
+    const a = await first(mediator);
+    const unsealable = (key: PublicKey): JsonObject => ({ id: "#legacy", type: "UnknownKeyType", publicKeyMultibase: key });
+    const link = await snapshotAt(MEDIATOR);
+
+    const later = await boundBy(a, mediator.did, (input, key) => {
+      input.verificationMethod.push(unsealable(key));
+      input.keyAgreement.unshift("#legacy");
+    });
+    expect((await scanVault(later.runtime.vault, later.keys)).replicas.replicas.get(later.runtime.author)?.status).toBe("member");
+    await (await opened(later, mediator)).sendSnapshotLink(addressOf(a), link);
+    await a.agent.connect();
+    expect(a.links).toEqual([{ mediationId: a.mediationId, replicaId: later.runtime.author, link }]);
+
+    const none = await boundBy(a, mediator.did, (input, key) => {
+      input.verificationMethod.push(unsealable(key));
+      input.keyAgreement = ["#legacy"];
+    });
+    expect((await scanVault(none.runtime.vault, none.keys)).replicas.replicas.get(none.runtime.author)?.status).toBe("member");
+    const before = queued(mediator);
+    await expect((await opened(none, mediator)).sendSnapshotLink(addressOf(a), link)).rejects.toThrow(/no key-agreement method didcomm seals from/);
+    expect(queued(mediator)).toBe(before);
+  });
+
+  test("a delivery to the replica that the receiver is closed on once it is opened, before the replica receipt is called, is refused and left for the next receiver", async () => {
+    const mediator = await newMediator(200, MEDIATOR);
+    const a = await first(mediator);
+    a.agent.close();
+    const ring = await Keyring.load(a.keys, await scanVault(a.runtime.vault, a.keys));
+    const replicaReceipt = replicaReceiptOf(a.keys, { mediatorEndpoint: () => MEDIATOR, onSnapshotLink: (received) => void a.links.push(received) });
+    const receipt = () => Promise.reject(new Error("only mail to the replica is sent here"));
+    const receiver: Receiver = new Receiver(a.runtime, a.keys, ring, {
+      didcomm,
+      receipt,
+      replicaReceipt,
+      admit: () => {
+        queueMicrotask(() => receiver.close());
+        return null;
+      },
+    });
+    const sibling = await writer(a.keys, mediator.did);
+    const link = await snapshotAt(MEDIATOR);
+    const packed = await mail(await endsOf(sibling, a.replica.longFormDid), SNAPSHOT_LINK, snapshotLinkBody({ replicaId: sibling.replicaId, link }));
+    const delivery: Delivery = { packed, source: { kind: "pickup", mediationId: a.mediationId, deliveryId: "d1" } };
+
+    await expect(receiver.receive(delivery)).rejects.toThrow(ReceiverClosed);
+    expect(a.links).toEqual([]);
+    const next = new Receiver(a.runtime, a.keys, ring, { didcomm, receipt, replicaReceipt });
+    expect(await next.receive(delivery)).toEqual({ outcome: "handed", key: deliveryKey(delivery) });
+    expect(a.links).toEqual([{ mediationId: a.mediationId, replicaId: sibling.replicaId, link }]);
+    next.close();
   });
 
   test("a runtime whose replica is no member, or whose arrangement carries no mail, sends nothing", async () => {

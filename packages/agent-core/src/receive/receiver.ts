@@ -403,6 +403,7 @@ export class Receiver {
     if (secrets.length === 0) return defer(`no key in hand for ${recipients.kid}`, recipientWatch([recipients.didId]), fold);
     const opened = await this.open(key, delivery, fold, header, secrets, recipients.did);
     if ("ended" in opened) return opened.ended;
+    this.refuseClosed();
     const { unpacked, sender } = opened;
 
     const authenticated: Authenticated = {
@@ -450,6 +451,7 @@ export class Receiver {
     this.refuseClosed();
     const opened = await this.open(key, delivery, fold, header, secrets, replica.did);
     if ("ended" in opened) return opened.ended;
+    this.refuseClosed();
     const { unpacked, sender } = opened;
     if (sender === null) return this.finish(key, delivery, `the envelope to the replica DID ${replica.did} is anonymous`);
     if (unpacked.fromPrior !== null) return this.finish(key, delivery, "a replica DID does not rotate, and the plaintext carries from_prior");
