@@ -40,11 +40,10 @@ import { PLAIN_TYP } from "./protocol/didcomm.js";
 import { GOAL_CONNECT, type Invitation } from "./protocol/oob.js";
 import { OOB_INVITATION } from "./protocol/spec.js";
 import { EntityConflict, UnknownEntity, Unregistered, Unusable, WrongMediator } from "./errors.js";
-import type { MediatorLink } from "./link.js";
+import type { Account } from "./arrangement.js";
 import { mediationOf } from "./mediation.js";
-import { decide, serially } from "./procedure.js";
-import type { Confirmations } from "./replica-enrollment.js";
-import { addRecipientsNow, holds } from "./replica-recipients.js";
+import { decide } from "./procedure.js";
+import { holds } from "./replica-recipients.js";
 import { knownLongForms } from "./resolver.js";
 
 /** The route a DID is minted for: a mediation arrangement by its ID, or a direct HTTPS or WSS endpoint. */
@@ -202,18 +201,16 @@ function requireEntry(fold: VaultFold, entity: LocalDidEntity): void {
 
 /**
  * `did.disclosed` for a live entry, and the invitation when it is an
- * `oob` one. A mediated address is added, over `link`, to the account
- * of the one arrangement that routes it, which needs the runtime's
- * `confirmations`, and refused unless the mediator holds it. A direct
- * address needs neither.
- * The addition and the commit run as the account's one procedure at a
- * time, the addition outside the writer lock and the entity's liveness
- * read again under it. An
- * invitation already recorded under the same `oobId` is republished:
- * its disclosure is returned and nothing written, so that a retry
- * after a lost result cannot record the one invitation twice.
+ * `oob` one. A mediated address is added to the account of the one
+ * arrangement that routes it, which `account` must be, and refused
+ * unless the mediator holds it. A direct address needs no account.
+ * The addition and the commit run in one turn of the account, the
+ * addition outside the writer lock and the entity's liveness read again
+ * under it. An invitation already recorded under the same `oobId` is
+ * republished: its disclosure is returned and nothing written, so that
+ * a retry after a lost result cannot record the one invitation twice.
  */
-export async function disclose(link: MediatorLink | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure, confirmations: Confirmations | null = null): Promise<Disclosed> {
+export async function disclose(account: Account | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
   const fold = await scanVault(runtime.vault, keys);
   const entity = didOf(fold, didId);
   requireLive(entity);
@@ -233,22 +230,17 @@ export async function disclose(link: MediatorLink | null, runtime: VaultRuntime,
   let disclosed: VaultEvent<"did.disclosed">;
   if (route?.kind === "mediated") {
     const { mediationId } = route;
-    if (link === null) throw new WrongMediator(mediationOf(fold, mediationId).mediatorDid ?? "unknown", "no link");
-    disclosed = await serially(runtime, mediationId, async () => {
+    if (account?.mediationId !== mediationId) throw new WrongMediator(mediationOf(fold, mediationId).mediatorDid ?? "unknown", account === null ? "no link" : `the mediator of ${account.mediationId}`);
+    disclosed = await account.turn(async (turn) => {
       const current = await scanVault(runtime.vault, keys);
       requireLive(didOf(current, didId));
-      if (!(await heldByMediator(link, runtime, keys, mediationId, created.did, confirmations))) throw new Unregistered(created.did);
+      if (!holds(await turn.addRecipients(), created.did)) throw new Unregistered(created.did);
       return commit();
     });
   } else {
     disclosed = await commit();
   }
   return { disclosed, longFormDid: created.longFormDid, invitation: oobId === null ? null : invitationOf(created.longFormDid, oobId, goal) };
-}
-
-async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId, did: Did, confirmations: Confirmations | null): Promise<boolean> {
-  if (confirmations === null) throw new Unusable("mediation", mediationId, ["a mediated address is disclosed with the runtime's confirmations"]);
-  return holds(await addRecipientsNow(link, runtime, keys, confirmations, mediationId), did);
 }
 
 function invitationDisclosureOf(fold: VaultFold, oobId: string, data: VaultData["did.disclosed"]): VaultEvent<"did.disclosed"> | null {

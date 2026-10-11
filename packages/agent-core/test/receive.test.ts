@@ -21,7 +21,6 @@ import {
   createDid,
   createMediation,
   deliveryKey,
-  disclose,
   resolve,
   retireDid,
   senderProof,
@@ -33,6 +32,7 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
+import { disclose } from "../src/dids.js";
 import { didcomm, directParty, freshVault, kidOf, mediatedParty, mediatedRoute, newMediator, peerSealer, reloaded, sealed, webIdentity, type DirectParty, type Fresh, type MediatedParty, type Sealer, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;

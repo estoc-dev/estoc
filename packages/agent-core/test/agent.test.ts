@@ -7,7 +7,8 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED, STATUS_REQUEST } from "../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { Agent, AgentTrace, LiveInput, Pickup, Receiver, ReceiverInUse, createMediation, disclose, receiptOf, selectMediation, send, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
+import { Agent, AgentTrace, LiveInput, Pickup, Receiver, ReceiverInUse, createMediation, receiptOf, selectMediation, send, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
+import { disclose } from "../src/dids.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { carrierWaitingForIssuer, didcomm, freshVault, holdAddresses, issuerRecovered, json, mediatedParty, newMediator, peerSealer, proofOfSuccession, refuseCommits, sealed, until, webIdentity, type MediatedParty } from "./helpers.js";
 
@@ -82,7 +83,7 @@ describe("opening an agent", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob" }, alice.confirmations);
+    const { invitation } = await disclose(alice.account, alice.runtime, alice.keys, ALICE, { as: "oob" });
     const bobAgent = await agentOf(bob, "start");
     const ping = await bobAgent.send(
       { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: invitation!.from },
@@ -507,8 +508,8 @@ describe("a live input", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.link, alice.runtime, alice.keys, ALICE, { as: "oob" }, alice.confirmations);
-    await disclose(bob.link, bob.runtime, bob.keys, BOB, { as: "direct" }, bob.confirmations);
+    const { invitation } = await disclose(alice.account, alice.runtime, alice.keys, ALICE, { as: "oob" });
+    await disclose(bob.account, bob.runtime, bob.keys, BOB, { as: "direct" });
     const inbounds: Inbound[] = [];
     const log: string[] = [];
     const agent = await agentOf(alice, "start", { onInbound: (inbound) => inbounds.push(inbound), log: (line) => log.push(line) });

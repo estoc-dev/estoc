@@ -25,6 +25,40 @@ export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediatio
   return mediation;
 }
 
+/** An arrangement whose creation the fold has: who it speaks as, and to which mediator. */
+export type CreatedMediation = Mediation & { mediatorDid: Did; me: NonNullable<Mediation["me"]> };
+
+/** The arrangement as the fold has it, created; `Unusable` while it has no creation, whatever else it is. */
+export function createdOf(fold: VaultFold, mediationId: MediationId): CreatedMediation {
+  const mediation = mediationOf(fold, mediationId);
+  if (mediation.me === null || mediation.mediatorDid === null) throw new Unusable("mediation", mediationId, ["no creation"]);
+  return mediation as CreatedMediation;
+}
+
+/** The arrangement as the fold has it, fit to be enrolled in: created, its keys confirmed, neither retired nor in conflict. */
+export function accountOf(fold: VaultFold, mediationId: MediationId): CreatedMediation {
+  const mediation = mediationOf(fold, mediationId);
+  const faults =
+    mediation.status === "conflict"
+      ? mediation.faults
+      : mediation.retired !== null
+        ? [`retired: ${mediation.retired}`]
+        : mediation.me === null || mediation.mediatorDid === null
+          ? ["no creation"]
+          : mediation.identity !== "verified"
+            ? ["the seed has not confirmed the arrangement's keys"]
+            : [];
+  if (faults.length > 0) throw new Unusable("mediation", mediationId, faults);
+  return mediation as CreatedMediation;
+}
+
+/** The arrangement as the fold has it, fit to be enrolled in and its account registered: what every request but the registration needs. */
+export function registeredAccountOf(fold: VaultFold, mediationId: MediationId): CreatedMediation {
+  const mediation = accountOf(fold, mediationId);
+  if (mediation.routingDid === null) throw new Unusable("mediation", mediationId, ["its account is not registered"]);
+  return mediation;
+}
+
 /**
  * The link must be the arrangement's own: to its mediator, speaking as
  * its identity. A ritual run over another account's link and recorded

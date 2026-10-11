@@ -2,12 +2,41 @@
 
 ## Unreleased
 
+- **An arrangement's account, bound** (breaking):
+  `Agent.arrangement(mediationId)` hands the host the account of one of
+  the vault's arrangements as an `Arrangement`, with `enroll()`,
+  `addRecipients()` and `listReplicas()`, bound once to this runtime,
+  its keys, what the mediator confirmed to it and the agent's line to
+  the mediator. Taking one reads the vault alone and needs the
+  arrangement's creation (`UnknownEntity` for one not recorded,
+  `Unusable` for one not created); the mediator is resolved and reached
+  only once an operation has to, and the link is checked then to be the
+  arrangement's own (`WrongMediator`, `WrongAccount`), before anything
+  is asked over it. `enroll()` and `addRecipients()` each take one turn
+  of the account, shared by every binding of it; `listReplicas()`
+  takes none. Once the agent closes, an operation that has to reach the
+  mediator is refused with `LinkClosed`, and one whose every step is
+  confirmed already answers as before. `Agent.listReplicas` is gone;
+  `Agent.enroll` stays, and refuses an arrangement with no creation as
+  `Unusable` before any line is made. `Agent.disclose`, and a send
+  from a mediated address the peer has not written to, make the line
+  to the mediator, and resolve it, only while some address the account
+  is to hold has no confirmation kept: once every one has, nothing is
+  asked of the mediator, an agent opened again included. An account is
+  bound by the agent alone: `enroll`, `addRecipients`,
+  `addRecipientsNow`, `listReplicas`, `disclose`, `dispatch`,
+  `Dispatcher`, `manualProcedures` and `Confirmations` are no longer
+  exported. Within the package, `DispatchOptions.accounts` replaces
+  `links` and `confirmations`, and `disclose` takes the account in
+  place of a link and confirmations, so neither can be given the one
+  without the other. `MediatorLink.observe` is gone: `diag.enroll`,
+  `diag.recipients` and `diag.replica-list` are written to the agent's
+  trace whether or not a link was made.
 - **The replicas an account added, as its mediator lists them**:
-  `Agent.listReplicas(mediationId)`, and `listReplicas` over a link,
-  ask the arrangement's mediator for its `replica-list` from the first
-  page to the last: sixteen a page, or one at a time once the mediator
-  refuses the first page, and a listing whose cursor is refused is
-  begun again once. A page that goes on to a cursor the listing was
+  `Arrangement.listReplicas()` asks the arrangement's mediator for its
+  `replica-list` from the first page to the last: sixteen a page, or
+  one at a time once the mediator refuses the first page, and a listing
+  whose cursor is refused is begun again once. A page that goes on to a cursor the listing was
   given before, or that lists nothing not listed before, is
   `MediatorRefused`. Every grant listed is checked against the seed
   (`verifyReplicaGrant`) and must name the arrangement and its

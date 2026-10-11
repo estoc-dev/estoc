@@ -31,17 +31,14 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
 import { PROFILE } from "../src/protocol/user-profile.js";
 import {
-  Dispatcher,
   Keyring,
   LocalRecords,
   Receiver,
   Unusable,
   afterReceipt,
   createDid,
-  disclose,
   effectTypesOf,
   manualNotificationDraft,
-  manualProcedures,
   readRecords,
   receiptOf,
   recorder,
@@ -56,6 +53,9 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
+import { disclose } from "../src/dids.js";
+import { Dispatcher } from "../src/dispatcher.js";
+import { manualProcedures } from "../src/views.js";
 import { copyOf, didcomm, directParty, mediatedParty, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;

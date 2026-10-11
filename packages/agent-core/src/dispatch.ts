@@ -47,14 +47,14 @@ import {
 import { ENCRYPTED_MIME } from "./protocol/didcomm.js";
 import { recordAcceptance, recordOwedAcceptance } from "./acceptance.js";
 import type { LiveAction } from "./action.js";
+import type { Account } from "./arrangement.js";
 import { routeOf } from "./dids.js";
 import { carry, type Carried, type Destination } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
 import { refuses } from "./lifetime.js";
-import { bounded, letGo, sealData, type MediatorLink } from "./link.js";
+import { bounded, letGo, sealData } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
-import type { Confirmations } from "./replica-enrollment.js";
-import { addRecipients, holds } from "./replica-recipients.js";
+import { holds } from "./replica-recipients.js";
 import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
 import { serially } from "./procedure.js";
 import { knownLongForms, type KnownLongForms, type ResolverOptions } from "./resolver.js";
@@ -73,10 +73,8 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
    * policy on addresses holds for a call as for a document.
    */
   fetch: typeof fetch;
-  /** The link to each mediation arrangement of this vault, or null where there is none now: what a mediated sender's registration is confirmed over. */
-  links?: (mediationId: MediationId) => MediatorLink | null;
-  /** What a replica-mediation mediator confirmed to this runtime: what a sender of such an arrangement is confirmed held against. */
-  confirmations?: Confirmations;
+  /** The account of each mediation arrangement of this vault, bound to this runtime, or null where none is bound: what a mediated sender is made to be held by. */
+  accounts?: (mediationId: MediationId) => Account | null;
   /** how long one attempt may take, the mediator resolved, the forward sealed and the call answered; `DISPATCH_TIMEOUT_MS` when left out */
   timeoutMs?: number;
 }
@@ -118,7 +116,7 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
     return { outcome: "pending", messageId, because: reason };
   };
   if (registerWith !== null) {
-    const unregistered = await confirmRegistration(runtime, keys, registerWith, options);
+    const unregistered = await confirmRegistration(registerWith, options);
     if (unregistered !== null) return pending("register", unregistered);
   }
   const deadline = AbortSignal.timeout(options.timeoutMs ?? DISPATCH_TIMEOUT_MS);
@@ -199,19 +197,14 @@ function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, chan
 }
 
 /** Has the account hold what the vault wants held; why the sender is not held after that, or null once it is. */
-async function confirmRegistration(runtime: VaultRuntime, keys: Keys, { mediationId, did }: NonNullable<Ready["registerWith"]>, options: DispatchOptions): Promise<string | null> {
-  const link = options.links?.(mediationId) ?? null;
-  if (link === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before an envelope discloses it`;
+async function confirmRegistration({ mediationId, did }: NonNullable<Ready["registerWith"]>, options: DispatchOptions): Promise<string | null> {
+  const account = options.accounts?.(mediationId) ?? null;
+  if (account === null) return `no account of ${mediationId} is bound, which is to have its mediator hold ${did} before an envelope discloses it`;
   try {
-    return (await heldByMediator(link, runtime, keys, mediationId, did, options.confirmations)) ? null : `the mediator of ${mediationId} does not hold ${did}`;
+    return holds(await account.addRecipients(), did) ? null : `the mediator of ${mediationId} does not hold ${did}`;
   } catch (err) {
     return `the mediator of ${mediationId} could not be asked to hold ${did}: ${messageOf(err)}`;
   }
-}
-
-async function heldByMediator(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId, did: Did, confirmations: Confirmations | undefined): Promise<boolean> {
-  if (confirmations === undefined) throw new Error("the account's confirmations are not given");
-  return holds(await addRecipients(link, runtime, keys, confirmations, mediationId), did);
 }
 
 /**

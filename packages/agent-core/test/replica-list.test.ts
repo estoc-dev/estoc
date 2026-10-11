@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { readReplicaGrant, signReplicaGrant, type Did, type ReplicaId } from "@estoc/vault";
 
-import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, canonicalDid, createMediation, enroll, listReplicas, type ListedReplica } from "../src/index.js";
+import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, canonicalDid, type ListedReplica } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { copyOf, didcomm, freshVault, newMediator, party, webFetch, type Party } from "./helpers.js";
+import { copyOf, didcomm, newMediator, party, type Party } from "./helpers.js";
 
 const closing: { close(): unknown }[] = [];
 
@@ -16,7 +16,7 @@ afterEach(async () => {
 async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party> {
   const p = await party(mediator, fill);
   closing.push(p.runtime);
-  await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+  await p.account.enroll();
   return p;
 }
 
@@ -35,7 +35,7 @@ function respelled(jws: string, bits: number): string {
 }
 
 const active = (grant: string) => ({ grant, state: "active", added_time: 1, removed_time: null });
-const listed = (p: Party): Promise<ListedReplica[]> => listReplicas(p.link, p.runtime, p.keys, p.mediationId);
+const listed = (p: Party): Promise<ListedReplica[]> => p.account.listReplicas();
 const asked = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === REPLICA_LIST).length;
 const roster = (mediator: FakeMediator): Did[] => [...mediator.replicas.keys()] as Did[];
 
@@ -56,8 +56,8 @@ describe("the replicas an account added", () => {
     const second = await open(copy);
     const theirs = (await second.enroll(p.mediationId)).replica;
 
-    const fromFirst = await first.listReplicas(p.mediationId);
-    const fromSecond = await second.listReplicas(p.mediationId);
+    const fromFirst = await (await first.arrangement(p.mediationId)).listReplicas();
+    const fromSecond = await (await second.arrangement(p.mediationId)).listReplicas();
     const as = (replica: typeof ours, self: boolean) => ({ replicaId: replica.replicaId, did: replica.did, longFormDid: replica.longFormDid, state: "active", addedTime: 1, removedTime: null, self });
     expect(fromFirst).toEqual([as(ours, true), as(theirs, false)]);
     expect(fromSecond).toEqual([as(ours, false), as(theirs, true)]);
@@ -134,19 +134,6 @@ describe("the replicas an account added", () => {
     closing.push(p.runtime);
     await expect(listed(p)).rejects.toBeInstanceOf(Unusable);
     expect(mediator.seenTypes).toEqual([]);
-  });
-
-  it("are not asked for through an agent, nor its mediator resolved, while the arrangement's account is not registered", async () => {
-    const fresh = await freshVault();
-    closing.push(fresh.runtime);
-    const { mediationId } = (await createMediation(fresh.runtime, fresh.keys, "did:web:mediator.example" as Did)).data;
-    const web = webFetch({});
-    const agent = await Agent.open(fresh, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
-    closing.unshift(agent);
-    const refused = await agent.listReplicas(mediationId).catch((err: unknown) => err);
-    expect(refused).toBeInstanceOf(Unusable);
-    expect((refused as Unusable).faults).toEqual(["its account is not registered"]);
-    expect(web.calls).toEqual([]);
   });
 
   it("are each listed once, however many spellings of its grant the mediator lists", async () => {

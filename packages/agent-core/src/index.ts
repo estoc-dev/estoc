@@ -74,14 +74,14 @@ export { Pickup, type Delivered, type Drained, type Fate, type Handle, type Pick
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "@estoc/vault";
 export { createMediation, mediationOf, selectMediation } from "./mediation.js";
-export { createReplica, enroll, type Confirmations, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
+export type { Arrangement } from "./arrangement.js";
+export { createReplica, type EnrollStep, type Enrolled } from "./replica-enrollment.js";
 export { LocalRecords, transientOptions, type LeftTo, type LocalStore } from "./local-records.js";
-export { addRecipients, addRecipientsNow, holds, type RecipientsAdded } from "./replica-recipients.js";
-export { listReplicas, type ListedReplica } from "./replica-list.js";
+export { holds, type RecipientsAdded } from "./replica-recipients.js";
+export type { ListedReplica } from "./replica-list.js";
 export {
   createDid,
   didOf,
-  disclose,
   invitationOf,
   namedRouteOf,
   recordedDid,
@@ -110,8 +110,8 @@ export {
 export { automaticDraft, manualNotificationDraft, send, type AutomaticDraft, type RecordedResult, type Content, type Effect, type EffectContent, type SendOptions, type Sent, type Target } from "./send.js";
 export { MAX_CONTENT_BYTES, carriage, hasExpired, outboundWorkKey, prepare, prepareAll, type Carriage, type PrepareOptions, type Prepared } from "./prepare.js";
 export { LiveAction, LiveInput, Responding, type ActionKind } from "./action.js";
-export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
-export { Dispatcher, LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Waiting } from "./dispatcher.js";
+export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
+export { LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Waiting } from "./dispatcher.js";
 export { GLOBAL_TIMERS, type Timers } from "./lifetime.js";
 export { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients, type Sealing, type SenderProof } from "./receive/gate.js";
 export {
@@ -175,5 +175,5 @@ export {
   type UnplacedOutput,
   type ViewOptions,
 } from "./records.js";
-export { manualProcedures, readRecords, type Manual, type ManualOptions } from "./views.js";
+export { readRecords, type Manual, type ManualOptions } from "./views.js";
 export { Agent, UPKEEP, type Upkeep, type AgentLines, type AgentOptions, type Connection, type Inbound, type Submitted } from "./agent.js";

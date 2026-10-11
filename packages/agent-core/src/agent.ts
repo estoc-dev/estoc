@@ -59,6 +59,7 @@ import { requiredReceivingSet, scanVault, type DidId, type Keys, type MediationI
 
 import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
+import { Account, type Arrangement, type Confirmations } from "./arrangement.js";
 import { BlobStore } from "./blob-store.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
@@ -71,16 +72,15 @@ import { Keyring, replicaSecrets } from "./keyring.js";
 import { Lifetime, type Fetch, type Timer, type Timers } from "./lifetime.js";
 import { MediatorLink, type LinkOptions } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
-import { mediationOf } from "./mediation.js";
+import { createdOf } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 import { plainMessage } from "./protocol/didcomm.js";
 import { STATUS } from "./protocol/mediation.js";
 import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
-import { enroll, type Confirmations, type Enrolled } from "./replica-enrollment.js";
+import type { Enrolled } from "./replica-enrollment.js";
 import { replicaReceiptOf, replicaRoute, sendOverRoute, type ReplicaAddress, type SnapshotLinkReceived } from "./replica-channel.js";
-import { listableAccountOf, listReplicas, type ListedReplica } from "./replica-list.js";
-import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
+import type { RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
 import { recordOwed, type Owed } from "./reconcile.js";
@@ -93,7 +93,7 @@ import { send, type Content, type SendOptions, type Sent, type Target } from "./
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
 
-export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
+export interface AgentOptions extends Omit<DispatcherOptions, "accounts" | "effectTypes" | "trace" | "local">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
   /** the socket live delivery comes down; the global one when left out */
   WebSocket?: typeof WebSocket;
   /** what every wait of the agent is kept by, for an outbound held up or a connection to try again; the global timers when left out */
@@ -216,6 +216,8 @@ export class Agent {
   private readonly attempts = new Map<MediationId, Connection>();
   private readonly retries = new Map<MediationId, Retry>();
   private readonly connecting = new Map<MediationId, Promise<Connection>>();
+  /** by arrangement, bound on first need: the line to the mediator is made only once one of the account's operations has to reach it */
+  private readonly accounts = new Map<MediationId, Account>();
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -253,7 +255,7 @@ export class Agent {
     await recordAcceptancesOwed(runtime, keys, local);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
+    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), accounts: (mediationId): Account => agent.account(mediationId) });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
     const { fetch, WebSocket, timeoutMs } = agentOptions;
     const linkOf: LinkOf = (line) => {
@@ -321,17 +323,29 @@ export class Agent {
   }
 
   /**
+   * The account of an arrangement, bound to this runtime and reaching
+   * its mediator over this agent's line: what `enroll` and `connect` use
+   * too. Nothing is asked of the mediator, nor is its DID resolved,
+   * until an operation has to reach it, and none is begun once the agent
+   * is closed. Needs the arrangement's creation.
+   */
+  async arrangement(mediationId: MediationId): Promise<Arrangement> {
+    this.refuseClosed();
+    createdOf(await scanVault(this.runtime.vault, this.keys), mediationId);
+    return this.account(mediationId);
+  }
+
+  /**
    * This runtime enrolled in an arrangement: its
    * account registered when the fold has no grant, its own replica
    * added when no confirmation is kept; then the arrangement's
    * connection, shared with one under way and taking over its wait as
-   * `connect` does. Throws what `enroll` throws, and begins no request
-   * once the agent is closed.
+   * `connect` does. Throws what `Arrangement.enroll` throws, and begins
+   * no request once the agent is closed.
    */
   async enroll(mediationId: MediationId): Promise<Enrolled> {
     this.refuseClosed();
-    const { link } = await this.lineOf(mediationId);
-    const enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
+    const enrolled = await this.account(mediationId).enroll();
     this.connectionOf(mediationId).enrolled = enrolled;
     await this.localStateChanged();
     this.forgetRetry(mediationId);
@@ -339,27 +353,11 @@ export class Agent {
     return enrolled;
   }
 
-  /**
-   * The replicas the account of an arrangement ever added, as its
-   * mediator lists them and the seed bears them out (`listReplicas`):
-   * this runtime's own among them once it is added, and each other one
-   * an address `sendSnapshotLink` takes. Begins no request once the
-   * agent is closed, nor while the vault alone shows the arrangement
-   * cannot be listed: its mediator is not even resolved then.
-   */
-  async listReplicas(mediationId: MediationId): Promise<ListedReplica[]> {
-    this.refuseClosed();
-    listableAccountOf(await scanVault(this.runtime.vault, this.keys), mediationId);
-    const { link } = await this.lineOf(mediationId);
-    return listReplicas(link, this.runtime, this.keys, mediationId);
-  }
-
-  /** `disclose` over the line of the arrangement that routes the DID. */
+  /** `disclose` with the account of the arrangement that routes the DID. */
   async disclose(didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
     const fold = await scanVault(this.runtime.vault, this.keys);
     const route = routeOf(didOf(fold, didId));
-    const link = route?.kind === "mediated" ? (await this.lineOf(route.mediationId)).link : null;
-    return disclose(link, this.runtime, this.keys, didId, disclosure, this.confirmations);
+    return disclose(route?.kind === "mediated" ? this.account(route.mediationId) : null, this.runtime, this.keys, didId, disclosure);
   }
 
   /**
@@ -372,7 +370,7 @@ export class Agent {
   async blobStore(mediationId: MediationId): Promise<BlobStore> {
     this.refuseClosed();
     const line = await this.lineOf(mediationId);
-    const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await enroll(line.link, this.runtime, this.keys, this.confirmations, mediationId)).replica));
+    const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await this.account(mediationId).enroll()).replica));
     return new BlobStore(inbox.link, { timeoutMs: this.options.timeoutMs });
   }
 
@@ -543,9 +541,9 @@ export class Agent {
     this.cancelRetry(mediationId);
     try {
       const line = await this.lineOf(mediationId);
-      const { link } = line;
-      connection.enrolled = await enroll(link, this.runtime, this.keys, this.confirmations, mediationId);
-      connection.recipients = await addRecipients(link, this.runtime, this.keys, this.confirmations, mediationId);
+      const account = this.account(mediationId);
+      connection.enrolled = await account.enroll();
+      connection.recipients = await account.addRecipients();
       const inbox = await this.pickUpAs(mediationId, line, connection.enrolled.replica);
       connection.drained = await inbox.pickup.drain();
       if (this.keepsLive() && !inbox.link.live) this.openSocket(mediationId, inbox);
@@ -649,13 +647,21 @@ export class Agent {
     }
   }
 
-  /** The one line of an arrangement for as long as the agent lives: a link speaks as one account to one mediator. */
+  private account(mediationId: MediationId): Account {
+    const existing = this.accounts.get(mediationId);
+    if (existing !== undefined) return existing;
+    const account = new Account(this.runtime, this.keys, mediationId, this.confirmations, this.options.trace, async () => (await this.lineOf(mediationId)).link);
+    this.accounts.set(mediationId, account);
+    return account;
+  }
+
+  /** The one line of an arrangement for as long as the agent lives: a link speaks as one account to one mediator. None is made once the agent closed, and the mediator is not resolved for one. */
   private async lineOf(mediationId: MediationId): Promise<Line> {
     const existing = this.wires.get(mediationId);
     if (existing !== undefined) return existing;
+    if (this.lifetime.closed) throw new LinkClosed();
     const fold = await scanVault(this.runtime.vault, this.keys);
-    const mediation = mediationOf(fold, mediationId);
-    if (mediation.me === null || mediation.mediatorDid === null) throw new Error(`the arrangement ${mediationId} has no creation`);
+    const mediation = createdOf(fold, mediationId);
     await this.ring.reload(fold);
     // The mediator may answer under its short form: the long form it was arranged under is in the fold, and an arrangement's creation never changes.
     const known = knownLongForms(fold);

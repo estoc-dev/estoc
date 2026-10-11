@@ -39,13 +39,11 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
-  Dispatcher,
   Keyring,
   LiveAction,
   Responding,
   Receiver,
   createDid,
-  dispatch,
   effectTypesOf,
   handlersOf,
   openVault,
@@ -65,6 +63,8 @@ import {
   type Source,
   routeOf,
 } from "../src/index.js";
+import { dispatch } from "../src/dispatch.js";
+import { Dispatcher } from "../src/dispatcher.js";
 import { copyOf, didcomm, directParty, peerSealer, posting, refuseCommits, refuseReads, refuseSubmissions, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;

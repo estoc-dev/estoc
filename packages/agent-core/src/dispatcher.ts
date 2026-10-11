@@ -64,7 +64,7 @@ interface Wait extends Waiting {
   timer: Timer | null;
 }
 
-/** Its transport and its waits are reached through a lifetime of its own, which `close()` closes; the links it is given are its holder's. */
+/** Its transport and its waits are reached through a lifetime of its own, which `close()` closes; the accounts it is given, and their links, are its holder's. */
 export class Dispatcher {
   private readonly options: DispatcherOptions;
   private readonly policy: RetryPolicy;
@@ -127,7 +127,7 @@ export class Dispatcher {
     return [...this.waits.keys()].map((messageId) => this.waitingOn(messageId) as Waiting);
   }
 
-  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. The links it was given stay open. */
+  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. The links of the accounts it was given stay open. */
   close(): void {
     this.lifetime.close();
     this.waits.clear();

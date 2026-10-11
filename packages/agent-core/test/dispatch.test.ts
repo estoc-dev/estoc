@@ -17,7 +17,6 @@ import {
   cancel,
   completeResponse,
   createVault,
-  dispatch,
   pinnedResolver,
   prepare,
   selectPreparation,
@@ -28,6 +27,7 @@ import {
   type DispatchOptions,
   type Dispatched,
 } from "../src/index.js";
+import { dispatch } from "../src/dispatch.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import {
   after,
@@ -583,14 +583,12 @@ describe("dispatch through a mediator", () => {
     const carol = await mediatedParty(mediator, 3, CAROL);
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const wire = posting(accepted);
-    const through = (party: MediatedParty) => ({ links: (mediationId: string) => (mediationId === party.mediationId ? party.link : null), confirmations: party.confirmations });
+    const through = (party: MediatedParty) => ({ accounts: (mediationId: string) => (mediationId === party.mediationId ? party.account : null) });
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
 
     const unlinked = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch });
     expect(unlinked).toMatchObject({ outcome: "pending", messageId: MESSAGE });
-    expect((unlinked as { because: string }).because).toMatch(/no link to the mediator/);
-    const unconfirmed = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, links: through(alice).links });
-    expect((unconfirmed as { because: string }).because).toMatch(/could not be asked to hold .*confirmations are not given/);
+    expect((unlinked as { because: string }).because).toMatch(/no account of .* is bound/);
     alice.offline.reason = "no route to host";
     const unreachable = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) });
     expect((unreachable as { because: string }).because).toMatch(/could not be asked to hold .*no route to host/);

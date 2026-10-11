@@ -36,25 +36,23 @@ import {
   Keyring,
   MediatorLink,
   Receiver,
-  addRecipients,
   authorizedKeys,
   canonicalDid,
   commitResolution,
   createDid,
   createMediation,
   createVault,
-  enroll,
   pinnedResolver,
   receiptOf,
   resolve,
   routeOf,
-  type Confirmations,
   type LinkOptions,
   type OpenedVault,
   type RecipientsAdded,
   type Timers,
   type RouteSpec,
 } from "../src/index.js";
+import { Account, type Confirmations } from "../src/arrangement.js";
 import { replicaSecrets } from "../src/keyring.js";
 import { FakeMediator, MEDIATOR_HTTP } from "./fake-mediator.js";
 
@@ -106,6 +104,8 @@ export interface Party extends Fresh {
   /** what the mediator confirmed to this runtime, in the runtime's local options */
   confirmations: Confirmations;
   link: MediatorLink;
+  /** the arrangement's account as an agent binds it, over `link` and with `confirmations` */
+  account: Account;
   /** what `link` was built from: another link over the same account, or one speaking as another, is `new MediatorLink({ ...linkOptions, ... })` */
   linkOptions: LinkOptions;
   log: string[];
@@ -136,7 +136,13 @@ export async function party(mediator: FakeMediator, fill = 1, over: Partial<Link
     ...over,
   };
   const link = new MediatorLink(linkOptions);
-  return { ...fresh, fold, mediator, mediationId: created.data.mediationId, created, ring, trace, confirmations: fresh.runtime.local.options, link, linkOptions, log, offline };
+  const bound = { ...fresh, mediationId: created.data.mediationId, trace, confirmations: fresh.runtime.local.options, link };
+  return { ...bound, fold, mediator, created, ring, linkOptions, log, offline, account: accountOver(bound) };
+}
+
+/** The party's account bound over another link, or with other confirmations, than its own. */
+export function accountOver(p: Pick<Party, "runtime" | "keys" | "mediationId" | "trace" | "confirmations" | "link">, { link = p.link, confirmations = p.confirmations }: { link?: MediatorLink; confirmations?: Confirmations } = {}): Account {
+  return new Account(p.runtime, p.keys, p.mediationId, confirmations, p.trace, async () => link);
 }
 
 /** A link speaking as the runtime's replica DID with that DID's keys alone, under both its spellings: what picks the replica's mail up. */
@@ -149,7 +155,7 @@ export async function replicaLink(p: Pick<Party, "keys" | "linkOptions">, replic
 
 /** The mediator made to hold every address of the party's arrangement, as a connection has it. */
 export function holdAddresses(p: Party): Promise<RecipientsAdded> {
-  return addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+  return p.account.addRecipients();
 }
 
 /** Waits for `condition`, giving up after `ms` with `what` in the error. */
@@ -363,7 +369,7 @@ export interface MediatedParty extends Party {
   did: Did;
   longFormDid: Did;
   /** the account's short form: what the mediator holds its addresses under */
-  account: string;
+  accountDid: string;
   /** this runtime's replica in the arrangement */
   replica: Replica & { did: Did; longFormDid: Did };
   /** the replica's own line: what picks up and is pushed its mail */
@@ -373,10 +379,10 @@ export interface MediatedParty extends Party {
 /** A party enrolled in its arrangement, with one communication DID, `didId`, routed through the mediator: the DID's document sends to the mediator, and the mediator does not hold it yet. */
 export async function mediatedParty(mediator: FakeMediator, fill: number, didId: DidId, driver = memoryDriver()): Promise<MediatedParty> {
   const p = await party(mediator, fill, {}, driver);
-  const { replica } = await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+  const { replica } = await p.account.enroll();
   const route = mediatedRoute(p.mediationId);
   const { minted } = await createDid(p.runtime, p.keys, route, didId);
-  return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid, account: canonicalDid(p.created.data.me.did), replica: replica as MediatedParty["replica"], inbox: await replicaLink(p, replica) };
+  return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid, accountDid: canonicalDid(p.created.data.me.did), replica: replica as MediatedParty["replica"], inbox: await replicaLink(p, replica) };
 }
 
 export interface Post {

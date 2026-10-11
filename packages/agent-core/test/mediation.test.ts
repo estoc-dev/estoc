@@ -16,10 +16,8 @@ import {
   RECIPIENT_ADDED,
   Unusable,
   UnverifiedReply,
-  addRecipients,
   createDid,
   createMediation,
-  enroll,
   holds,
   knownLongForms,
   plainMessage,
@@ -29,7 +27,7 @@ import {
   type IMessage,
 } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import { didcomm, freshVault, newMediator, party, reloaded, mediatedRoute, until } from "./helpers.js";
+import { accountOver, didcomm, freshVault, newMediator, party, reloaded, mediatedRoute, until } from "./helpers.js";
 
 describe("creating an arrangement", () => {
   it("records the vault's identity toward the mediator before any request, under the ID the mediator's DID derives, and says the same again for the same mediator", async () => {
@@ -53,7 +51,7 @@ describe("creating an arrangement", () => {
   it("merges what two replicas of one seed recorded under the mediator's long and short form into one usable arrangement that routes the address minted on either", async () => {
     const mediator = await newMediator();
     const a = await party(mediator);
-    await enroll(a.link, a.runtime, a.keys, a.confirmations, a.mediationId);
+    await a.account.enroll();
     const address = await createDid(a.runtime, a.keys, mediatedRoute(a.mediationId));
     const b = await freshVault(1, "the same seed elsewhere");
     const short = longToShort(mediator.did) as Did;
@@ -161,7 +159,7 @@ describe("the line to the mediator", () => {
     };
     for (const [name, forgery] of Object.entries(forgeries)) {
       forge = forgery;
-      await expect(enroll(link, p.runtime, p.keys, transientOptions(), p.mediationId), name).rejects.toBeInstanceOf(UnverifiedReply);
+      await expect(accountOver(p, { link, confirmations: transientOptions() }).enroll(), name).rejects.toBeInstanceOf(UnverifiedReply);
       expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(p.mediationId)?.status, name).toBe("pending");
     }
     expect((await p.trace.read({ type: "envelope.rejected" })).map((entry) => entry.data["reason"])).toEqual([
@@ -176,7 +174,7 @@ describe("the line to the mediator", () => {
     expect(signed?.data["from_kid"]).toBeUndefined();
     expect(String(signed?.data["sign_from"]).startsWith(`${mediator.did}#`)).toBe(true);
     forge = null;
-    expect((await enroll(link, p.runtime, p.keys, transientOptions(), p.mediationId)).mediation.routingDid).toBe(mediator.did);
+    expect((await accountOver(p, { link, confirmations: transientOptions() }).enroll()).mediation.routingDid).toBe(mediator.did);
     await p.runtime.close();
   });
 
@@ -188,7 +186,7 @@ describe("the line to the mediator", () => {
     expect(opened.msg.type).toBe(ACCOUNT_REGISTERED);
     expect(opened.metadata).toMatchObject({ encrypted: true, authenticated: true, anonymous_sender: true });
     expect(opened.sender).toBe(mediator.did);
-    expect((await enroll(p.link, p.runtime, p.keys, transientOptions(), p.mediationId)).mediation.status).toBe("usable");
+    expect((await accountOver(p, { confirmations: transientOptions() }).enroll()).mediation.status).toBe("usable");
     expect(await p.trace.read({ type: "envelope.rejected" })).toEqual([]);
     await p.runtime.close();
   });
@@ -196,15 +194,15 @@ describe("the line to the mediator", () => {
   it("refuses a forged reply by the deadline even when the note of the refusal never settles, and the account's next procedure goes on", async () => {
     const mediator = await newMediator();
     const p = await party(mediator);
-    await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+    await p.account.enroll();
     const a = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
     const stalled = Object.create(p.trace) as AgentTrace;
     (stalled as { append: AgentTrace["append"] }).append = (stream, what, data) => (stream === "envelope" && what === "rejected" ? new Promise(() => undefined) : p.trace.append(stream, what, data));
     const forged = plainMessage(RECIPIENT_ADDED, mediator.did, p.link.me, { recipient_did: a.minted.did, added_time: 1 });
     const link = new MediatorLink({ ...p.linkOptions, trace: stalled, timeoutMs: 300, fetch: async () => new Response(JSON.stringify(forged), { status: 200 }) });
     const started = Date.now();
-    const first = addRecipients(link, p.runtime, p.keys, p.confirmations, p.mediationId);
-    const second = addRecipients(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+    const first = accountOver(p, { link }).addRecipients();
+    const second = p.account.addRecipients();
     await expect(first).rejects.toBeInstanceOf(UnverifiedReply);
     expect(holds(await second, a.minted.did)).toBe(true);
     expect(Date.now() - started).toBeLessThan(2000);
@@ -266,7 +264,7 @@ describe("selecting", () => {
   it("records the preferred arrangement once it is usable, and nothing twice", async () => {
     const p = await party(await newMediator());
     await expect(selectMediation(p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
-    await enroll(p.link, p.runtime, p.keys, p.confirmations, p.mediationId);
+    await p.account.enroll();
     const selected = await selectMediation(p.runtime, p.keys, p.mediationId);
     expect(selected?.data).toEqual({ mediationId: p.mediationId });
     expect(await selectMediation(p.runtime, p.keys, p.mediationId)).toBeNull();
