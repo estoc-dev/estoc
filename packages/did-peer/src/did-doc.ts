@@ -20,10 +20,13 @@ export class DIDDocConversionError extends Error {
 const ED25519_PUB = Uint8Array.from([0xed, 0x01]);
 const X25519_PUB = Uint8Array.from([0xec, 0x01]);
 
-/** The curves didcomm-rust reads a `JsonWebKey2020` key on, by `kty`. */
-const JWK_CURVES: ReadonlyMap<unknown, ReadonlySet<unknown>> = new Map([
-  ["EC", new Set(["P-256", "secp256k1"])],
-  ["OKP", new Set(["Ed25519", "X25519"])],
+/**
+ * The keys didcomm-rust reads from a `JsonWebKey2020` JWK, by `kty`: the
+ * curves it reads, and the members that hold the public key on them.
+ */
+const JWK_KEYS: ReadonlyMap<unknown, { curves: ReadonlySet<unknown>; coordinates: readonly string[] }> = new Map([
+  ["EC", { curves: new Set(["P-256", "secp256k1"]), coordinates: ["x", "y"] }],
+  ["OKP", { curves: new Set(["Ed25519", "X25519"]), coordinates: ["x"] }],
 ]);
 
 const BASE58_SUITES = new Set(["X25519KeyAgreementKey2019", "Ed25519VerificationKey2018"]);
@@ -54,13 +57,32 @@ function prefixMatches(prefix: Uint8Array | null, expected: Uint8Array): boolean
 }
 
 /**
- * The suite didcomm-rust reads the method's key under. It reads the
- * first of a JWK, a multibase and a base58 value the method carries,
+ * The JWK as didcomm-rust imports it: the key type, the curve and the
+ * members holding the public key, or null when it holds no key on a
+ * curve didcomm-rust reads. askar, which imports it, fails on a member
+ * its parser has no case for, such as `alg`, and builds the key from
+ * these members alone; leaving the rest out keeps the key.
+ */
+function importableJwk(jwk: Record<string, unknown>): Record<string, unknown> | null {
+  const { kty, crv } = jwk;
+  const key = JWK_KEYS.get(kty);
+  if (key === undefined || !key.curves.has(crv)) {
+    return null;
+  }
+  const coordinates = key.coordinates.map((member) => [member, jwk[member]] as const);
+  return coordinates.every(([, value]) => typeof value === "string")
+    ? { kty, crv, ...Object.fromEntries(coordinates) }
+    : null;
+}
+
+/**
+ * The method's suite and material as didcomm-rust reads them. It reads
+ * the first of a JWK, a multibase and a base58 value the method carries,
  * and only under the suite defined over that material: a JWK under
- * `JsonWebKey2020` on a curve it supports, a multibase key under the
- * 2020 suite of the key's own curve, a base58 key under the older
- * suites. It has no `Multikey` variant, so a Multikey method is read
- * under the 2020 suite of its multicodec prefix.
+ * `JsonWebKey2020` holding a key on a curve it supports, a multibase key
+ * under the 2020 suite of the key's own curve, a base58 key under the
+ * older suites. It has no `Multikey` variant, so a Multikey method is
+ * read under the 2020 suite of its multicodec prefix.
  *
  * Anything else becomes `Other`. didcomm-rust's VerificationMethodType
  * has no catch-all deserializer, so leaving an unknown type in place
@@ -70,10 +92,11 @@ function prefixMatches(prefix: Uint8Array | null, expected: Uint8Array): boolean
  * break every operation. An `Other` method survives the round trip but
  * cannot be used for crypto.
  */
-function suiteOf(type: string, material: Material): string {
+function asRead(type: string, material: Material): Pick<VerificationMethod, "type"> & Material {
   const { publicKeyJwk: jwk, publicKeyMultibase: multibase, publicKeyBase58: base58 } = material;
   if (jwk !== undefined) {
-    return type === "JsonWebKey2020" && JWK_CURVES.get(jwk.kty)?.has(jwk.crv) === true ? type : "Other";
+    const key = type === "JsonWebKey2020" ? importableJwk(jwk) : null;
+    return key === null ? { type: "Other", ...material } : { type, ...material, publicKeyJwk: key };
   }
   if (multibase !== undefined) {
     const prefix = multicodecPrefix(multibase);
@@ -82,9 +105,9 @@ function suiteOf(type: string, material: Material): string {
       : prefixMatches(prefix, X25519_PUB)
         ? "X25519KeyAgreementKey2020"
         : "Other";
-    return type === suite || type === "Multikey" ? suite : "Other";
+    return { type: type === suite || type === "Multikey" ? suite : "Other", ...material };
   }
-  return base58 !== undefined && BASE58_SUITES.has(type) ? type : "Other";
+  return { type: base58 !== undefined && BASE58_SUITES.has(type) ? type : "Other", ...material };
 }
 
 function toVerificationMethod(
@@ -110,7 +133,7 @@ function toVerificationMethod(
     material.publicKeyBase58 = method.publicKeyBase58;
   }
 
-  return { id, type: suiteOf(type, material), controller, ...material };
+  return { id, controller, ...asRead(type, material) };
 }
 
 function firstEndpoint(serviceEndpoint: unknown): unknown {

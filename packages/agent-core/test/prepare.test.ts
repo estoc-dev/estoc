@@ -1,3 +1,4 @@
+import { base64url, decodeProtectedHeader } from "jose";
 import { describe, expect, it, test } from "vitest";
 
 import { decodeLongForm, encodeLongForm, longToShort, type DIDDoc } from "@estoc/did-peer";
@@ -23,6 +24,7 @@ import {
 } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
+import { secretOf } from "../src/keyring.js";
 import { secretsResolverFor } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
@@ -96,35 +98,40 @@ async function opened(alice: DirectParty, bob: DirectParty, packed: string): Pro
   return unpack(didcomm, packed, resolver, secretsResolverFor(ring.secrets()));
 }
 
-/** Alice continues `ALICE` as `ALICE_NEXT` toward `peer`, under the proof her seed signs, once the peer has written to `ALICE`: a verified local replacement. */
-async function rotated(alice: DirectParty, peer: DirectParty): Promise<{ next: Did; longFormDid: Did; fromPrior: string; decision: EventCid }> {
-  await received(alice, peer, `confirm-${ALICE}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } });
-  const route = routeOf((await fold(alice)).dids.entities.get(ALICE)!)!;
+/** Alice continues `from`, `ALICE` unless named, as `ALICE_NEXT` toward `peer`, under the proof her seed signs, once the peer has written to `from`: a verified local replacement. */
+async function rotated(alice: DirectParty, peer: DirectParty, from: { didId: DidId; did: Did; longFormDid: Did } = alice): Promise<{ next: Did; longFormDid: Did; fromPrior: string; decision: EventCid }> {
+  await received(alice, peer, `confirm-${from.didId}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } }, from);
+  const route = routeOf((await fold(alice)).dids.entities.get(from.didId)!)!;
   const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
-  const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, IAT);
-  const [decision] = await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
+  const fromPrior = await signFromPrior(alice.keys, { didId: from.didId, longFormDid: from.longFormDid }, minted.longFormDid, IAT);
+  const [decision] = await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: from.didId, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
   return { next: minted.did, longFormDid: minted.longFormDid, fromPrior, decision: decision!.cid };
 }
 
 /**
  * A DID of Alice's as another implementation might write it: its
- * document authorizes her key-agreement key under the methods
- * `keyAgreement` names, where `#legacy` carries that key under a suite
- * didcomm does not know and `#mislabelled` under one it reads only from
- * a JWK.
+ * document authorizes her keys under the methods `authorized` names
+ * for each relationship, the template's otherwise. `#legacy` carries
+ * her key-agreement key under a suite didcomm does not know,
+ * `#mislabelled` under one it reads only from a JWK, and `#agreement`
+ * as a JWK naming its algorithm and use beside the key; `#signing`
+ * carries her authentication key as a JWK naming its algorithm.
  */
-async function writtenElsewhere(alice: DirectParty, didId: DidId, keyAgreement: string[]): Promise<{ did: Did; longFormDid: Did }> {
+async function writtenElsewhere(alice: DirectParty, didId: DidId, authorized: { keyAgreement?: string[]; authentication?: string[] }): Promise<{ didId: DidId; did: Did; longFormDid: Did }> {
   const keys = await alice.keys.didKeys(didId);
   const document = inputDocumentOf(keys, "https://alice.example/didcomm");
+  const jwkOf = (crv: string, bytes: Uint8Array) => ({ kty: "OKP", crv, x: base64url.encode(bytes) });
   (document["verificationMethod"] as JsonObject[]).push(
     { id: "#legacy", type: "UnknownKeyType", publicKeyMultibase: keys.keyAgreement.publicKey },
-    { id: "#mislabelled", type: "JsonWebKey2020", publicKeyMultibase: keys.keyAgreement.publicKey }
+    { id: "#mislabelled", type: "JsonWebKey2020", publicKeyMultibase: keys.keyAgreement.publicKey },
+    { id: "#agreement", type: "JsonWebKey2020", publicKeyJwk: { ...jwkOf("X25519", keys.keyAgreement.publicKeyBytes()), alg: "ECDH-1PU+A256KW", use: "enc" } },
+    { id: "#signing", type: "JsonWebKey2020", publicKeyJwk: { ...jwkOf("Ed25519", keys.authentication.publicKeyBytes()), alg: "EdDSA" } }
   );
-  document["keyAgreement"] = keyAgreement;
+  Object.assign(document, authorized);
   const longFormDid = encodeLongForm(document) as Did;
   const did = longToShort(longFormDid) as Did;
   await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId, did, longFormDid, generation: { kind: "entry", profile: "v1" } })]);
-  return { did, longFormDid };
+  return { didId, did, longFormDid };
 }
 
 describe("prepare", () => {
@@ -294,8 +301,8 @@ describe("prepare", () => {
 
   it("seals from the first key-agreement method of the sender's own document that didcomm seals from, and makes no preparation from a document that authorizes the key under none", async () => {
     const { alice, bob } = await parties();
-    const sealing = await writtenElsewhere(alice, ALICE_LEGACY, ["#legacy", "#mislabelled", KEY_AGREEMENT_METHOD]);
-    const unsealing = await writtenElsewhere(alice, ALICE_LEGACY_ONLY, ["#legacy", "#mislabelled"]);
+    const sealing = await writtenElsewhere(alice, ALICE_LEGACY, { keyAgreement: ["#legacy", "#mislabelled", "#agreement"] });
+    const unsealing = await writtenElsewhere(alice, ALICE_LEGACY_ONLY, { keyAgreement: ["#legacy", "#mislabelled"] });
     const entities = (await fold(alice)).dids.entities;
     expect([entities.get(ALICE_LEGACY)?.live, entities.get(ALICE_LEGACY_ONLY)?.live]).toEqual([true, true]);
 
@@ -303,7 +310,7 @@ describe("prepare", () => {
     const made = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
     const { plaintext, sender } = await opened(alice, bob, (await envelopeOf(alice, made)).packed);
     expect(plaintext.from).toBe(sealing.longFormDid);
-    expect(sender).toEqual({ did: sealing.longFormDid, kid: `${sealing.longFormDid}${KEY_AGREEMENT_METHOD}` });
+    expect(sender).toEqual({ did: sealing.longFormDid, kid: `${sealing.longFormDid}#agreement` });
 
     await send(alice.runtime, alice.keys, { channel: { localDid: unsealing.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
     expect(await prepare(alice.runtime, alice.keys, SECOND, options())).toEqual({ outcome: "none", messageId: SECOND, because: `${unsealing.did} authorizes no key-agreement method didcomm seals from with the key the seed derives` });
@@ -335,6 +342,19 @@ describe("prepare", () => {
     expect(second.plaintext).not.toHaveProperty("from_prior");
 
     await expect(send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD })).rejects.toThrow(`the local DID is replaced here by ${next}`);
+    await closeAll(alice, bob);
+  });
+
+  test("a successor carries a proof its predecessor signs under an authentication JWK that names its algorithm beside the key", async () => {
+    const { alice, bob } = await parties();
+    const predecessor = await writtenElsewhere(alice, ALICE_LEGACY, { authentication: ["#signing"] });
+    const { next, longFormDid, fromPrior } = await rotated(alice, bob, predecessor);
+    expect(decodeProtectedHeader(fromPrior).kid).toBe(`${predecessor.longFormDid}#signing`);
+    await send(alice.runtime, alice.keys, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const proven = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    expect(proven.prepared.data.fromPrior).toBe(fromPrior);
+    const { plaintext } = await opened(alice, bob, (await envelopeOf(alice, proven)).packed);
+    expect(plaintext).toMatchObject({ from: longFormDid, from_prior: fromPrior });
     await closeAll(alice, bob);
   });
 
@@ -423,6 +443,22 @@ describe("prepare", () => {
     const f = await fold(alice);
     expect(f.set.of("message.prepared")).toHaveLength(2);
     expect(f.outbound.outbounds.get(SECOND)!.work).toEqual({ kind: "prepare" });
+    await closeAll(alice, bob);
+  });
+
+  it("seals to a key-agreement key given as a JWK that names its algorithm beside the key, ahead of a later one, and the recipient opens it", async () => {
+    const { alice, bob } = await parties();
+    const { keyAgreement } = await bob.keys.didKeys(BOB);
+    const document = decodeLongForm(bob.longFormDid);
+    const agreement = { id: "#agreement", type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "X25519", x: base64url.encode(keyAgreement.publicKeyBytes()), alg: "ECDH-ES+A256KW" } };
+    const did = encodeLongForm({ ...document, verificationMethod: [...(document["verificationMethod"] as JsonObject[]), agreement], keyAgreement: ["#agreement", KEY_AGREEMENT_METHOD] }) as Did;
+    const short = longToShort(did) as Did;
+    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, short), recipientDid: did }, HELLO, { messageId: MESSAGE });
+    const { packed } = await envelopeOf(alice, await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    const kid = `${short}#agreement`;
+    expect(((parseStrict(packed) as JsonObject).recipients as { header: { kid: string } }[]).map((r) => r.header.kid)).toEqual([kid]);
+    const { plaintext } = await unpack(didcomm, packed, pinnedResolver(await fold(alice)), secretsResolverFor([secretOf(kid, keyAgreement)]));
+    expect(plaintext.body).toEqual(HELLO.body);
     await closeAll(alice, bob);
   });
 
