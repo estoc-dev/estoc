@@ -4,7 +4,7 @@ import { scanVault, type DidId, type MessageId } from "@estoc/vault";
 import type { VaultRuntime } from "@estoc/event-store";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { Dispatcher, LiveAction, send, type Content, type DispatcherOptions } from "../src/index.js";
+import { Dispatcher, Lifetime, LiveAction, send, type Content, type DispatcherOptions } from "../src/index.js";
 import { didcomm, directParty, handTimers, posting, until, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -32,7 +32,7 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
   const timers = handTimers();
   const wire = posting(answer);
   const log: string[] = [];
-  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, timers, now: () => T0, log: (line) => log.push(line), ...over });
+  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, lifetime: new Lifetime(timers), now: () => T0, log: (line) => log.push(line), ...over });
   return {
     alice,
     bob,

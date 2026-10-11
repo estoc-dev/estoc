@@ -6,6 +6,7 @@ import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type Mess
 import {
   ACCOUNT_REGISTER,
   Agent,
+  Lifetime,
   LinkClosed,
   MediatorLink,
   RECIPIENT_ADD,
@@ -141,14 +142,14 @@ describe("adding recipients", () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
     const a = await address(p);
-    let closed = false;
+    const lifetime = new Lifetime();
     const keys = Object.assign(Object.create(p.keys) as typeof p.keys, {
       didKeys: async (didId: DidId) => {
-        closed = true;
+        lifetime.close();
         return p.keys.didKeys(didId);
       },
     });
-    const link = new MediatorLink({ ...p.linkOptions, closed: () => closed });
+    const link = new MediatorLink({ ...p.linkOptions, lifetime });
     await expect(addRecipients(link, p.runtime, keys, p.confirmations, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
     expect(mediator.sharedRecipients.size).toBe(0);

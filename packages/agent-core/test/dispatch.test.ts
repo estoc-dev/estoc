@@ -10,6 +10,7 @@ import { FORWARD } from "../src/protocol/spec.js";
 import {
   AgentTrace,
   Keyring,
+  Lifetime,
   LiveAction,
   LocalRecords,
   UnknownEntity,
@@ -522,10 +523,12 @@ describe("dispatch to a direct endpoint", () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
     const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, closed: () => true })).toEqual({ outcome: "none", messageId: MESSAGE, because: "closed before the call" });
+    const closed = new Lifetime();
+    closed.close();
+    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, lifetime: closed })).toEqual({ outcome: "none", messageId: MESSAGE, because: "closed before the call" });
     expect(wire.posts).toEqual([]);
     expect(sent.action.spent).toBe(false);
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, closed: () => false }));
+    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, lifetime: new Lifetime() }));
     expect(wire.posts).toHaveLength(1);
     await closeAll(alice, bob);
   });

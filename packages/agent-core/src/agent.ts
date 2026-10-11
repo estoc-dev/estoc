@@ -62,11 +62,12 @@ import type { LiveAction, LiveInput } from "./action.js";
 import { BlobStore } from "./blob-store.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
-import { Dispatcher, GLOBAL_TIMERS, type DispatcherOptions, type PendingOutbound, type Timers } from "./dispatcher.js";
+import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { Keyring, replicaSecrets } from "./keyring.js";
+import { Lifetime, type Fetch, type Timer, type Timers } from "./lifetime.js";
 import { MediatorLink } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { mediationOf } from "./mediation.js";
@@ -90,9 +91,11 @@ import { send, type Content, type SendOptions, type Sent, type Target } from "./
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
 
-export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
+export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations" | "lifetime">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
   /** the socket live delivery comes down; the global one when left out */
   WebSocket?: typeof WebSocket;
+  /** what every wait of the agent is kept by, for an outbound held up or a connection to try again; the global timers when left out */
+  timers?: Timers;
   /** whether a connection opens the socket for live delivery, after its pickup; on by default */
   liveDelivery?: boolean;
   /**
@@ -175,9 +178,12 @@ export const UPKEEP: Upkeep = { retryMs: 2_000, retryAtMostMs: 5 * 60_000 };
 
 /** The connection to try again, and how long the next one after it waits. */
 interface Retry {
-  timer: unknown;
+  timer: Timer | null;
   nextMs: number;
 }
+
+/** The agent's options, its transport reached through its lifetime alone. */
+type GatedOptions = AgentOptions & { fetch: Fetch };
 
 export interface Submitted extends Sent {
   dispatched: Called;
@@ -201,7 +207,6 @@ interface Line {
 }
 
 export class Agent {
-  private closed = false;
   /** by arrangement, from the first attempt to connect it: one whose line could not even be made has a connection to say why */
   private readonly attempts = new Map<MediationId, Connection>();
   private readonly retries = new Map<MediationId, Retry>();
@@ -217,7 +222,8 @@ export class Agent {
   private constructor(
     private readonly runtime: VaultRuntime,
     private readonly keys: Keys,
-    private readonly options: AgentOptions,
+    private readonly options: GatedOptions,
+    private readonly lifetime: Lifetime,
     private readonly ring: Keyring,
     private readonly dispatcher: Dispatcher,
     private readonly receiver: Receiver,
@@ -231,15 +237,17 @@ export class Agent {
   }
 
   /** The agent over an open runtime, with networking off; throws `ReceiverInUse` while another agent of the runtime is open. */
-  static async open(vault: { runtime: VaultRuntime; keys: Keys }, options: AgentOptions): Promise<Agent> {
+  static async open(vault: { runtime: VaultRuntime; keys: Keys }, agentOptions: AgentOptions): Promise<Agent> {
     const { runtime, keys } = vault;
+    const lifetime = new Lifetime(agentOptions.timers);
+    const options: GatedOptions = { ...agentOptions, fetch: lifetime.fetch(agentOptions.fetch) };
     const confirmations = options.localOptions ?? transientOptions();
     const local = new LocalRecords(confirmations, runtime.author);
     const recovered = await recordOwed(runtime, keys);
     await recordAcceptancesOwed(runtime, keys, local);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...options, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
+    const dispatcher = new Dispatcher(runtime, keys, { ...options, lifetime, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
     let linesChanged = (): void => undefined;
     const mediatorEndpoint = (mediationId: MediationId): string => {
@@ -249,6 +257,7 @@ export class Agent {
     };
     const receiver = new Receiver(runtime, keys, ring, {
       didcomm,
+      lifetime,
       receipt: receiptOf(runtime, keys),
       replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
@@ -263,7 +272,7 @@ export class Agent {
       log,
       changed: () => linesChanged(),
     });
-    const agent = new Agent(runtime, keys, options, ring, dispatcher, receiver, lines, confirmations, local, recovered);
+    const agent = new Agent(runtime, keys, options, lifetime, ring, dispatcher, receiver, lines, confirmations, local, recovered);
     linesChanged = () => agent.linesChanged();
     return agent;
   }
@@ -336,6 +345,7 @@ export class Agent {
    * to be.
    */
   async blobStore(mediationId: MediationId): Promise<BlobStore> {
+    this.refuseClosed();
     const line = await this.lineOf(mediationId);
     const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await enroll(line.link, this.runtime, this.keys, this.confirmations, mediationId)).replica));
     return new BlobStore(inbox.link, { timeoutMs: this.options.timeoutMs });
@@ -427,16 +437,17 @@ export class Agent {
 
   /**
    * Sockets are closed and waits dropped, and nothing is sent or
-   * called after this: every line refuses its next request. A
-   * connection under way stops there, and so does finding who answers
-   * a delivery already taken, whose outputs are then listed for the
-   * user; a request already made is answered first, and what its
-   * answer settled is recorded. The runtime stays open: it is its
-   * opener's to close.
+   * called after this: every request is refused at the call, wherever
+   * in the agent it is made. A connection under way stops there, and
+   * so does answering a delivery already taken: no output is begun, and
+   * what the input still earns is listed for the user. A request
+   * already made is still answered, but an answer that comes after this
+   * may be lost, as one lost on the wire is: a reply from a did:web
+   * mediator is checked against the mediator resolved again, which is a
+   * request too. The runtime stays open: it is its opener's to close.
    */
   close(): void {
-    if (this.closed) return;
-    this.closed = true;
+    this.lifetime.close();
     for (const { inbox } of this.wires.values()) inbox?.link.closeSocket();
     for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
     this.dispatcher.close();
@@ -444,7 +455,7 @@ export class Agent {
   }
 
   private refuseClosed(): void {
-    if (this.closed) throw new Error("the agent is closed");
+    if (this.lifetime.closed) throw new Error("the agent is closed");
   }
 
   private log(line: string): void {
@@ -453,11 +464,11 @@ export class Agent {
 
   /** The host told of the lines once this turn is over, whatever else changes them meanwhile. */
   private linesChanged(): void {
-    if (this.linesDue || this.closed || this.options.onLines === undefined) return;
+    if (this.linesDue || this.lifetime.closed || this.options.onLines === undefined) return;
     this.linesDue = true;
     queueMicrotask(() => {
       this.linesDue = false;
-      if (this.closed) return;
+      if (this.lifetime.closed) return;
       try {
         this.options.onLines?.(this.lines());
       } catch (err) {
@@ -510,7 +521,7 @@ export class Agent {
       if (this.keepsLive() && !inbox.link.live) this.openSocket(mediationId, inbox);
       connection.unreachable = null;
     } catch (err) {
-      if (this.closed) return this.shown(connection);
+      if (this.lifetime.closed) return this.shown(connection);
       connection.unreachable = messageOf(err);
       this.log(`the mediator of ${mediationId} was not reached: ${connection.unreachable}`);
       this.retryLater(mediationId);
@@ -540,11 +551,7 @@ export class Agent {
   }
 
   private keepsLive(): boolean {
-    return (this.options.liveDelivery ?? true) && !this.closed;
-  }
-
-  private timers(): Timers {
-    return this.options.timers ?? GLOBAL_TIMERS;
+    return this.options.liveDelivery ?? true;
   }
 
   private upkeep(): Upkeep {
@@ -553,8 +560,8 @@ export class Agent {
 
   private cancelRetry(mediationId: MediationId): void {
     const retry = this.retries.get(mediationId);
-    if (retry === undefined || retry.timer === null) return;
-    this.timers().clear(retry.timer);
+    if (retry === undefined) return;
+    retry.timer?.cancel();
     retry.timer = null;
   }
 
@@ -577,7 +584,7 @@ export class Agent {
     if (retry.timer !== null) return;
     const wait = retry.nextMs * (0.5 + Math.random() / 2);
     retry.nextMs = Math.min(retry.nextMs * 2, retryAtMostMs);
-    retry.timer = this.timers().set(() => {
+    retry.timer = this.lifetime.setTimer(() => {
       retry.timer = null;
       void this.retry(mediationId, retry);
     }, wait);
@@ -586,7 +593,7 @@ export class Agent {
   /** A wait dropped while the vault was being read — live delivery come on, a connection made by hand, the agent closed — leaves this try nothing to do. */
   private async retry(mediationId: MediationId, retry: Retry): Promise<void> {
     if (!this.keepsLive()) return;
-    const stands = (): boolean => !this.closed && this.retries.get(mediationId) === retry;
+    const stands = (): boolean => this.retries.get(mediationId) === retry;
     try {
       const fold = await scanVault(this.runtime.vault, this.keys);
       if (!stands()) return;
@@ -601,7 +608,6 @@ export class Agent {
   }
 
   private async pickUpOnceLive(mediationId: MediationId, pickup: Pickup): Promise<void> {
-    if (this.closed) return;
     this.forgetRetry(mediationId);
     try {
       const drained = await pickup.drain();
@@ -615,7 +621,6 @@ export class Agent {
 
   /** The one line of an arrangement for as long as the agent lives: a link speaks as one account to one mediator. */
   private async lineOf(mediationId: MediationId): Promise<Line> {
-    this.refuseClosed();
     const existing = this.wires.get(mediationId);
     if (existing !== undefined) return existing;
     const fold = await scanVault(this.runtime.vault, this.keys);
@@ -632,8 +637,8 @@ export class Agent {
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
     const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const { mediatorDid } = mediation;
-    const closed = (): boolean => this.closed;
-    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log, closed });
+    const { lifetime } = this;
+    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log, lifetime });
     const link = linkAs(mediation.me.did, () => this.ring.secrets());
     const line: Line = { link, inbox: null, linkAs };
     const raced = this.wires.get(mediationId);
@@ -687,7 +692,7 @@ export class Agent {
     return async () => this.tell(await this.answer(inbound, live, address));
   }
 
-  /** The live input answered, when this runtime is found to answer it and is still open: the rotation's notification, then the automatic effects, each decided and called. */
+  /** The live input answered, when this runtime is found to answer it and is still open: the rotation's notification, then the automatic effects, each decided and called, and neither begun once the agent closed. */
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
     const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
@@ -698,10 +703,11 @@ export class Agent {
       return inbound;
     };
     if (found.answering === null) return unanswered(found.responder === null ? "who answers the input was not found" : found.responder.status === "other" ? "another replica answers the input" : `no replica is known to answer the input: ${found.responder.because}`);
-    if (this.closed) return unanswered("the agent closed before the input was answered");
+    if (this.lifetime.closed) return unanswered("the agent closed before the input was answered");
     const { answering } = found;
     const dispatch = (action: LiveAction): Promise<Dispatched> => this.dispatcher.run(action);
     if (address !== null) inbound.address = await this.step("the notification of the private address", () => notifyPrivateAddress(this.runtime, this.keys, address, answering, { now, dispatch, trace }));
+    if (this.lifetime.closed) return inbound;
     const effects = await this.step("the automatic effects", () => decideEffects(this.runtime, this.keys, answering, { handlers, acknowledge, now, trace }));
     if (effects !== null) inbound.reacted = await this.step("the calls of the automatic effects", () => callEffects(effects, { dispatch, trace }));
     return inbound;

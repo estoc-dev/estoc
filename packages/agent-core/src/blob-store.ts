@@ -108,7 +108,7 @@ export interface ReadBlobOptions {
   maxBytes: number;
   /** how long the whole read may take */
   timeoutMs: number;
-  /** injectable for tests; the global one by default */
+  /** the host's transport; the global one by default */
   fetch?: typeof fetch;
 }
 
@@ -120,6 +120,7 @@ export interface ReadBlobOptions {
  */
 export async function readBlob(url: string, options: ReadBlobOptions): Promise<Uint8Array> {
   const { maxBytes } = options;
+  // eslint-disable-next-line no-restricted-globals -- a read the host makes on its own, over its own transport when it names none
   const fetchFn = options.fetch ?? fetch;
   const signal = AbortSignal.timeout(options.timeoutMs);
   return bounded(signal, async () => {

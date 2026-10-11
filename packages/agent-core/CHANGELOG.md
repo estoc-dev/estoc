@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Closing is checked where an effect happens** (breaking): a
+  `Lifetime` is what an agent and its parts run under, one `closed` for
+  all of them, asked by each side effect in the step that makes it: a
+  request at the call and a socket at its opening and at each send
+  (`LinkClosed`), a wait at its setting (`setTimer`, every wait dropped
+  at the close), a receipt at its calling and an ending short of the
+  receipt before it is told (`ReceiverClosed`), and an automatic output
+  before it begins. `Agent.open` makes one and shares it with its
+  dispatcher, receiver and lines, and the host's `fetch` and
+  `WebSocket` are reached through it alone, the resolution of a did:web
+  mediator included. `MediatorLink`'s `closed` option and
+  `DispatchOptions.closed` give way to `lifetime`; `Dispatcher` and
+  `Receiver` take one too, and their `close()` closes it.
+  `DispatcherOptions.timers` is gone: a dispatcher's waits are kept by
+  its lifetime (`new Lifetime(timers)`), an agent's by
+  `AgentOptions.timers`, and `Timers` and `GLOBAL_TIMERS` come with
+  `Lifetime`. `Agent.close` says one thing more: an answer that comes
+  after it may be lost, as one lost on the wire is, since a did:web
+  mediator's reply is checked against the mediator resolved again. A
+  live input being answered as the agent closes begins no automatic
+  effect, its notification made or not; what it still earns is listed
+  for the user. `Agent.blobStore` refuses a closed agent, as the other
+  methods that begin network work do. The package's source may call
+  neither the global `fetch` nor the global `WebSocket` (`pnpm lint`
+  at the repository root).
 - **The replica channel** (breaking): replica-channel/1.0 carries mail
   between the replicas of one vault's seed at one arrangement, and has
   one type, `snapshot-link` (`SNAPSHOT_LINK`), whose body is exactly

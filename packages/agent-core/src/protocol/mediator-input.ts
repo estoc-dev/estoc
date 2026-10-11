@@ -16,6 +16,7 @@ import { parseInvitation } from "./oob.js";
 export async function resolveMediatorInput(
   input: string,
   prefer?: string,
+  // eslint-disable-next-line no-restricted-globals -- the host asks before any agent runs, over its own transport when it names none
   fetchFn: typeof fetch = fetch
 ): Promise<string> {
   const trimmed = input.trim();

@@ -110,7 +110,8 @@ export { automaticDraft, manualNotificationDraft, send, type AutomaticDraft, typ
 export { MAX_CONTENT_BYTES, carriage, hasExpired, outboundWorkKey, prepare, prepareAll, type Carriage, type PrepareOptions, type Prepared } from "./prepare.js";
 export { LiveAction, LiveInput, Responding, type ActionKind } from "./action.js";
 export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
-export { Dispatcher, GLOBAL_TIMERS, LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Timers, type Waiting } from "./dispatcher.js";
+export { Dispatcher, LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Waiting } from "./dispatcher.js";
+export { GLOBAL_TIMERS, Lifetime, type Timer, type Timers } from "./lifetime.js";
 export { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients, type Sealing, type SenderProof } from "./receive/gate.js";
 export {
   DISCARDED_KEPT,
