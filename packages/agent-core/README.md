@@ -58,7 +58,7 @@ races, crashes, restore, closing and a hostile peer.
 | What is a message, before any network work? | `send.ts` | `send`, `automaticDraft`, `manualNotificationDraft` |
 | What goes on the wire for an intent, and which preparation does this runtime carry? | `prepare.ts` | `prepare`, `prepareAll`, `carriage`, `hasExpired` |
 | How is the one call made? | `dispatch.ts` | `dispatch`, `cancel`, `selectPreparation` |
-| How is an envelope sealed from one end to the other, and carried to where the recipient receives? | `ends.ts` | `Ends`, `seal`, `carry`, `recipientEndOf` |
+| How is an envelope sealed from one end to the other, and carried to where the recipient receives? | `ends.ts` | `Ends`, `seal`, `carry`, `senderEndOf`, `recipientEndOf` |
 | What waits for a prerequisite, and for how long? | `dispatcher.ts` | `Dispatcher`, `RETRY_POLICY` |
 | What does an acceptance the disk has not recorded owe? | `acceptance.ts` | `recordAcceptance`, `recordAcceptancesOwed` |
 | What does this runtime alone know of delivery? | `local-records.ts` | `LocalRecords`, `transientOptions` |

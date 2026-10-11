@@ -713,6 +713,27 @@ describe("the receiver's lifecycle", () => {
     expect(seen).toHaveLength(2);
     await closeAll(alice, bob);
   });
+
+  test("a delivery the receiver is closed on once it is opened and admitted, before its receipt is called, is refused and left for the next receiver", async () => {
+    const { alice, bob } = await parties();
+    const { receipt, seen } = recording();
+    const receiver: Receiver = await receiverOver(alice, {
+      receipt,
+      admit: () => {
+        queueMicrotask(() => receiver.close());
+        return null;
+      },
+    });
+    const delivery: Delivery = { packed: await sealed(await peerSealer(bob), alice.longFormDid), source: PICKUP };
+    await expect(receiver.receive(delivery)).rejects.toThrow(ReceiverClosed);
+    expect(seen).toEqual([]);
+
+    const next = await receiverOver(alice, { receipt });
+    expect(await next.receive(delivery)).toEqual({ outcome: "received", key: deliveryKey(delivery), cid: RECORDED, live: LIVE });
+    expect(seen).toHaveLength(1);
+    next.close();
+    await closeAll(alice, bob);
+  });
 });
 
 describe("the gate over pickup", () => {

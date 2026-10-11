@@ -56,7 +56,6 @@ import {
   type Cid,
   type Decision,
   type Did,
-  type DidUrl,
   type EventCid,
   type EventReference,
   type Keys,
@@ -74,7 +73,7 @@ import {
 
 import type { DidcommApi, IMessage } from "./protocol/didcomm.js";
 import { recordOwedAcceptance } from "./acceptance.js";
-import { addressingOf, recipientEndOf, seal, type Ends, type SenderEnd } from "./ends.js";
+import { addressingOf, recipientEndOf, seal, senderEndOf, type Ends } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
 import { commitResolution } from "./evidence.js";
 import { recordOwedUnderLock } from "./reconcile.js";
@@ -312,7 +311,8 @@ async function owedRecorded(held: Held, keys: Keys, messageId: MessageId): Promi
  * the rotation that made it a successor here, and under its short form
  * after. A document authorizing no key the sender can seal to is not a
  * key change — the document is immutable — but no preparation to it
- * can be made.
+ * can be made, and none from a sender whose own document authorizes its
+ * key under no method didcomm seals from.
  */
 async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, channel: Channel, recipientDid: Did): Promise<Ends | { pending: string } | { because: string }> {
   const known = knownLongForms(fold);
@@ -323,11 +323,13 @@ async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, chann
   const recipient = recipientEndOf(channel.peerDid, answer.resolution, key);
   if (recipient === null) return { because: `${answer.resolution.presentedDid} authorizes no key-agreement key ${channel.localDid} can seal to` };
   const created = sender.created as NonNullable<LocalDidEntity["created"]>;
-  const senderAs = (did: Did): SenderEnd => ({ did, resolution: sender.resolution as PeerResolution, methodId: sender.methodIds.keyAgreement[0] as DidUrl, key });
-  if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) !== null) return { sender: senderAs(created.did), recipient, fromPrior: null };
+  const confirmed = fold.continuity.confirmedBy(channel.localDid, channel.peerDid) !== null;
+  const from = senderEndOf(confirmed ? created.did : created.longFormDid, sender.resolution as PeerResolution, key);
+  if (from === null) return { because: `${channel.localDid} authorizes no key-agreement method didcomm seals from with the key the seed derives` };
+  if (confirmed) return { sender: from, recipient, fromPrior: null };
   const fromPrior = proofOf(fold, sender, channel);
   if (fromPrior !== null && !("proof" in fromPrior)) return fromPrior;
-  return { sender: senderAs(created.longFormDid), recipient, fromPrior };
+  return { sender: from, recipient, fromPrior };
 }
 
 /**

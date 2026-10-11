@@ -11,7 +11,7 @@
 
 import { DIDDocConversionError, splitDidUrl } from "@estoc/did-peer";
 import { parseStrict, type JsonObject } from "@estoc/event-store";
-import { InvalidDidDocument, InvalidPublicKey, agreementKey, sameDid, type Addressing, type Did, type DidUrl, type LocalKey, type PeerResolution, type PublicKey } from "@estoc/vault";
+import { InvalidDidDocument, InvalidPublicKey, agreementKey, authorizedMethodIds, methodPublicKey, sameDid, type Addressing, type Did, type DidUrl, type LocalKey, type PeerResolution, type PublicKey } from "@estoc/vault";
 
 import { ENCRYPTED_MIME, PLAIN_TYP, endpointOf, packEncrypted, secretsResolverFor, type DIDResolver, type DidcommApi, type IMessage } from "./protocol/didcomm.js";
 import { FORWARD } from "./protocol/spec.js";
@@ -66,12 +66,28 @@ export function addressingOf({ sender, recipient, fromPrior }: Ends): Addressing
  * recipient key ID would fail the seal.
  */
 export function recipientEndOf(did: Did, resolution: Resolution, key: LocalKey): RecipientEnd | null {
-  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
-  const packable = new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
+  const packable = packableMethodIds(resolution);
   for (const [methodId, publicKey] of authorizedKeys(resolution, "keyAgreement")) {
     if (packable.has(methodId) && agrees(publicKey, key.type)) return { did, resolution, methodId, publicKey };
   }
   return null;
+}
+
+/**
+ * The sender at `did`, sealing from `key` under its own document. The
+ * document is read, not rebuilt from a template, so it may authorize
+ * the key under a suite didcomm does not pack with as well, which the
+ * projection marks `Other`; naming that method would fail the seal.
+ */
+export function senderEndOf(did: Did, resolution: PeerResolution, key: LocalKey): SenderEnd | null {
+  const packable = packableMethodIds(resolution);
+  const methodId = authorizedMethodIds(resolution.document, "keyAgreement").find((id) => packable.has(id) && methodPublicKey(resolution.document, id) === key.publicKey);
+  return methodId === undefined ? null : { did, resolution, methodId, key };
+}
+
+function packableMethodIds(resolution: PeerResolution): Set<string> {
+  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
+  return new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
 }
 
 function agrees(key: PublicKey, type: LocalKey["type"]): boolean {

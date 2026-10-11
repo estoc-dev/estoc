@@ -14,12 +14,11 @@
 
 import { isLongForm } from "@estoc/did-peer";
 import type { JsonObject } from "@estoc/event-store";
-import { IdentityMismatch, InvalidDidDocument, authorizedMethodIds, checkReplicaDocument, methodPublicKey, peerResolution, type Did, type Keys, type LocalKey, type MediationId, type ReplicaId, type VaultFold } from "@estoc/vault";
+import { IdentityMismatch, InvalidDidDocument, checkReplicaDocument, peerResolution, type Did, type Keys, type MediationId, type ReplicaId, type VaultFold } from "@estoc/vault";
 
 import { DISPATCH_TIMEOUT_MS } from "./dispatch.js";
-import { carry, recipientEndOf, seal, type CarryOptions, type Destination, type Ends, type SenderEnd } from "./ends.js";
+import { carry, recipientEndOf, seal, senderEndOf, type CarryOptions, type Destination, type Ends } from "./ends.js";
 import { MediatorRefused, NotAReplica, UnknownEntity, Unusable } from "./errors.js";
-import { didcommDocumentOf } from "./evidence.js";
 import { bounded, sealData, type MediatorLink } from "./link.js";
 import { mediationOf } from "./mediation.js";
 import type { IMessage } from "./protocol/didcomm.js";
@@ -77,27 +76,12 @@ export async function replicaRoute(keys: Keys, fold: VaultFold, author: ReplicaI
   const mediation = mediationOf(fold, from.mediationId);
   if (mediation.status !== "usable") throw new Unusable("mediation", from.mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
   const key = (await keys.replicaKeys(author)).keyAgreement;
-  const sender = senderEndOf(from, key);
+  const sender = senderEndOf(from.longFormDid, peerResolution(from.longFormDid), key);
   if (sender === null) throw new Unusable("replica", author, ["its document authorizes no key-agreement method didcomm seals from with the key the seed derives"]);
   const resolution = await recipientDocument(keys, from, to);
   const recipient = recipientEndOf(to.longFormDid, resolution, key);
   if (recipient === null) throw new NotAReplica(to.replicaId, to.longFormDid, "its document has no key-agreement method to seal to");
   return { from, ends: { sender, recipient, fromPrior: null }, destination: { did: to.longFormDid, service: resolution.service } };
-}
-
-/**
- * The replica as `key` seals from it: at the first method, in document
- * order, its document authorizes for key agreement, that carries `key`
- * and that didcomm can seal from. Null when there is none. The document
- * may authorize the key under a suite didcomm does not pack with, which
- * its projection marks `Other`; naming that method would fail the seal.
- */
-function senderEndOf(from: BoundReplica, key: LocalKey): SenderEnd | null {
-  const resolution = peerResolution(from.longFormDid);
-  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
-  const packable = new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
-  const methodId = authorizedMethodIds(resolution.document, "keyAgreement").find((id) => packable.has(id) && methodPublicKey(resolution.document, id) === key.publicKey);
-  return methodId === undefined ? null : { did: from.longFormDid, resolution, methodId, key };
 }
 
 async function recipientDocument(keys: Keys, from: BoundReplica, to: ReplicaAddress): Promise<Resolution> {
