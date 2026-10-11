@@ -26,8 +26,10 @@ DASL objects. Capitalized requirement words have their BCP 14 meanings.
 ## 1. Scope
 
 This profile owns CID identity, the object API, verification and retention
-semantics. [event-store.md](event-store.md) owns atomic vault commits;
-[vault-sqlite.md](vault-sqlite.md) owns persistence and maintenance.
+semantics. [event-store.md](event-store.md) owns event identity and commit
+durability; the vault commit is [vault.ts](../../packages/event-store/src/vault.ts)'s
+under [SQ §9.1](vault-sqlite.md#atomic-vault-commit); [vault-sqlite.md](vault-sqlite.md)
+owns persistence and maintenance.
 This is not an IPFS node, discovery service, automatic graph traversal or public
 retrieval protocol. The normative CID dependency is
 [DASL Content IDs](https://dasl.ing/cid.html).
@@ -131,10 +133,10 @@ checks bytes. `size` is an exact nonnegative safe integer in this API. Equivalen
 language-specific stream types are permitted.
 
 This is an internal backend interface. Full-vault callers have no standalone
-put or collect: [ES §9](event-store.md#vault-interface) exposes reads and commit.
+put or collect: [the vault interface](../../packages/event-store/src/vault.ts) exposes reads and commit.
 Preparation is private. Accepting a full commit's objects and events uses one
 transaction, not independently committed primitive calls. Standalone primitive
-tests obey [ES §2.1](event-store.md#commit-and-durability-terminology): success is
+tests obey [ES §2](event-store.md#commit-and-durability-terminology): success is
 process-durable; a pre-resolution crash leaves the whole object or none, never
 partially accepted bytes.
 

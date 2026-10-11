@@ -8,7 +8,9 @@ Status: **version 5** — schema 2, CID-keyed events. SQLite is the sole
 persistent vault and portable backup format.
 
 The capitalized requirement words in this document have their BCP 14 meanings.
-[event-store.md](event-store.md) owns the API and event semantics;
+[event-store.md](event-store.md) owns event identity, commit durability and
+versioning, and the API is [event.ts](../../packages/event-store/src/event.ts) and
+[vault.ts](../../packages/event-store/src/vault.ts)'s;
 [dasl-objects.md](dasl-objects.md) owns CID identity and object verification;
 [vault-events.md](vault-events.md) owns payloads and held roots, and the folds
 over them are code. This file owns SQLite storage and recovery, not a second implementation of SQLite's
@@ -59,7 +61,7 @@ PRAGMA user_version = 2;
 `user_version` identifies the SQLite schema; `vault_meta.vault_version = 5`
 identifies event, object, key and fold semantics. Reject unsupported versions
 before application writes or payload interpretation. Published schema changes
-require a new schema version; semantic changes follow [ES §12](event-store.md#versioning).
+require a new schema version; semantic changes follow [ES §3](event-store.md#versioning).
 Each published schema revision must separately define the portable source
 versions accepted for restore and import; runtime migration support alone does
 not imply portable compatibility.
@@ -184,17 +186,17 @@ or a `cid` field. The `cid` column is the canonical raw DASL CID of those bytes;
 `at`, `author` and `type` MUST equal the corresponding envelope fields. Each
 event CID has one row. Accepted events are never updated or deleted.
 Validate CIDs before deduplication; current-author fork checks
-follow [ES §5](event-store.md#eventstore).
+follow [ES §1](event-store.md#invariants) and the [event store interface](../../packages/event-store/src/event.ts).
 
 Scans order by `at, cid` with `BINARY` text collation, matching the event-store's
 canonical order. Decoded CID byte order is not a substitute for this text order.
-CID/bytes verification follows [ES §5.6](event-store.md#event-damage): acceptance,
+CID/bytes verification follows [the event store](../../packages/event-store/README.md): acceptance,
 full portable source validation and `damaged()` check the digest; ordinary scans
 and deltas return stored CIDs without rehashing.
 
 If SQL JSON functions are used for filtering, pass `CAST(canonical AS TEXT)`;
 the stored BLOB is UTF-8 JSON, not SQLite JSONB. Preserve JSON primitive types
-when implementing [ES §5.4](event-store.md#scan)'s filter semantics.
+when implementing the [filter](../../packages/event-store/src/event.ts) semantics.
 A `cid` filter uses exact `events.cid` equality and the same conjunctions.
 
 Runtime-only control:
@@ -229,10 +231,10 @@ wrong-vault/generation and future tokens. An empty filtered delta still advances
 the frontier; a consumer checkpoints only after consuming the complete result.
 Positions/tokens never travel in portable state.
 
-Portable inspection exposes [ES §9](event-store.md#vault-interface)'s read-only
-`Vault` and scans the immutable event set in canonical order without local
-control tables. It has no change frontier; `changes` is rejected under
-[ES §5.5](event-store.md#changes). Its scans return stored CIDs under the same
+Portable inspection exposes the read-only [`Vault`](../../packages/event-store/src/vault.ts)
+and scans the immutable event set in canonical order without local
+control tables. It has no change frontier; `changes` is rejected, as
+[the portable snapshot](../../packages/event-store/README.md) has it. Its scans return stored CIDs under the same
 verification rules; inspection does not replace full source validation.
 
 <a id="objects-and-streams"></a>
@@ -279,7 +281,7 @@ deferred until verified repair. Repair follows
 replace the object's metadata and complete chunk set in the enclosing acceptance
 transaction. Failed validation or rollback preserves the existing damage state.
 Persistent quarantine is not required. Structural database damage fails the
-runtime; event damage follows [ES §5.6](event-store.md#damage-and-conflicts).
+runtime; event damage follows [the event store](../../packages/event-store/README.md).
 
 GC holds the operation lock from computing current held roots through deleting
 unheld objects and their chunks in one transaction. Object damage does not block
@@ -361,7 +363,7 @@ close. Do not release ownership while an operation still uses the database.
 
 Use SQLite transactions and journal recovery, not an application publication
 journal. SQL statements are application-owned and input values are bound.
-The driver must meet [ES §2.1](event-store.md#commit-and-durability-terminology),
+The driver must meet [ES §2](event-store.md#commit-and-durability-terminology),
 enable foreign keys and use a recoverable journal/durability configuration.
 Document and test the effective configuration on each supported platform;
 `journal_mode=OFF/MEMORY` and `synchronous=OFF` are not runtime policies.
@@ -372,7 +374,7 @@ No particular VFS, WAL mode or stronger power-loss guarantee is mandated.
 ### 9.1 Atomic commit
 
 Under the operation lock, validate drafts and prepare objects, assign events
-under ES's batch rules, and require every root to have sound accepted bytes under
+under the batch rules of [event.ts](../../packages/event-store/src/event.ts), and require every root to have sound accepted bytes under
 [DO §6.3](dasl-objects.md#read-operations) or verified prepared bytes. One transaction
 accepts all supplied objects, including repairs under
 [DO §6.2](dasl-objects.md#putobject), the whole event batch and positions, and

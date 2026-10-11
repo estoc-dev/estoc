@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `cidFromDigest(code, digest)`: the CID of a sha-256 digest already
+  taken, for a hash computed incrementally. `cidOf` is now the same
+  constructor over `multiformats`' digest; no CID header is assembled by
+  hand anywhere in the profile.
+
 ## 0.1.0 — 2026-09-29
 
 First release: the DASL primitives in a package of their own. The

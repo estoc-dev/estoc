@@ -1,9 +1,10 @@
 # @estoc/event-store
 
-The vault as an event store: the code form of the
+The vault as an event store, under the
 [replica model](../../docs/replica-model/README.md)'s
-[event store](../../docs/replica-model/event-store.md),
-[DASL object profile](../../docs/replica-model/dasl-objects.md) and
+[event store contracts](../../docs/replica-model/event-store.md) — event
+identity, commit durability, versioning — the
+[DASL object profile](../../docs/replica-model/dasl-objects.md) and the
 [SQLite vault](../../docs/replica-model/vault-sqlite.md). What is here
 is the model, its reference in memory, the SQLite driver the
 persistent stores are written against, the vault's schema and opening

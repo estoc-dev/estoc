@@ -41,7 +41,6 @@ const envelope: EventEnvelope = {
 };
 const base: Event = { ...envelope, cid: eventCidOf(envelope) };
 
-// the specification's worked example
 const EXAMPLE: EventEnvelope = {
   at: "2026-09-25T00:00:00.000Z",
   author: "019b0000-0000-7000-8000-000000000001" as AuthorId,
@@ -70,7 +69,7 @@ describe("identity", () => {
     expect(isEventCid(base.author)).toBe(false);
   });
 
-  test("an event's CID is the raw DASL CID of its five-field canonical bytes: the specification's example, and nothing else in it", async () => {
+  test("an event's CID is the raw DASL CID of its five-field canonical bytes: the fixed example, and nothing else in it", async () => {
     expect(eventCidOf(EXAMPLE)).toBe(EXAMPLE_CID);
     expect(await rawCid(canonicalEventBytes(EXAMPLE))).toBe(EXAMPLE_CID);
     expect(canonicalEventText(EXAMPLE)).toBe('{"at":"2026-09-25T00:00:00.000Z","author":"019b0000-0000-7000-8000-000000000001","data":{"text":"hello"},"roots":[],"type":"example.note"}');

@@ -16,7 +16,7 @@ This document uses the key words **MUST**, **MUST NOT**, **REQUIRED**,
 when, and only when, they appear in all capitals.
 
 Every example below is the `type`, `roots` and `data` portion of an event
-whose complete envelope is defined by [event-store.md](event-store.md). Object CIDs and
+whose complete envelope is defined by [event.ts](../../packages/event-store/src/event.ts). Object CIDs and
 retention semantics are defined by [dasl-objects.md](dasl-objects.md). A known event
 type has a closed payload schema in version 5. The store itself validates
 only the envelope; the vault layer validates the payload before append
@@ -420,7 +420,7 @@ records retain their own names and carry typed identifiers in each record.
 
 The type distinction is part of the API contract. One possible TypeScript
 representation is below; other languages may use equivalent nominal types.
-`EventCid` and `AuthorId` come from [event-store.md section 3](event-store.md#the-event), and `Cid` from
+`EventCid` and `AuthorId` come from [event.ts](../../packages/event-store/src/event.ts), and `Cid` from
 [dasl-objects.md section 6](dasl-objects.md#objectstore).
 
 ```ts
@@ -1878,7 +1878,7 @@ The erased message still reads erased.
 
 ### 10.2 Held roots
 
-Under the operation lock in [event-store.md section 9](event-store.md#vault-interface), the vault runtime computes
+Under the operation lock in [vault.ts](../../packages/event-store/src/vault.ts), the vault runtime computes
 the held roots passed to `ObjectStore.collect` in [dasl-objects.md section 8.3](dasl-objects.md#collection);
 [the held-roots fold](../../packages/vault/src/fold/held.ts) is that
 computation. Collection may rely on this much:
@@ -1969,7 +1969,7 @@ if invalid; an incremental result must equal the pure fold of that union.
 Compute held roots from the prospective event union and copy only verified
 source objects that are absent or known damaged in the target and held by that
 fold. Full import publishes events and object additions or repairs under
-[event-store.md section 10.3](event-store.md#import-into-an-existing-vault)'s atomic
+[the import](../../packages/event-store/README.md)'s atomic
 publication boundary; this semantic union is not permission to expose an
 intermediate event-only import.
 No content traversal is implied. An erased message/root relation does not
