@@ -19,8 +19,9 @@ have their BCP 14 meanings.
 
 [dasl-objects.md](dasl-objects.md) defines object identity;
 [vault-sqlite.md](vault-sqlite.md) owns storage, ownership and recovery
-procedures; [vault-events.md](vault-events.md) owns application payloads and
-held roots; the folds over them are code.
+procedures; [vault-events.md](vault-events.md) owns the vault model and its
+boundaries; payloads, held roots and the folds over them are
+[`@estoc/vault`](../../packages/vault/README.md)'s.
 [Delivery](distributed-delivery.md) and [channel address policy](relationships.md)
 use these primitives.
 

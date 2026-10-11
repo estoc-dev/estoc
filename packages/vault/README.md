@@ -8,16 +8,17 @@ decisions a writer takes over that fold before it commits. No storage,
 no agent, no protocol: `@estoc/event-store` holds the events and
 `@estoc/agent-core` runs on them.
 
-The payload schemas, the deterministic identifiers and the stored
-formats are the [replica model](../../docs/replica-model/README.md)'s:
-[vault events](../../docs/replica-model/vault-events.md) for the
-payloads and the retention contract,
+The code and its tests are the definition: the payload schemas, the
+deterministic identifiers, the stored formats, the folds and the
+procedures, each module's leading comment stating what it is
+responsible for. The [replica model](../../docs/replica-model/README.md)
+keeps the contracts around them:
+[vault events](../../docs/replica-model/vault-events.md) for the model
+the events are read under, the principles and the boundaries,
 [channels](../../docs/replica-model/channels.md) for channel identity
 and the channel payloads, and
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
-for the hashes and the inbound identities. The code and its tests
-define what the folds and the procedures do; each module's leading
-comment states what it is responsible for.
+for the hashes and the inbound identities.
 
 ## Modules
 

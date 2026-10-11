@@ -119,7 +119,7 @@ contacts directly select those pairs.
 
 Contacts use UUIDv7 and are created or assigned only by explicit product policy.
 Creation records a non-empty set of complete channel pairs under
-[vault events](vault-events.md#contact-created), possibly before receipt or peer
+[the contact schema](../../packages/vault/src/schema.ts), possibly before receipt or peer
 resolution. A discovered peer DID therefore needs a local-DID choice first.
 
 <a id="102-binding-and-contact-policy"></a>
@@ -138,7 +138,7 @@ concrete channel denials separately.
 ### 5.3 Entries and private branches
 
 A local address is made for one of two uses, recorded immutably in its
-creation's `generation` under [did.created](vault-events.md#did-created). An
+creation's `generation` under [did.created](../../packages/vault/src/schema.ts). An
 **entry** is an address handed out: disclosed as an invitation or a direct
 DID, written to by whoever holds it. A **private branch** is the succession
 of addresses one relationship moves through once it leaves the entry: its
@@ -193,7 +193,7 @@ nothing.
 
 OOB, QR, directory, file, NFC or manual exchange discloses an ordinary address.
 Reusable discovery SHOULD use a public-contact address. Record the disclosed
-content as an OOB invitation or direct DID under [did.disclosed](vault-events.md#did-disclosed),
+content as an OOB invitation or direct DID under [did.disclosed](../../packages/vault/src/schema.ts),
 independently of its publication medium. An OOB ID supplies `pthid`, never
 channel identity. An invitation is reusable: whoever holds it writes in a
 channel of their own, and no receipt takes it from the next under
@@ -265,12 +265,12 @@ Content remains application content regardless of whether a rotation is carried.
 A locally controlled communication DID MUST have its fixed key-agreement and
 authentication methods, seed-derived keys and validated numalgo-4 document
 naming one DIDComm service under
-[vault-events.md section 5.2](vault-events.md#did-identity-and-keys). That
+[identity.ts](../../packages/vault/src/identity.ts). That
 document must support authenticated messages and signing `from_prior`. Sending
 requires a live DID; which retained keys still receive is
 [the receive gate](../../packages/agent-core/src/receive/gate.ts)'s to say. Each receipt or package
 references the exact immutable peer document it used under
-[`peer.resolved`](vault-events.md#peer-resolved); another document cannot
+[`peer.resolved`](../../packages/vault/src/schema.ts); another document cannot
 substitute for those bytes.
 
 <a id="resolver-security-and-supported-senders"></a>
@@ -343,7 +343,7 @@ channel peer's immutable key changed. Live prerequisite retries follow
 Every local and remote phase-1 channel address is a Peer DID numalgo 4.
 Both validated long and canonical short forms name one entity. Canonicalization
 validates the long form and uses its derived short form. The retained document
-follows [vault-events.md section 4.3](vault-events.md#peer-resolved)'s fixed
+follows [peer-document.ts](../../packages/vault/src/peer-document.ts)'s fixed
 long-form representation, including when the presented DID is short. The
 encoded document is immutable; changing its keys or bound service produces
 another DID. Public and private disclosure use this same method.

@@ -23,7 +23,7 @@ Each runtime enrolls as a replica of its arrangement's replica-mediation
 account. The
 [mediator README](../../../mediator/README.md#replica-mediation) is that
 protocol's wire contract, and
-[`replica.created`](../vault-events.md#replica-created) records an enrollment
+[`replica.created`](../../../packages/vault/src/schema.ts) records an enrollment
 with its account-signed grant. A full replica has its own DID and event author;
 the vault seed and communication DIDs are shared. The mediator delivers mail to
 the replicas enrolled when it accepts that mail, so a new replica obtains

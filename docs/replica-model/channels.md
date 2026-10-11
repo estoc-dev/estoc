@@ -328,9 +328,9 @@ withdraw an already effective admission or its ACK evidence.
 ### 6.2 Contacts and channel views
 
 `contact.channelsSet` directly selects a contact's channels under
-[the contact membership schema](vault-events.md#contact-channelsset).
+[the contact selection schema](../../packages/vault/src/schema.ts).
 Two channels sharing a peer DID at different local addresses remain independently
-selectable. [Contact creation](vault-events.md#contact-created) records a non-empty
+selectable. [Contact creation](../../packages/vault/src/schema.ts) records a non-empty
 initial set; clearing it leaves no contact-based send choice. The history a
 contact shows beyond its selected channels, and the heads a new send from it
 may go to, are [the contact view](../../packages/vault/src/fold/views.ts); a selected channel
