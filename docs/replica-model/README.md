@@ -4,7 +4,7 @@ Status: **version 5**. The folds over the vault's events and the procedures
 that append them are specified by the code under
 [`packages/`](../../packages/) and its tests, see
 [`packages/vault/README.md`](../../packages/vault/README.md).
-The suite has seven specifications and one vectors appendix. A vault may run
+The suite has six specifications and one vectors appendix. A vault may run
 one writable full runtime or several as distinct replicas of one
 replica-mediation arrangement. SQLite is the sole persistent vault and portable
 interchange format. This guide is informative; linked specification sections
@@ -25,7 +25,7 @@ migration is required.
 A vault has one seed, immutable events and raw content-addressed objects.
 [Channels](channels.md#model) are ordered local/peer DID pairs. Each receipt and
 preparation retains its own authentication or encryption evidence. Carried proofs
-retain their original JWTs and derive their immutable issuer documents. Phase-1 channel
+retain their original JWTs and derive their immutable issuer documents. Channel
 endpoints use immutable `did:peer:4` documents; mediator DID resolution is
 independent. Received proofs and local rotation decisions
 derive directed links between pairs. Receipt may precede continuity verification,
@@ -62,7 +62,7 @@ permits at most one compatible intent per execution.
 | Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event identity, commit durability and versioning; object bytes and retention; the event API and the stores are code |
 | Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
 | Domain facts | [Vault events](vault-events.md) | The vault model, its principles and boundaries; payloads, identifiers, held roots and the folds over them are code |
-| Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, invitations, channel event payloads, DID profiles and address policy; the continuity adapter, admission and dispatch authority are code |
+| Communication authority | [Channels](channels.md) | Fixed DID pairs, addresses, DID profiles and resolution, and the boundaries of admission, continuity and denial; the channel payloads, the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Message layers and CIDs, channel-local identity, ACK paths, preparations, runtime-local delivery records and live dispatch actions |
 | Vectors | [Message vectors](message-vectors.md) | Fixed inputs with their canonical bytes and CIDs for the message layers |
 
@@ -93,12 +93,12 @@ endings.
 
 | Task | Suggested path |
 | --- | --- |
-| Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [address/contact policy](relationships.md#what-it-is-for) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
+| Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [addresses](channels.md#addresses) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
 | Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [event store contracts](event-store.md) → [EventStore/Vault](../../packages/event-store/README.md) → [SQLite](vault-sqlite.md#reading-guide) |
 | Implement application state | [Vault model](vault-events.md#model) → [types.ts](../../packages/vault/src/types.ts) → [schema.ts](../../packages/vault/src/schema.ts) → [folds and procedures](../../packages/vault/README.md) |
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
-| Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](relationships.md#ordinary-sending-and-birth-selection) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
-| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](relationships.md#did-resolution-requirements) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
+| Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](channels.md#sending) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
+| Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](channels.md#did-resolution) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Back up or recover | [Recovery material](vault-sqlite.md#recovery-material-and-product-requirement) → [export](vault-sqlite.md#snapshot-and-export) → [restore/import](vault-sqlite.md#restore-and-import) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
 
 <a id="rule-ownership"></a>
@@ -108,16 +108,16 @@ endings.
 Change the defining section and align its consumers. ES owns event identity,
 commit durability and versioning, and the envelope and batch rules are
 [event.ts](../../packages/event-store/src/event.ts)'s; DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel identity,
-invitations and the rotation, admission and denial payloads; the continuity
-adapter, operation eligibility, admission and dispatch authority are owned by
-their code in `packages/vault` and `packages/agent-core`.
+addresses, the DID profiles and local resolution, and the boundaries of
+admission, continuity and denial; the channel payloads, the continuity
+adapter, operation eligibility, admission, the receive gate, the
+private-address policy, dispatch authority and retry are owned by their code
+in `packages/vault` and `packages/agent-core`.
 `@estoc/from-prior` owns proof verification and binding, and
 `@estoc/continuity` owns graph semantics. VE owns the vault model, its principles and its boundaries, while the
 domain payloads, the folds over them and the procedures that append them
-are owned by their code in `packages/vault` and `packages/agent-core`;
-DD owns runtime ordering and message/effect identity;
-RZ owns the DID profiles, local resolution and address/display policy; the
-receive gate, the private-address policy and retry are code.
+are owned by their code in `packages/vault` and `packages/agent-core`.
+DD owns runtime ordering and message/effect identity.
 
 | Rule | Definition | Consumers |
 | --- | --- | --- |
@@ -129,7 +129,7 @@ receive gate, the private-address policy and retry are code.
 | Proof verification and binding | [from-prior package](../../packages/from-prior/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [vault proofs](../../packages/vault/src/from-prior.ts) |
 | Links, joins and query semantics | [Continuity package](../../packages/continuity/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [continuity fold](../../packages/vault/src/fold/continuity.ts) |
 | Source projection, admitted confirmation and query policy | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [rotation](../../packages/agent-core/src/rotate.ts), [DD receive](distributed-delivery.md#receive-a-message) |
-| New-send head selection | [contact view](../../packages/vault/src/fold/views.ts) | [DD built-in replies](distributed-delivery.md#built-in-independent-operations), [RZ sending](relationships.md#ordinary-sending-and-birth-selection), [rotation](../../packages/agent-core/src/rotate.ts) |
+| New-send head selection | [contact view](../../packages/vault/src/fold/views.ts) | [DD built-in replies](distributed-delivery.md#built-in-independent-operations), [CH sending](channels.md#sending), [rotation](../../packages/agent-core/src/rotate.ts) |
 | Deferred-proof adapter boundary | [DIDComm API](../../packages/agent-core/README.md#didcomm-api) | [receive gate](../../packages/agent-core/src/receive/gate.ts), [DD receipt](distributed-delivery.md#receive-a-message), [receipt schema](../../packages/vault/src/schema.ts) |
 | Receipt verification status | [continuity fold](../../packages/vault/src/fold/continuity.ts) | [DD recovery](distributed-delivery.md#receive-recovery) |
 | Durable application admission and operation eligibility | [CH](channels.md#application-admission), [admission model](../../packages/vault/src/admission/model.ts) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
@@ -140,9 +140,9 @@ receive gate, the private-address policy and retry are code.
 | Runtime-local delivery records | [DD local records](distributed-delivery.md#runtime-local-delivery-records) | [responder](../../packages/agent-core/src/responder.ts), [prepare](../../packages/agent-core/src/prepare.ts), [dispatch](../../packages/agent-core/src/dispatch.ts) |
 | ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [ACK witness](../../packages/vault/src/schema.ts) |
 | Complete witnesses | [continuity fold](../../packages/vault/src/fold/continuity.ts), [inbound fold](../../packages/vault/src/fold/inbound.ts) | [CH links](channels.md#channel-linked), [DD ACKs](distributed-delivery.md#applying-ack) |
-| Channel method boundary, local resolution and mediator resolution | [RZ resolution](relationships.md#did-resolution-requirements), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
+| Channel method boundary, local resolution and mediator resolution | [CH resolution](channels.md#did-resolution), [receive gate](../../packages/agent-core/src/receive/gate.ts) | [receipt](../../packages/agent-core/src/receive/receipt.ts), [DD receipt](distributed-delivery.md#receive-a-message) |
 | Invitations | [disclosure](../../packages/vault/src/schema.ts), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
-| Denial and contact views | [CH policy/display](channels.md#effects-and-recovery) | [contact selection](../../packages/vault/src/schema.ts), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
+| Denial and contact views | [CH denial and contacts](channels.md#effects-and-recovery) | [contact selection](../../packages/vault/src/schema.ts), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
 | Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
 
@@ -150,7 +150,7 @@ receive gate, the private-address policy and retry are code.
 
 ## Evidence and references
 
-The seven documents above define the current contract. No document
+The six documents above define the current contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see

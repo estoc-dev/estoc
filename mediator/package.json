@@ -34,11 +34,11 @@
     "better-sqlite3": "^13.0.3",
     "bs58": "^6.0.0",
     "canonicalize": "^5.1.0",
-    "did-resolver": "^4.1.0",
     "hono": "^4.13.1",
+    "ipaddr.js": "^2.5.0",
     "jose": "^6.2.12",
     "multiformats": "^14.0.5",
-    "web-did-resolver": "^2.0.27"
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260821.1",

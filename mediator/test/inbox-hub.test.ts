@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestHarness, experimental_readRawConfig } from "wrangler";
 import WebSocket from "ws";
 
+import { WebDids } from "../src/didcomm/did-resolver.js";
 import {
   agent,
   ENCRYPTED,
@@ -33,6 +34,8 @@ const server = createTestHarness({ root, workers: [{ config: deployed }] });
 
 let origin: URL;
 let mediatorDid: string;
+/** The mediator runs on loopback here, so its did:web is fetched over plain http. */
+const web = new WebDids({ fetch, insecureLoopback: true });
 
 beforeAll(async () => {
   ({ url: origin } = await server.listen());
@@ -97,7 +100,7 @@ async function isLive(did: string): Promise<boolean> {
 
 describe("the inbox Durable Object", () => {
   it("answers a client's Close frame with its code and reason", async () => {
-    const alice = await agent("alice-closes");
+    const alice = await agent("alice-closes", { web });
     const ws = await liveSocket(alice);
     expect(await isLive(alice.did)).toBe(true);
 
@@ -109,7 +112,7 @@ describe("the inbox Durable Object", () => {
   });
 
   it("answers a Close frame without a code with one without a code", async () => {
-    const ws = await liveSocket(await agent("bob-closes"));
+    const ws = await liveSocket(await agent("bob-closes", { web }));
 
     const answer = closed(ws);
     ws.close();
@@ -118,7 +121,7 @@ describe("the inbox Durable Object", () => {
   });
 
   it("pushes to a socket that stayed open while the object hibernated", async () => {
-    const carol = await agent("carol-hibernates");
+    const carol = await agent("carol-hibernates", { web });
     const ws = await liveSocket(carol);
 
     await server
@@ -130,7 +133,7 @@ describe("the inbox Durable Object", () => {
     const res = await server.fetch("/", {
       method: "POST",
       headers: { "content-type": ENCRYPTED },
-      body: await packAnonymous(forward, mediatorDid),
+      body: await packAnonymous(forward, mediatorDid, web),
     });
     expect(res.status).toBe(202);
     const { message } = await carol.ctx.unpack(await push);

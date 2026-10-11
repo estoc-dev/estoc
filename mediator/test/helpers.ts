@@ -15,8 +15,8 @@ import { CompactSign, FlattenedEncrypt, importJWK, type JWK } from "jose";
 import type { IMessage } from "@estoc/didcomm-node";
 
 import type { MediatorConfig } from "../src/config.js";
-import { DIDCommContext } from "../src/didcomm/didcomm.js";
-import { resolveDIDCommDoc } from "../src/didcomm/did-resolver.js";
+import { DIDCommContext, type ContextOptions } from "../src/didcomm/didcomm.js";
+import { resolveDIDCommDoc, type WebDids } from "../src/didcomm/did-resolver.js";
 import { mintIdentity, mintSecrets, type MediatorIdentity } from "../src/identity-core.js";
 import { SqliteStore } from "../src/store/sqlite.js";
 
@@ -60,12 +60,12 @@ export interface TestAgent {
   ctx: DIDCommContext;
 }
 
-export async function agent(name: string): Promise<TestAgent> {
+export async function agent(name: string, options: ContextOptions = {}): Promise<TestAgent> {
   const identity = await mintIdentity(`https://${name}.test/didcomm`);
   return {
     identity,
     did: identity.did,
-    ctx: new DIDCommContext(identity.did, identity.didDoc, identity.secrets),
+    ctx: new DIDCommContext(identity.did, identity.didDoc, identity.secrets, options),
   };
 }
 
@@ -87,14 +87,15 @@ export function plaintext(
 /** Anoncrypt to `to` — how a stranger's forward arrives at a mediator. */
 export async function packAnonymous(
   message: IMessage,
-  to: string
+  to: string,
+  web: WebDids | null = null
 ): Promise<string> {
   const msg = new Message(message);
   const [packed] = await msg.pack_encrypted(
     to,
     null,
     null,
-    { resolve: resolveDIDCommDoc },
+    { resolve: (did: string) => resolveDIDCommDoc(did, web) },
     { get_secret: async () => null, find_secrets: async () => [] },
     { forward: false }
   );
@@ -176,7 +177,8 @@ type InputDocument = Parameters<typeof encodeLongForm>[0];
 /** `reshape` turns the document into one no vault would mint. */
 export async function peer4Agent(
   service: string | null,
-  reshape: (document: InputDocument) => InputDocument = (document) => document
+  reshape: (document: InputDocument) => InputDocument = (document) => document,
+  options: ContextOptions = {}
 ): Promise<Peer4Agent> {
   const [agreement, signing] = (await mintSecrets()).map(
     (secret) => secret.privateKeyJwk as Record<string, unknown>
@@ -213,18 +215,21 @@ export async function peer4Agent(
     ctx: new DIDCommContext(
       longForm,
       toDIDCommDIDDoc(resolveLongForm(longForm)),
-      secretsAs(longForm)
+      secretsAs(longForm),
+      options
     ),
     shortCtx: new DIDCommContext(
       did,
       toDIDCommDIDDoc(resolveShortForm(longForm)),
-      secretsAs(did)
+      secretsAs(did),
+      options
     ),
     claiming: (claimed) =>
       new DIDCommContext(
         claimed,
         { ...toDIDCommDIDDoc(resolveLongForm(longForm)), id: claimed },
-        secretsAs(longForm)
+        secretsAs(longForm),
+        options
       ),
     unread: (padding) => {
       const padded = encodeLongForm({ ...input, padding: "x".repeat(padding) });
@@ -234,7 +239,8 @@ export async function peer4Agent(
         ctx: new DIDCommContext(
           padded,
           JSON.parse(doc.replaceAll(longForm, padded)),
-          secretsAs(padded)
+          secretsAs(padded),
+          options
         ),
       };
     },

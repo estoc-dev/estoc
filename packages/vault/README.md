@@ -15,8 +15,8 @@ responsible for. The [replica model](../../docs/replica-model/README.md)
 keeps the contracts around them:
 [vault events](../../docs/replica-model/vault-events.md) for the model
 the events are read under, the principles and the boundaries,
-[channels](../../docs/replica-model/channels.md) for channel identity
-and the channel payloads, and
+[channels](../../docs/replica-model/channels.md) for channel identity,
+the addresses and the boundaries of admission and continuity, and
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
 for the hashes and the inbound identities.
 
@@ -79,7 +79,7 @@ import { channelOf, reconcileAdmissions, scanVault, senderGate } from "@estoc/va
 const fold = await scanVault(vault, keys);
 const channel = channelOf(ourDid, peerDid);
 senderGate(fold, channel);              // { status: "open" }, or why the channel takes no new work
-fold.views.channel(channel).inputs;     // the established inputs there, in canonical event order
+fold.views.channel(channel).inbound;    // the inputs there, established first, then pending
 fold.dispositions.disposition(cid);     // what one observation stands as: admitted, refused, ignored, pending
 await reconcileAdmissions(vault, keys); // commit the admissions still owed, dispatching nothing
 ```
