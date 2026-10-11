@@ -131,10 +131,10 @@ checks bytes. `size` is an exact nonnegative safe integer in this API. Equivalen
 language-specific stream types are permitted.
 
 This is an internal backend interface. Full-vault callers have no standalone
-put or collect: [ES §9](event-store.md#vault-interface) exposes reads and commit.
+put or collect: [the vault interface](../../packages/event-store/src/vault.ts) exposes reads and commit.
 Preparation is private. Accepting a full commit's objects and events uses one
 transaction, not independently committed primitive calls. Standalone primitive
-tests obey [ES §2.1](event-store.md#commit-and-durability-terminology): success is
+tests obey [ES §2](event-store.md#commit-and-durability-terminology): success is
 process-durable; a pre-resolution crash leaves the whole object or none, never
 partially accepted bytes.
 

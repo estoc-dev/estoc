@@ -59,7 +59,7 @@ permits at most one compatible intent per execution.
 
 | Layer | Documents | Responsibility |
 | --- | --- | --- |
-| Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event API, identity/order, object bytes and retention |
+| Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event identity, commit durability and versioning; object bytes and retention; the event API and the stores are code |
 | Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
 | Domain facts | [Vault events](vault-events.md) | Message, delivery, contact and local policy payloads; the folds over them are code |
 | Communication authority | [Channels](channels.md), [Address/contact policy](relationships.md) | Fixed DID pairs, invitations, channel event payloads, DID profiles and address policy; the continuity adapter, admission and dispatch authority are code |
@@ -94,7 +94,7 @@ endings.
 | Task | Suggested path |
 | --- | --- |
 | Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [address/contact policy](relationships.md#what-it-is-for) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
-| Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [EventStore/Vault](event-store.md#reading-guide) → [SQLite](vault-sqlite.md#reading-guide) |
+| Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [event store contracts](event-store.md) → [EventStore/Vault](../../packages/event-store/README.md) → [SQLite](vault-sqlite.md#reading-guide) |
 | Implement application state | [Identifier vocabulary](vault-events.md#identifier-and-reference-vocabulary) → [schemas](vault-events.md#reading-guide) → [folds and procedures](vault-events.md#folds-and-procedures) |
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](relationships.md#ordinary-sending-and-birth-selection) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
@@ -120,7 +120,7 @@ receive gate, the private-address policy and retry are code.
 
 | Rule | Definition | Consumers |
 | --- | --- | --- |
-| Event envelope and ordering | [ES](event-store.md#the-event) | [VE vocabulary](vault-events.md#identifier-and-reference-vocabulary) |
+| Event envelope and ordering | [event.ts](../../packages/event-store/src/event.ts), [ES identity](event-store.md#invariants) | [VE vocabulary](vault-events.md#identifier-and-reference-vocabulary) |
 | Commit durability | [ES](event-store.md#commit-and-durability-terminology) | [DD boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
 | Storage ownership and recovery | [SQ](vault-sqlite.md#ownership-and-lifecycle) | [agent open](../../packages/agent-core/src/identity.ts) |
 | Object identity and held roots | [DO](dasl-objects.md#accepted-dasl-cids), [VE retention](vault-events.md#held-roots) | [SQ objects](vault-sqlite.md#objects-and-streams) |

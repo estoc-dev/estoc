@@ -236,7 +236,7 @@ null included, and a manual rotation notification has none. The value is not
 a transport-freshness proof.
 
 A successful vault commit uses the process-durable boundary in
-[event-store.md section 2.1](event-store.md#commit-and-durability-terminology). Correctness MUST NOT depend on an uninterrupted
+[event-store.md section 2](event-store.md#commit-and-durability-terminology). Correctness MUST NOT depend on an uninterrupted
 process lifetime or rebuildable cache state. A remote thin client without the
 seed may stage a command offline, but the command becomes authoritative only
 when a full vault runtime process-durably appends `message.out`.
@@ -359,7 +359,7 @@ fields keep them apart ([vault-events.md section 3.5](vault-events.md#identifier
 | Intent | `intentCid` | the intent projection of [5.2](#intent-projection) | the same fixed application message |
 | Plaintext | `plaintextCid` | the complete DIDComm plaintext of [5.3](#exact-plaintext-hash) | the same complete plaintext, own ID, addressing and proof included |
 | Envelope | `envelopeCid` | the normalized encrypted envelope of [the preparation](vault-events.md#message-prepared) | the same ciphertext; re-encrypting gives another |
-| Event | event `cid` | the canonical event envelope of [event-store.md](event-store.md#the-event) | the same event |
+| Event | event `cid` | the canonical event envelope of [event.ts](../../packages/event-store/src/event.ts) | the same event |
 
 Content equality is not identity. Two independent user sends of equal content
 have different message IDs and may have one intent CID; one intent prepared
@@ -502,7 +502,7 @@ same intent and the same intent CID.
 The envelope CID is the raw CID of `UTF8(RFC8785(parsedEncryptedEnvelope))`
 under [the preparation](vault-events.md#message-prepared); the bytes are
 retained as an object and are the event's root. An event CID is
-[event-store.md](event-store.md#the-event)'s. `delivery.submitted` names its
+[event.ts](../../packages/event-store/src/event.ts)'s. `delivery.submitted` names its
 preparation by event CID and resolves it by that exact CID: an event of equal
 payload under another CID is another preparation, present or not.
 

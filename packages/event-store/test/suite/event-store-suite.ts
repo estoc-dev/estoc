@@ -34,7 +34,7 @@ export type OpenStore = (options?: OpenOptions) => Promise<EventStore>;
 const RAW_HELLO = "bafkreibm6jg3ux5qumhcn2b3flc3tyu6dmlb4xa7u5bf44yegnrjhc4yeq" as Cid;
 const T0 = "2026-09-06T10:00:00.000Z";
 
-/** The specification's worked example: this envelope, appended by this author at this instant, has this CID. */
+/** The fixed example: this envelope, appended by this author at this instant, has this CID. */
 const EXAMPLE = {
   author: "019b0000-0000-7000-8000-000000000001" as AuthorId,
   at: "2026-09-25T00:00:00.000Z",
@@ -97,7 +97,7 @@ export function eventStoreSuite(name: string, open: OpenStore): void {
       expect(await all(store.scan())).toEqual([event, later]);
     });
 
-    test("the specification's example envelope hashes to its published CID", async () => {
+    test("the fixed example envelope hashes to its known CID", async () => {
       const c = clock(EXAMPLE.at);
       const store = await open({ author: EXAMPLE.author, now: c.now });
       const event = await store.append(EXAMPLE.draft);
