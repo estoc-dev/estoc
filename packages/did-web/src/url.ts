@@ -46,7 +46,9 @@ export function webDidUrl(did: string, insecureLoopback = false): { url: URL } |
   const literal = name.startsWith("[") ? name.slice(1, -1) : name;
   if (LOOPBACK_NAMES.has(name)) {
     if (!insecureLoopback) return { refused: "a loopback authority" };
-    url.protocol = "http:";
+    // parsed anew rather than given another protocol: a :443 that https
+    // dropped as its default is a port of its own on http
+    url = new URL(`http://${authority}/`);
   } else if (ipaddr.isValid(literal)) {
     return { refused: "an IP-literal authority" };
   } else if (RESERVED_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
@@ -63,24 +65,21 @@ function idchars(segment: string): string {
 
 /**
  * The did:web of a service at `publicUrl`: the host with its port
- * percent-encoded, then one segment per path element. It is the inverse
- * of `webDidUrl` with loopback allowed, and a URL that `webDidUrl` would
- * not give back is refused with a throw: an http URL to anything but a
- * loopback host, an https one to a loopback host, an IP literal, a
- * reserved name, a path element that is no segment.
+ * percent-encoded, then one segment per path element, a trailing slash
+ * aside. It is the inverse of `webDidUrl` with loopback allowed, and a
+ * URL that `webDidUrl` would not give back is refused with a throw: an
+ * http URL to anything but a loopback host, an https one to a loopback
+ * host, an IP literal, a reserved name, a path element that is empty or
+ * no segment.
  */
 export function didWebFromUrl(publicUrl: string | URL): string {
   const url = new URL(publicUrl);
   const host = url.port === "" ? url.hostname : `${url.hostname}%3A${url.port}`;
-  const segments = url.pathname
-    .split("/")
-    .filter((segment) => segment !== "")
-    .map((segment) => idchars(decodeURIComponent(segment)));
-  const did = ["did:web", host, ...segments].join(":");
+  const elements = url.pathname.split("/").slice(1);
+  if (elements.at(-1) === "") elements.pop();
+  const did = ["did:web", host, ...elements.map((element) => idchars(decodeURIComponent(element)))].join(":");
   const derived = webDidUrl(did, true);
   if ("refused" in derived) throw new Error(`${url.href} has no did:web: ${derived.refused}`);
-  if (derived.url.protocol !== url.protocol) {
-    throw new Error(`${url.href} has no did:web: its document at ${url.host} is fetched over ${derived.url.protocol.slice(0, -1)}, not ${url.protocol.slice(0, -1)}`);
-  }
+  if (derived.url.origin !== url.origin) throw new Error(`${url.href} has no did:web: its document is fetched from ${derived.url.origin}`);
   return did;
 }

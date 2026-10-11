@@ -59,10 +59,12 @@ describe("WebDids", () => {
   });
 
   it("reads at most 64 KiB of a document unless the policy says otherwise", async () => {
-    expect((await resolving({ fetch: transport(() => streamed(65, 1024)).fetch })).didResolutionMetadata).toEqual({
-      error: "notFound",
-      message: `${URL_OF_DID}: the document is larger than 65536 bytes`,
-    });
+    for (const policy of [{}, { maxBytes: undefined }]) {
+      expect((await resolving({ ...policy, fetch: transport(() => streamed(65, 1024)).fetch })).didResolutionMetadata).toEqual({
+        error: "notFound",
+        message: `${URL_OF_DID}: the document is larger than 65536 bytes`,
+      });
+    }
     expect((await resolving({ fetch: transport(() => streamed(65, 1024)).fetch, maxBytes: 128 * 1024 })).didResolutionMetadata.message).toMatch(/not JSON/);
   });
 

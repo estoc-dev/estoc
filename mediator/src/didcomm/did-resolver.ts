@@ -170,7 +170,7 @@ export class WebDids {
 
   /** `policy` is `@estoc/did-web`'s, with `MAX_WEB_DOCUMENT_BYTES` unless it says otherwise. */
   constructor(policy: WebDidOptions) {
-    this.policy = { maxBytes: MAX_WEB_DOCUMENT_BYTES, ...policy };
+    this.policy = { ...policy, maxBytes: policy.maxBytes ?? MAX_WEB_DOCUMENT_BYTES };
   }
 
   async resolve(did: string): Promise<ResolveResult> {

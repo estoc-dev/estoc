@@ -60,6 +60,13 @@ describe("webDidUrl", () => {
     expect(refusalOf("did:web:10.0.0.1", true)).toBe("an IP-literal authority");
     expect(urlOf("did:web:bob.example", true)).toBe("https://bob.example/.well-known/did.json");
   });
+
+  it("keeps a loopback port as the DID writes it, 443 on plain http included", () => {
+    expect(urlOf("did:web:localhost", true)).toBe("http://localhost/.well-known/did.json");
+    expect(urlOf("did:web:localhost%3A80", true)).toBe("http://localhost/.well-known/did.json");
+    expect(urlOf("did:web:localhost%3A443", true)).toBe("http://localhost:443/.well-known/did.json");
+    expect(urlOf("did:web:127.0.0.1%3A443:a", true)).toBe("http://127.0.0.1:443/a/did.json");
+  });
 });
 
 describe("didWebFromUrl", () => {
@@ -76,18 +83,23 @@ describe("didWebFromUrl", () => {
       ["https://mediator.example.com", "https://mediator.example.com/.well-known/did.json"],
       ["https://bob.example:8443/users/alice", "https://bob.example:8443/users/alice/did.json"],
       ["https://bob.example/~alice/a%20b", "https://bob.example/~alice/a%20b/did.json"],
+      ["https://bob.example/users/alice/", "https://bob.example/users/alice/did.json"],
       ["http://localhost:8787", "http://localhost:8787/.well-known/did.json"],
+      ["http://localhost:443", "http://localhost:443/.well-known/did.json"],
+      ["http://127.0.0.1:443/a", "http://127.0.0.1:443/a/did.json"],
     ] as const) {
       expect(urlOf(didWebFromUrl(url), true), url).toBe(document);
     }
   });
 
   it("refuses a URL its did:web would not be fetched from", () => {
-    expect(() => didWebFromUrl("http://mediator.example.com")).toThrow(/fetched over https, not http/);
-    expect(() => didWebFromUrl("https://localhost:8443")).toThrow(/fetched over http, not https/);
+    expect(() => didWebFromUrl("http://mediator.example.com")).toThrow(/its document is fetched from https:\/\/mediator\.example\.com$/);
+    expect(() => didWebFromUrl("https://localhost:8443")).toThrow(/its document is fetched from http:\/\/localhost:8443$/);
     expect(() => didWebFromUrl("http://[::1]:8787")).toThrow(/not a did:web/);
     expect(() => didWebFromUrl("https://10.0.0.1")).toThrow(/IP-literal/);
     expect(() => didWebFromUrl("https://printer.local")).toThrow(/reserved name/);
     expect(() => didWebFromUrl("https://bob.example/a%2Fb")).toThrow(/path segment/);
+    expect(() => didWebFromUrl("https://bob.example/a//b")).toThrow(/path segment ""/);
+    expect(() => didWebFromUrl("https://bob.example//a")).toThrow(/path segment ""/);
   });
 });

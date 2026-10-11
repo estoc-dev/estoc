@@ -83,11 +83,15 @@ connection. So the network policy holds in the transport, and
 - It follows no redirect and answers from no cache (`fetchWebDid` asks for
   `redirect: "manual"` and `cache: "no-store"`), and it honours `signal`.
 
-`guardedFetch` is that transport for Node. It resolves the name, refuses
-every address that is not public unicast, at each connection, and refuses an
-IP literal in the URL that is not, or a scheme other than http and https,
-before connecting. In a browser or a Worker the platform's `fetch` makes the
-connection, and the checks on the name are what this package holds there.
+`guardedFetch` is that transport for Node. It refuses every address that is
+not public unicast as each connection is made: every address a name resolves
+to, at lookup, and an IP literal before it is dialled. It refuses a scheme
+other than http and https before anything else. It follows no redirect,
+whatever the request asks: a 3xx is the answer, or an error under
+`redirect: "error"`. A `Request` goes out as fetch would send it, with
+`init` over it, its body read whole first. In a browser or a Worker the
+platform's `fetch` makes the connection, and the checks on the name are what
+this package holds there.
 
 `web-did-resolver` is not wrapped: it fetches through its own transport,
 follows redirects and reads a body without a bound.

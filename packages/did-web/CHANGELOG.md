@@ -17,5 +17,8 @@ did:web under a network policy, taken out of `@estoc/agent-core` and
   `unavailable`, `definitive`, or `refused` when the policy settled it
   before any request.
 - **`@estoc/did-web/node`**: `guardedFetch`, the Node transport that
-  refuses every address that is not public unicast, now with the code
-  `EBLOCKED` on every refusal, a literal or a scheme included.
+  refuses every address that is not public unicast. It now checks an IP
+  literal as each connection is made, puts the code `EBLOCKED` on every
+  refusal, a literal or a scheme included, follows no redirect whatever
+  the request asks, and sends a `Request` with its method, headers, body
+  and signal.
