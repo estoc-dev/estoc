@@ -5,7 +5,6 @@ import { scanVault, canonicalDid } from "@estoc/vault";
 import { Agent, BLOB_TOO_LARGE, BlobTooLarge, LinkClosed, MediatorRefused, SEAL_OVERHEAD, openBlob, readBlob, sealBlob } from "../src/index.js";
 import { BlobStore } from "../src/blob-store.js";
 import { MediatorLink } from "../src/link.js";
-import { createReplica } from "../src/replica-enrollment.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, newMediator, party, type Party } from "./helpers.js";
 
@@ -18,10 +17,10 @@ afterEach(async () => {
   }
 });
 
-/** A runtime with an arrangement toward `mediator` and its replica created there, enrolled nowhere yet; its agent open and not connected, the blob store it speaks to as its replica, and every request the agent sent. */
+/** A runtime enrolled at `mediator`; its agent open and not connected, the blob store it speaks to as its replica, and every request the agent sent. */
 async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; store: BlobStore; sent: string[] }> {
   const p = await party(mediator, 1);
-  await createReplica(p.runtime, p.keys, p.mediationId);
+  await p.account.enroll();
   const sent: string[] = [];
   const transport = p.linkOptions.fetch as typeof fetch;
   const counting = ((input: RequestInfo | URL, init?: RequestInit) => {

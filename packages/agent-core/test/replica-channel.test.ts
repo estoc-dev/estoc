@@ -352,7 +352,9 @@ describe("the replica channel", () => {
       input.keyAgreement.unshift("#legacy");
     });
     expect((await scanVault(later.runtime.vault, later.keys)).replicas.replicas.get(later.runtime.author)?.status).toBe("member");
-    await (await (await opened(later, mediator)).membership()).sendSnapshotLink(addressOf(a), link);
+    const laterAgent = await opened(later, mediator);
+    await laterAgent.enroll(a.mediationId);
+    await (await laterAgent.membership()).sendSnapshotLink(addressOf(a), link);
     await a.agent.connect();
     expect(a.links).toEqual([{ mediationId: a.mediationId, replicaId: later.runtime.author, link }]);
 
@@ -361,8 +363,10 @@ describe("the replica channel", () => {
       input.keyAgreement = ["#legacy"];
     });
     expect((await scanVault(none.runtime.vault, none.keys)).replicas.replicas.get(none.runtime.author)?.status).toBe("member");
+    const noneAgent = await opened(none, mediator);
+    await noneAgent.enroll(a.mediationId);
     const before = queued(mediator);
-    await expect((await (await opened(none, mediator)).membership()).sendSnapshotLink(addressOf(a), link)).rejects.toThrow(/no key-agreement method didcomm seals from/);
+    await expect((await noneAgent.membership()).sendSnapshotLink(addressOf(a), link)).rejects.toThrow(/no key-agreement method didcomm seals from/);
     expect(queued(mediator)).toBe(before);
   });
 

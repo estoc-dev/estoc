@@ -31,7 +31,7 @@ import { InvalidDidDocument, canonicalDidOf, scanVault, type Did, type Execution
 
 import { responding, type LiveInput, type Responding } from "./action.js";
 import { owesEffects, messageOf, type EffectOptions } from "./effects.js";
-import { LinkClosed, MediatorRefused } from "./errors.js";
+import { LinkClosed, MediatorRefused, UnknownEntity, Unusable } from "./errors.js";
 import { control } from "./link.js";
 import type { LocalRecords } from "./local-records.js";
 import type { Member } from "./membership.js";
@@ -106,8 +106,8 @@ async function registered(mediationId: MediationId, executionId: ExecutionId, op
  * The registration of an execution at the member's mediator, as its
  * replica. A request whose answer is lost is made once more: the
  * mediator answers a repeat as the registration stands, this replica in
- * the place it first took. A refusal, and a link whose holder closed,
- * are not asked again.
+ * the place it first took. A refusal, a link whose holder closed, and a
+ * replica its gate does not let through are not asked again.
  */
 export async function registerExecution(member: Member, executionId: ExecutionId): Promise<Responder> {
   const register = (): Promise<IMessage | Error> =>
@@ -116,7 +116,7 @@ export async function registerExecution(member: Member, executionId: ExecutionId
       .then((link) => control(link, EXECUTION_REGISTER, { execution_id: executionId }, EXECUTION_REGISTERED))
       .catch((err: unknown) => (err instanceof Error ? err : new Error(messageOf(err))));
   let reply = await register();
-  if (reply instanceof Error && !(reply instanceof MediatorRefused || reply instanceof LinkClosed)) reply = await register();
+  if (reply instanceof Error && !(reply instanceof MediatorRefused || reply instanceof LinkClosed || reply instanceof Unusable || reply instanceof UnknownEntity)) reply = await register();
   return reply instanceof Error ? { status: "unknown", because: reply.message } : responderOf(reply, member.mediationId, executionId, member.did);
 }
 

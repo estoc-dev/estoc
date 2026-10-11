@@ -37,6 +37,7 @@ import {
   MediatorRefused,
   SEAL_OVERHEAD,
   UnknownEntity,
+  Unusable,
   createDid,
   createMediation,
   createVault,
@@ -601,19 +602,22 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   const preferredRoute = async (running: Open): Promise<RouteSpec> => ({ kind: "mediated", mediationId: await preferredMediation(running) });
 
   /**
-   * The runtime's replica at its arrangement. A runtime restored, or past
-   * an identity reset, holds the vault's arrangement and no replica of its
-   * own until a connection enrolls it: it is enrolled at the preferred
-   * arrangement first. A vault that never had a mediator set has no
-   * preferred arrangement to enroll in.
+   * The runtime's replica at its arrangement, enrolled there. A runtime
+   * restored, or past an identity reset, holds the vault's arrangement
+   * and no replica of its own until a connection enrolls it; one whose
+   * adding the mediator never confirmed to it is a member in the vault
+   * alone. Either is enrolled first, at its replica's arrangement, or
+   * with no replica at the preferred one. A vault that never had a
+   * mediator set has no preferred arrangement to enroll in.
    */
   async function membershipOf(running: Open, agent: Agent): Promise<Membership> {
     try {
       return await agent.membership();
     } catch (err) {
-      if (!(err instanceof UnknownEntity)) throw err;
+      if (!(err instanceof UnknownEntity || err instanceof Unusable)) throw err;
     }
-    await agent.enroll(await preferredMediation(running));
+    const own = (await scanVault(running.runtime.vault, running.keys, SCAN)).replicas.replicas.get(running.runtime.author);
+    await agent.enroll(own?.mediationId ?? (await preferredMediation(running)));
     return agent.membership();
   }
 

@@ -1,9 +1,10 @@
 import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
+import type { JsonValue, LocalOptions } from "@estoc/event-store";
 import { mintReplicaDid, scanVault, signReplicaGrant, vaultDraft, type Did, type DidId, type ReplicaId } from "@estoc/vault";
 
-import { ACCOUNT_REGISTER, Agent, AgentTrace, BLOB_PUT, EntityConflict, LinkClosed, REPLICA_ADD, UnknownEntity, Unusable, blobName, createMediation, sealBlob, type BlobLink, type Membership, type ReplicaAddress } from "../src/index.js";
+import { ACCOUNT_REGISTER, Agent, AgentTrace, BLOB_PUT, LinkClosed, REPLICA_ADD, UnknownEntity, Unusable, blobName, createMediation, sealBlob, type BlobLink, type Membership, type ReplicaAddress } from "../src/index.js";
 import { createReplica } from "../src/replica-enrollment.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { copyOf, didcomm, forwarded, freshVault, mediatedParty, newMediator, party, sealed, webFetch, type Party } from "./helpers.js";
@@ -16,14 +17,14 @@ afterEach(async () => {
 
 const ADDRESS = "019b0000-0000-7000-8000-0000000000a0" as DidId;
 
-/** The party's agent, open and not connected, and every request it sent. */
-async function opened(p: Pick<Party, "runtime" | "keys" | "trace">, mediator: FakeMediator): Promise<{ agent: Agent; sent: string[] }> {
+/** The party's agent, open and not connected, and every request it sent; its confirmations the runtime's unless `localOptions` says otherwise. */
+async function opened(p: Pick<Party, "runtime" | "keys" | "trace">, mediator: FakeMediator, localOptions: LocalOptions = p.runtime.local.options): Promise<{ agent: Agent; sent: string[] }> {
   const sent: string[] = [];
   const fetch: typeof globalThis.fetch = (input, init) => {
     sent.push(`${init?.method ?? "GET"} ${String(input)}`);
     return mediator.fetch(input, init);
   };
-  const agent = await Agent.open(p, { didcomm, fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false });
+  const agent = await Agent.open(p, { didcomm, fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions, privateAddresses: false, liveDelivery: false });
   closing.unshift(agent);
   return { agent, sent };
 }
@@ -41,6 +42,17 @@ async function member(mediator: FakeMediator): Promise<Party & { agent: Agent; s
 async function sibling(p: Pick<Party, "keys">, mediator: FakeMediator): Promise<ReplicaAddress> {
   const replicaId = uuidv7() as ReplicaId;
   return { replicaId, longFormDid: (await mintReplicaDid(p.keys, replicaId, mediator.did as Did)).longFormDid };
+}
+
+/** Local options holding nothing the mediator confirmed: those of a runtime whose vault was copied without them. */
+function emptyOptions(): LocalOptions {
+  const kept = new Map<string, JsonValue>();
+  return {
+    get: async (key) => kept.get(key),
+    set: async (key, value) => void kept.set(key, value),
+    delete: async (key) => void kept.delete(key),
+    keys: async () => [...kept.keys()],
+  };
 }
 
 async function snapshot(mediator: FakeMediator): Promise<BlobLink> {
@@ -69,7 +81,7 @@ describe("a runtime's membership", () => {
     expect(web.calls).toEqual([]);
   });
 
-  it("is bound to the arrangement its replica's creation names before the account is registered there, and a blob request registers the account and adds the replica first", async () => {
+  it("is withheld while the replica is created but the account is not registered, asking nothing; had once the host enrolls, and a blob request then goes alone", async () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     closing.push(p.runtime);
@@ -79,12 +91,32 @@ describe("a runtime's membership", () => {
     expect(fold.mediations.mediations.get(p.mediationId)?.routingDid).toBeNull();
     const { agent } = await opened(p, mediator);
 
+    await expect(agent.membership()).rejects.toBeInstanceOf(Unusable);
+    expect(mediator.seenTypes).toEqual([]);
+    await agent.enroll(p.mediationId);
+    expect(mediator.seenTypes.slice(0, 2)).toEqual([ACCOUNT_REGISTER, REPLICA_ADD]);
     const membership = await agent.membership();
     expect(membership).toMatchObject({ replicaId: p.runtime.author, mediationId: p.mediationId });
-    expect(mediator.seenTypes).toEqual([]);
+    const seen = mediator.seenTypes.length;
     const sealed = await sealBlob(new Uint8Array(100));
     await membership.blobs.put(sealed.hash, sealed.bytes.length);
-    expect(mediator.seenTypes).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, BLOB_PUT]);
+    expect(mediator.seenTypes.slice(seen)).toEqual([BLOB_PUT]);
+  });
+
+  it("is withheld while the mediator's adding of the replica is not confirmed to this runtime, though the vault has it a member; had once the host enrolls, which adds it again", async () => {
+    const mediator = await newMediator();
+    const p = await party(mediator);
+    closing.push(p.runtime);
+    await p.account.enroll();
+    expect((await scanVault(p.runtime.vault, p.keys)).replicas.replicas.get(p.runtime.author)?.status).toBe("member");
+    const { agent, sent } = await opened(p, mediator, emptyOptions());
+
+    await expect(agent.membership()).rejects.toThrow(/has not confirmed adding it/);
+    expect(sent).toEqual([]);
+    const seen = mediator.seenTypes.length;
+    await agent.enroll(p.mediationId);
+    expect(mediator.seenTypes.slice(seen, seen + 1)).toEqual([REPLICA_ADD]);
+    expect(await agent.membership()).toMatchObject({ replicaId: p.runtime.author, mediationId: p.mediationId });
   });
 
   it("refuses every operation once its arrangement is retired, asking nothing", async () => {
@@ -95,6 +127,7 @@ describe("a runtime's membership", () => {
     await m.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: m.mediationId, because: "gone" })]);
     const sent = m.sent.length;
 
+    await expect(m.agent.membership()).rejects.toBeInstanceOf(Unusable);
     await expect(m.membership.blobs.limits()).rejects.toBeInstanceOf(Unusable);
     await expect(m.membership.blobs.put(link.hash, 64)).rejects.toBeInstanceOf(Unusable);
     await expect(m.membership.blobs.delete(link.hash)).rejects.toBeInstanceOf(Unusable);
@@ -114,7 +147,8 @@ describe("a runtime's membership", () => {
     expect((await scanVault(m.runtime.vault, m.keys)).replicas.replicas.get(m.runtime.author)).toMatchObject({ status: "conflict", mediationId: null });
     const sent = m.sent.length;
 
-    await expect(m.membership.blobs.put(link.hash, 64)).rejects.toBeInstanceOf(EntityConflict);
+    await expect(m.agent.membership()).rejects.toBeInstanceOf(Unusable);
+    await expect(m.membership.blobs.put(link.hash, 64)).rejects.toBeInstanceOf(Unusable);
     await expect(m.membership.sendSnapshotLink(to, link)).rejects.toBeInstanceOf(Unusable);
     expect(m.sent).toHaveLength(sent);
   });

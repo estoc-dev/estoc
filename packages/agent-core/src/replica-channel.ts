@@ -75,20 +75,19 @@ export interface ReplicaRoute {
 }
 
 /**
- * The route of mail from this runtime's replica `author` to `to`: from
- * the long form the fold binds the replica to, a member of an
- * arrangement that can carry mail, to `to` when the seed bears it out
- * as another replica at that arrangement's mediator, with no
- * `from_prior`, since a replica DID never rotates. Nothing is derived
- * for another arrangement: a replica is bound to one, and its mail
- * stays there. `UnknownEntity` or `Unusable` when this runtime's
- * replica cannot send, `NotAReplica` when `to` is no one to send to.
+ * The route of mail from this runtime's replica `from`, as the fold
+ * binds it, to `to`: from the replica's long form to `to` when the seed
+ * bears it out as another replica at the arrangement's mediator, with
+ * no `from_prior`, since a replica DID never rotates. Nothing is
+ * derived for another arrangement: a replica is bound to one, and its
+ * mail stays there. Whether `from` may send is its binder's to decide
+ * before; `Unusable` when its document seals from no key the seed
+ * derives, `NotAReplica` when `to` is no one to send to.
  */
-export async function replicaRoute(keys: Keys, fold: VaultFold, author: ReplicaId, to: ReplicaAddress): Promise<ReplicaRoute> {
-  const from = usableReplica(fold, author);
-  const key = (await keys.replicaKeys(author)).keyAgreement;
+export async function replicaRoute(keys: Keys, from: BoundReplica, to: ReplicaAddress): Promise<ReplicaRoute> {
+  const key = (await keys.replicaKeys(from.replicaId)).keyAgreement;
   const sender = senderEndOf(from.longFormDid, peerResolution(from.longFormDid), key);
-  if (sender === null) throw new Unusable("replica", author, ["its document authorizes no key-agreement method didcomm seals from with the key the seed derives"]);
+  if (sender === null) throw new Unusable("replica", from.replicaId, ["its document authorizes no key-agreement method didcomm seals from with the key the seed derives"]);
   const resolution = await recipientDocument(keys, from, to);
   const recipient = recipientEndOf(to.longFormDid, resolution, key);
   if (recipient === null) throw new NotAReplica(to.replicaId, to.longFormDid, "its document has no key-agreement method to seal to");

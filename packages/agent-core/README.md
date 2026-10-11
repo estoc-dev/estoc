@@ -80,7 +80,7 @@ peer.
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf`, `accountOf` |
 | What speaks as an arrangement's account, and with what? | `arrangement.ts` | `Arrangement`, `Account` |
-| What speaks as this runtime's replica at its arrangement, and with what? | `membership.ts` | `Membership`, `Member`, `bindingOf` |
+| What speaks as this runtime's replica at its arrangement, and with what? | `membership.ts` | `Membership`, `Member`, `bindingOf`, `enrolledReplica` |
 | How does this runtime enroll at the mediator? | `replica-enrollment.ts` | `enroll`, `createReplica` |
 | Which addresses does the account hold? | `replica-recipients.ts` | `addRecipients`, `holds` |
 | Which replicas has the account added, and which of them is this runtime? | `replica-list.ts` | `listReplicas` |

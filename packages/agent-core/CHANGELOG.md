@@ -8,17 +8,20 @@
   spoken as the replica) and `sendSnapshotLink(to, link)`, bound once to
   this runtime, its keys and the agent's line to the arrangement's
   mediator. A runtime has one replica, bound to one arrangement for good,
-  so the call takes no arrangement. Taking it reads the vault alone and
-  needs the replica's creation (`UnknownEntity` until this runtime has
-  enrolled somewhere); the mediator is resolved and reached only once an
-  operation has to. Each blob request enrolls this runtime first, each
-  step only when it is not known to be done, and then needs the replica
-  a member of an arrangement that is usable; a snapshot link needs the
-  same, without enrolling. Once the agent closes, an operation that has
-  to reach the mediator is refused with `LinkClosed`.
-  `Agent.blobStore(mediationId)` and `Agent.sendSnapshotLink(to, link)`
-  are removed. A snapshot link is posted over the replica's own link;
-  what reaches the mediator is the same anonymous forward.
+  so the call takes no arrangement. Taking it reads the vault and the
+  local confirmations alone, and needs the replica enrolled:
+  `UnknownEntity` until this runtime has a replica, `Unusable` while a
+  step of enrolling it is wanting, which the host does through
+  `Agent.enroll`. Every operation that reaches the mediator passes the
+  same gate first, the agent still open and the replica still enrolled
+  over the fold as it stands; one refused fails alone with nothing sent,
+  and the next is judged anew. No operation enrolls on its own any
+  more. The mediator is resolved and reached only once an operation
+  passes. Once the agent closes, an operation that has to reach the
+  mediator is refused with `LinkClosed`. `Agent.blobStore(mediationId)`
+  and `Agent.sendSnapshotLink(to, link)` are removed. A snapshot link is
+  posted over the replica's own link; what reaches the mediator is the
+  same anonymous forward.
 
 - **The index exports what a host acts through** (breaking): an
   operation that acts as the vault reaches a host only through an
