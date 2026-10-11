@@ -22,13 +22,17 @@ interface Held {
   secrets: Secret[];
 }
 
+export function secretOf(id: string, key: LocalKey): Secret {
+  return { id, type: "JsonWebKey2020", privateKeyJwk: key.privateJwk() };
+}
+
 /** The secrets didcomm asks for by key ID: each of the two keys under every method that carries it, under every spelling given. */
 export function secretsOf(keys: DidKeys, spellings: readonly string[], methods: { authentication: readonly string[]; keyAgreement: readonly string[] }): Secret[] {
   const secrets: Secret[] = [];
   const add = (ids: readonly string[], key: LocalKey): void => {
     for (const id of ids) {
       const fragment = splitDidUrl(id)[1];
-      for (const spelling of spellings) secrets.push({ id: spelling + fragment, type: "JsonWebKey2020", privateKeyJwk: key.privateJwk() });
+      for (const spelling of spellings) secrets.push(secretOf(spelling + fragment, key));
     }
   };
   add(methods.authentication, keys.authentication);

@@ -38,11 +38,9 @@
  * replaced, and the preparation it made stands uncarried.
  */
 
-import { isShortForm, splitDidUrl } from "@estoc/did-peer";
-import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
+import { isShortForm } from "@estoc/did-peer";
+import { parseStrict, type Held, type VaultRuntime } from "@estoc/event-store";
 import {
-  InvalidPublicKey,
-  agreementKey,
   envelopeOf,
   intentOfOutbound,
   objectReader,
@@ -57,9 +55,7 @@ import {
   type Channel,
   type Cid,
   type Decision,
-  type DecodedPublicKey,
   type Did,
-  type DidKeys,
   type DidUrl,
   type EventCid,
   type EventReference,
@@ -68,24 +64,24 @@ import {
   type MessageId,
   type MessageOut,
   type Outbound,
+  type PeerResolution,
   type Preparation,
-  type PublicKey,
   type ScanOptions,
   type StoredMessageDocument,
   type VaultEvent,
   type VaultFold,
 } from "@estoc/vault";
 
-import { packEncrypted, secretsResolverFor, type DidcommApi, type IMessage } from "./protocol/didcomm.js";
+import type { DidcommApi, IMessage } from "./protocol/didcomm.js";
 import { recordOwedAcceptance } from "./acceptance.js";
+import { addressingOf, recipientEndOf, seal, type Ends, type SenderEnd } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
-import { authorizedKeys, commitResolution, didcommDocumentOf, pinnedResolver } from "./evidence.js";
+import { commitResolution } from "./evidence.js";
 import { recordOwedUnderLock } from "./reconcile.js";
-import { secretsOf } from "./keyring.js";
 import { sealData } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import { serially } from "./procedure.js";
-import { knownLongForms, resolve, type Resolution } from "./resolver.js";
+import { knownLongForms, resolve } from "./resolver.js";
 import { noteAll, type AgentTrace, type Note } from "./trace.js";
 
 /** The most bytes a message's body or one attachment payload may run to and still go on the wire. */
@@ -266,10 +262,10 @@ async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: 
   if ("because" in ends) return none(ends.because);
   const content = await readContent(held, intent);
   if ("pending" in content) return { result: { outcome: "pending", messageId, because: content.pending }, notes };
-  const plaintext = wirePlaintext(intentOfOutbound(intent).value, messageId, content.document, { from: ends.from, to: [channel.peerDid], fromPrior: ends.fromPrior }, (root) => content.payloads.get(root) as Uint8Array);
-  const packed = await pack(fold, sender, ends, plaintext, options.didcomm);
+  const plaintext = wirePlaintext(intentOfOutbound(intent).value, messageId, content.document, addressingOf(ends), (root) => content.payloads.get(root) as Uint8Array);
+  const packed = await seal(ends, plaintext, options.didcomm);
   const envelope = envelopeOf(packed);
-  const resolved = await commitResolution(held, { resolution: ends.resolution, localKeyName: sender.keyNames.keyAgreement, peerPublicKey: ends.peerPublicKey });
+  const resolved = await commitResolution(held, { resolution: ends.recipient.resolution, localKeyName: sender.keyNames.keyAgreement, peerPublicKey: ends.recipient.publicKey });
   const [prepared] = (
     await held.commit(
       [{ cid: envelope.cid, source: envelope.value }],
@@ -278,9 +274,9 @@ async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: 
           messageId,
           senderDidId: sender.didId,
           localKeyName: sender.keyNames.keyAgreement,
-          recipientDid: channel.peerDid,
+          recipientDid: ends.recipient.did,
           peerResolutionEventCid: resolved.cid as EventReference<"peer.resolved">,
-          fromPrior: ends.fromPrior,
+          fromPrior: ends.fromPrior?.proof ?? null,
           intentCid: intent.intentCid,
           plaintextCid: plaintextCidOf(plaintext),
           envelopeCid: envelope.cid,
@@ -308,53 +304,43 @@ async function owedRecorded(held: Held, keys: Keys, messageId: MessageId): Promi
   }
 }
 
-interface Ends {
-  senderKeys: DidKeys;
-  /** the sender's spelling on the wire: the long form until an admitted receipt shows the peer has written to the address, the short form after */
-  from: Did;
-  fromPrior: string | null;
-  /** the recipient's document, resolved from the long form in evidence */
-  resolution: Resolution;
-  /** the recipient's key-agreement method, under the document's own spelling */
-  methodId: DidUrl;
-  peerPublicKey: PublicKey;
-}
-
 /**
- * The two ends as the wire names them. A peer key is one the retained
- * document authorizes for key agreement, didcomm can seal to, and on
- * the sender's own curve; the first such in document order. A
- * document authorizing none is not a key change — the document is
- * immutable — but no preparation to it can be made.
+ * The two ends as the wire names them: the recipient under the
+ * channel's spelling, at the key `recipientEndOf` picks from its
+ * retained document; the sender under its long form until an admitted
+ * receipt shows the peer has written to the address, with the proof of
+ * the rotation that made it a successor here, and under its short form
+ * after. A document authorizing no key the sender can seal to is not a
+ * key change — the document is immutable — but no preparation to it
+ * can be made.
  */
 async function endsOf(fold: VaultFold, keys: Keys, sender: LocalDidEntity, channel: Channel, recipientDid: Did): Promise<Ends | { pending: string } | { because: string }> {
   const known = knownLongForms(fold);
   if (isShortForm(recipientDid) && known(recipientDid) === null) return { pending: `no long form of ${recipientDid} is in evidence` };
   const answer = await resolve(recipientDid, known);
   if (answer.outcome !== "resolved") return { because: answer.reason };
-  const { resolution } = answer;
-  const senderKeys = await keys.didKeys(sender.didId);
-  const [chosen] = sealable(resolution, senderKeys);
-  if (chosen === undefined) return { because: `${resolution.presentedDid} authorizes no key-agreement key ${channel.localDid} can seal to` };
-  const [methodId, peerPublicKey] = chosen;
+  const { keyAgreement: key } = await keys.didKeys(sender.didId);
+  const recipient = recipientEndOf(channel.peerDid, answer.resolution, key);
+  if (recipient === null) return { because: `${answer.resolution.presentedDid} authorizes no key-agreement key ${channel.localDid} can seal to` };
   const created = sender.created as NonNullable<LocalDidEntity["created"]>;
-  const ends = { senderKeys, resolution, methodId, peerPublicKey };
-  if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) !== null) return { ...ends, from: created.did, fromPrior: null };
-  const proof = proofOf(fold, sender, channel);
-  if (proof !== null && typeof proof === "object") return proof;
-  return { ...ends, from: created.longFormDid, fromPrior: proof };
+  const senderAs = (did: Did): SenderEnd => ({ did, resolution: sender.resolution as PeerResolution, methodId: sender.methodIds.keyAgreement[0] as DidUrl, key });
+  if (fold.continuity.confirmedBy(channel.localDid, channel.peerDid) !== null) return { sender: senderAs(created.did), recipient, fromPrior: null };
+  const fromPrior = proofOf(fold, sender, channel);
+  if (fromPrior !== null && !("proof" in fromPrior)) return fromPrior;
+  return { sender: senderAs(created.longFormDid), recipient, fromPrior };
 }
 
 /**
  * The frozen proof a sender carries as an unconfirmed successor: that
  * of the rotation intent which made it one toward this channel's peer,
- * at the pair itself or on a verified role-preserving path to it. Null
- * when no record made the sender a successor here. The records are read
- * off their own fields, since one waiting for its predecessor's creation
- * has no channel in the fold yet; what they amount to, and which proof
- * stands for them, is the vault's reading of the intent.
+ * at the pair itself or on a verified role-preserving path to it, with
+ * the document of the predecessor that issued it. Null when no record
+ * made the sender a successor here. The records are read off their own
+ * fields, since one waiting for its predecessor's creation has no
+ * channel in the fold yet; what they amount to, and which proof stands
+ * for them, is the vault's reading of the intent.
  */
-function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): string | null | { pending: string } | { because: string } {
+function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): Ends["fromPrior"] | { pending: string } | { because: string } {
   const records = [...fold.channels.decisions.values()].filter((decision) => decision.event.data.toDidId === sender.didId && leadsTo(fold, decision, channel));
   const intent = rotationIntent(fold, records);
   switch (intent.status) {
@@ -364,8 +350,12 @@ function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): str
       return { because: intent.because };
     case "pending":
       return { pending: intent.because };
-    case "candidate":
-      return intent.candidate.event.data.fromPrior;
+    case "candidate": {
+      const { fromDidId, fromPrior } = intent.candidate.event.data;
+      const issuer = fold.dids.entities.get(fromDidId)?.resolution ?? null;
+      if (issuer === null) return { because: `the document of ${fromDidId}, which issued the proof, does not read` };
+      return { proof: fromPrior, issuer };
+    }
   }
 }
 
@@ -373,31 +363,6 @@ function proofOf(fold: VaultFold, sender: LocalDidEntity, channel: Channel): str
 function leadsTo(fold: VaultFold, decision: Decision, channel: Channel): boolean {
   const landed: Channel = { localDid: channel.localDid, peerDid: decision.event.data.peerDid };
   return sameChannel(landed, channel) || fold.continuity.ackPath(landed, channel);
-}
-
-/**
- * The key-agreement methods of a resolved document that authcrypt from
- * `sender` can seal to, in the document's order. The document may
- * authorize more: a method of a suite didcomm does not pack with, which
- * its projection marks `Other`, or a key on another curve than the
- * sender's, since didcomm agrees both ends over one curve; or a key
- * that agrees nothing, a signing key or a low-order point. Each is
- * authorized and still unusable here, and naming it as the recipient
- * key ID would fail the seal.
- */
-function sealable(resolution: Resolution, sender: DidKeys): [DidUrl, PublicKey][] {
-  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
-  const packable = new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
-  return [...authorizedKeys(resolution, "keyAgreement")].filter(([id, key]) => packable.has(id) && agrees(key, sender.keyAgreement.type));
-}
-
-function agrees(key: PublicKey, type: DecodedPublicKey["type"]): boolean {
-  try {
-    return agreementKey(key).type === type;
-  } catch (err) {
-    if (err instanceof InvalidPublicKey) return false;
-    throw err;
-  }
 }
 
 type Content = { document: StoredMessageDocument; payloads: Map<Cid, Uint8Array> };
@@ -416,22 +381,4 @@ async function readContent(held: Held, intent: MessageOut): Promise<Content | { 
     payloads.set(attachment.data.root, payload);
   }
   return { document, payloads };
-}
-
-/**
- * The plaintext sealed as authcrypt from the sender's key-agreement key
- * to the one recipient key selected, both named as key IDs so that
- * didcomm seals to exactly those: the sender's under the spelling the
- * plaintext carries, the recipient's under the spelling the plaintext
- * addresses. The documents are answered from the resolution in hand and
- * the fold; nothing is resolved again.
- */
-async function pack(fold: VaultFold, sender: LocalDidEntity, ends: Ends, plaintext: JsonObject, didcomm: DidcommApi): Promise<string> {
-  const created = sender.created as NonNullable<LocalDidEntity["created"]>;
-  const senderKid = ends.from + splitDidUrl(sender.methodIds.keyAgreement[0] as string)[1];
-  const recipientKid = (plaintext.to as string[])[0] + splitDidUrl(ends.methodId)[1];
-  const secrets = secretsOf(ends.senderKeys, [created.longFormDid, created.did], sender.methodIds);
-  const resolver = pinnedResolver(fold, { current: [ends.resolution] });
-  const [packed] = await packEncrypted(didcomm, plaintext as unknown as IMessage, recipientKid, senderKid, null, resolver, secretsResolverFor(secrets), { forward: false });
-  return packed;
 }
