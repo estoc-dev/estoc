@@ -15,8 +15,8 @@ submission, receipt and skipped-effect payloads in
 [`@estoc/vault`](../../packages/vault/README.md) lists; and the procedures
 that send, prepare, dispatch, receive, reconcile, answer and acknowledge as
 [`@estoc/agent-core`](../../packages/agent-core/README.md) lists, each
-module answering one question with its tests beside it and every published
-vector pinned there. What a forward must be and how the replicas of one
+module answering one question, with derivation fixtures and behavioral
+checks in the tests beside it. What a forward must be and how the replicas of one
 account register under an execution are
 [the mediator's README](../../mediator/README.md). This document keeps what
 that code cannot state about itself: the message layers and the
@@ -272,9 +272,10 @@ is derived from another.
 | Envelope | `EnvelopeCid` | `UTF8(RFC8785(parsedEncryptedEnvelope))`, retained as an object and the preparation's root | `envelopeOf` in [document.ts](../../packages/vault/src/document.ts) |
 | Event | `EventCid` | the canonical event envelope | `eventCidOf` in [event.ts](../../packages/event-store/src/event.ts) |
 
-The intent is the fixed application message: the control headers with every
-reference to the message itself folded to `""`, and the stored document by
-its CID. The own `id`, `typ`, `from`, `to`, `from_prior`, the effect tuple,
+The intent is the fixed application message: the control headers, with a
+self reference in `thid` or `please_ack` folded to `""`, and the stored
+document by its CID. Other references and application content keep their
+spelling. The own `id`, `typ`, `from`, `to`, `from_prior`, the effect tuple,
 the source and rotation references and every preparation field are not in
 it, so one intent CID may be recorded under any message ID in any channel,
 and a use that needs the sender and recipient carries them beside it. Which
@@ -309,12 +310,15 @@ replica wrote them. `delivery.submitted` names its preparation by event CID
 and resolves it by that exact CID; an event of equal payload under another
 CID is another preparation.
 
-No CID grants admission, dispatch or retry eligibility. The vault keeps the
-plaintext CID and not the plaintext, and envelope bytes may be absent, so a
-reader validates `plaintextCid` and `envelopeCid` for their form alone and
-recomputes only `intentCid`, from the fields beside it
-([schema.ts](../../packages/vault/src/schema.ts)); this version makes no
-matching, deduplication or admission decision by the plaintext CID.
+No CID grants admission, dispatch or retry eligibility. The payload reader
+([schema.ts](../../packages/vault/src/schema.ts)) checks each layer CID for
+its form and recomputes the intent CID of a `message.out` or `message.in`
+from the fields beside it; a preparation's intent CID is compared with its
+message's by the outbound fold. The vault keeps the plaintext CID and not
+the plaintext, so nothing checks it further, and this version makes no
+matching, deduplication or admission decision by it. The envelope CID is
+the preparation's root: dispatch reads the bytes to carry by it, and the
+object store answers for their digest.
 
 <a id="preparing-a-package"></a>
 
@@ -375,9 +379,10 @@ preparation whose envelope its transport calls carry, and a transport
 acceptance it observed and has not yet recorded as `delivery.submitted`. The
 records are keyed by replica ID: a reopen reads them; a restore or an
 identity reset mints another author and reads none, so it starts with no
-selection and knows no other runtime's choice. A message with several valid
-preparations waits for the user to choose among them, and only the user's
-explicit choice replaces a selection. An acceptance the runtime saw but
+selection and knows no other runtime's choice. A message with no selection and
+several valid preparations waits for the user to choose among them. An
+existing selection remains in force, and only the user's explicit choice
+replaces it. An acceptance the runtime saw but
 could not write leaves the outcome unknown: the message shows as prepared,
 and only an explicit manual retry may carry the envelope again. None of
 these records, and no trace, decides whether a call may be made: that is
@@ -515,10 +520,13 @@ messageId = UUIDv5(
 )
 ```
 
-The namespace derivation is [ids.ts](../../packages/vault/src/ids.ts)'s,
-and the naming vectors, the two spellings of one wire ID among them, are
-pinned in [ids.test.ts](../../packages/vault/test/ids.test.ts): `message.in`
-keeps the `id` as received, the transcript takes its canonical form.
+The namespace derivation is [ids.ts](../../packages/vault/src/ids.ts)'s.
+The UUID naming fixtures and canonical wire-ID equivalence are tested in
+[ids.test.ts](../../packages/vault/test/ids.test.ts), and
+[message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)
+checks that `a1` and `A1` name one input and one execution; the published
+values are in [message-vectors.md](message-vectors.md). `message.in` keeps
+the `id` as received, the transcript takes its canonical form.
 
 Keys and source event CIDs remain exact authentication evidence; different
 authorized keys in one immutable DID document represent the same channel
