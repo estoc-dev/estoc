@@ -100,6 +100,23 @@ describe("signFromPrior over a recorded document", () => {
     expect((await verifyFromPrior(jwt, longFormDid)).method).toBe(`${longFormDid}#auth`);
   });
 
+  it("names the first method carrying the key under a suite didcomm reads, passing over one it does not read, and signs nothing when the document has none", async () => {
+    const { keys, successor } = await setup();
+    const { inputDocument } = await mintDid(keys, PREDECESSOR, ROUTE);
+    const { authentication } = await keys.didKeys(PREDECESSOR);
+    const legacy: JsonObject = { id: "#legacy", type: "UnknownKeyType", publicKeyMultibase: authentication.publicKey };
+    const recordedWith = async (authenticationIds: string[]) => {
+      const longFormDid = encodeLongForm({ ...inputDocument, verificationMethod: [...(inputDocument["verificationMethod"] as JsonObject[]), legacy], authentication: authenticationIds }) as Did;
+      const recorded = { didId: PREDECESSOR, did: longToShort(longFormDid) as Did, longFormDid };
+      await checkDidCreated(keys, recorded, ROUTE);
+      return recorded;
+    };
+    const both = await recordedWith(["#legacy", AUTHENTICATION_METHOD]);
+    expect(decodeProtectedHeader(await signFromPrior(keys, both, successor.longFormDid, IAT)).kid).toBe(`${both.longFormDid}${AUTHENTICATION_METHOD}`);
+    const only = await recordedWith(["#legacy"]);
+    await expect(signFromPrior(keys, only, successor.longFormDid, IAT)).rejects.toThrow(/authorizes no authentication method carrying the entity's key under a suite didcomm reads/);
+  });
+
   it("refuses a recorded predecessor whose document leaks the entity's private key, and signs nothing for it", async () => {
     const { keys, successor } = await setup();
     const { inputDocument } = await mintDid(keys, PREDECESSOR, ROUTE);

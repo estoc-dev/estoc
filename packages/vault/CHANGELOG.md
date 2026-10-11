@@ -9,6 +9,13 @@
   alone, the two compared as validated DIDs. `verifyReplicaGrant` checks
   a grant's replica with it and accepts what it accepted; refusing a
   replica that sends elsewhere, it now names the mediator it expected.
+- **`signFromPrior` signs under a method didcomm reads**: of the
+  predecessor's authentication methods carrying the entity's key, the
+  proof's `kid` is the first whose suite didcomm reads, since didcomm
+  reads the issuer's key from that method when it seals the proof. A
+  document another implementation wrote may also carry the key under a
+  suite didcomm does not read; with no other method, nothing is signed
+  (`InvalidFromPrior`).
 - **Verification relationships are read by `@estoc/did-peer`**
   (breaking): `authorizedMethodIds`, `definedMethod` and the service IDs
   of a retained document come from `@estoc/did-peer`, which
