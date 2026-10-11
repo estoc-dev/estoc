@@ -10,29 +10,19 @@ import { PLAIN_TYP, type IMessage, type Unpacked } from "../src/protocol/didcomm
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
 import {
   AgentTrace,
-  Keyring,
-  Pickup,
-  Receiver,
   ReceiverClosed,
   ReceiverInUse,
-  authorizedKeys,
-  classifyRecipients,
-  commitResolution,
   createDid,
   createMediation,
-  deliveryKey,
-  resolve,
-  retireDid,
-  senderProof,
-  type Authenticated,
-  type Delivery,
-  type ReceiptOutcome,
-  type ReceiverOptions,
-  type Resolution,
   type Source,
-  routeOf,
 } from "../src/index.js";
-import { disclose } from "../src/dids.js";
+import { authorizedKeys, commitResolution } from "../src/evidence.js";
+import { Keyring } from "../src/keyring.js";
+import { Pickup } from "../src/pickup.js";
+import { classifyRecipients, senderProof } from "../src/receive/gate.js";
+import { Receiver, deliveryKey, type Authenticated, type Delivery, type ReceiptOutcome, type ReceiverOptions } from "../src/receive/receiver.js";
+import { resolve, type Resolution } from "../src/resolver.js";
+import { disclose, retireDid, routeOf } from "../src/dids.js";
 import { didcomm, directParty, freshVault, kidOf, mediatedParty, mediatedRoute, newMediator, peerSealer, reloaded, sealed, webIdentity, type DirectParty, type Fresh, type MediatedParty, type Sealer, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;

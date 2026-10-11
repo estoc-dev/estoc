@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PURE_ACK_EFFECT, type Did, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
+import { PURE_ACK_EFFECT, canonicalDid, type Did, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { EXECUTION_REGISTER, LiveInput, MESSAGES_RECEIVED, canonicalDid, type ChannelRecord, type MessageRecord } from "../../src/index.js";
+import { EXECUTION_REGISTER, MESSAGES_RECEIVED, type ChannelRecord, type MessageRecord } from "../../src/index.js";
+import { LiveInput } from "../../src/action.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, peerSealer, sealed, type DirectParty, type Sealer } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, imported, restart, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";

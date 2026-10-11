@@ -4,9 +4,13 @@ import { scanVault, type DidId, type MessageId } from "@estoc/vault";
 import type { VaultRuntime } from "@estoc/event-store";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { Keyring, LiveAction, Receiver, send, type Content, type DispatcherOptions } from "../src/index.js";
+import type { Content } from "../src/index.js";
+import { LiveAction } from "../src/action.js";
+import { Keyring } from "../src/keyring.js";
+import { Receiver } from "../src/receive/receiver.js";
+import { send } from "../src/send.js";
 import { dispatch } from "../src/dispatch.js";
-import { Dispatcher } from "../src/dispatcher.js";
+import { Dispatcher, type DispatcherOptions } from "../src/dispatcher.js";
 import { didcomm, directParty, handTimers, posting, until, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;

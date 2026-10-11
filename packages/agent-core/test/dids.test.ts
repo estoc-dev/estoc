@@ -2,11 +2,12 @@ import { describe, expect, it, test } from "vitest";
 
 import { longToShort, resolveDIDCommDoc } from "@estoc/did-peer";
 import { createSeedKeystore } from "@estoc/keystore";
-import { InvalidIdentifier, InvalidPayload, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
+import { InvalidIdentifier, InvalidPayload, canonicalDid, didcommServiceUris, mintDid, scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, canonicalDid, createDid, createMediation, createVault, invitationUrl, parseInvitation, retireDid, routeOf, routeTargetOf, send } from "../src/index.js";
-import { disclose } from "../src/dids.js";
+import { EntityConflict, OOB_INVITATION, Unregistered, Unusable, WrongMediator, createDid, createMediation, createVault, invitationUrl, parseInvitation } from "../src/index.js";
+import { send } from "../src/send.js";
+import { disclose, retireDid, routeOf, routeTargetOf } from "../src/dids.js";
 import { dispatch } from "../src/dispatch.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { PASSPHRASE, didcomm, freshVault, mediatedRoute, memoryDriver, newMediator, party, posting, seedOf, ticking } from "./helpers.js";

@@ -5,7 +5,7 @@ import { PING_RESPONSE_EFFECT, PING_TYPE, PURE_ACK_EFFECT, forwardId, kindOf, ty
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { LiveInput } from "../../src/index.js";
+import { LiveInput } from "../../src/action.js";
 import { newMediator } from "../helpers.js";
 import { foldOf as fold, run, stopAll, until } from "./running.js";
 

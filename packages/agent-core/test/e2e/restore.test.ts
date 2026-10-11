@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Did, DidId, MessageId, VaultFold } from "@estoc/vault";
+import { canonicalDid, type Did, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { canonicalDid, createDid } from "../../src/index.js";
+import { createDid } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, mediatedRoute } from "../helpers.js";
 import { LONG, channelOf, foldOf, imported, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";

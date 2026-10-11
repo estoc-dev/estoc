@@ -9,25 +9,21 @@ import { ENCRYPTED_MIME, secretsResolverFor } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
 import {
   AgentTrace,
-  Keyring,
-  LiveAction,
   LocalRecords,
   UnknownEntity,
-  automaticDraft,
-  cancel,
-  completeResponse,
   createVault,
-  pinnedResolver,
-  prepare,
-  selectPreparation,
-  send,
-  transientOptions,
   unpack,
   type Content,
-  type DispatchOptions,
   type Dispatched,
 } from "../src/index.js";
-import { dispatch } from "../src/dispatch.js";
+import { LiveAction } from "../src/action.js";
+import { completeResponse } from "../src/effects.js";
+import { pinnedResolver } from "../src/evidence.js";
+import { Keyring } from "../src/keyring.js";
+import { transientOptions } from "../src/local-records.js";
+import { prepare } from "../src/prepare.js";
+import { automaticDraft, send } from "../src/send.js";
+import { cancel, dispatch, selectPreparation, type DispatchOptions } from "../src/dispatch.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import {
   after,

@@ -6,7 +6,13 @@ import { InvalidDidDocument, anonymousMessageId, canonicalDidOf, didKeyName, inb
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, Keyring, LiveInput, MAX_CONTENT_BYTES, Pickup, Receiver, createDid, deliveryKey, receiptOf, recordReceipt, type Authenticated, type Delivery, type ReceiverOptions, type Source, routeOf } from "../src/index.js";
+import { AgentTrace, MAX_CONTENT_BYTES, createDid, type Source } from "../src/index.js";
+import { LiveInput } from "../src/action.js";
+import { routeOf } from "../src/dids.js";
+import { Keyring } from "../src/keyring.js";
+import { Pickup } from "../src/pickup.js";
+import { receiptOf, recordReceipt } from "../src/receive/receipt.js";
+import { Receiver, deliveryKey, type Authenticated, type Delivery, type ReceiverOptions } from "../src/receive/receiver.js";
 import { didcomm, directParty, freshVault, mediatedParty, newMediator, peerSealer, refuseCommits, reloaded, sealed, type DirectParty, type Fresh, holdAddresses } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;

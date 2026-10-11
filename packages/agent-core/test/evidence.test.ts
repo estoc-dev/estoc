@@ -5,7 +5,10 @@ import { longToShort, resolveDIDCommDoc, toDIDCommDIDDoc } from "@estoc/did-peer
 import { MemoryVault } from "@estoc/event-store";
 import { didKeyName, objectReader, peerResolution, scanVault, type Did, type DidId, type PublicKey } from "@estoc/vault";
 
-import { Keyring, UnauthorizedKey, authorizedKeys, commitResolution, createDid, didcommDocumentOf, knownLongForms, pinnedResolver, readResolution, resolve, secretsResolverFor, type Resolution } from "../src/index.js";
+import { UnauthorizedKey, createDid, secretsResolverFor } from "../src/index.js";
+import { authorizedKeys, commitResolution, didcommDocumentOf, pinnedResolver, readResolution } from "../src/evidence.js";
+import { Keyring } from "../src/keyring.js";
+import { knownLongForms, resolve, type Resolution } from "../src/resolver.js";
 import { didcomm, freshVault, json, newMediator, webFetch, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
 
 const BOB = "did:web:bob.example";

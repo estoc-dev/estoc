@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, test } from "vitest";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
-import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MintedDid, type Replica } from "@estoc/vault";
+import { AUTHENTICATION_METHOD, canonicalDid, scanVault, type Did, type DidId, type MintedDid, type Replica } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { Agent, DELIVERY_REQUEST, LiveInput, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
+import { LiveInput } from "../src/action.js";
+import { classifyRecipients } from "../src/receive/gate.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, forwarded, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
 

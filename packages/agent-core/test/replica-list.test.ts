@@ -1,9 +1,9 @@
 import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readReplicaGrant, signReplicaGrant, type Did, type ReplicaId } from "@estoc/vault";
+import { canonicalDid, readReplicaGrant, signReplicaGrant, type Did, type ReplicaId } from "@estoc/vault";
 
-import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, canonicalDid, type ListedReplica } from "../src/index.js";
+import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, type ListedReplica } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { copyOf, didcomm, newMediator, party, type Party } from "./helpers.js";
 

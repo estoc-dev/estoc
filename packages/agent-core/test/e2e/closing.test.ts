@@ -4,7 +4,9 @@ import { PROBLEM_REPORT_TYPE, collectGarbage, inboundMessageId, type Cid, type C
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { LiveInput, MAX_ENVELOPE_BYTES, Unusable } from "../../src/index.js";
+import { Unusable } from "../../src/index.js";
+import { LiveInput } from "../../src/action.js";
+import { MAX_ENVELOPE_BYTES } from "../../src/dispatch.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, restart, run, snapshotOf, stopAll, until, type Running } from "./running.js";

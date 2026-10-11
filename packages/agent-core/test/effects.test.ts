@@ -34,35 +34,28 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
-import { liveInput, responding } from "../src/action.js";
+import { LiveAction, Responding, liveInput, responding } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
-  Keyring,
-  LiveAction,
-  Responding,
-  Receiver,
   createDid,
   effectTypesOf,
-  handlersOf,
   openVault,
-  pinnedResolver,
-  prepare,
-  reactTo,
-  completeResponse,
-  receiptOf,
-  recordReceipt,
-  retireDid,
   unpack,
-  type Authenticated,
-  type EffectOptions,
   type EffectOutcome,
   type Handler,
   type Reacted,
   type Source,
-  routeOf,
 } from "../src/index.js";
+import { retireDid, routeOf } from "../src/dids.js";
+import { completeResponse, reactTo, type EffectOptions } from "../src/effects.js";
+import { pinnedResolver } from "../src/evidence.js";
+import { handlersOf } from "../src/handlers/index.js";
+import { Keyring } from "../src/keyring.js";
+import { prepare } from "../src/prepare.js";
+import { receiptOf, recordReceipt } from "../src/receive/receipt.js";
+import { Receiver, type Authenticated } from "../src/receive/receiver.js";
 import { dispatch } from "../src/dispatch.js";
 import { Dispatcher } from "../src/dispatcher.js";
 import { copyOf, didcomm, directParty, peerSealer, posting, refuseCommits, refuseReads, refuseSubmissions, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";

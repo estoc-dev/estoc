@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, test } from "vitest";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
-import { PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, scanVault, type Did, type DidId, type MessageId } from "@estoc/vault";
+import { PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, canonicalDid, scanVault, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { ACCOUNT_REGISTERED, Agent, AgentTrace, EXECUTION_REGISTER, LIVE_DELIVERY_CHANGE, LinkClosed, STATUS_REQUEST, canonicalDid, createMediation, didcommDocumentOf, mediationOf } from "../../src/index.js";
+import { ACCOUNT_REGISTERED, Agent, AgentTrace, EXECUTION_REGISTER, LIVE_DELIVERY_CHANGE, LinkClosed, STATUS_REQUEST, createMediation } from "../../src/index.js";
+import { didcommDocumentOf } from "../../src/evidence.js";
+import { mediationOf } from "../../src/mediation.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { afterNextCommit, didcomm, freshVault, handTimers, json, newMediator, party, sealed, webIdentity, type Sealer } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, restart, run, stopAll, until, type Running } from "./running.js";

@@ -10,6 +10,7 @@ import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type Seed
 import {
   AUTHENTICATION_METHOD,
   PLAINTEXT_TYP,
+  canonicalDid,
   didKeyName,
   inboundMessageId,
   readPlaintext,
@@ -33,27 +34,22 @@ import { PLAIN_TYP, packEncrypted, secretsResolverFor, type DIDResolver, type IM
 import { FORWARD } from "../src/protocol/spec.js";
 import {
   AgentTrace,
-  Keyring,
-  MediatorLink,
-  Receiver,
-  authorizedKeys,
-  canonicalDid,
-  commitResolution,
   createDid,
   createMediation,
   createVault,
-  pinnedResolver,
-  receiptOf,
-  resolve,
-  routeOf,
-  type LinkOptions,
   type OpenedVault,
   type RecipientsAdded,
   type Timers,
   type RouteSpec,
 } from "../src/index.js";
+import { routeOf } from "../src/dids.js";
+import { authorizedKeys, commitResolution, pinnedResolver } from "../src/evidence.js";
+import { MediatorLink, type LinkOptions } from "../src/link.js";
+import { receiptOf } from "../src/receive/receipt.js";
+import { Receiver } from "../src/receive/receiver.js";
+import { resolve } from "../src/resolver.js";
 import { Account, type Confirmations } from "../src/arrangement.js";
-import { replicaSecrets } from "../src/keyring.js";
+import { Keyring, replicaSecrets } from "../src/keyring.js";
 import { FakeMediator, MEDIATOR_HTTP } from "./fake-mediator.js";
 
 export const didcomm = { Message };

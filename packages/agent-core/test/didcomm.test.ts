@@ -9,7 +9,8 @@ import { InvalidJson, canonicalize, parseStrict } from "@estoc/event-store";
 import { intentOf, scanVault, storeMessage, wirePlaintext, type Did, type DidId } from "@estoc/vault";
 
 import { EnvelopeRefused, secretsResolverFor, unpack, type DidcommApi, type IMessage, type SecretsResolver } from "../src/protocol/didcomm.js";
-import { Keyring, createDid } from "../src/index.js";
+import { createDid } from "../src/index.js";
+import { Keyring } from "../src/keyring.js";
 import { sealingOf, senderProof } from "../src/receive/gate.js";
 import { didcomm, freshVault, newMediator, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
 

@@ -28,7 +28,9 @@ import {
 } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, automaticDraft, createDid, retireDid, send, type Content, routeOf } from "../src/index.js";
+import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, createDid, type Content } from "../src/index.js";
+import { retireDid, routeOf } from "../src/dids.js";
+import { automaticDraft, send } from "../src/send.js";
 import { directParty, merged, received, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
