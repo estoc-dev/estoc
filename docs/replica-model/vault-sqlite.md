@@ -488,7 +488,7 @@ receiving on, has the account hold every address the arrangement routes, and
 picks up its own mailbox; mail the mediator fanned out to the earlier replica
 before the restore stays with that replica. It holds none of the earlier
 runtime's local delivery records under
-[distributed-delivery.md section 6.2](distributed-delivery.md#runtime-local-delivery-records):
+[distributed-delivery.md section 6.1](distributed-delivery.md#runtime-local-delivery-records):
 a message with several preparations waits for the user's choice, and one
 whose acceptance the earlier runtime saw but never recorded stays
 unconfirmed. The open is

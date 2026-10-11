@@ -14,16 +14,18 @@ blob-store 1.0 for blobs the replica keeps at its mediator, channels of
 did:peer:4 pairs rotated by `from_prior`, invitations, trust-ping,
 basicmessage, user-profile and report-problem.
 
-The identifiers, the hashes, the commit boundaries and the wire
-profiles are the [replica model](../../docs/replica-model/README.md)'s:
+The identifiers, the hashes and the commit boundaries are the
+[replica model](../../docs/replica-model/README.md)'s:
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
-for the inbound and execution identities, the effect keys, the commit
-boundaries and the mediator's envelope profile,
+for the inbound and execution identities, the effect keys and the commit
+boundaries,
 [channels](../../docs/replica-model/channels.md) for the channel
 payloads, and
 [address and contact policy](../../docs/replica-model/relationships.md)
-for the DID profiles. The code and its tests define what the procedures
-do; each module's leading comment states what it is responsible for.
+for the DID profiles; what a forward must be is
+[the mediator's README](../../mediator/README.md). The code and its tests
+define what the procedures do; each module's leading comment states what
+it is responsible for.
 
 Runs wherever didcomm-rust's WASM does: the browser (Vite), workerd, Node.
 The WASM itself is *not* loaded here — see [Didcomm API](#didcomm-api).
