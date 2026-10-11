@@ -1,6 +1,6 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, type KeyObject } from "node:crypto";
 
-import { Message } from "@estoc/didcomm-node";
+import { FromPrior, Message } from "@estoc/didcomm-node";
 import { describe, it, expect } from "vitest";
 import { DIDDocConversionError, toDIDCommDIDDoc } from "../src/did-doc.js";
 import {
@@ -124,6 +124,66 @@ describe("toDIDCommDIDDoc", () => {
       "Other",
       "Other",
     ]);
+  });
+
+  it("maps a method to Other unless didcomm-rust reads its key under its suite from the first material it carries", () => {
+    const ed25519 = "z6MkrCD1csqtgdj8sjrsu8jxcbeyP6m7LiK87NzhfWqio5yr";
+    const x25519 = "z6LSqPZfn9krvgXma2icTMKf2uVcYhKXsudCmPoUzqGYW24U";
+    const x = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo";
+    const methods: [Record<string, unknown>, string][] = [
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "X25519", x } }, "JsonWebKey2020"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed448", x } }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "EC", crv: "P-256", x } }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "X25519", x: 1 } }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyMultibase: x25519 }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed25519", x }, publicKeyMultibase: ed25519 }, "JsonWebKey2020"],
+      [{ type: "Ed25519VerificationKey2020", publicKeyMultibase: ed25519 }, "Ed25519VerificationKey2020"],
+      [{ type: "Ed25519VerificationKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed25519", x } }, "Other"],
+      [{ type: "X25519KeyAgreementKey2020", publicKeyMultibase: ed25519 }, "Other"],
+      [{ type: "X25519KeyAgreementKey2019", publicKeyBase58: "JhNWeSVLMYccCk7iopQW4guaSJTojqpMEELgSLhKwRr" }, "X25519KeyAgreementKey2019"],
+      [{ type: "X25519KeyAgreementKey2019", publicKeyMultibase: x25519 }, "Other"],
+      [{ type: "EcdsaSecp256k1VerificationKey2019", publicKeyJwk: { kty: "EC", crv: "secp256k1", x, y: x } }, "Other"],
+      [{ type: "Ed25519VerificationKey2020" }, "Other"],
+    ];
+    const didDoc = toDIDCommDIDDoc({
+      id: "did:example:alice",
+      verificationMethod: methods.map(([method], i) => ({ id: `#key-${i}`, ...method })),
+    });
+
+    expect(didDoc.verificationMethod.map((method) => method.type)).toStrictEqual(methods.map(([, suite]) => suite));
+  });
+
+  it("passes a JWK on as its key type, curve and the members holding the key, so that didcomm-rust seals to, seals from and proves under a key whose JWK carries more", async () => {
+    const jwkMethod = (id: string, publicKey: KeyObject, extra: Record<string, unknown>) => ({ id, type: "JsonWebKey2020", publicKeyJwk: { ...publicKey.export({ format: "jwk" }), ...extra } });
+    const secretOf = (kid: string, privateKey: KeyObject) => ({ id: kid, type: "JsonWebKey2020" as const, privateKeyJwk: privateKey.export({ format: "jwk" }) });
+    const secretsOf = (...secrets: ReturnType<typeof secretOf>[]) => ({
+      get_secret: async (id: string) => secrets.find((secret) => secret.id === id) ?? null,
+      find_secrets: async (ids: string[]) => ids.filter((id) => secrets.some((secret) => secret.id === id)),
+    });
+    const prior = generateKeyPairSync("ed25519");
+    const sender = generateKeyPairSync("x25519");
+    const recipient = generateKeyPairSync("x25519");
+    const priorDid = encodeLongForm({ verificationMethod: [jwkMethod("#signing", prior.publicKey, { alg: "EdDSA", kid: "signing", key_ops: ["verify"] })], authentication: ["#signing"] });
+    const senderDid = encodeLongForm({ verificationMethod: [jwkMethod("#agreement", sender.publicKey, { alg: "ECDH-1PU+A256KW", use: "enc" })], keyAgreement: ["#agreement"] });
+    const recipientDid = encodeLongForm({ verificationMethod: [jwkMethod("#agreement", recipient.publicKey, { alg: "ECDH-ES+A256KW", ext: true })], keyAgreement: ["#agreement"] });
+    const [priorKid, senderKid, recipientKid] = [`${priorDid}#signing`, `${senderDid}#agreement`, `${recipientDid}#agreement`];
+
+    expect(toDIDCommDIDDoc(resolveLongForm(priorDid)).verificationMethod).toStrictEqual([
+      { id: priorKid, type: "JsonWebKey2020", controller: priorDid, publicKeyJwk: { kty: "OKP", crv: "Ed25519", x: prior.publicKey.export({ format: "jwk" }).x } },
+    ]);
+
+    const resolver = { resolve: resolveDIDCommDoc };
+    const fromPrior = new FromPrior({ iss: priorDid, sub: senderDid, iat: 1_757_700_000 });
+    const [proof, signedBy] = await fromPrior.pack(priorKid, resolver, secretsOf(secretOf(priorKid, prior.privateKey)));
+    fromPrior.free();
+    expect(signedBy).toBe(priorKid);
+    const message = new Message({ id: "1", typ: "application/didcomm-plain+json", type: "https://didcomm.org/basicmessage/2.0/message", from: senderDid, to: [recipientDid], from_prior: proof, body: { content: "hello" } });
+    const [packed] = await message.pack_encrypted(recipientKid, senderKid, null, resolver, secretsOf(secretOf(senderKid, sender.privateKey)), { forward: false });
+    message.free();
+    const [unpacked, metadata] = await Message.unpack(packed, resolver, secretsOf(secretOf(recipientKid, recipient.privateKey)), {});
+    expect(unpacked.as_value().body).toStrictEqual({ content: "hello" });
+    unpacked.free();
+    expect(metadata).toMatchObject({ authenticated: true, encrypted_from_kid: senderKid, encrypted_to_kids: [recipientKid], from_prior_issuer_kid: priorKid });
   });
 
   it("absolutizes relative routing keys", () => {

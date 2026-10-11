@@ -14,7 +14,7 @@
 
 import type { Secret } from "@estoc/did-peer";
 import { longToShort, splitDidUrl } from "@estoc/did-peer";
-import { authorizedMethodIds, peerResolution, type DidId, type DidKeys, type Keys, type LocalKey, type MediationId, type VaultFold } from "@estoc/vault";
+import { authorizedMethodIds, peerResolution, type Did, type DidId, type DidKeys, type Keys, type LocalKey, type MediationId, type ReplicaId, type VaultFold } from "@estoc/vault";
 
 /** A held identity: its keys, and the DID URLs of each method under every spelling the entity has. */
 interface Held {
@@ -38,6 +38,16 @@ export function secretsOf(keys: DidKeys, spellings: readonly string[], methods: 
   add(methods.authentication, keys.authentication);
   add(methods.keyAgreement, keys.keyAgreement);
   return secrets;
+}
+
+/**
+ * The secrets of a replica's DID, under both its spellings: the
+ * mediator seals what it pushes to the short form, and another replica
+ * seals to the long form it was given.
+ */
+export async function replicaSecrets(keys: Keys, replica: { replicaId: ReplicaId; did: Did; longFormDid: Did }): Promise<Secret[]> {
+  const { document } = peerResolution(replica.longFormDid);
+  return secretsOf(await keys.replicaKeys(replica.replicaId), [replica.longFormDid, replica.did], { authentication: authorizedMethodIds(document, "authentication"), keyAgreement: authorizedMethodIds(document, "keyAgreement") });
 }
 
 export class Keyring {

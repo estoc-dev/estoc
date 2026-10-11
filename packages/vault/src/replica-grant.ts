@@ -19,9 +19,9 @@ import { InvalidJson, canonicalText, isJsonObject } from "@estoc/event-store";
 import { CompactSign, base64url, compactVerify, decodeProtectedHeader, importJWK } from "jose";
 
 import { IdentityMismatch, InvalidReplicaGrant } from "./errors.js";
-import { checkReplicaKeys, mintReplicaDid, type Keys } from "./identity.js";
+import { checkReplicaDocument, mintReplicaDid, type Keys } from "./identity.js";
 import { sameDid } from "./ids.js";
-import { canonicalDidOf, didcommServiceUris, peerResolution } from "./peer-document.js";
+import { peerResolution } from "./peer-document.js";
 import { publicJwk, signingKey, signingMethod } from "./signing-method.js";
 import { isCompactJwt, isDerivedId, isDid, isDidUrl, isMintedId, isPeer4Long, isPeer4Short } from "./syntax.js";
 import type { Did, DidUrl, MediationId, ReplicaId } from "./types.js";
@@ -162,13 +162,8 @@ export async function signReplicaGrant(keys: Keys, mediation: GrantingMediation,
  * one, `kid` names, under either spelling of the account, a method its
  * document authorizes for authentication and that a mediator reads the
  * account key the seed derives for the grant's arrangement from, the
- * signature is
- * that key's, and the replica's document carries the keys the seed
- * derives for the replica's ID and sends to the grant's mediator
- * alone. The mediator may be spelled differently in the grant and in
- * the service: each did:peer:4 long form among them is validated
- * against its hash before the two are compared, since resolving the
- * replica's document validates nothing nested in its service URI.
+ * signature is that key's, and the replica's document is the seed's
+ * for the replica's ID at the grant's mediator (`checkReplicaDocument`).
  * `InvalidReplicaGrant`, `IdentityMismatch` or `InvalidDidDocument`
  * otherwise. Whether the mediator is the arrangement's own is for
  * whoever holds its creation.
@@ -189,9 +184,6 @@ export async function verifyReplicaGrant(keys: Keys, jws: string, accountDid: Di
   } catch {
     throw new InvalidReplicaGrant(`the signature is not that of the account key the seed derives for mediation ${grant.mediationId}`);
   }
-  const replica = peerResolution(grant.replicaLongForm);
-  await checkReplicaKeys(keys, grant.replicaId, replica);
-  const uris = didcommServiceUris(replica.document);
-  if (uris.length !== 1 || canonicalDidOf(uris[0]!) !== canonicalDidOf(grant.mediator)) throw new IdentityMismatch(`replica ${grant.replicaId} sends to ${JSON.stringify(uris)}, not the grant's mediator`);
+  await checkReplicaDocument(keys, grant.replicaId, peerResolution(grant.replicaLongForm), grant.mediator);
   return grant;
 }

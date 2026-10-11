@@ -4,11 +4,9 @@ import { resolveDIDCommDoc } from "@estoc/did-peer";
 import { AUTHENTICATION_METHOD, scanVault, type Did, type DidId, type MintedDid, type Replica } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
-import { FORWARD } from "../src/protocol/spec.js";
 import { Agent, DELIVERY_REQUEST, LiveInput, MESSAGES_RECEIVED, STATUS_REQUEST, canonicalDid, classifyRecipients, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { didcomm, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
+import { didcomm, forwarded, kidOf, mediatedParty, newMediator, party, peerSealer, sealed, until, type MediatedParty, type Party, mediatedRoute } from "./helpers.js";
 
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
 const PICKUP = [STATUS_REQUEST, DELIVERY_REQUEST, MESSAGES_RECEIVED];
@@ -51,13 +49,6 @@ async function peer(mediator: FakeMediator): Promise<{ bob: MediatedParty; agent
 }
 
 const hello = (bob: MediatedParty, agent: Agent, to: MintedDid) => agent.send({ channel: { localDid: bob.did, peerDid: to.did }, recipientDid: to.longFormDid }, { type: BASIC_MESSAGE, body: { content: "hello" } });
-
-/** An envelope left at the mediator for `next`, by no one in particular. */
-async function forwarded(mediator: FakeMediator, next: string, packed: string): Promise<void> {
-  const forward = { id: crypto.randomUUID(), typ: PLAIN_TYP, type: FORWARD, to: [mediator.did], body: { next }, attachments: [{ id: crypto.randomUUID(), data: { json: JSON.parse(packed) as unknown } }] } as IMessage;
-  const [outer] = await packEncrypted(didcomm, forward, mediator.did, null, null, { resolve: resolveDIDCommDoc }, secretsResolverFor([]), { forward: false });
-  await mediator.handleHttp(outer);
-}
 
 /** Who asked the mediator for pickup, by canonical DID, in order and without repeats. */
 function pickupSenders(mediator: FakeMediator): string[] {
@@ -104,7 +95,7 @@ describe("the mail of a replica-mediation arrangement", () => {
     expect(alice.agent.connections()).toMatchObject([{ live: true }]);
   });
 
-  test("an envelope naming only the replica's own DID is acknowledged unopened, leaving a diagnostic and nothing in the vault", async () => {
+  test("an envelope naming only the replica's own DID is acknowledged unopened when the host takes no mail to the replica, leaving a diagnostic and nothing in the vault", async () => {
     const mediator = await newMediator();
     const alice = await enrolled(mediator);
     const { bob } = await peer(mediator);
@@ -120,8 +111,8 @@ describe("the mail of a replica-mediation arrangement", () => {
     expect(mediator.queues.get(alice.replica.did)).toEqual([]);
     await alice.agent.settled();
     expect(alice.inbounds.map((inbound) => inbound.received)).toMatchObject([
-      { outcome: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) },
-      { outcome: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) },
+      { outcome: "terminal", reason: expect.stringMatching(/takes no mail addressed to its replica/) },
+      { outcome: "terminal", reason: expect.stringMatching(/takes no mail addressed to its replica/) },
     ]);
     expect(alice.agent.discardedDeliveries()).toHaveLength(2);
     expect(alice.agent.waitingDeliveries()).toEqual([]);
@@ -131,7 +122,7 @@ describe("the mail of a replica-mediation arrangement", () => {
 });
 
 describe("an envelope naming a key of the runtime's replica DID", () => {
-  it("is terminal beside keys the vault lacks, and application mail beside a communication DID's key", async () => {
+  it("is the replica's own mail beside keys the vault lacks, and application mail beside a communication DID's key", async () => {
     const mediator = await newMediator();
     const alice = await enrolled(mediator);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
@@ -141,8 +132,9 @@ describe("an envelope naming a key of the runtime's replica DID", () => {
     const stranger = "did:example:stranger#key-1";
     const own = alice.runtime.author;
 
-    for (const kids of [[replicaKid], [shortKid], [stranger, replicaKid]]) {
-      expect(classifyRecipients(fold, kids, own)).toMatchObject({ verdict: "terminal", reason: expect.stringMatching(/no protocol addressed to a replica is supported/) });
+    const replica = { replicaId: own, mediationId: alice.mediationId, did: alice.replica.did, longFormDid: alice.replica.longFormDid };
+    for (const [kids, kid] of [[[replicaKid], replicaKid], [[shortKid], shortKid], [[stranger, replicaKid], replicaKid]] as const) {
+      expect(classifyRecipients(fold, kids, own)).toEqual({ verdict: "replica", kid, replica: { ...replica, mediatorDid: alice.created.data.mediatorDid } });
     }
     expect(classifyRecipients(fold, [replicaKid, addressKid], own)).toMatchObject({ verdict: "eligible", kid: addressKid });
     expect(classifyRecipients(fold, [replicaKid])).toMatchObject({ verdict: "terminal", reason: expect.stringMatching(/local recipient material is unavailable/) });

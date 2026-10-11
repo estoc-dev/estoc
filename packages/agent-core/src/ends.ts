@@ -11,7 +11,7 @@
 
 import { DIDDocConversionError, splitDidUrl } from "@estoc/did-peer";
 import { parseStrict, type JsonObject } from "@estoc/event-store";
-import { InvalidDidDocument, InvalidPublicKey, agreementKey, sameDid, type Addressing, type Did, type DidUrl, type LocalKey, type PeerResolution, type PublicKey } from "@estoc/vault";
+import { InvalidDidDocument, InvalidPublicKey, agreementKey, authorizedMethodIds, methodPublicKey, sameDid, type Addressing, type Did, type DidUrl, type LocalKey, type PeerResolution, type PublicKey } from "@estoc/vault";
 
 import { ENCRYPTED_MIME, PLAIN_TYP, endpointOf, packEncrypted, secretsResolverFor, type DIDResolver, type DidcommApi, type IMessage } from "./protocol/didcomm.js";
 import { FORWARD } from "./protocol/spec.js";
@@ -58,20 +58,37 @@ export function addressingOf({ sender, recipient, fromPrior }: Ends): Addressing
  * The recipient at `did` as `key` can seal to it: at the first method,
  * in document order, the resolved document authorizes for key
  * agreement, didcomm can seal to, and on `key`'s own curve. Null when
- * there is none. The document may authorize more: a method of a suite
- * didcomm does not pack with, which its projection marks `Other`, or a
- * key on another curve, since didcomm agrees both ends over one curve;
- * or a key that agrees nothing, a signing key or a low-order point.
+ * there is none. The document may authorize more: a method didcomm
+ * reads no key from, which its projection marks `Other`, or a key on
+ * another curve, since didcomm agrees both ends over one curve; or a
+ * key that agrees nothing, a signing key or a low-order point.
  * Each is authorized and still unusable here, and naming it as the
  * recipient key ID would fail the seal.
  */
 export function recipientEndOf(did: Did, resolution: Resolution, key: LocalKey): RecipientEnd | null {
-  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
-  const packable = new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
+  const packable = packableMethodIds(resolution);
   for (const [methodId, publicKey] of authorizedKeys(resolution, "keyAgreement")) {
     if (packable.has(methodId) && agrees(publicKey, key.type)) return { did, resolution, methodId, publicKey };
   }
   return null;
+}
+
+/**
+ * The sender at `did`, sealing from `key` under its own document. The
+ * document is read, not rebuilt from a template, so it may also carry
+ * the key in a method didcomm reads no key from, under a suite didcomm
+ * does not know or over material that suite is not read from, which
+ * the projection marks `Other`; naming that method would fail the seal.
+ */
+export function senderEndOf(did: Did, resolution: PeerResolution, key: LocalKey): SenderEnd | null {
+  const packable = packableMethodIds(resolution);
+  const methodId = authorizedMethodIds(resolution.document, "keyAgreement").find((id) => packable.has(id) && methodPublicKey(resolution.document, id) === key.publicKey);
+  return methodId === undefined ? null : { did, resolution, methodId, key };
+}
+
+function packableMethodIds(resolution: PeerResolution): Set<string> {
+  const projected = didcommDocumentOf(resolution, resolution.document["id"] as string);
+  return new Set(projected.verificationMethod.filter((method) => method.type !== "Other").map((method) => method.id));
 }
 
 function agrees(key: PublicKey, type: LocalKey["type"]): boolean {

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **A replica's document is checked whole** (breaking):
+  `checkReplicaDocument(keys, replicaId, resolution, mediatorDid)`
+  replaces `checkReplicaKeys`. Besides carrying the two keys the seed
+  derives for the replica's ID, the document must send to that mediator
+  alone, the two compared as validated DIDs. `verifyReplicaGrant` checks
+  a grant's replica with it and accepts what it accepted; refusing a
+  replica that sends elsewhere, it now names the mediator it expected.
+- **`signFromPrior` signs under a method didcomm reads**: of the
+  predecessor's authentication methods carrying the entity's key, the
+  proof's `kid` is the first didcomm reads the key from, since didcomm
+  reads the issuer's key from that method when it seals the proof. A
+  document another implementation wrote may also carry the key under a
+  suite didcomm does not know or over material that suite is not read
+  from; with no other method, nothing is signed (`InvalidFromPrior`).
 - **Verification relationships are read by `@estoc/did-peer`**
   (breaking): `authorizedMethodIds`, `definedMethod` and the service IDs
   of a retained document come from `@estoc/did-peer`, which

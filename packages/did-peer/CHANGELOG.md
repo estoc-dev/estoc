@@ -31,6 +31,27 @@
   different methods under one ID or a reference that names no method, is
   a `DIDDocConversionError`; it used to convert with one of the two
   methods, or the dangling reference, in it.
+- **`toDIDCommDIDDoc` types `Other` a method didcomm-rust reads no key
+  from** (behaviour change): a method keeps its suite only when
+  didcomm-rust reads its key under that suite from the first of
+  `publicKeyJwk`, `publicKeyMultibase` and `publicKeyBase58` it carries:
+  a JWK under `JsonWebKey2020` on P-256, secp256k1, Ed25519 or X25519, a
+  multibase key under the 2020 suite of its own curve, a base58 key
+  under `X25519KeyAgreementKey2019` or `Ed25519VerificationKey2018`. A
+  known suite over other material, such as `JsonWebKey2020` with a
+  multibase key or a multibase key on another curve, used to keep its
+  suite and fail whichever operation picked it.
+  `EcdsaSecp256k1VerificationKey2019`, which didcomm-rust reads no key
+  under, is `Other` too. A caller that passes over `Other` methods now
+  passes over every method didcomm-rust cannot use.
+- **`toDIDCommDIDDoc` passes a JWK on as the key it holds** (behaviour
+  change): the `publicKeyJwk` of a `JsonWebKey2020` method keeps `kty`,
+  `crv` and the members holding the key, `x` and on EC `y`, and nothing
+  else. didcomm-rust imports the key through askar, whose JWK parser
+  fails on a member it has no case for, such as `alg`, so a JWK naming
+  its algorithm used to keep its suite and fail whichever operation
+  picked it; the key imported is the one the JWK holds. A JWK without
+  one of those members as a string is `Other`.
 
 ## 0.2.0 — 2026-09-29
 

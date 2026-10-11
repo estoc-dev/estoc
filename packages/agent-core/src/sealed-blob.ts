@@ -8,11 +8,12 @@
  */
 
 import { base32 } from "multiformats/bases/base32";
+import * as Digest from "multiformats/hashes/digest";
 import { sha256 } from "multiformats/hashes/sha2";
 
 import { BlobMismatch, BlobUnopened } from "./errors.js";
 
-const KEY_BYTES = 32;
+export const BLOB_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 
@@ -25,6 +26,11 @@ export interface BlobKey {
   key: Uint8Array;
 }
 
+/** Where a sealed blob is read, with what opens it. */
+export interface BlobLink extends BlobKey {
+  url: string;
+}
+
 export interface SealedBlob extends BlobKey {
   /** the nonce, then the ciphertext and its tag: what is put and uploaded */
   bytes: Uint8Array;
@@ -34,8 +40,19 @@ export async function blobName(bytes: Uint8Array): Promise<string> {
   return base32.encode((await sha256.digest(bytes)).bytes);
 }
 
+/** Is `text` a name `blobName` could give, spelled as it spells one? */
+export function isBlobName(text: string): boolean {
+  try {
+    const bytes = base32.decode(text);
+    const digest = Digest.decode(bytes);
+    return digest.code === sha256.code && digest.size === 32 && base32.encode(bytes) === text;
+  } catch {
+    return false;
+  }
+}
+
 export async function sealBlob(plaintext: Uint8Array): Promise<SealedBlob> {
-  const key = crypto.getRandomValues(new Uint8Array(KEY_BYTES));
+  const key = crypto.getRandomValues(new Uint8Array(BLOB_KEY_BYTES));
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, await aesKey(key, "encrypt"), plaintext);
   const bytes = new Uint8Array(NONCE_BYTES + ciphertext.byteLength);
@@ -48,7 +65,7 @@ export async function sealBlob(plaintext: Uint8Array): Promise<SealedBlob> {
 export async function openBlob(bytes: Uint8Array, { hash, key }: BlobKey): Promise<Uint8Array> {
   const named = await blobName(bytes);
   if (named !== hash) throw new BlobMismatch(hash, named);
-  if (key.length !== KEY_BYTES || bytes.length < SEAL_OVERHEAD) throw new BlobUnopened();
+  if (key.length !== BLOB_KEY_BYTES || bytes.length < SEAL_OVERHEAD) throw new BlobUnopened();
   try {
     return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.subarray(0, NONCE_BYTES) }, await aesKey(key, "decrypt"), bytes.subarray(NONCE_BYTES)));
   } catch (err) {

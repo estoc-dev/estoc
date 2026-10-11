@@ -2,15 +2,17 @@
  * Every delivery this runtime is handed — an attachment the mediator
  * delivered, or an envelope posted straight to it — goes through one
  * gate before anything reaches the vault. The recipients it names
- * decide first: a delivery this vault may never open is terminal, as
- * is one naming this runtime's replica DID and no communication
- * DID of the vault; one waiting on something recoverable of this
- * runtime's is held. It is
+ * decide first: a delivery this vault may never open is terminal; one
+ * waiting on something recoverable of this runtime's is held. It is
  * then opened with the one key it may be opened with, its sender read
  * from what the vault holds and nothing else, and what the envelope
  * proves checked; what passes goes to the receipt, which records it as
  * one observation, told here by its event, or says what of this
- * runtime's it still waits for. A terminal delivery is acknowledged to
+ * runtime's it still waits for. One naming this runtime's replica DID
+ * and no communication DID of the vault is the replica's own mail: it
+ * is opened with the replica's key and handed to the replica receipt,
+ * never to the vault, and is terminal unopened when there is no
+ * replica receipt. A terminal delivery is acknowledged to
  * the mediator and leaves nothing in the vault, only a bounded
  * diagnostic here and in the trace: what it lacked, without a claimed
  * sender presented as anyone, and without a cause asserted.
@@ -38,20 +40,21 @@
  * the vault cannot authenticate now is refused now.
  */
 
-import type { Secret } from "@estoc/did-peer";
+import { isShortForm, splitDidUrl, type Secret } from "@estoc/did-peer";
 import { canonicalize, parseStrict, type VaultRuntime } from "@estoc/event-store";
 import { rawCidOfBytes, sameDid, scanVault, type Did, type DidId, type DidUrl, type EventReference, type Keys, type KeyName, type MediationId, type VaultFold } from "@estoc/vault";
 
-import { secretsResolverFor, unpack, type DidcommApi, type IMessage, type UnpackMetadata } from "../protocol/didcomm.js";
-import { envelopeHeader } from "../protocol/envelope.js";
+import { secretsResolverFor, unpack, type DidcommApi, type IMessage, type Unpacked, type UnpackMetadata } from "../protocol/didcomm.js";
+import { envelopeHeader, type EnvelopeHeader } from "../protocol/envelope.js";
 import type { LiveInput } from "../action.js";
 import { ReceiverClosed, ReceiverInUse } from "../errors.js";
 import { pinnedResolver } from "../evidence.js";
-import type { Keyring } from "../keyring.js";
+import { replicaSecrets, type Keyring } from "../keyring.js";
 import type { Delivered, Fate, Handle } from "../pickup.js";
 import { serially } from "../procedure.js";
+import type { BoundReplica } from "../replica-channel.js";
 import { note, type AgentTrace, type TraceData } from "../trace.js";
-import { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender } from "./gate.js";
+import { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients } from "./gate.js";
 
 /** Where a delivery came from: an attachment of a pickup delivery, by the arrangement and attachment ID, or a post straight to this runtime. */
 export type Source = { kind: "pickup"; mediationId: MediationId; deliveryId: string } | { kind: "direct" };
@@ -101,6 +104,21 @@ export type ReceiptOutcome = { outcome: "received"; cid: EventReference<"message
 
 export type Receipt = (authenticated: Authenticated) => Promise<ReceiptOutcome>;
 
+/** Mail to this runtime's replica, opened: taken from the replica's mailbox, sealed by a DID's long form with no rotation proof. */
+export interface ReplicaAuthenticated {
+  source: Extract<Source, { kind: "pickup" }>;
+  plaintext: IMessage;
+  /** this runtime's replica it was opened as */
+  recipient: BoundReplica;
+  sender: AuthenticatedSender;
+}
+
+/** `handed`: what the mail carried was given to the host, which ends the delivery; `terminal`: it carried nothing the host takes. */
+export type ReplicaReceiptOutcome = { outcome: "handed" } | { outcome: "terminal"; reason: string };
+
+/** What takes the replica's opened mail; one that throws leaves the delivery where it came from, as a receipt that throws does. */
+export type ReplicaReceipt = (mail: ReplicaAuthenticated) => Promise<ReplicaReceiptOutcome>;
+
 /**
  * What became of a delivery. `key` is what it is kept under; null only
  * for a direct post that is not strict JSON. `live` is the authority
@@ -110,6 +128,8 @@ export type Receipt = (authenticated: Authenticated) => Promise<ReceiptOutcome>;
  */
 export type Received =
   | { outcome: "received"; key: string; cid: EventReference<"message.in">; live: LiveInput | null }
+  /** mail to this runtime's replica, given to the host: it ends as a terminal delivery does, and nothing of it is in the vault */
+  | { outcome: "handed"; key: string }
   | { outcome: "terminal"; key: string | null; reason: string }
   | { outcome: "deferred"; key: string; reason: string };
 
@@ -138,6 +158,8 @@ export interface Ingress {
 export interface ReceiverOptions {
   didcomm: DidcommApi;
   receipt: Receipt;
+  /** what takes mail to this runtime's replica once it is opened; without one, that mail is terminal unopened */
+  replicaReceipt?: ReplicaReceipt;
   /** acknowledges a pickup delivery retried off a pickup's turn */
   acknowledge?: (source: Extract<Source, { kind: "pickup" }>) => Promise<void>;
   /** the host's abuse and resource limits: the reason a delivery is refused, or null to admit it */
@@ -374,36 +396,22 @@ export class Receiver {
     const recipients = classifyRecipients(fold, header.kids ?? [], this.runtime.author);
     if (recipients.verdict === "terminal") return this.finish(key, delivery, recipients.reason);
     if (recipients.verdict === "pending") return defer(recipients.reason, recipientWatch(recipients.waitingOn), fold);
+    if (recipients.verdict === "replica") return this.attemptReplica(key, delivery, fold, header, recipients);
     await this.ring.reload(fold);
     this.refuseClosed();
     const secrets: Secret[] = this.ring.secrets().filter((secret) => secret.id === recipients.kid);
     if (secrets.length === 0) return defer(`no key in hand for ${recipients.kid}`, recipientWatch([recipients.didId]), fold);
-
-    const sender = await senderEvidence(fold, header.skid ?? null);
-    if ("terminal" in sender) return this.finish(key, delivery, sender.terminal);
-    const trace = this.options.trace ?? null;
-    let unpacked;
-    try {
-      unpacked = await unpack(this.options.didcomm, delivery.packed, pinnedResolver(fold, { current: sender.resolution === null ? [] : [sender.resolution] }), secretsResolverFor(secrets));
-    } catch (err) {
-      await note(trace, { stream: "envelope", what: "error", data: { ...header, parent: delivery.parent, error: messageOf(err) } });
-      this.refuseClosed();
-      return this.finish(key, delivery, `the envelope does not open: ${messageOf(err)}`);
-    }
-    const proof = senderProof(unpacked, sealingOf(delivery.packed), sender.resolution);
-    await note(trace, { stream: "envelope", what: "open", data: { ...header, parent: delivery.parent, type: unpacked.plaintext.type, from_prior: unpacked.fromPrior !== null } });
+    const opened = await this.open(key, delivery, fold, header, secrets, recipients.did);
+    if ("ended" in opened) return opened.ended;
     this.refuseClosed();
-    if ("refused" in proof) return this.finish(key, delivery, proof.refused);
-    if (proof.sender !== null && sameDid(proof.sender.resolution.did, recipients.did)) return this.finish(key, delivery, `the sender ${proof.sender.resolution.did} is the recipient itself`);
-    const refused = this.options.admit?.({ source: delivery.source, recipient: recipients.did, sender: proof.sender?.resolution.did ?? null, bytes: utf8.encode(delivery.packed).length }) ?? null;
-    if (refused !== null) return this.finish(key, delivery, refused);
+    const { unpacked, sender } = opened;
 
     const authenticated: Authenticated = {
       delivery,
       plaintext: unpacked.plaintext,
       metadata: unpacked.metadata,
       recipient: { didId: recipients.didId, did: recipients.did, kid: recipients.kid, localKeyName: recipients.localKeyName },
-      sender: proof.sender,
+      sender,
       fromPrior: unpacked.fromPrior,
     };
     let outcome: ReceiptOutcome;
@@ -420,6 +428,69 @@ export class Receiver {
       case "deferred":
         return defer(outcome.reason, outcome.watch, fold);
     }
+  }
+
+  /**
+   * Mail to this runtime's replica, not opened at all without a replica
+   * receipt. Otherwise it is taken only from the replica's own mailbox,
+   * opened with the replica's key alone, and only when its sender
+   * sealed it under a long form, which alone carries the document the
+   * replica receipt reads, with no rotation proof, since a replica DID
+   * never rotates.
+   */
+  private async attemptReplica(key: string, delivery: Delivery, fold: VaultFold, header: EnvelopeHeader, recipients: Extract<Recipients, { verdict: "replica" }>): Promise<Received> {
+    const { kid, replica } = recipients;
+    const receipt = this.options.replicaReceipt;
+    if (receipt === undefined) return this.finish(key, delivery, `the envelope names a key-agreement method of this runtime's own replica DID ${replica.did} and no communication DID of this vault, and this runtime takes no mail addressed to its replica; the delivery was discarded`);
+    const { source } = delivery;
+    if (source.kind !== "pickup" || source.mediationId !== replica.mediationId) return this.finish(key, delivery, `mail to the replica DID ${replica.did} is taken only from its mailbox at ${replica.mediationId}`);
+    if (header.skid === undefined) return this.finish(key, delivery, `the envelope to the replica DID ${replica.did} is anonymous`);
+    const [sealer] = splitDidUrl(header.skid);
+    if (isShortForm(sealer)) return this.finish(key, delivery, `the sender names itself by the short form ${sealer}, and a replica's mail is taken only from a long form`);
+    const secrets = (await replicaSecrets(this.keys, replica)).filter((secret) => secret.id === kid);
+    this.refuseClosed();
+    const opened = await this.open(key, delivery, fold, header, secrets, replica.did);
+    if ("ended" in opened) return opened.ended;
+    this.refuseClosed();
+    const { unpacked, sender } = opened;
+    if (sender === null) return this.finish(key, delivery, `the envelope to the replica DID ${replica.did} is anonymous`);
+    if (unpacked.fromPrior !== null) return this.finish(key, delivery, "a replica DID does not rotate, and the plaintext carries from_prior");
+    let outcome: ReplicaReceiptOutcome;
+    try {
+      outcome = await receipt({ source, plaintext: unpacked.plaintext, recipient: replica, sender });
+    } catch (err) {
+      return this.leave(key, delivery, `the replica receipt failed: ${messageOf(err)}`);
+    }
+    return outcome.outcome === "handed" ? this.hand(key, delivery) : this.finish(key, delivery, outcome.reason);
+  }
+
+  /**
+   * The envelope opened with `secrets` as sealed to `recipient`, its
+   * sender read from what the vault holds alone and what the envelope
+   * proves of the sender checked, then the host's limits asked; or how
+   * the delivery ended short of that.
+   */
+  private async open(key: string, delivery: Delivery, fold: VaultFold, header: EnvelopeHeader, secrets: Secret[], recipient: Did): Promise<{ unpacked: Unpacked; sender: AuthenticatedSender | null } | { ended: Received }> {
+    const ended = async (reason: string): Promise<{ ended: Received }> => ({ ended: await this.finish(key, delivery, reason) });
+    const sender = await senderEvidence(fold, header.skid ?? null);
+    if ("terminal" in sender) return ended(sender.terminal);
+    const trace = this.options.trace ?? null;
+    let unpacked;
+    try {
+      unpacked = await unpack(this.options.didcomm, delivery.packed, pinnedResolver(fold, { current: sender.resolution === null ? [] : [sender.resolution] }), secretsResolverFor(secrets));
+    } catch (err) {
+      await note(trace, { stream: "envelope", what: "error", data: { ...header, parent: delivery.parent, error: messageOf(err) } });
+      this.refuseClosed();
+      return ended(`the envelope does not open: ${messageOf(err)}`);
+    }
+    const proof = senderProof(unpacked, sealingOf(delivery.packed), sender.resolution);
+    await note(trace, { stream: "envelope", what: "open", data: { ...header, parent: delivery.parent, type: unpacked.plaintext.type, from_prior: unpacked.fromPrior !== null } });
+    this.refuseClosed();
+    if ("refused" in proof) return ended(proof.refused);
+    if (proof.sender !== null && sameDid(proof.sender.resolution.did, recipient)) return ended(`the sender ${proof.sender.resolution.did} is the recipient itself`);
+    const refused = this.options.admit?.({ source: delivery.source, recipient, sender: proof.sender?.resolution.did ?? null, bytes: utf8.encode(delivery.packed).length }) ?? null;
+    if (refused !== null) return ended(refused);
+    return { unpacked, sender: proof.sender };
   }
 
   /**
@@ -463,6 +534,15 @@ export class Receiver {
     const ended: Ended = { outcome: "received", key, cid, live };
     if (!this.closed) this.remember(key, ended);
     await this.diag(delivery, { outcome: "received", cid });
+    return ended;
+  }
+
+  private async hand(key: string, delivery: Delivery): Promise<Received> {
+    this.stopWaiting(key);
+    this.release(key);
+    const ended: Ended = { outcome: "handed", key };
+    if (!this.closed) this.remember(key, ended);
+    await this.diag(delivery, { outcome: "handed" });
     return ended;
   }
 

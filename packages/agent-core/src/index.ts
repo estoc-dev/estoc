@@ -13,6 +13,7 @@ export * from "./protocol/spec.js";
 export * from "./protocol/mediation.js";
 export * from "./protocol/replica-mediation.js";
 export * from "./protocol/blob-store.js";
+export * from "./protocol/replica-channel.js";
 export { BASIC_MESSAGE } from "./protocol/basicmessage.js";
 export { PROFILE, REQUEST_PROFILE, announcedName } from "./protocol/user-profile.js";
 export {
@@ -31,7 +32,7 @@ export {
 export { GOAL_CONNECT, invitationUrl, parseInvitation, type Invitation } from "./protocol/oob.js";
 export { didHost, resolveMediatorInput } from "./protocol/mediator-input.js";
 
-export { AmbiguousTarget, BlobMismatch, BlobTooLarge, BlobTransferFailed, BlobUnopened, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
+export { AmbiguousTarget, BlobMismatch, BlobTooLarge, BlobTransferFailed, BlobUnopened, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotAReplica, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
 export {
   createVault,
   inspectRuntime,
@@ -68,7 +69,7 @@ export {
 } from "./trace.js";
 export { MediatorLink, bounded, ritual, sealData, sealerOf, senderOf, type LinkOptions, type Opened, type Sealed } from "./link.js";
 export { BlobStore, readBlob, type BlobLimits, type BlobPlacement, type BlobStoreOptions, type ReadBlobOptions } from "./blob-store.js";
-export { SEAL_OVERHEAD, blobName, openBlob, sealBlob, type BlobKey, type SealedBlob } from "./sealed-blob.js";
+export { SEAL_OVERHEAD, blobName, openBlob, sealBlob, type BlobKey, type BlobLink, type SealedBlob } from "./sealed-blob.js";
 export { Pickup, type Delivered, type Drained, type Fate, type Handle, type PickupOptions } from "./pickup.js";
 export { decide, serially, type Decided } from "./procedure.js";
 export { canonicalDid, sameDid } from "@estoc/vault";
@@ -128,11 +129,15 @@ export {
   type ReceiptOutcome,
   type Received,
   type ReceiverOptions,
+  type ReplicaAuthenticated,
+  type ReplicaReceipt,
+  type ReplicaReceiptOutcome,
   type Source,
   type WaitingDelivery,
   type Watch,
 } from "./receive/receiver.js";
 export { receiptOf, recordReceipt } from "./receive/receipt.js";
+export { replicaReceiptOf, type BoundReplica, type ReplicaAddress, type ReplicaReceiptOptions, type SnapshotLinkReceived } from "./replica-channel.js";
 export { acknowledgementDrafts, recordAcks } from "./acknowledgements.js";
 export { recordOwed, recordOwedUnderLock, type Owed } from "./reconcile.js";
 export { afterReceipt, type AfterReceipt, type AfterReceiptOptions } from "./receive/after.js";
