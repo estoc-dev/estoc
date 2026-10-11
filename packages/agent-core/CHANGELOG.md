@@ -18,11 +18,11 @@
   mediator is refused with `LinkClosed`, and one whose every step is
   confirmed already answers as before. `Agent.listReplicas` is gone;
   `Agent.enroll` stays, and refuses an arrangement with no creation as
-  `Unusable` before any line is made. `Agent.disclose` makes the line
-  to the mediator, and resolves it, only for an address with no
-  confirmation kept, and so does a send from a mediated address the
-  peer has not written to: one whose confirmation is kept is sent with
-  no line made, an agent opened again included. An account is
+  `Unusable` before any line is made. `Agent.disclose`, and a send
+  from a mediated address the peer has not written to, make the line
+  to the mediator, and resolve it, only while some address the account
+  is to hold has no confirmation kept: once every one has, nothing is
+  asked of the mediator, an agent opened again included. An account is
   bound by the agent alone: `enroll`, `addRecipients`,
   `addRecipientsNow`, `listReplicas`, `disclose`, `dispatch`,
   `Dispatcher`, `manualProcedures` and `Confirmations` are no longer
