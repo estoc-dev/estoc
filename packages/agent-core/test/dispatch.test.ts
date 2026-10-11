@@ -588,7 +588,7 @@ describe("dispatch through a mediator", () => {
 
     const unlinked = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch });
     expect(unlinked).toMatchObject({ outcome: "pending", messageId: MESSAGE });
-    expect((unlinked as { because: string }).because).toMatch(/no link to the mediator/);
+    expect((unlinked as { because: string }).because).toMatch(/no account of .* is bound/);
     alice.offline.reason = "no route to host";
     const unreachable = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) });
     expect((unreachable as { because: string }).because).toMatch(/could not be asked to hold .*no route to host/);

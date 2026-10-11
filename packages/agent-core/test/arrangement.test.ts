@@ -4,17 +4,20 @@ import type { VaultRuntime } from "@estoc/event-store";
 import { scanVault, vaultDraft, type Did, type DidId, type Keys, type MediationId } from "@estoc/vault";
 
 import * as core from "../src/index.js";
-import { Agent, AgentTrace, LinkClosed, MediatorLink, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, createDid, createMediation, transientOptions, type Arrangement, type DispatchOptions, type Disclosure } from "../src/index.js";
+import { Agent, AgentTrace, BASIC_MESSAGE, LinkClosed, MediatorLink, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, createDid, createMediation, transientOptions, type Arrangement, type DispatchOptions, type Disclosure } from "../src/index.js";
 import type { Account } from "../src/arrangement.js";
 import { disclose } from "../src/dids.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { accountOver, didcomm, freshVault, mediatedRoute, newMediator, party, webFetch, type Party } from "./helpers.js";
+import { accountOver, didcomm, directParty, freshVault, mediatedRoute, newMediator, party, posting, webFetch, type Party } from "./helpers.js";
 
 const closing: { close(): unknown }[] = [];
 
 afterEach(async () => {
   for (const held of closing.splice(0)) await held.close();
 });
+
+const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
+const BOB_ENDPOINT = "https://bob.example/didcomm";
 
 const sent = (mediator: FakeMediator, type: string): number => mediator.seenTypes.filter((seen) => seen === type).length;
 
@@ -25,8 +28,8 @@ async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party> {
   return p;
 }
 
-async function agentOf(p: Party): Promise<Agent> {
-  const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: p.mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false });
+async function agentOf(p: Party, fetch = p.linkOptions.fetch as typeof globalThis.fetch): Promise<Agent> {
+  const agent = await Agent.open(p, { didcomm, fetch, WebSocket: p.mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false });
   closing.unshift(agent);
   return agent;
 }
@@ -171,6 +174,36 @@ describe("an arrangement taken from an agent", () => {
     agent.close();
     await expect(arrangement.enroll()).rejects.toBeInstanceOf(LinkClosed);
     expect(web.calls).toEqual([]);
+  });
+});
+
+describe("an agent opened again over the same local options", () => {
+  it("sends from a mediated address its account holds with no request to the mediator, and has one it holds not yet held first", async () => {
+    const mediator = await newMediator();
+    const p = await party(mediator);
+    const bob = await directParty(2, BOB_ENDPOINT, BOB);
+    closing.push(p.runtime, bob.runtime);
+    const wire = posting(() => new Response(null, { status: 202 }));
+    const fetch: typeof globalThis.fetch = (input, init) => (String(input).startsWith(BOB_ENDPOINT) ? wire.fetch(input, init) : (p.linkOptions.fetch as typeof globalThis.fetch)(input, init));
+    const first = await agentOf(p, fetch);
+    await first.enroll(p.mediationId);
+    const { created, minted } = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    await first.disclose(created.data.didId, { as: "oob" });
+    first.close();
+
+    const agent = await agentOf(p, fetch);
+    const asked = mediator.seenTypes.length;
+    const hello = await agent.send({ channel: { localDid: minted.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    expect(hello.dispatched).toMatchObject({ outcome: "submitted" });
+    expect(wire.posts).toHaveLength(1);
+    expect(mediator.seenTypes).toHaveLength(asked);
+
+    const later = (await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).minted;
+    const again = await agent.send({ channel: { localDid: later.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello again" } });
+    expect(again.dispatched).toMatchObject({ outcome: "submitted" });
+    expect(sent(mediator, RECIPIENT_ADD)).toBe(2);
+    expect(mediator.sharedRecipients.has(later.did)).toBe(true);
+    expect(wire.posts).toHaveLength(2);
   });
 });
 

@@ -73,7 +73,7 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
    * policy on addresses holds for a call as for a document.
    */
   fetch: typeof fetch;
-  /** The account of each mediation arrangement of this vault, bound to this runtime, or null where there is no line to its mediator now: what a mediated sender is made to be held by. */
+  /** The account of each mediation arrangement of this vault, bound to this runtime, or null where none is bound: what a mediated sender is made to be held by. */
   accounts?: (mediationId: MediationId) => Account | null;
   /** how long one attempt may take, the mediator resolved, the forward sealed and the call answered; `DISPATCH_TIMEOUT_MS` when left out */
   timeoutMs?: number;
@@ -199,7 +199,7 @@ function unconfirmedMediatedSender(fold: VaultFold, sender: LocalDidEntity, chan
 /** Has the account hold what the vault wants held; why the sender is not held after that, or null once it is. */
 async function confirmRegistration({ mediationId, did }: NonNullable<Ready["registerWith"]>, options: DispatchOptions): Promise<string | null> {
   const account = options.accounts?.(mediationId) ?? null;
-  if (account === null) return `no link to the mediator of ${mediationId}, which is to hold ${did} before an envelope discloses it`;
+  if (account === null) return `no account of ${mediationId} is bound, which is to have its mediator hold ${did} before an envelope discloses it`;
   try {
     return holds(await account.addRecipients(), did) ? null : `the mediator of ${mediationId} does not hold ${did}`;
   } catch (err) {

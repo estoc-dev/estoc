@@ -255,7 +255,7 @@ export class Agent {
     await recordAcceptancesOwed(runtime, keys, local);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), accounts: (mediationId): Account | null => (lines.has(mediationId) ? agent.account(mediationId) : null) });
+    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), accounts: (mediationId): Account => agent.account(mediationId) });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
     const { fetch, WebSocket, timeoutMs } = agentOptions;
     const linkOf: LinkOf = (line) => {

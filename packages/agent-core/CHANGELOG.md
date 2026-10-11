@@ -20,7 +20,9 @@
   `Agent.enroll` stays, and refuses an arrangement with no creation as
   `Unusable` before any line is made. `Agent.disclose` makes the line
   to the mediator, and resolves it, only for an address with no
-  confirmation kept. An account is
+  confirmation kept, and so does a send from a mediated address the
+  peer has not written to: one whose confirmation is kept is sent with
+  no line made, an agent opened again included. An account is
   bound by the agent alone: `enroll`, `addRecipients`,
   `addRecipientsNow`, `listReplicas`, `disclose`, `dispatch`,
   `Dispatcher`, `manualProcedures` and `Confirmations` are no longer
