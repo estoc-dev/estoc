@@ -9,17 +9,21 @@ persistent vault and interchange format. The event model, the `EventStore`,
 `ObjectStore` and `Vault` interfaces, the SQLite vault and the portable
 snapshot are code in [`@estoc/event-store`](../../packages/event-store/README.md):
 the envelope, its validation, its identity and its order in
-[event.ts](../../packages/event-store/src/event.ts); the vault, its writer lock
-and the held view in [vault.ts](../../packages/event-store/src/vault.ts); the
-conformance suites under `test/suite/` as the evidence every store must give.
+[event.ts](../../packages/event-store/src/event.ts); the object store and its
+streaming hash in [objects.ts](../../packages/event-store/src/objects.ts); the
+vault, its writer lock and the held view in
+[vault.ts](../../packages/event-store/src/vault.ts); the SQLite schema, the
+opening of a runtime or a snapshot, export, validation, restore and import
+under [src/sqlite/](../../packages/event-store/src/sqlite/); the conformance
+suites under `test/suite/` as the evidence every store must give.
 This document keeps the contracts the code cannot state about itself: what
 event identity promises to the layers above, what a successful commit
 guarantees, and what a change to any of it costs. Capitalized requirement words
 have their BCP 14 meanings.
 
-[dasl-objects.md](dasl-objects.md) defines object identity;
-[vault-sqlite.md](vault-sqlite.md) owns storage, ownership and recovery
-procedures; [vault-events.md](vault-events.md) owns the vault model and its
+Object CIDs are the raw DASL CIDs of
+[`@estoc/dasl`](../../packages/dasl/README.md);
+[vault-events.md](vault-events.md) owns the vault model and its
 boundaries; payloads, held roots and the folds over them are
 [`@estoc/vault`](../../packages/vault/README.md)'s.
 [Delivery](distributed-delivery.md) and [channels](channels.md)
@@ -27,7 +31,7 @@ use these primitives.
 
 <a id="invariants"></a>
 
-## 1. Event identity
+## 1. Event and object identity
 
 Events are immutable and identified by the raw DASL CID of their canonical
 envelope bytes. Merge is set union by event CID: identical bytes are one event,
@@ -55,10 +59,18 @@ fields, not causality and not arrival order. An ambiguous commit outcome is
 not a safe instruction to resubmit drafts: a new commit samples a new `at` and
 can produce different CIDs for the same drafts.
 
+An object is named by the raw DASL CID of its complete bytes, whatever its
+size: storage chunks and transport segments have no CID of their own, and
+moving their boundaries changes no object's CID. The vault accepts raw objects
+only. Content addressing checks integrity, not authorization, confidentiality,
+provenance or safety: bytes are hashed where they are accepted, whatever a
+stored column, a server or an HTTP digest claims, and object content is not
+executed.
+
 Only explicit event roots retain objects; a CID merely mentioned in a payload
-or inside an object retains nothing. Local IDs, positions, change tokens and
-caches never travel with portable state; losing them cannot lose a committed
-decision or message body.
+or inside an object retains nothing and is not fetched. Local IDs, positions,
+change tokens and caches never travel with portable state; losing them cannot
+lose a committed decision or message body.
 
 <a id="commit-and-durability-terminology"></a>
 

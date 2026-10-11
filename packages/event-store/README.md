@@ -2,10 +2,8 @@
 
 The vault as an event store, under the
 [replica model](../../docs/replica-model/README.md)'s
-[event store contracts](../../docs/replica-model/event-store.md) — event
-identity, commit durability, versioning — the
-[DASL object profile](../../docs/replica-model/dasl-objects.md) and the
-[SQLite vault](../../docs/replica-model/vault-sqlite.md). What is here
+[event store contracts](../../docs/replica-model/event-store.md): event
+and object identity, commit durability, versioning. What is here
 is the model, its reference in memory, the SQLite driver the
 persistent stores are written against, the vault's schema and opening
 over it, the event store and the object store over that, the SQLite

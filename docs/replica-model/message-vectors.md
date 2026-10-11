@@ -10,7 +10,7 @@ message layers of
 give over them. The rules live there and in
 [`@estoc/vault`](../../packages/vault/README.md); this appendix is what the tests
 reproduce. Every CID is the raw DASL CID of
-[dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over the UTF-8 of the
+[`@estoc/dasl`](../../packages/dasl/README.md) over the UTF-8 of the
 RFC 8785 text shown, and every UUIDv5 follows
 [ids.ts](../../packages/vault/src/ids.ts).
 
