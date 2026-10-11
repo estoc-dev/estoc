@@ -10,7 +10,6 @@ import { FORWARD } from "../src/protocol/spec.js";
 import {
   AgentTrace,
   Keyring,
-  Lifetime,
   LiveAction,
   LocalRecords,
   UnknownEntity,
@@ -516,20 +515,6 @@ describe("dispatch to a direct endpoint", () => {
     submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(1);
     expect(sent.action.spent).toBe(true);
-    await closeAll(alice, bob);
-  });
-
-  test("a caller closed before the call makes none, consumes nothing, and the same action calls for a caller still open", async () => {
-    const { alice, bob } = await parties();
-    const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const closed = new Lifetime();
-    closed.close();
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, lifetime: closed })).toEqual({ outcome: "none", messageId: MESSAGE, because: "closed before the call" });
-    expect(wire.posts).toEqual([]);
-    expect(sent.action.spent).toBe(false);
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, lifetime: new Lifetime() }));
-    expect(wire.posts).toHaveLength(1);
     await closeAll(alice, bob);
   });
 

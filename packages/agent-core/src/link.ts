@@ -29,7 +29,7 @@ import type { AgentTrace, TraceData, TraceStream } from "./trace.js";
 export interface LinkOptions {
   didcomm: DidcommApi;
   resolveDid: (did: string) => Promise<DIDDoc | null>;
-  /** the host's transports; the globals when left out. The link reaches them through its lifetime alone. */
+  /** the host's transports; the globals when left out. The link reaches them through a lifetime of its own, which `close()` closes. */
   fetch?: typeof fetch;
   WebSocket?: typeof WebSocket;
   trace: AgentTrace;
@@ -44,14 +44,6 @@ export interface LinkOptions {
   timeoutMs?: number;
   /** a line for the human log: a trace that could not be written is reported here, not thrown, and a socket frame that failed */
   log?: (line: string) => void;
-  /**
-   * The lifetime the link's holder runs under. Once it closed, a request
-   * is refused at the call, a socket at its opening and at each send,
-   * with `LinkClosed`, however far the request had got: a close during
-   * the sealing or the noting of a request still sends nothing. A link
-   * given none has one of its own, which nothing closes.
-   */
-  lifetime?: Lifetime;
 }
 
 /** An envelope opened: the plaintext and what the envelope itself proves. */
@@ -179,6 +171,7 @@ export function letGo(stream: { cancel(reason?: unknown): Promise<void> } | null
 export class MediatorLink {
   private readonly didcomm: DidcommApi;
   private readonly resolver: { resolve: (did: string) => Promise<DIDDoc | null> };
+  private readonly lifetime = new Lifetime();
   private readonly fetchFn: Fetch;
   private readonly sockets: Sockets;
   readonly trace: AgentTrace;
@@ -193,11 +186,10 @@ export class MediatorLink {
   constructor(options: LinkOptions) {
     this.didcomm = options.didcomm;
     this.resolver = { resolve: (did) => options.resolveDid(did) };
-    const lifetime = options.lifetime ?? new Lifetime();
-    // eslint-disable-next-line no-restricted-globals -- a link built alone speaks over the host's global transports
+    // eslint-disable-next-line no-restricted-globals -- a link given no transports speaks over the host's global ones
     const { fetch: transport = fetch, WebSocket: Socket = WebSocket } = options;
-    this.fetchFn = lifetime.fetch(transport);
-    this.sockets = lifetime.sockets(Socket);
+    this.fetchFn = this.lifetime.fetch(transport);
+    this.sockets = this.lifetime.sockets(Socket);
     this.trace = options.trace;
     this.secrets = options.secrets;
     this.me = options.me;
@@ -308,7 +300,7 @@ export class MediatorLink {
    * the deadline: `timeoutMs` runs from entry and covers the whole
    * ritual, pack and unpack with their resolutions included. Before
    * the POST every wait fails the ritual at the deadline, nothing
-   * having been sent, and so does the lifetime closing (`LinkClosed`);
+   * having been sent, and so does the link closing (`LinkClosed`);
    * once the answer is in hand, only the noting of it can still lose
    * the race, and it loses alone.
    */
@@ -364,7 +356,7 @@ export class MediatorLink {
    * POST a frame already traced as `out` (`traceOut`) and read what
    * came back: the status, the text, and how long the wire took.
    * Throws when the line is cut, with `wire.error` written, and before
-   * anything is sent once the lifetime closed; a status that is no
+   * anything is sent once the link closed; a status that is no
    * 2xx is the caller's to judge. `signal` bounds the wait, and the
    * caller races the whole call too, since an injected fetch may
    * ignore the signal.
@@ -392,7 +384,7 @@ export class MediatorLink {
    * A plain HTTP request beside the rituals, such as a blob's bytes put
    * where the mediator said: sent over the link's transport, unsealed
    * and untraced, and refused with `LinkClosed`, nothing sent, once the
-   * lifetime closed.
+   * link closed.
    */
   async request(url: string, init: RequestInit): Promise<Response> {
     return this.fetchFn(url, init);
@@ -409,7 +401,7 @@ export class MediatorLink {
    * is the caller's whatever becomes of the socket. `onClose` is told
    * when the socket closed on its own, not when `closeSocket` closed it,
    * so reconnecting, and when, is the caller's. Throws `LinkClosed`
-   * once the lifetime closed.
+   * once the link closed.
    */
   openSocket(onFrame: (opened: Opened) => Promise<void> | void, onClose?: () => void): void {
     const uri = this.ws();
@@ -472,6 +464,18 @@ export class MediatorLink {
     const socket = this.socket;
     this.socket = null;
     socket?.close();
+  }
+
+  /**
+   * The socket closed, and nothing sent over the link from now on: a
+   * request is refused at the call, a socket at its opening and at each
+   * send, with `LinkClosed`, however far the request had got, so that a
+   * close during the sealing or the noting of a request still sends
+   * nothing. A request already made is still answered.
+   */
+  close(): void {
+    this.lifetime.close();
+    this.closeSocket();
   }
 
   /** A frame going out: its header on `wire`, its bytes on `bytes`; returns the frame's sequence number. */

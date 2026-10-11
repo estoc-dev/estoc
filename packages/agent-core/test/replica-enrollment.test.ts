@@ -8,7 +8,6 @@ import {
   Agent,
   EntityConflict,
   Keyring,
-  Lifetime,
   LinkClosed,
   MediatorLink,
   MediatorRefused,
@@ -108,17 +107,16 @@ describe("enrolling", () => {
     await p.runtime.close();
   });
 
-  test("an account registered and the link's holder closed there is taken up from the grant, the replica recorded before it is added", async () => {
+  test("an account registered and the link closed there is taken up from the grant, the replica recorded before it is added", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const lifetime = new Lifetime();
     const transport = p.linkOptions.fetch as typeof fetch;
     const fetchOnce: typeof fetch = (input, init) => {
       const answer = transport(input, init);
-      lifetime.close();
+      link.close();
       return answer;
     };
-    const link = new MediatorLink({ ...p.linkOptions, fetch: fetchOnce, lifetime });
+    const link = new MediatorLink({ ...p.linkOptions, fetch: fetchOnce });
     await expect(enroll(link, p.runtime, p.keys, p.runtime.local.options, p.mediationId)).rejects.toBeInstanceOf(LinkClosed);
     const left = await fold(p);
     expect(left.mediations.mediations.get(p.mediationId)?.routingDid).toBe(mediator.did);

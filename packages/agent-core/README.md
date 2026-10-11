@@ -42,7 +42,7 @@ peer.
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
 | What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `blobStore`, `sendSnapshotLink`, `close` |
-| What still happens once an agent closed? | `lifetime.ts` | `Lifetime` |
+| What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf` |
@@ -127,9 +127,11 @@ you inject.
 
 `fetch` and `WebSocket` are injectable too; the tests run two agents
 against an in-process fake mediator that way (`test/fake-mediator.ts`).
-Inside the package they are reached through a `Lifetime` alone, so that
-nothing goes out once the agent closed, and the source may not call the
-global ones.
+An agent, and each link and dispatcher, reaches them through a lifetime
+of its own, so that nothing goes out once it closed. Only a link given
+none and the host helpers that run outside any agent,
+`resolveMediatorInput` and `readBlob`, fall back to the global ones; the
+lint forbids them anywhere else in `src/`.
 
 ## Development
 

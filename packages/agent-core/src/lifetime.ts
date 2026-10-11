@@ -1,13 +1,15 @@
 /**
- * How long an agent, or one of its parts used alone, runs: one
- * `closed` for all of it, asked by every side effect in the same
+ * How long one part of the package runs, an agent or a part used alone:
+ * one `closed`, asked by every side effect of that part in the same
  * synchronous step that makes it, so that no wait between the steps of
  * a procedure can let one through after a close. The transports are
  * reached through it alone: a request is refused at the call, a socket
  * at its opening and at every send. So are the waits: none is set once
  * it closed, and every one set is dropped when it closes. Nothing under
  * way is cut short: a request already made is answered and its body
- * still read, and closing waits for nothing.
+ * still read, and closing waits for nothing. Each part makes its own
+ * and closes it in its own `close()`; an agent closes the parts it
+ * holds, so that closing one part closes no other.
  */
 
 import { LinkClosed } from "./errors.js";
@@ -31,7 +33,7 @@ export interface Timer {
 
 const gated: unique symbol = Symbol("lifetime");
 
-/** `fetch` refused once its lifetime closed: what the parts of an agent make requests with, so that the host's own transport reaches none of them. */
+/** `fetch` refused once its lifetime closed: what a part makes its requests with, in place of the host's transport. */
 export type Fetch = typeof fetch & { readonly [gated]: Lifetime };
 
 /** A socket opened through a lifetime: it sends nothing once the lifetime closed. */
@@ -45,7 +47,6 @@ export interface Socket {
 
 /** What opens sockets through a lifetime: none is opened once it closed. */
 export interface Sockets {
-  readonly [gated]: Lifetime;
   open(url: string): Socket;
 }
 
@@ -81,9 +82,9 @@ export class Lifetime {
     };
   }
 
-  /** `transport` as the parts of an agent call it: refused with `LinkClosed` once this lifetime closed. One already gated by it is returned as it is. */
+  /** `transport` refused with `LinkClosed` once this lifetime closed. One a lifetime gates already is not taken: whoever calls a transport asks the one lifetime it goes through whether a call may still be made. */
   fetch(transport: typeof fetch): Fetch {
-    if (ownerOf(transport) === this) return transport as Fetch;
+    if (gated in transport) throw new Error("the transport is gated by a lifetime already");
     // a function of its own rather than the transport branded: the host's fetch is left as it was, and a native one is called unbound, as browsers require
     const call = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => (this.ended ? Promise.reject(new LinkClosed()) : transport(input, init));
     return Object.assign(call, { [gated]: this }) as unknown as Fetch;
@@ -91,17 +92,18 @@ export class Lifetime {
 
   /** Sockets of `Socket`, opened only while this lifetime lasts: refused with `LinkClosed` once it closed, at the opening and at each send. */
   sockets(Socket: typeof WebSocket): Sockets {
-    const open = (url: string): Socket => {
-      if (this.ended) throw new LinkClosed();
-      return gatedSocket(new Socket(url), this);
+    return {
+      open: (url) => {
+        if (this.ended) throw new LinkClosed();
+        return gatedSocket(new Socket(url), this);
+      },
     };
-    const sockets: Sockets = { [gated]: this, open };
-    return sockets;
   }
 }
 
-function ownerOf(transport: object): Lifetime | undefined {
-  return (transport as { [gated]?: Lifetime })[gated];
+/** Whether a call over `transport` is refused now: one a lifetime gates is once that lifetime closed, and one none gates never is. */
+export function refuses(transport: typeof fetch): boolean {
+  return (transport as { [gated]?: Lifetime })[gated]?.closed ?? false;
 }
 
 function gatedSocket(socket: WebSocket, lifetime: Lifetime): Socket {

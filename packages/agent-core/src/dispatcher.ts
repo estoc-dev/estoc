@@ -17,7 +17,7 @@ import { scanVault, unfinishedWork, type EventReference, type Keys, type Message
 
 import { LiveAction, type ActionKind } from "./action.js";
 import { cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
-import { Lifetime, type Timer } from "./lifetime.js";
+import { Lifetime, type Timer, type Timers } from "./lifetime.js";
 import { scanOptions } from "./prepare.js";
 
 export interface RetryPolicy {
@@ -34,9 +34,10 @@ export const RETRY_POLICY: RetryPolicy = { firstWaitMs: 30_000, longestWaitMs: 2
 /** Timers take no longer delay; a wait further off is reached by waits of this length. */
 export const LONGEST_TIMER_MS = 2 ** 31 - 1;
 
-/** `lifetime` is what the dispatcher runs under and its waits are kept by: one shared with its holder, or its own, which `close()` closes either way. */
 export interface DispatcherOptions extends DispatchOptions {
   retry?: Partial<RetryPolicy>;
+  /** what the waits between attempts are kept by; the global timers when left out */
+  timers?: Timers;
   /** a line for the human log: an attempt that threw, an action given up on */
   log?: (line: string) => void;
 }
@@ -63,7 +64,9 @@ interface Wait extends Waiting {
   timer: Timer | null;
 }
 
+/** Its transport and its waits are reached through a lifetime of its own, which `close()` closes; the links it is given are its holder's. */
 export class Dispatcher {
+  private readonly options: DispatcherOptions;
   private readonly policy: RetryPolicy;
   private readonly lifetime: Lifetime;
   private readonly now: () => number;
@@ -73,10 +76,11 @@ export class Dispatcher {
   constructor(
     private readonly runtime: VaultRuntime,
     private readonly keys: Keys,
-    private readonly options: DispatcherOptions
+    options: DispatcherOptions
   ) {
+    this.lifetime = new Lifetime(options.timers);
+    this.options = { ...options, fetch: this.lifetime.fetch(options.fetch) };
     this.policy = { ...RETRY_POLICY, ...options.retry };
-    this.lifetime = options.lifetime ?? new Lifetime();
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
   }
@@ -123,7 +127,7 @@ export class Dispatcher {
     return [...this.waits.keys()].map((messageId) => this.waitingOn(messageId) as Waiting);
   }
 
-  /** The lifetime closed: no attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. */
+  /** No attempt after the ones running, and no wait kept. An attempt yet to call its transport makes no call and leaves its action live; one that has called it records the answer. The links it was given stay open. */
   close(): void {
     this.lifetime.close();
     this.waits.clear();
@@ -139,7 +143,7 @@ export class Dispatcher {
     wait.nextAt = null;
     let result: Dispatched;
     try {
-      result = await dispatch(this.runtime, this.keys, wait.action, { ...this.options, lifetime: this.lifetime });
+      result = await dispatch(this.runtime, this.keys, wait.action, this.options);
     } catch (err) {
       this.forget(wait);
       throw err;

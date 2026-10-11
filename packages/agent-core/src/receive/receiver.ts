@@ -50,7 +50,6 @@ import type { LiveInput } from "../action.js";
 import { ReceiverClosed, ReceiverInUse } from "../errors.js";
 import { pinnedResolver } from "../evidence.js";
 import { replicaSecrets, type Keyring } from "../keyring.js";
-import { Lifetime } from "../lifetime.js";
 import type { Delivered, Fate, Handle } from "../pickup.js";
 import { serially } from "../procedure.js";
 import type { BoundReplica } from "../replica-channel.js";
@@ -158,8 +157,6 @@ export interface Ingress {
 
 export interface ReceiverOptions {
   didcomm: DidcommApi;
-  /** the lifetime the receiver runs under: one shared with its holder, or its own; `close()` closes it either way */
-  lifetime?: Lifetime;
   receipt: Receipt;
   /** what takes mail to this runtime's replica once it is opened; without one, that mail is terminal unopened */
   replicaReceipt?: ReplicaReceipt;
@@ -224,7 +221,6 @@ const utf8 = new TextEncoder();
 const receivers = new WeakMap<VaultRuntime, Receiver>();
 
 export class Receiver {
-  private readonly lifetime: Lifetime;
   private readonly options: Omit<ReceiverOptions, "receipt" | "replicaReceipt">;
   private readonly receipt: (authenticated: Authenticated) => Promise<ReceiptOutcome | Failed>;
   private readonly replicaReceipt: ((mail: ReplicaAuthenticated) => Promise<ReplicaReceiptOutcome | Failed>) | null;
@@ -238,6 +234,7 @@ export class Receiver {
   private readonly discardedRing: Discarded[] = [];
   /** counts the local changes told of, so that an attempt knows whether one came while it read the vault */
   private changes = 0;
+  private closed = false;
 
   /** Throws `ReceiverInUse` while another receiver of `runtime` is open. */
   constructor(
@@ -250,9 +247,9 @@ export class Receiver {
     receivers.set(runtime, this);
     const { receipt, replicaReceipt, ...rest } = options;
     this.options = rest;
-    this.lifetime = options.lifetime ?? new Lifetime();
-    this.receipt = whileOpen(this.lifetime, receipt);
-    this.replicaReceipt = replicaReceipt === undefined ? null : whileOpen(this.lifetime, replicaReceipt);
+    const closed = (): boolean => this.closed;
+    this.receipt = whileOpen(closed, receipt);
+    this.replicaReceipt = replicaReceipt === undefined ? null : whileOpen(closed, replicaReceipt);
     this.log = options.log ?? (() => undefined);
     this.maxWaiting = options.maxWaiting ?? MAX_WAITING;
     this.maxHeldBytes = options.maxHeldBytes ?? MAX_HELD_BYTES;
@@ -327,16 +324,16 @@ export class Receiver {
   }
 
   /**
-   * The lifetime closed: no delivery is handed to the receipt after
-   * this. One not yet handed to the receipt — waiting its turn, or with
-   * its vault read or its opening still under way, however that then
-   * ends — is refused with `ReceiverClosed` and stays wherever it came
-   * from. One whose receipt was already called ends as the receipt
-   * says, since the receipt may have recorded it. Everything kept is let
-   * go; the runtime may then have another receiver.
+   * No delivery is handed to the receipt after this. One not yet handed
+   * to the receipt — waiting its turn, or with its vault read or its
+   * opening still under way, however that then ends — is refused with
+   * `ReceiverClosed` and stays wherever it came from. One whose receipt
+   * was already called ends as the receipt says, since the receipt may
+   * have recorded it. Everything kept is let go; the runtime may then
+   * have another receiver.
    */
   close(): void {
-    this.lifetime.close();
+    this.closed = true;
     this.waits.clear();
     this.held.clear();
     this.heldBytes = 0;
@@ -345,7 +342,7 @@ export class Receiver {
   }
 
   private refuseClosed(): void {
-    if (this.lifetime.closed) throw new ReceiverClosed();
+    if (this.closed) throw new ReceiverClosed();
   }
 
   /** An ending told only while the receiver is open, when the delivery's receipt was not called. */
@@ -526,7 +523,7 @@ export class Receiver {
       if (watch(fold) !== seen) return this.attempt(key, delivery);
     }
     this.reporting(after);
-    if (this.lifetime.closed) return this.leave(key, delivery, reason, after);
+    if (this.closed) return this.leave(key, delivery, reason, after);
     if (!this.waits.has(key) && this.waits.size >= this.maxWaiting) return this.leave(key, delivery, `${reason}; as many deliveries wait as may`, after);
     this.hold(key, delivery);
     this.waits.set(key, { source: delivery.source, reason, watch, seen, retry: false });
@@ -549,7 +546,7 @@ export class Receiver {
     this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "received", key, cid, live };
-    if (!this.lifetime.closed) this.remember(key, ended);
+    if (!this.closed) this.remember(key, ended);
     await this.diag(delivery, { outcome: "received", cid });
     return ended;
   }
@@ -558,7 +555,7 @@ export class Receiver {
     this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "handed", key };
-    if (!this.lifetime.closed) this.remember(key, ended);
+    if (!this.closed) this.remember(key, ended);
     await this.diag(delivery, { outcome: "handed" });
     return ended;
   }
@@ -568,7 +565,7 @@ export class Receiver {
     this.stopWaiting(key);
     this.release(key);
     const ended: Ended = { outcome: "terminal", key, reason: bounded(reason) };
-    if (!this.lifetime.closed) this.remember(key, ended);
+    if (!this.closed) this.remember(key, ended);
     await this.discard(delivery, reason);
     return ended;
   }
@@ -606,7 +603,7 @@ export class Receiver {
 
   private discard(delivery: Delivery, reason: string): Promise<unknown> {
     const kept = bounded(reason);
-    if (!this.lifetime.closed) {
+    if (!this.closed) {
       this.discardedRing.push({ source: delivery.source, reason: kept });
       if (this.discardedRing.length > DISCARDED_KEPT) this.discardedRing.shift();
       this.options.changed?.();
@@ -622,14 +619,14 @@ export class Receiver {
 }
 
 /**
- * A receipt called only while `lifetime` lasts. Once it closed, the
+ * A receipt called only while the receiver is open. Once `closed`, the
  * receipt is not called and `ReceiverClosed` is thrown in the step that
  * would have called it; once called, what the receipt throws comes back
  * as its failure, so that a closing is never taken for one.
  */
-function whileOpen<T, O>(lifetime: Lifetime, receipt: (taken: T) => Promise<O>): (taken: T) => Promise<O | Failed> {
+function whileOpen<T, O>(closed: () => boolean, receipt: (taken: T) => Promise<O>): (taken: T) => Promise<O | Failed> {
   return (taken) => {
-    if (lifetime.closed) return Promise.reject(new ReceiverClosed());
+    if (closed()) return Promise.reject(new ReceiverClosed());
     return (async () => receipt(taken))().catch((err: unknown): Failed => ({ outcome: "failed", reason: messageOf(err) }));
   };
 }

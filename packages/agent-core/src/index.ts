@@ -111,7 +111,7 @@ export { MAX_CONTENT_BYTES, carriage, hasExpired, outboundWorkKey, prepare, prep
 export { LiveAction, LiveInput, Responding, type ActionKind } from "./action.js";
 export { DISPATCH_TIMEOUT_MS, MAX_ENVELOPE_BYTES, cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
 export { Dispatcher, LONGEST_TIMER_MS, RETRY_POLICY, type DispatcherOptions, type PendingOutbound, type RetryPolicy, type Waiting } from "./dispatcher.js";
-export { GLOBAL_TIMERS, Lifetime, type Timer, type Timers } from "./lifetime.js";
+export { GLOBAL_TIMERS, type Timers } from "./lifetime.js";
 export { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients, type Sealing, type SenderProof } from "./receive/gate.js";
 export {
   DISCARDED_KEPT,

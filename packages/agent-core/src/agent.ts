@@ -64,11 +64,12 @@ import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./did
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
+import { LinkClosed } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { Keyring, replicaSecrets } from "./keyring.js";
 import { Lifetime, type Fetch, type Timer, type Timers } from "./lifetime.js";
-import { MediatorLink } from "./link.js";
+import { MediatorLink, type LinkOptions } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { mediationOf } from "./mediation.js";
 import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
@@ -91,7 +92,7 @@ import { send, type Content, type SendOptions, type Sent, type Target } from "./
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
 
-export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations" | "lifetime">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
+export interface AgentOptions extends Omit<DispatcherOptions, "links" | "effectTypes" | "trace" | "local" | "confirmations">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
   /** the socket live delivery comes down; the global one when left out */
   WebSocket?: typeof WebSocket;
   /** what every wait of the agent is kept by, for an outbound held up or a connection to try again; the global timers when left out */
@@ -182,8 +183,11 @@ interface Retry {
   nextMs: number;
 }
 
-/** The agent's options, its transport reached through its lifetime alone. */
+/** The agent's options as it makes requests itself, its transport reached through its lifetime alone. */
 type GatedOptions = AgentOptions & { fetch: Fetch };
+
+/** What makes a line's links: each over the host's transports through a lifetime of its own, and none once the agent closed, so that every link there is one the agent closes. */
+type LinkOf = (line: Pick<LinkOptions, "resolveDid" | "secrets" | "me" | "mediatorDid" | "mediatorDoc">) => MediatorLink;
 
 export interface Submitted extends Sent {
   dispatched: Called;
@@ -228,6 +232,7 @@ export class Agent {
     private readonly dispatcher: Dispatcher,
     private readonly receiver: Receiver,
     private readonly wires: Map<MediationId, Line>,
+    private readonly linkOf: LinkOf,
     private readonly confirmations: Confirmations,
     private readonly local: LocalRecords,
     /** what the open recorded of what the vault owed */
@@ -247,8 +252,13 @@ export class Agent {
     await recordAcceptancesOwed(runtime, keys, local);
     const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...options, lifetime, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
+    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, confirmations, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), links: (mediationId) => lines.get(mediationId)?.link ?? null });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
+    const { fetch, WebSocket, timeoutMs } = agentOptions;
+    const linkOf: LinkOf = (line) => {
+      if (lifetime.closed) throw new LinkClosed();
+      return new MediatorLink({ didcomm, fetch, WebSocket, trace, timeoutMs, log, ...line });
+    };
     let linesChanged = (): void => undefined;
     const mediatorEndpoint = (mediationId: MediationId): string => {
       const line = lines.get(mediationId);
@@ -257,7 +267,6 @@ export class Agent {
     };
     const receiver = new Receiver(runtime, keys, ring, {
       didcomm,
-      lifetime,
       receipt: receiptOf(runtime, keys),
       replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
@@ -272,7 +281,7 @@ export class Agent {
       log,
       changed: () => linesChanged(),
     });
-    const agent = new Agent(runtime, keys, options, lifetime, ring, dispatcher, receiver, lines, confirmations, local, recovered);
+    const agent = new Agent(runtime, keys, options, lifetime, ring, dispatcher, receiver, lines, linkOf, confirmations, local, recovered);
     linesChanged = () => agent.linesChanged();
     return agent;
   }
@@ -436,19 +445,24 @@ export class Agent {
   }
 
   /**
-   * Sockets are closed and waits dropped, and nothing is sent or
-   * called after this: every request is refused at the call, wherever
-   * in the agent it is made. A connection under way stops there, and
-   * so does answering a delivery already taken: no output is begun, and
-   * what the input still earns is listed for the user. A request
-   * already made is still answered, but an answer that comes after this
-   * may be lost, as one lost on the wire is: a reply from a did:web
-   * mediator is checked against the mediator resolved again, which is a
-   * request too. The runtime stays open: it is its opener's to close.
+   * Nothing is sent or called after this, and nothing waits: the
+   * agent's own requests and waits are refused through its lifetime,
+   * and it closes every part it holds, each line's links with their
+   * sockets, the dispatcher and the receiver, each then refusing its
+   * own. A connection under way stops there, and so does answering a
+   * delivery already taken: no output is begun, and what the input
+   * still earns is listed for the user. A request already made is still
+   * answered, but an answer that comes after this may be lost, as one
+   * lost on the wire is: a reply from a did:web mediator is checked
+   * against the mediator resolved again, which is a request too. The
+   * runtime stays open: it is its opener's to close.
    */
   close(): void {
     this.lifetime.close();
-    for (const { inbox } of this.wires.values()) inbox?.link.closeSocket();
+    for (const { link, inbox } of this.wires.values()) {
+      link.close();
+      inbox?.link.close();
+    }
     for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
     this.dispatcher.close();
     this.receiver.close();
@@ -635,10 +649,8 @@ export class Agent {
     };
     const mediatorDoc = await resolveDid(mediation.mediatorDid);
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
-    const { didcomm, fetch, WebSocket, trace, timeoutMs, log } = this.options;
     const { mediatorDid } = mediation;
-    const { lifetime } = this;
-    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => new MediatorLink({ didcomm, resolveDid, fetch, WebSocket, trace, secrets, me, mediatorDid, mediatorDoc, timeoutMs, log, lifetime });
+    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => this.linkOf({ resolveDid, secrets, me, mediatorDid, mediatorDoc });
     const link = linkAs(mediation.me.did, () => this.ring.secrets());
     const line: Line = { link, inbox: null, linkAs };
     const raced = this.wires.get(mediationId);

@@ -4,7 +4,7 @@ import { scanVault, type DidId, type MessageId } from "@estoc/vault";
 import type { VaultRuntime } from "@estoc/event-store";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { Dispatcher, Lifetime, LiveAction, send, type Content, type DispatcherOptions } from "../src/index.js";
+import { Dispatcher, Keyring, LiveAction, Receiver, dispatch, send, type Content, type DispatcherOptions } from "../src/index.js";
 import { didcomm, directParty, handTimers, posting, until, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -32,7 +32,7 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
   const timers = handTimers();
   const wire = posting(answer);
   const log: string[] = [];
-  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, lifetime: new Lifetime(timers), now: () => T0, log: (line) => log.push(line), ...over });
+  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, timers, now: () => T0, log: (line) => log.push(line), ...over });
   return {
     alice,
     bob,
@@ -159,6 +159,26 @@ describe("Dispatcher", () => {
     expect(sent.action.spent).toBe(false);
     expect(s.dispatcher.waiting()).toEqual([]);
     expect(s.timers.waits).toEqual([]);
+    expect(await dispatch(s.alice.runtime, s.alice.keys, sent.action, { didcomm, fetch: s.wire.fetch })).toMatchObject({ outcome: "submitted" });
+    expect(s.wire.posts).toHaveLength(1);
+    await s.close();
+  });
+
+  test("closing it closes nothing else of its runtime, nor does closing a receiver beside it close it", async () => {
+    const s = await scene();
+    const sent = await toShortForm(s, MESSAGE);
+    expect(await s.dispatcher.run(sent.action)).toMatchObject({ outcome: "pending" });
+    const ring = await Keyring.load(s.alice.keys, await scanVault(s.alice.runtime.vault, s.alice.keys));
+    const receipt = async () => ({ outcome: "terminal", reason: "kept for the test" }) as const;
+    new Receiver(s.alice.runtime, s.alice.keys, ring, { didcomm, receipt }).close();
+    expect(s.dispatcher.waiting()).toMatchObject([{ messageId: MESSAGE, attempts: 1, nextAt: T0 + 30_000 }]);
+    s.timers.waits[0]!.fire();
+    await until("the second attempt waited", () => s.timers.waits.length === 2);
+
+    const receiver = new Receiver(s.alice.runtime, s.alice.keys, ring, { didcomm, receipt });
+    s.dispatcher.close();
+    expect(await receiver.receive({ packed: "not an envelope", source: { kind: "direct" } })).toMatchObject({ outcome: "terminal" });
+    receiver.close();
     await s.close();
   });
 });

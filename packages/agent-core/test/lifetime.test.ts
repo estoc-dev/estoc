@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, test, vi } from "vitest";
 
-import { Lifetime, LinkClosed } from "../src/index.js";
+import * as core from "../src/index.js";
+import { LinkClosed, type AgentOptions, type DispatchOptions, type DispatcherOptions, type LinkOptions, type ReceiverOptions } from "../src/index.js";
+import { Lifetime, refuses } from "../src/lifetime.js";
 import { handTimers } from "./helpers.js";
 
 class RecordingSocket {
@@ -97,17 +99,15 @@ describe("a lifetime", () => {
     expect(await (await asked).text()).toBe("late");
   });
 
-  it("hands back a transport it gated already, and gates one another lifetime gated", async () => {
+  it("takes no transport a lifetime gates already, so that whoever calls one asks the one lifetime it goes through", () => {
     const transport = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }));
     const first = new Lifetime(handTimers());
-    const second = new Lifetime(handTimers());
     const gated = first.fetch(transport);
-    expect(first.fetch(gated)).toBe(gated);
-    const twice = second.fetch(gated);
-    expect(twice).not.toBe(gated);
+    expect(() => first.fetch(gated)).toThrow("the transport is gated by a lifetime already");
+    expect(() => new Lifetime(handTimers()).fetch(gated)).toThrow("the transport is gated by a lifetime already");
+    expect([refuses(transport), refuses(gated)]).toEqual([false, false]);
     first.close();
-    await expect(twice("https://example.org/")).rejects.toBeInstanceOf(LinkClosed);
-    expect(transport).not.toHaveBeenCalled();
+    expect([refuses(transport), refuses(gated)]).toEqual([false, true]);
   });
 
   it("opens a socket and sends over it while open, handing down what it says", () => {
@@ -137,4 +137,15 @@ describe("a lifetime", () => {
     expect(RecordingSocket.opened).toHaveLength(1);
     expect(RecordingSocket.opened[0]!.sent).toEqual([]);
   });
+});
+
+test("a lifetime is its owner's alone: the package exports none, and no part is handed one, or told when it has closed", () => {
+  expect(Object.keys(core)).not.toContain("Lifetime");
+  expectTypeOf<AgentOptions>().not.toHaveProperty("lifetime");
+  expectTypeOf<DispatchOptions>().not.toHaveProperty("lifetime");
+  expectTypeOf<DispatcherOptions>().not.toHaveProperty("lifetime");
+  expectTypeOf<ReceiverOptions>().not.toHaveProperty("lifetime");
+  expectTypeOf<LinkOptions>().not.toHaveProperty("lifetime");
+  expectTypeOf<DispatchOptions>().not.toHaveProperty("closed");
+  expectTypeOf<LinkOptions>().not.toHaveProperty("closed");
 });

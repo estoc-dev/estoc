@@ -50,7 +50,7 @@ import type { LiveAction } from "./action.js";
 import { routeOf } from "./dids.js";
 import { carry, type Carried, type Destination } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
-import { Lifetime, type Fetch } from "./lifetime.js";
+import { refuses } from "./lifetime.js";
 import { bounded, letGo, sealData, type MediatorLink } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import type { Confirmations } from "./replica-enrollment.js";
@@ -79,23 +79,11 @@ export interface DispatchOptions extends ResolverOptions, PrepareOptions {
   confirmations?: Confirmations;
   /** how long one attempt may take, the mediator resolved, the forward sealed and the call answered; `DISPATCH_TIMEOUT_MS` when left out */
   timeoutMs?: number;
-  /**
-   * The lifetime of whoever dispatches. Once it closed, the call is not
-   * made and the action not consumed, and no request goes out over
-   * `fetch`. One of its own, which nothing closes, when left out.
-   */
-  lifetime?: Lifetime;
-}
-
-/** The options of one attempt, its transport reached through the lifetime alone. */
-interface Carrying extends DispatchOptions {
-  fetch: Fetch;
-  lifetime: Lifetime;
 }
 
 export type Dispatched =
   | { outcome: "submitted"; messageId: MessageId; preparationEventCid: EventReference<"message.prepared">; submitted: VaultEvent<"delivery.submitted"> }
-  /** the fold asks for no call — the message is closed, in conflict, or not the sender's to send now — or the lifetime closed before the call */
+  /** the fold asks for no call — the message is closed, in conflict, or not the sender's to send now — or the dispatcher closed before the call */
   | { outcome: "none"; messageId: MessageId; because: string }
   /** nothing was called and the action is still live: a prerequisite is missing and may still come, or the attempt's deadline passed before the call */
   | { outcome: "pending"; messageId: MessageId; because: string }
@@ -111,12 +99,10 @@ export type Dispatched =
 /** The one transport call of the message under `action`, serially with every other piece of work on that message. */
 export function dispatch(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
   const local = localRecordsOf(runtime, options.local);
-  const lifetime = options.lifetime ?? new Lifetime();
-  const carrying: Carrying = { ...options, fetch: lifetime.fetch(options.fetch), lifetime };
-  return serially(runtime, outboundWorkKey(action.messageId), () => attempt(runtime, keys, action, carrying, local));
+  return serially(runtime, outboundWorkKey(action.messageId), () => attempt(runtime, keys, action, options, local));
 }
 
-async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: Carrying, local: LocalRecords): Promise<Dispatched> {
+async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions, local: LocalRecords): Promise<Dispatched> {
   const { messageId } = action;
   const trace = options.trace ?? null;
   const owed = await recordOwedAcceptance(runtime, local, messageId);
@@ -251,7 +237,7 @@ async function recheck(held: Held, keys: Keys, action: LiveAction, preparationEv
 }
 
 type Answer = { status: number; ms: number } | { error: string; ms: number };
-/** nothing was called: the deadline had passed, the lifetime had closed, or the action had been spent, when the call was about to be made */
+/** nothing was called: the deadline had passed, the transport was refused, or the action had been spent, when the call was about to be made */
 type Uncalled = { uncalled: "deadline" | "closed" | "spent" };
 
 /**
@@ -259,13 +245,13 @@ type Uncalled = { uncalled: "deadline" | "closed" | "spent" };
  * redirect and answered from no cache. The status is the answer; the
  * body is not read. The action's invocation is consumed in the same
  * synchronous step that invokes `fetch`, after the deadline and the
- * lifetime are looked at: a deadline passed, or a close, before this
- * point has cost nothing, and a deadline passing from here on is a call
- * whose outcome is unknown.
+ * transport itself are asked: a deadline passed, or a close of whoever
+ * gates the transport, before this point has cost nothing, and a
+ * deadline passing from here on is a call whose outcome is unknown.
  */
-async function call({ fetch, lifetime }: Carrying, { endpoint, body }: Carried, deadline: AbortSignal, action: LiveAction): Promise<Answer | Uncalled> {
+async function call({ fetch }: DispatchOptions, { endpoint, body }: Carried, deadline: AbortSignal, action: LiveAction): Promise<Answer | Uncalled> {
   if (deadline.aborted) return { uncalled: "deadline" };
-  if (lifetime.closed) return { uncalled: "closed" };
+  if (refuses(fetch)) return { uncalled: "closed" };
   if (!action.consume()) return { uncalled: "spent" };
   const started = Date.now();
   try {

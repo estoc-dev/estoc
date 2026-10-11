@@ -5,9 +5,9 @@ import { PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, scanVault, type Did, typ
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { ACCOUNT_REGISTERED, Agent, AgentTrace, EXECUTION_REGISTER, LIVE_DELIVERY_CHANGE, STATUS_REQUEST, canonicalDid, createMediation, didcommDocumentOf, mediationOf } from "../../src/index.js";
+import { ACCOUNT_REGISTERED, Agent, AgentTrace, EXECUTION_REGISTER, LIVE_DELIVERY_CHANGE, LinkClosed, STATUS_REQUEST, canonicalDid, createMediation, didcommDocumentOf, mediationOf } from "../../src/index.js";
 import type { FakeMediator } from "../fake-mediator.js";
-import { afterNextCommit, didcomm, freshVault, handTimers, json, newMediator, sealed, webIdentity, type Sealer } from "../helpers.js";
+import { afterNextCommit, didcomm, freshVault, handTimers, json, newMediator, party, sealed, webIdentity, type Sealer } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, restart, run, stopAll, until, type Running } from "./running.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
@@ -120,6 +120,17 @@ describe("an agent closed while a request was on its way to the network", () => 
       agent.close();
       await alice.runtime.close();
     }
+  });
+
+  it("makes no line once closed while the line was being made: nothing reaches the mediator", async () => {
+    const mediator = await newMediator();
+    const alice = await party(mediator);
+    const agent = await Agent.open(alice, { didcomm, fetch: alice.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: alice.trace, liveDelivery: false });
+    const enrolling = agent.enroll(alice.mediationId);
+    agent.close();
+    await expect(enrolling).rejects.toBeInstanceOf(LinkClosed);
+    expect(mediator.seenTypes).toEqual([]);
+    await alice.runtime.close();
   });
 });
 

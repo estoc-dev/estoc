@@ -69,7 +69,7 @@ export class UnverifiedReply extends Error {
   }
 }
 
-/** The lifetime a request or a socket goes through closed before it was made: nothing went out, and nothing is begun through it again. */
+/** What a request or a socket goes through, a link, a dispatcher or an agent, closed before it was made: nothing went out, and nothing is begun through it again. */
 export class LinkClosed extends Error {
   constructor() {
     super("the holder of the link is closed");
