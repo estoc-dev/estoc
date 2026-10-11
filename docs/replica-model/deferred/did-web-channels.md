@@ -45,8 +45,8 @@ authorized usable key is not a resolution failure.
 For a new message's package, use currently authorized keys and service
 from its fresh resolution. For new incoming delivery, authenticate with its
 current sender document. Neither operation requires equality with another
-message's document CID or selected key. Keep the same channel, invitation
-consumer and channel-local deduplication scope.
+message's document CID or selected key. Keep the same channel and
+channel-local deduplication scope.
 Normal denial, supersession and carried-proof checks still apply.
 
 Retain every referenced snapshot without choosing one channel-wide current

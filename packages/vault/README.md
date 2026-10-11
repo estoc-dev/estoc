@@ -79,7 +79,7 @@ import { channelOf, reconcileAdmissions, scanVault, senderGate } from "@estoc/va
 const fold = await scanVault(vault, keys);
 const channel = channelOf(ourDid, peerDid);
 senderGate(fold, channel);              // { status: "open" }, or why the channel takes no new work
-fold.views.channel(channel).inputs;     // the established inputs there, in canonical event order
+fold.views.channel(channel).inbound;    // the inputs there, established first, then pending
 fold.dispositions.disposition(cid);     // what one observation stands as: admitted, refused, ignored, pending
 await reconcileAdmissions(vault, keys); // commit the admissions still owed, dispatching nothing
 ```

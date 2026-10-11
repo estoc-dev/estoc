@@ -94,9 +94,9 @@ the usable history led back to when it was made, and each **next** replaces
 the start or a next in the same branch. Only an entry is disclosed; an
 address of a branch is its peer's alone.
 
-A successor is derived, not chosen, so that replicas deciding one rotation
-apart arrive at one entity on the predecessor's route and record two records
-of one intent rather than a fork. The recipe is
+A successor is derived, not chosen: replicas that decide the same rotation
+independently from the same recipe arrive at one entity on the predecessor's
+route, and what they record is one intent rather than a fork. The recipe is
 [succession.ts](../../packages/vault/src/succession.ts), and which records
 are one intent is [rotation-policy.ts](../../packages/vault/src/rotation-policy.ts).
 The binding of a start is what the deciding vault could see. Two replicas
