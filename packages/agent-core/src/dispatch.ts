@@ -24,7 +24,7 @@
  * network wait happens under the writer lock.
  */
 
-import { parseStrict, type Held, type VaultRuntime } from "@estoc/event-store";
+import type { Held, VaultRuntime } from "@estoc/event-store";
 import {
   forwardId,
   objectReader,
@@ -44,20 +44,19 @@ import {
   type VaultFold,
 } from "@estoc/vault";
 
-import { ENCRYPTED_MIME, PLAIN_TYP, endpointOf, packEncrypted, secretsResolverFor, type IMessage } from "./protocol/didcomm.js";
-import { FORWARD } from "./protocol/spec.js";
+import { ENCRYPTED_MIME } from "./protocol/didcomm.js";
 import { recordAcceptance, recordOwedAcceptance } from "./acceptance.js";
 import type { LiveAction } from "./action.js";
 import { routeOf } from "./dids.js";
+import { carry, type Carried, type Destination } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
-import { didcommDocumentOf } from "./evidence.js";
 import { bounded, letGo, sealData, type MediatorLink } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import type { Confirmations } from "./replica-enrollment.js";
 import { addRecipients, holds } from "./replica-recipients.js";
 import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
 import { serially } from "./procedure.js";
-import { knownLongForms, resolve, type ResolverOptions, type Resolved } from "./resolver.js";
+import { knownLongForms, type KnownLongForms, type ResolverOptions } from "./resolver.js";
 import { note, noteAll, type AgentTrace } from "./trace.js";
 
 /** How long one attempt may take by default: the mediator resolved, the forward sealed and the call answered. */
@@ -113,7 +112,7 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
   const readied = await runtime.locked((held) => ready(held, keys, messageId, options, local));
   await noteAll(trace, readied.notes);
   if ("outcome" in readied.result) return readied.result;
-  const { fold, preparation, envelope, service, registerWith } = readied.result;
+  const { preparation, envelope, destination, known, registerWith } = readied.result;
   const preparationEventCid = preparation.event.cid as EventReference<"message.prepared">;
   const pending = async (phase: string, reason: string): Promise<Dispatched> => {
     await note(trace, { stream: "diag", what: "delivery", data: { messageId, preparationEventCid, phase, reason } });
@@ -124,7 +123,7 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
     if (unregistered !== null) return pending("register", unregistered);
   }
   const deadline = AbortSignal.timeout(options.timeoutMs ?? DISPATCH_TIMEOUT_MS);
-  const carried = await carry(fold, preparation, envelope, service, options, deadline);
+  const carried = await carry(destination, envelope, forwardId(preparationEventCid), known, options, deadline);
   if ("because" in carried) return { outcome: "none", messageId, because: carried.because };
   if ("reason" in carried) return pending("route", carried.reason);
   const rechecked = await runtime.locked((held) => recheck(held, keys, action, preparationEventCid, options));
@@ -147,11 +146,12 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
 
 /** What the wire needs of a message the fold says is ready for its call. */
 interface Ready {
-  fold: VaultFold;
   preparation: Preparation;
   envelope: string;
-  /** the DIDComm service the recipient's resolved document names */
-  service: string | null;
+  /** the preparation's recipient, at the DIDComm service its resolution names */
+  destination: Destination;
+  /** the long forms in evidence, which a short-form mediator resolves through */
+  known: KnownLongForms;
   /** a mediated sender the peer has not written to yet, to be held by its mediator before the call */
   registerWith: { mediationId: MediationId; did: Did } | null;
 }
@@ -180,7 +180,8 @@ async function ready(held: Held, keys: Keys, messageId: MessageId, options: Disp
   const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
   if (bytes === null) return done({ outcome: "pending", messageId, because: `the envelope ${preparation.event.data.envelopeCid} is not here` });
   const registerWith = unconfirmedMediatedSender(fold, outbound.sender as LocalDidEntity, outbound.channel as Channel);
-  return { result: { fold, preparation, envelope: new TextDecoder().decode(bytes), service: resolved.event.data.service, registerWith }, notes };
+  const destination = { did: preparation.event.data.recipientDid, service: resolved.event.data.service };
+  return { result: { preparation, envelope: new TextDecoder().decode(bytes), destination, known: knownLongForms(fold), registerWith }, notes };
 }
 
 /**
@@ -234,69 +235,6 @@ async function recheck(held: Held, keys: Keys, action: LiveAction, preparationEv
   if (!work.candidates.some((candidate) => candidate.event.cid === preparationEventCid)) return { result: { outcome: "none", messageId, because: `the preparation ${preparationEventCid} is no longer one a call may carry` }, notes: [] };
   if (action.spent) return { result: { outcome: "spent", messageId }, notes: [] };
   return { result: null, notes: [] };
-}
-
-/** What goes on the wire and where: the envelope itself, or the forward sealed around it. */
-interface Carried {
-  endpoint: string;
-  body: string;
-  forward: { packed: string; message: IMessage } | null;
-}
-
-/**
- * To a direct endpoint, the envelope itself. To a mediator, a forward
- * whose ID the preparation's event CID derives and whose `next` is the
- * preparation's recipient, carrying the envelope as JSON, sealed
- * anonymously to the mediator's key-agreement key and carried to its
- * HTTP endpoint. The mediator's document is resolved for this attempt
- * alone: it is how the envelope travels, not evidence about the peer.
- */
-async function carry(fold: VaultFold, preparation: Preparation, envelope: string, service: string | null, options: DispatchOptions, deadline: AbortSignal): Promise<Carried | { because: string } | { reason: string }> {
-  const hop = hopOf(service);
-  if (hop === null) return { because: service === null ? "the recipient's document names no DIDComm service" : `the recipient's service ${service} is nothing this runtime carries to` };
-  if (hop.kind === "direct") return { endpoint: hop.endpoint, body: envelope, forward: null };
-  const { routingDid } = hop;
-  let answer: Resolved;
-  try {
-    answer = await bounded(deadline, () => resolve(routingDid, knownLongForms(fold), options));
-  } catch (err) {
-    return { reason: `the mediator ${routingDid} did not resolve in time: ${messageOf(err)}` };
-  }
-  if (answer.outcome === "unavailable") return { reason: `the mediator ${routingDid} did not resolve now: ${answer.reason}` };
-  if (answer.outcome === "definitive") return { because: `the mediator ${routingDid} does not resolve: ${answer.reason}` };
-  const document = didcommDocumentOf(answer.resolution);
-  const endpoint = endpointOf(document, "http");
-  if (endpoint === null) return { because: `the mediator ${routingDid} names no HTTP endpoint` };
-  const message = {
-    id: forwardId(preparation.event.cid as EventReference<"message.prepared">),
-    typ: PLAIN_TYP,
-    type: FORWARD,
-    to: [routingDid],
-    body: { next: preparation.event.data.recipientDid },
-    attachments: [{ media_type: ENCRYPTED_MIME, data: { json: parseStrict(envelope) } }],
-  } as unknown as IMessage;
-  const resolver = { resolve: async (did: string) => (did === routingDid ? document : null) };
-  try {
-    const [packed] = await bounded(deadline, () => packEncrypted(options.didcomm, message, routingDid, null, null, resolver, secretsResolverFor([]), { forward: false }));
-    return { endpoint, body: packed, forward: { packed, message } };
-  } catch (err) {
-    if (deadline.aborted) return { reason: `the forward to ${routingDid} was not sealed in time` };
-    return { because: `the forward to ${routingDid} cannot be sealed: ${messageOf(err)}` };
-  }
-}
-
-type Hop = { kind: "direct"; endpoint: string } | { kind: "forward"; routingDid: Did };
-
-/** The service a resolution names, as a hop a call can take: an HTTP endpoint, or a DID whose mediator takes a forward; null for anything else. */
-function hopOf(service: string | null): Hop | null {
-  if (service === null) return null;
-  if (service.startsWith("did:")) return { kind: "forward", routingDid: service as Did };
-  try {
-    const { protocol } = new URL(service);
-    return protocol === "https:" || protocol === "http:" ? { kind: "direct", endpoint: service } : null;
-  } catch {
-    return null;
-  }
 }
 
 type Answer = { status: number; ms: number } | { error: string; ms: number };

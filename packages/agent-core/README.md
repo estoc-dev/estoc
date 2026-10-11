@@ -56,6 +56,7 @@ races, crashes, restore, closing and a hostile peer.
 | What is a message, before any network work? | `send.ts` | `send`, `automaticDraft`, `manualNotificationDraft` |
 | What goes on the wire for an intent, and which preparation does this runtime carry? | `prepare.ts` | `prepare`, `prepareAll`, `carriage`, `hasExpired` |
 | How is the one call made? | `dispatch.ts` | `dispatch`, `cancel`, `selectPreparation` |
+| How is an envelope sealed from one end to the other, and carried to where the recipient receives? | `ends.ts` | `Ends`, `seal`, `carry`, `recipientEndOf` |
 | What waits for a prerequisite, and for how long? | `dispatcher.ts` | `Dispatcher`, `RETRY_POLICY` |
 | What does an acceptance the disk has not recorded owe? | `acceptance.ts` | `recordAcceptance`, `recordAcceptancesOwed` |
 | What does this runtime alone know of delivery? | `local-records.ts` | `LocalRecords`, `transientOptions` |
@@ -78,7 +79,7 @@ races, crashes, restore, closing and a hostile peer.
 ## Reading order
 
 1. `action.ts` and `procedure.ts`: what authorizes a transport call, and the shape of every procedure that writes the vault.
-2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
+2. `send.ts`, `prepare.ts`, `dispatch.ts`: a message as an intent, the preparation selected and one call; `ends.ts` for the sealing and carrying beneath them, which read nothing but the two ends, `local-records.ts` for what the runtime keeps of it beside the vault, `dispatcher.ts` for the wait in between.
 3. `receive/gate.ts`, `receive/receiver.ts`, `receive/receipt.ts`, then `reconcile.ts`, `responder.ts` and `effects.ts`: a delivery as one observation, what the vault owes over it, which replica answers a live input, and what the input earns.
 4. `agent.ts`: how open, connect and each delivery put these together; `records.ts` for what the host is shown.
 5. `mediation.ts`, `replica-enrollment.ts`, `replica-recipients.ts`, `link.ts`, `pickup.ts`, `blob-store.ts`: the mediator side; `sealed-blob.ts` for what a blob holds.

@@ -173,7 +173,7 @@ function didcommProjection(document: JsonObject): DIDDoc {
  * under that `id`, so that the key IDs didcomm looks up are the ones
  * the envelope names. A spelling of another DID is refused.
  */
-export function didcommDocumentOf(resolution: Resolution, spelling: string = resolution.presentedDid): DIDDoc {
+export function didcommDocumentOf(resolution: Pick<Resolution, "presentedDid" | "did" | "document">, spelling: string = resolution.presentedDid): DIDDoc {
   if (spelling === resolution.document["id"]) return didcommProjection(resolution.document);
   if (canonicalDidOf(spelling) !== resolution.did) throw new InvalidDidDocument(`${spelling} is not a spelling of ${resolution.did}`);
   return didcommProjection({ ...resolution.document, id: spelling });
