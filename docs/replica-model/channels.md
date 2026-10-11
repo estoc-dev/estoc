@@ -1,16 +1,27 @@
-# Channels, continuity and operation evidence
+# Channels, addresses and continuity
 
-Status: **implemented**. This document owns channel identity,
-invitations and the payloads of the three channel events: a local rotation
-decision, an application admission and a channel denial. The
-[`@estoc/from-prior` API and host contract](../../packages/from-prior/README.md)
-own proof semantics, and the
-[`@estoc/continuity` API and host contract](../../packages/continuity/README.md)
-own graph semantics. The vault's reading of its evidence into the continuity
-model, operation eligibility, admission and dispatch authority are code, named
-in [section 7](#folds-and-procedures). Storage envelopes and durability follow
-[event-store.md](event-store.md). Sending and effect ordering follow
-[distributed-delivery.md](distributed-delivery.md). The capitalized requirement
+<!-- suite-navigation:start -->
+[Suite guide](README.md)
+<!-- suite-navigation:end -->
+
+Status: **version 5**. The channel layer of the vault is code: the channel
+pair and its order in [ids.ts](../../packages/vault/src/ids.ts); the payloads
+of `did.created`, `did.disclosed`, `did.rotationSelected`,
+`message.admitted`, `channel.blocked` and `contact.channelsSet` in
+[schema.ts](../../packages/vault/src/schema.ts); what each receipt, proof and
+decision establishes, the continuity read over them, admission, invitations,
+contact views and the succession of local addresses in the folds
+[`@estoc/vault`](../../packages/vault/README.md) lists; and the receive gate,
+resolution, preparation, rotation and the private-address policy in the
+procedures [`@estoc/agent-core`](../../packages/agent-core/README.md) lists.
+Each module states in its leading comment the rule it implements, and its
+tests sit beside it. The
+[`@estoc/from-prior` package](../../packages/from-prior/README.md) owns proof
+semantics and the [`@estoc/continuity` package](../../packages/continuity/README.md)
+owns graph semantics. This document keeps what that code cannot state about
+itself: what a channel, a link, a contact and an address are, which DIDs a
+channel may use and how they resolve, and the boundaries of admission,
+continuity and denial across replicas and restores. Capitalized requirement
 words have their BCP 14 meanings.
 
 <a id="model"></a>
@@ -18,21 +29,21 @@ words have their BCP 14 meanings.
 ## 1. Model
 
 A **channel** is the fixed ordered pair `(localDid, peerDid)` of distinct
-canonical `did:peer:4` communication DIDs, viewed from one vault. Each
-message retains its sender, recipient, authenticated keys and exact immutable
-document evidence. Mediator DIDs follow a separate
-[resolution policy](relationships.md#mediator-resolution).
+canonical `did:peer:4` communication DIDs, viewed from one vault. `(A, B)`
+and `(B, A)` are different vault-local views; receiving from B at A and
+sending from A to B use the same channel, written `C(A, B)`. Each message
+stays in the channel it was observed or sent in, with its sender, recipient,
+authenticated keys and exact immutable document evidence.
 
 A **continuity link** is a derived replacement of exactly one endpoint in the
 context of one channel. The fold computes it from received proofs, resolution
-evidence and local rotation decisions; no link event is stored.
-Links form a directed graph whose authority is scoped to each channel context.
+evidence and local rotation decisions; no link event is stored, and its
+authority is scoped to each channel context.
 
 A **contact** organizes selected channels with local names and preferences.
-Creation selects complete local/peer DID pairs and may precede receipt or peer
-resolution. Contact edits affect presentation and preferences, not message
-identity or protocol authority. Channels and continuity exist independently of
-contacts; unassigned channels remain usable.
+Its edits affect presentation and send choices, not message identity or
+protocol authority. Channels and continuity exist independently of contacts,
+and an unassigned channel remains usable.
 
 ```mermaid
 flowchart TD
@@ -47,338 +58,265 @@ flowchart TD
     D --> I
 ```
 
-Receipt needs no invitation state, contact or continuity history.
-Anonymous input has no channel or application execution. Each later operation
-checks its own evidence and policy in the module that owns it under
-[section 7](#folds-and-procedures).
+Receipt needs no invitation state, contact or continuity history. Anonymous
+input has no channel or application execution. Each later operation checks
+its own evidence and policy in the module that owns it.
 
 <a id="channel-identity"></a>
 
 ## 2. Channel identity
 
-Validate and canonicalize both DIDs under
-[the DID profile](relationships.md#peer-did-numalgo-4-profile). A channel value
-has exactly these two DID strings:
+Both endpoints are canonical numalgo-4 short forms, compared byte for byte in
+each role; equal endpoints are invalid. A receipt derives its pair from the
+local key's DID and the authenticated sender, an outbound intent from its
+sender DID entity and canonical recipient, and a source-based fact from the
+message it references. Missing endpoint evidence leaves that projection
+pending: contact membership, another observation or a shared key cannot
+supply it.
 
-```ts
-type Channel = { localDid: Did; peerDid: Did };
-```
+Replacing either DID creates another channel. Changing a numalgo-4 encoded
+document yields another DID, and shared keys or services do not alias
+distinct DIDs. A selector, such as contact membership or a denial, stores the
+two canonical DID strings and is checked offline; a missing document or local
+entity leaves its evidence unresolved and grants no authority.
 
-Both endpoints use the canonical numalgo-4 short form. Compare each role
-byte-for-byte; equal endpoints are invalid. `(A, B)` and `(B, A)` are different
-vault-local views.
-Receiving from B at A and sending from A to B use the same `(A, B)` channel.
-The notation `C(A, B)` throughout this profile means `{localDid: A, peerDid: B}`.
+<a id="addresses"></a>
+<a id="private-branches"></a>
 
-Receipts derive the pair from the local key's DID and authenticated sender.
-Outbound intents derive it from `senderDidId` and canonical `recipientDid`.
-Source-based facts use the pair of their referenced message. Missing exact
-endpoint evidence leaves that projection pending; contact membership, another
-observation or a shared key cannot supply it.
+## 3. Addresses
 
-Selectors such as contact membership and blocking store the two canonical DID
-strings directly. Canonicalize supplied long forms before storing a selector.
-Its syntax and distinctness can be checked offline; missing DID documents or
-local entities leave evidence unresolved and grant no authority.
-Compare selectors by both roles. Sort sets by unsigned UTF-8 byte order of
-`RFC8785([localDid, peerDid])`, with no duplicate pairs. This ordering sorts the
-set, not the two endpoints within a pair.
+A local address is made for one of two uses, fixed in its creation. An
+**entry** is an address handed out, as an invitation or a direct DID, and
+whoever holds it may write to it. A **private branch** is the succession of
+addresses one relationship moves through once it leaves an entry: its
+**start** is the first address toward one peer, bound to the peer's address
+the usable history led back to when it was made, and each **next** replaces
+the start or a next in the same branch. Only an entry is disclosed; an
+address of a branch is its peer's alone.
 
-Replacing either DID creates another channel; document CIDs, keys and resolution
-event CIDs are verification evidence. Changing a numalgo-4 encoded document
-yields another DID. Shared keys or services never alias distinct DIDs.
+A successor is derived, not chosen, so that replicas deciding one rotation
+apart arrive at one entity on the predecessor's route and record two records
+of one intent rather than a fork. The recipe is
+[succession.ts](../../packages/vault/src/succession.ts), and which records
+are one intent is [rotation-policy.ts](../../packages/vault/src/rotation-policy.ts).
+The binding of a start is what the deciding vault could see. Two replicas
+that see different fragments of the peer's history may bind to different
+addresses and so make different starts; once the evidence that relates them
+merges, continuity shows the competition as a conflict, and nothing settles
+it by arrival. Making a branch address serve another relationship, or
+splitting one a peer reused, is not provided.
+
+Branches exist for privacy: [the private-address policy](../../packages/agent-core/src/privacy.ts)
+moves a relationship off a disclosed entry once the peer's first application
+input there is established.
 
 <a id="invitations"></a>
+<a id="out-of-band-discovery"></a>
 
-## 3. Invitations
+### Invitations and discovery
 
-An OOB invitation is an address handed out, not a token. Whoever holds it
-writes to the disclosed local DID in an exact channel of their own under
-[section 1](#model), and a receipt under it is an ordinary receipt: it needs
-no invitation state and grants none. No event records who used an invitation,
-and nothing a peer sends under one takes it from the next. An invitation is
-available while its disclosed DID is live on a route that may deliver, and
-unavailable once the DID or its route ended or while one of them waits on
-something that may recover; [the invitation fold](../../packages/vault/src/fold/invitations.ts)
-owns that view. An `oobId` that distinct disclosures carry, once histories
-that each disclosed it are merged, is unavailable under every one of them and
-handed out again under none; the DIDs and their receipts are as they were.
-Retirement of the disclosed DID ends new disclosure and sending at it while
-retained keys still receive under [the receive gate](../../packages/agent-core/src/receive/gate.ts).
+OOB, QR, a directory, a file, NFC or manual exchange discloses an ordinary
+address, and reusable discovery SHOULD use an entry. An invitation is an
+address handed out, not a token: whoever holds it writes in a channel of
+their own, a receipt under it is an ordinary receipt that needs and grants no
+invitation state, and an OOB ID supplies `pthid`, not channel identity. When
+an invitation may still be handed out is
+[the invitation fold](../../packages/vault/src/fold/invitations.ts).
+
+<a id="sending"></a>
+
+### Sending
+
+Before an intent is committed, one exact channel that takes new work is
+selected, explicitly or through the contact's send choices, whose default is
+the unique verified head ([the contact view](../../packages/vault/src/fold/views.ts)).
+An explicit address choice may start a new channel without a handshake. Any
+supported application protocol may be the first message, with no rendezvous
+wrapper, wire contact field or preliminary handshake; when no content is
+ready, the first message is an ordinary Trust Ping. An existing intent keeps
+its channel.
+
+<a id="dids-and-resolution"></a>
+<a id="did-profile"></a>
+
+## 4. DIDs and their resolution
+
+Both endpoints of every application channel, and the predecessor and
+successor of every continuity link, are `did:peer:4`, for public and private
+disclosure alike. An unsupported sender fails the receive gate, an
+unsupported recipient cannot form an outbound intent, and a proof whose
+issuer is unsupported is invalid for continuity without invalidating an
+otherwise authenticated carrier. A local DID is derived from the seed with a
+fixed key-agreement and authentication method and one DIDComm service
+([identity.ts](../../packages/vault/src/identity.ts)); a peer's document is
+retained in the one form [peer-document.ts](../../packages/vault/src/peer-document.ts)
+gives it, whichever spelling the peer presents.
+
+A sender uses its long form in a channel context until an admitted
+observation there shows the peer has written to that address, and a
+successor carries its frozen `from_prior` until then
+([prepare.ts](../../packages/agent-core/src/prepare.ts)). Confirmation in an
+unrelated channel that shares the address does not count, and a committed
+package stays byte-identical after confirmation.
+
+<a id="did-resolution"></a>
+
+### Resolution
+
+A peer's `did:peer:4` resolves locally, from its validated long form or a
+retained long form matching its short form, and starts no network lookup. A
+missing long form leaves preparation pending and is not evidence of a key
+change; an unknown sender short form without its long form cannot
+authenticate. Each receipt and each package retains the exact immutable
+document it used as its own `peer.resolved` evidence, and another document
+cannot substitute for those bytes
+([resolver.ts](../../packages/agent-core/src/resolver.ts),
+[evidence.ts](../../packages/agent-core/src/evidence.ts)).
+
+The channel method restriction does not apply to mediator or routing DIDs. A
+mediator may use `did:web`; resolving it creates no local DID and makes it no
+channel peer. A Web resolver used by a client or a mediator MUST be
+constrained against SSRF, DNS rebinding, redirects, unbounded responses and
+DID mismatch, with a bounded timeout, and a fetch its policy forbids is a
+definitive failure that MUST NOT fall back to an unrestricted one. The
+presented Web DID string is the identity: the document's `id` MUST match it
+byte for byte, whatever URL or DNS processing the fetch went through. A
+mediator lookup failure grants no dispatch authority and does not show that a
+channel peer's key changed. The client's resolver is
+[resolver.ts](../../packages/agent-core/src/resolver.ts); the mediator's
+policy is in [its README](../../mediator/README.md).
 
 <a id="continuity"></a>
 <a id="channel-linked"></a>
 
-## 4. Derived continuity
+## 5. Continuity
 
-The vault projects retained proof evidence and local rotation decisions into
-`@estoc/continuity` and uses its queries. The package's public types, JSDoc,
-README host contract and tests define normalization, joins, contexts, conflict
-scope and query outcomes; the vault implements no second graph. What each
-event establishes on its own is read by
-[`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts): a source
-is one authenticated `message.in` with its own resolution document, a carrier
-is a source that brought a `from_prior` proof, a decision is a saved
-`did.rotationSelected`. A carrier's proof is verified and bound to its receipt
-by `@estoc/from-prior`, whose README holds the proof profile; the vault projects
-the change a bound proof reports as the successor's observation carrying the
-rotation. [`packages/vault/src/fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts)
-projects them into the model as facts identified by their content, keeps its
-own index from event CIDs to those facts, and reads the model's answers for
-the host: each carrier's or decision's status, which channels take no new
-work, the admitted witness by which an address is confirmed for new work, and
-the denials that cover a channel. Proof verification is local and appends no verification events.
-Application admission is a separate durable decision under
-[section 5](#application-admission).
+The vault projects its retained proof evidence and local rotation decisions
+into `@estoc/continuity` and implements no second graph. What each receipt,
+carrier and decision establishes on its own is
+[fold/channels.ts](../../packages/vault/src/fold/channels.ts); the host's
+reading of the model, each record's status, which channels take no new work
+and the witness that confirms an address, is
+[fold/continuity.ts](../../packages/vault/src/fold/continuity.ts). Proof
+verification is local and appends no events.
 
-A verified carrier `M` addressed to local DID `A`, whose proof names issuer
-`B0` and whose authenticated sender is `B1`, yields the peer link
+A verified carrier `M` addressed to local `A`, whose proof names issuer `B0`
+and whose authenticated sender is `B1`, yields the peer link
 `C(A, B0) -> C(A, B1)`. A decision from local `A0` toward peer `B` with
-successor `A1` yields the local link `C(A0, B) -> C(A1, B)`. At one pair, a
-local link and a peer link join to `C(A1, B1)`. A link replaces exactly one
-endpoint; competing successors for one endpoint in one context, cycles and
-contradictory identity evidence are conflicts the package exposes, and phase 1
-defines no operation to clear them. A verified replacement ends new work from
-and to the replaced endpoint in its context, and in no unrelated channel that
-shares the DID.
+successor `A1` yields the local link `C(A0, B) -> C(A1, B)`, and at one pair
+a local and a peer link join to `C(A1, B1)`. Competing successors for one
+endpoint in one context, cycles and contradictory identity evidence are
+conflicts the package exposes, and no operation clears them. A verified
+replacement ends new work from and to the replaced endpoint in its context,
+and in no unrelated channel that shares the DID.
+
+Continuity relates channels and merges nothing: another channel has another
+logical input and execution, even for an equal wire ID and content, as
+[delivery](distributed-delivery.md#observation-ids-and-vectors) derives them.
 
 <a id="did-rotationselected"></a>
 
-### Local rotation decisions
-
-A local rotation may be selected before any outbound message exists. Preserve
-that decision as `did.rotationSelected`, with `roots == []` and five closed fields:
-
-```json
-{
-  "type": "did.rotationSelected",
-  "roots": [],
-  "data": {
-    "fromDidId": "019b2a60-c68e-75bf-b6fb-ae1a41f8d715",
-    "peerDid": "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP",
-    "toDidId": "019b4d12-22d3-7fd0-82fb-f33864a75dd5",
-    "sourceEventCid": null,
-    "fromPrior": "<compact-jwt>"
-  }
-}
-```
-
-`fromDidId` names the already committed local DID `A0`; `peerDid` stores the
-canonical peer DID `B`. They fix the oriented old pair `C(A0,B)`, including
-when `sourceEventCid` is null. `toDidId` names an eligible local DID `A1`, distinct
-from both old endpoints; its `did.created` is committed earlier or in the same
-atomic commit as this decision. Its document, route and generation come from
-that creation: a start of the predecessor's entry bound to the peer's start,
-or a next of the predecessor, under [the succession query](../../packages/vault/src/succession.ts),
-so that replicas deciding the same rotation apart name one successor.
-Validate both local DID entities and their exact retained
-key evidence. The original JWT is signed by the retained local `A0`
-authentication method, with exact `iss`/`sub` spellings for `A0`/`A1`.
-Peer resolution is not supplied by this local signature;
-each outgoing package retains its own peer resolution.
-
-`sourceEventCid` is null for manual rotation; otherwise it names the complete
-source witness in `C(A0,B)` that selected the rotation under
-[the private-address policy](../../packages/agent-core/src/privacy.ts). The decision is committed
-before any dependent intent or disclosure. A pair has one rotation intent in
-its context, which several records may support: two replicas deciding the same
-predecessor and successor apart, or one deciding it again over a restored
-snapshot, each record under its own author, time, source and proof. Which
-records are one intent, and that two successors in one context compete while
-the same successor from two predecessors is not one intent, is
-[the rotation policy](../../packages/vault/src/rotation-policy.ts). What a producer checks before
-committing one, that it reuses the intent already recorded in its context and
-how the notification follows are [the rotation procedure](../../packages/agent-core/src/rotate.ts); what a
-saved decision needs before it is projected, and that a decision still waiting
-for its evidence already forbids another successor, is the continuity fold.
-A prepared message carries the proof of one of that intent's records.
+A local rotation is the saved decision `did.rotationSelected`, committed
+together with or after the successor's creation and before any intent or
+disclosure that depends on it, its proof signed by the predecessor's
+authentication key. A pair has one
+rotation intent in its context, which several records may support: two
+replicas deciding it apart, or one deciding it again over a restored snapshot.
+A prepared message carries the proof of one of that intent's records. The
+procedure is [rotate.ts](../../packages/agent-core/src/rotate.ts).
 
 <a id="admission"></a>
 <a id="channel-accepted"></a>
 <a id="application-admission"></a>
 
-## 5. Application admission
+## 6. Application admission
 
-`message.in` records an authenticated observation, not permission to apply it.
-Before a receipt can contribute accepted chat, profile values, an incoming ACK,
-Report Problem correlation, new address confirmation or a new input-derived
-operation, commit `message.admitted` for that exact observation. This is a
-local acceptance decision, not a cached signature-verification result, a
-handler result or permission to send. Its closed payload and roots are:
+`message.in` records an authenticated observation, not permission to apply
+it. Before a receipt contributes accepted chat, profile values, an incoming
+ACK, Report Problem correlation, address confirmation or a new input-derived
+operation, `message.admitted` is committed for that exact observation. It is
+a trusted runtime's local acceptance decision: not a cached verification
+result, a handler result or permission to send, and not a proof of what
+another disconnected runtime knew. Admission of one duplicate lends no
+authority to another duplicate's headers or authentication, and pickup ACK
+only removes a transport delivery. When an admission is effective and what
+stands against a new one is
+[admission/model.ts](../../packages/vault/src/admission/model.ts); the pass
+that records the admissions owed is
+[admission/record.ts](../../packages/vault/src/admission/record.ts), and a
+fold or replay appends none.
 
-```json
-{
-  "type": "message.admitted",
-  "roots": [],
-  "data": { "sourceEventCid": "bafkreichxnhduewkkewrtmtgoaklp5f5s2ak7p62t3evkl77qpji3waffm" }
-}
-```
+<a id="merge-restore-and-replicas"></a>
 
-`sourceEventCid` is a non-null `EventReference<"message.in">`. The source and its
-required evidence MUST already be committed. Admission retains no extra body
-roots and does not undo erasure. Multiple admissions of the same exact source
-are equivalent decisions, not multiple executions. Admission of one duplicate
-cannot lend authority to another duplicate's headers or authentication. Pickup
-ACK only removes a transport delivery and grants no application authority.
-
-When an admission is effective, what stands in the way of a new one and the
-disposition shown beside every observation are
-[`packages/vault/src/admission/model.ts`](../../packages/vault/src/admission/model.ts). The pass
-that records the admissions a vault owes, under the writer lock and in
-canonical event order, is
-[`packages/vault/src/admission/record.ts`](../../packages/vault/src/admission/record.ts), run by
-[`packages/agent-core/src/reconcile.ts`](../../packages/agent-core/src/reconcile.ts); pure fold or replay never
-appends an admission. Which admitted observations speak for one logical input,
-and when they conflict, is [the inbound fold](../../packages/vault/src/fold/inbound.ts). As
-with other local decisions, the event records a trusted vault runtime's
-choice; it is not a cryptographic proof of what another disconnected runtime
-knew.
-
-### 5.1 Merge, restore and disconnected replicas
+### Merge, restore and disconnected replicas
 
 Merge unions events by CID under the
-[event identity contract](event-store.md#invariants). Exact duplicate envelopes
-are one event; distinct events retain their own exact references.
-Import admissions with their exact sources and
-proof evidence; import order must not determine their meaning. Once the same
-complete union is available, all readers derive the same admitted history and
-current restrictions. A late duplicate without its own admission cannot extend
-a previously admitted message's receipt timing or profile content.
-A consistent admitted duplicate keeps the original logical input accepted;
-contradictory independently admitted claims still expose an application intent
-conflict. A late unadmitted old-peer duplicate cannot create that conflict.
+[event identity contract](event-store.md#invariants), and admissions are
+imported with their exact sources and proof evidence, so import order does
+not change their meaning: once the same union is available, every reader
+derives the same admitted history and the same restrictions. A late
+duplicate without its own admission cannot extend an admitted message's
+receipt timing or profile content, and a late unadmitted old-peer duplicate
+cannot create an intent conflict.
 
-Do not use the earliest observation in canonical event order as a global
-rotation cutoff: disconnected histories have no shared physical receive order.
-If one independent history admitted an observation before learning a rotation,
-its valid admission remains historical evidence after merge; another history's
-local refusal cannot retroactively undo that fact or a reply already sent.
-This does not authorize processing an unadmitted old-peer source after merge.
+Disconnected histories share no physical receive order, so the earliest
+observation in canonical event order is not a rotation cutoff. An admission
+one history made before it learned a rotation remains historical evidence
+after merge; another history's refusal cannot undo it or a reply already
+sent, and an unadmitted old-peer source is not processed after merge.
 
-Full runtimes of one vault may run concurrently as distinct replicas of one
-replica-mediation arrangement. Each admits observations against the history
-it holds; [automatic-output selection](distributed-delivery.md#automatic-effects)
-determines which replica answers a live input delivered to several replicas.
-That selection does not synchronize their rotation knowledge. Requiring all
-replicas to stop as soon as any replica knows a rotation requires coordination
-or suspending application processing while freshness cannot be established.
-Offline independent processing cannot promise that rule. Neither mediator
-fan-out nor deterministic event ordering provides it.
+Replicas of one arrangement each admit against the history they hold.
+[Automatic-output selection](distributed-delivery.md#automatic-effects)
+decides which replica answers a live input; it does not synchronize their
+rotation knowledge. Stopping every replica as soon as one knows a rotation
+would need coordination, or a halt while freshness cannot be established,
+and offline processing cannot promise it. Neither mediator fan-out nor
+deterministic event ordering provides it.
 
-Restore from a snapshot that omits a rotation can lose knowledge of that
-restriction. A fresh author, a seed or an admission event is not an anti-rollback
-mechanism. State this limitation; recover newer history when available. Do not
-use an old address as a guaranteed repair channel or enable manual bypass of a
-known replacement. A fresh relationship may be needed when history is lost.
-A deliberate new relationship using an unrelated local DID can form a new
-context; a verified local successor remains in the old context and cannot
-bypass its restriction. The new context inherits no prior conversation
-authority, and the old peer address has no guaranteed delivery or safety.
+A restore from a snapshot that omits a rotation can lose that restriction. A
+fresh author, a seed or an admission event is not an anti-rollback
+mechanism: recover newer history when it is available, do not treat an old
+address as a guaranteed repair channel, and do not bypass a known
+replacement by hand. A deliberate new relationship from an unrelated local
+DID forms a new context that inherits no prior conversation authority; a
+verified local successor stays in the old context and under its
+restrictions.
 
 <a id="effects-and-recovery"></a>
-
-## 6. Identity, local policy and display
-
-The logical inbound identity is `(canonical sender DID, canonical recipient DID, wire ID)`.
-Key variants independently authorized by the same immutable DID document can
-agree on that one input; intent differences conflict. Another channel always
-has another logical input and
-execution ID, even if its wire ID/content is equal and continuity is proven.
-Neither later graph discovery nor grouping merges executions. The ID formulas
-and within-channel vectors are in [delivery](distributed-delivery.md#observation-ids-and-vectors).
-
-ACK, Ping reply and rotation notification are independent concrete intents
-with distinct deterministic tuples. Each tuple permits one immutable intent.
-Only the replica [selected to answer](distributed-delivery.md#automatic-effects)
-an eligible live input may react to it automatically; the first dispatch of
-historical work is manual under
-[the live action](../../packages/agent-core/src/action.ts).
-
 <a id="channel-blocked"></a>
-
-### 6.1 Blocking
-
-`channel.blocked` has `roots == []` and three required data fields:
-
-```json
-{
-  "type": "channel.blocked",
-  "roots": [],
-  "data": {
-    "localDid": "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd",
-    "peerDid": "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP",
-    "includeSuccessors": true
-  }
-}
-```
-
-The DID pair obeys section 2's selector rules; `includeSuccessors` is Boolean.
-It is a permanent local denial decision for that channel. When
-`includeSuccessors` is true, the denial also covers the channel's verified
-successors, including through paths masked by a continuity conflict; this
-deny-only traversal grants no continuity or operation authority, and
-[the continuity fold](../../packages/vault/src/fold/continuity.ts) derives it. Denial prevents
-new admission and new work in the channel. It does not prevent authenticated
-receipt or pickup ACK, does not infer a global block of a DID, and does not
-withdraw an already effective admission or its ACK evidence.
-
-<a id="display-relationships"></a>
 <a id="contact-channels"></a>
 
-### 6.2 Contacts and channel views
+## 7. Denial and contacts
 
-`contact.channelsSet` directly selects a contact's channels under
-[the contact selection schema](../../packages/vault/src/schema.ts).
-Two channels sharing a peer DID at different local addresses remain independently
-selectable. Creation commits `contact.created` and a non-empty
-`contact.channelsSet` in one batch
-([createContact](../../packages/daemon/src/daemon.ts)); clearing the set later
-leaves no contact-based send choice. The history a
-contact shows beyond its selected channels, and the heads a new send from it
-may go to, are [the contact view](../../packages/vault/src/fold/views.ts); a selected channel
-stays told apart from a derived one.
+`channel.blocked` is a permanent local denial of one channel and, when it
+includes successors, of the channel's verified successors, through paths a
+continuity conflict masks too; that deny-only traversal grants no continuity
+or operation authority. Denial stops new admission and new work in the
+channel. It does not stop authenticated receipt or pickup ACK, does not
+become a global block of a DID, and does not withdraw an effective admission
+or its ACK evidence.
 
-A product's explicit "delete and block" action separately appends denial
-decisions for the concrete selected channels and optional successors; later
-contact membership changes cannot expand or remove them.
+A contact is created with a non-empty selection of complete channels in one
+batch, possibly before any receipt or peer resolution, so a discovered peer
+DID needs a local-DID choice first. Two channels that share a peer DID at
+different local addresses stay separately selectable. A product's "delete
+and block" appends denials for the concrete channels it chose
+([contact-commands.ts](../../packages/vault/src/contact-commands.ts)), and
+later membership changes neither widen nor remove them. What a contact shows,
+and where a new send from it may go, is
+[the contact view](../../packages/vault/src/fold/views.ts).
 
-<a id="folds-and-procedures"></a>
+<a id="privacy-and-interoperability"></a>
 
-## 7. Receipt, continuity and dispatch are code
+## 8. Privacy and interoperability
 
-Each module below states in its leading comment the rule it implements, and
-its tests sit beside it. This document describes none of them a second time.
-
-- The gate every delivery passes before the vault, and the bounded diagnostic
-  a terminal delivery leaves: [`packages/agent-core/src/receive/gate.ts`](../../packages/agent-core/src/receive/gate.ts)
-  and [`receiver.ts`](../../packages/agent-core/src/receive/receiver.ts). The authenticated unpack
-  that keeps `from_prior` as the string it came as is the
-  [DIDComm API](../../packages/agent-core/README.md#didcomm-api).
-- Durable receipt, what the vault owes once it is in, and what is reported of
-  the observation in hand: [`receive/receipt.ts`](../../packages/agent-core/src/receive/receipt.ts),
-  [`reconcile.ts`](../../packages/agent-core/src/reconcile.ts) and
-  [`receive/after.ts`](../../packages/agent-core/src/receive/after.ts).
-- What each source, carrier and decision establishes on its own:
-  [`packages/vault/src/fold/channels.ts`](../../packages/vault/src/fold/channels.ts), which
-  verifies and binds a carrier's proof with `@estoc/from-prior` and projects
-  the change it binds. Locating the issuer material a carried proof verifies
-  against, and signing a local proof with `@estoc/from-prior`:
-  [`packages/vault/src/from-prior.ts`](../../packages/vault/src/from-prior.ts).
-- Links, joins, conflicts, each carrier's and decision's status, the admitted
-  witness that confirms an address for new work and which channels take no
-  new work: [`fold/continuity.ts`](../../packages/vault/src/fold/continuity.ts) over
-  `@estoc/continuity`.
-- Effective admission, admission blockers and disposition:
-  [`admission/model.ts`](../../packages/vault/src/admission/model.ts); the pass that
-  records what is owed: [`admission/record.ts`](../../packages/vault/src/admission/record.ts). Logical inputs and intent
-  agreement: [`fold/inbound.ts`](../../packages/vault/src/fold/inbound.ts).
-- Rotation decisions and their notification: [`rotate.ts`](../../packages/agent-core/src/rotate.ts).
-  The early private-address policy: [`privacy.ts`](../../packages/agent-core/src/privacy.ts).
-- Which channels take new work, for every path to the wire:
-  [`channel-policy.ts`](../../packages/vault/src/channel-policy.ts).
-- Send heads for a contact, channel views and the errors peers reported:
-  [`fold/views.ts`](../../packages/vault/src/fold/views.ts).
-- Dispatch authority: [`action.ts`](../../packages/agent-core/src/action.ts) mints the one transport
-  call a live action carries, [`dispatch.ts`](../../packages/agent-core/src/dispatch.ts) rereads the
-  fold under the lock before making it, and [`dispatcher.ts`](../../packages/agent-core/src/dispatcher.ts)
-  waits out prerequisites with its retry policy.
+Channels use DIDComm Messaging 2.1 with Out-of-Band 2.0, Trust Ping 2.0,
+Empty Message 1.0, Report Problem 2.0 and Routing 2.0, over Peer DID
+numalgo 4 and RFC 8785. Peers receive ordinary DIDComm messages, with no
+contact ID, replica ID or Estoc handshake. Entries and branches are
+disclosure policy, not message schemas or receipt permissions: a shared
+address can correlate traffic, and a private branch reduces that reuse.
+Continuity holds in exact channel contexts along role-preserving paths and
+transfers no authority through display membership. A peer's reuse of one
+wire ID across channels is not deduplicated, and channel-local processing
+promises no exactly-once business execution.

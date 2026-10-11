@@ -15,8 +15,8 @@ responsible for. The [replica model](../../docs/replica-model/README.md)
 keeps the contracts around them:
 [vault events](../../docs/replica-model/vault-events.md) for the model
 the events are read under, the principles and the boundaries,
-[channels](../../docs/replica-model/channels.md) for channel identity
-and the channel payloads, and
+[channels](../../docs/replica-model/channels.md) for channel identity,
+the addresses and the boundaries of admission and continuity, and
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
 for the hashes and the inbound identities.
 

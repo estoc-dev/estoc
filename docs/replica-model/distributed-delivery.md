@@ -121,7 +121,7 @@ no transport error, timeout or remote Problem Report appends
 
 Useful content or Trust Ping can be the first ordinary DIDComm message;
 address selection and optional early privacy rotation follow
-[the address policy](relationships.md).
+[the channel addresses](channels.md#addresses).
 
 <a id="4-vault-first-sending-and-commit-boundaries"></a>
 
@@ -334,7 +334,7 @@ evidence; forbidden `return_route`, duplicate JSON members and invalid I-JSON
 are rejected. The plaintext is canonicalized with RFC 8785 and encrypted
 through maintained DIDComm APIs, and the normalized envelope object, the peer
 resolution it used under
-[the address profile](relationships.md#recipient-resolution-freshness) and
+[channel resolution](channels.md#did-resolution) and
 `message.prepared` are committed in one lock before transport, the event
 carrying the intent, plaintext and envelope CIDs with its evidence
 references. The commit freezes that envelope: later confirmation, rotation,

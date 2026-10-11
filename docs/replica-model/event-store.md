@@ -22,7 +22,7 @@ have their BCP 14 meanings.
 procedures; [vault-events.md](vault-events.md) owns the vault model and its
 boundaries; payloads, held roots and the folds over them are
 [`@estoc/vault`](../../packages/vault/README.md)'s.
-[Delivery](distributed-delivery.md) and [channel address policy](relationships.md)
+[Delivery](distributed-delivery.md) and [channels](channels.md)
 use these primitives.
 
 <a id="invariants"></a>

@@ -32,8 +32,9 @@ meanings.
 [event-store.md](event-store.md) owns event identity, commit durability and
 versioning; [dasl-objects.md](dasl-objects.md) owns object identity;
 [vault-sqlite.md](vault-sqlite.md) owns storage, ownership, restore and
-import; [channels.md](channels.md) owns channel identity, invitations and the
-channel payloads; [distributed-delivery.md](distributed-delivery.md) owns the
+import; [channels.md](channels.md) owns channel identity, the addresses,
+the DID profiles and the boundaries of admission and continuity;
+[distributed-delivery.md](distributed-delivery.md) owns the
 message layers, their CIDs, the inbound identities and the commit and
 acknowledgment boundaries. Socket state, pickup cursors, retry timers, caches
 and traces are local state and appear in no event.

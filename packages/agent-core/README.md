@@ -19,10 +19,8 @@ The identifiers, the hashes and the commit boundaries are the
 [distributed delivery](../../docs/replica-model/distributed-delivery.md)
 for the inbound and execution identities, the effect keys and the commit
 boundaries,
-[channels](../../docs/replica-model/channels.md) for the channel
-payloads, and
-[address and contact policy](../../docs/replica-model/relationships.md)
-for the DID profiles; what a forward must be is
+[channels](../../docs/replica-model/channels.md) for channel
+identity, the addresses and the DID profiles; what a forward must be is
 [the mediator's README](../../mediator/README.md). The code and its tests
 define what the procedures do; each module's leading comment states what
 it is responsible for.

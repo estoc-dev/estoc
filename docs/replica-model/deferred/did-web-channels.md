@@ -10,10 +10,10 @@ phase-1 dependency or an implementation-ready extension. Requirement words
 below apply only to that candidate profile, whose post-receipt retry policy
 remains unresolved.
 
-Phase-1 channel endpoints, including continuity predecessors, support only
-`did:peer:4` under [the channel DID profile](../relationships.md#peer-did-numalgo-4-profile).
+Channel endpoints, including continuity predecessors, support only
+`did:peer:4` under [the channel DID profile](../channels.md#dids-and-resolution).
 Mediator and routing DID resolution remains separate under
-[mediator resolution](../relationships.md#mediator-resolution).
+[mediator resolution](../channels.md#did-resolution).
 
 ## 1. Future endpoint identity and document updates
 
@@ -63,7 +63,7 @@ DID; this rule does not allow replacing their encoded keys or route in place.
 ## 2. Candidate network resolution rules
 
 These rules require the constrained network resolver used for
-[mediator resolution](../relationships.md#mediator-resolution). They extend
+[mediator resolution](../channels.md#did-resolution). They extend
 channel authentication and preparation; they do not change mediator identity
 or grant any new transport invocation. The candidate defaults are a 30-second
 minimum retry interval, exponential backoff capped at 21600 seconds and
