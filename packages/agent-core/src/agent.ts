@@ -79,7 +79,7 @@ import { STATUS } from "./protocol/mediation.js";
 import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
 import { enroll, type Confirmations, type Enrolled } from "./replica-enrollment.js";
 import { replicaReceiptOf, replicaRoute, sendOverRoute, type ReplicaAddress, type SnapshotLinkReceived } from "./replica-channel.js";
-import { listReplicas, type ListedReplica } from "./replica-list.js";
+import { listableAccountOf, listReplicas, type ListedReplica } from "./replica-list.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
@@ -344,10 +344,12 @@ export class Agent {
    * mediator lists them and the seed bears them out (`listReplicas`):
    * this runtime's own among them once it is added, and each other one
    * an address `sendSnapshotLink` takes. Begins no request once the
-   * agent is closed.
+   * agent is closed, nor while the vault alone shows the arrangement
+   * cannot be listed: its mediator is not even resolved then.
    */
   async listReplicas(mediationId: MediationId): Promise<ListedReplica[]> {
     this.refuseClosed();
+    listableAccountOf(await scanVault(this.runtime.vault, this.keys), mediationId);
     const { link } = await this.lineOf(mediationId);
     return listReplicas(link, this.runtime, this.keys, mediationId);
   }

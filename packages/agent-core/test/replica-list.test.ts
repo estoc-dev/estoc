@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { readReplicaGrant, signReplicaGrant, type Did, type ReplicaId } from "@estoc/vault";
 
-import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, canonicalDid, enroll, listReplicas, type ListedReplica } from "../src/index.js";
+import { Agent, AgentTrace, INVALID_MESSAGE, MediatorRefused, PROBLEM_REPORT, REPLICAS, REPLICA_LIST, Unusable, canonicalDid, createMediation, enroll, listReplicas, type ListedReplica } from "../src/index.js";
 import type { FakeMediator } from "./fake-mediator.js";
-import { copyOf, didcomm, newMediator, party, type Party } from "./helpers.js";
+import { copyOf, didcomm, freshVault, newMediator, party, webFetch, type Party } from "./helpers.js";
 
 const closing: { close(): unknown }[] = [];
 
@@ -13,7 +13,6 @@ afterEach(async () => {
   for (const held of closing.splice(0)) await held.close();
 });
 
-/** A party whose own replica the mediator added. */
 async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party> {
   const p = await party(mediator, fill);
   closing.push(p.runtime);
@@ -29,6 +28,13 @@ async function added(p: Party, grant?: string): Promise<Did> {
   return replicaDid;
 }
 
+/** The grant spelled otherwise: the last character of an Ed25519 signature has low bits that encode nothing, and flipping them changes no byte of it. */
+function respelled(jws: string, bits: number): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  return jws.slice(0, -1) + alphabet[alphabet.indexOf(jws.at(-1)!) ^ bits];
+}
+
+const active = (grant: string) => ({ grant, state: "active", added_time: 1, removed_time: null });
 const listed = (p: Party): Promise<ListedReplica[]> => listReplicas(p.link, p.runtime, p.keys, p.mediationId);
 const asked = (mediator: FakeMediator): number => mediator.seenTypes.filter((type) => type === REPLICA_LIST).length;
 const roster = (mediator: FakeMediator): Did[] => [...mediator.replicas.keys()] as Did[];
@@ -130,11 +136,48 @@ describe("the replicas an account added", () => {
     expect(mediator.seenTypes).toEqual([]);
   });
 
+  it("are not asked for through an agent, nor its mediator resolved, while the arrangement's account is not registered", async () => {
+    const fresh = await freshVault();
+    closing.push(fresh.runtime);
+    const { mediationId } = (await createMediation(fresh.runtime, fresh.keys, "did:web:mediator.example" as Did)).data;
+    const web = webFetch({});
+    const agent = await Agent.open(fresh, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
+    closing.unshift(agent);
+    const refused = await agent.listReplicas(mediationId).catch((err: unknown) => err);
+    expect(refused).toBeInstanceOf(Unusable);
+    expect((refused as Unusable).faults).toEqual(["its account is not registered"]);
+    expect(web.calls).toEqual([]);
+  });
+
+  it("are each listed once, however many spellings of its grant the mediator lists", async () => {
+    const mediator = await newMediator();
+    const p = await enrolled(mediator);
+    const [own] = mediator.replicas.values();
+    const [first, second, third] = [0, 1, 2].map((bits) => respelled(own!.grant, bits));
+    mediator.intercept = (msg, from) =>
+      msg.type === REPLICA_LIST ? mediator.reply(REPLICAS, from as string, msg.body["cursor"] === null ? { entries: [active(first!), active(second!)], next_cursor: "on" } : { entries: [active(third!)], next_cursor: null }, msg.id) : undefined;
+    expect((await listed(p)).map(({ did, self }) => ({ did, self }))).toEqual([{ did: own!.replicaDid, self: true }]);
+    expect(asked(mediator)).toBe(2);
+  });
+
+  it("are not asked for again by a page that goes on to a cursor given before, whatever else it lists", async () => {
+    const mediator = await newMediator();
+    const p = await enrolled(mediator);
+    for (const cursors of [["again", "again"], ["one", "two", "one"]]) {
+      const before = asked(mediator);
+      let page = 0;
+      mediator.intercept = (msg, from) => (msg.type === REPLICA_LIST ? mediator.reply(REPLICAS, from as string, { entries: [active(`not a grant ${page}`)], next_cursor: cursors[page++] }, msg.id) : undefined);
+      await expect(listed(p)).rejects.toBeInstanceOf(MediatorRefused);
+      expect(asked(mediator) - before).toBe(cursors.length);
+    }
+  });
+
   it("are not asked for again by a page that lists none not listed before", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
     const [own] = mediator.replicas.values();
-    mediator.intercept = (msg, from) => (msg.type === REPLICA_LIST ? mediator.reply(REPLICAS, from as string, { entries: [{ grant: own!.grant, state: "active", added_time: 1, removed_time: null }], next_cursor: "again" }, msg.id) : undefined);
+    let page = 0;
+    mediator.intercept = (msg, from) => (msg.type === REPLICA_LIST ? mediator.reply(REPLICAS, from as string, { entries: [active(own!.grant)], next_cursor: `page ${++page}` }, msg.id) : undefined);
     await expect(listed(p)).rejects.toBeInstanceOf(MediatorRefused);
     expect(asked(mediator)).toBe(2);
   });

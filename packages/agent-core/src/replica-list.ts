@@ -10,7 +10,7 @@
  */
 
 import { isJsonObject, type VaultRuntime } from "@estoc/event-store";
-import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, scanVault, verifyReplicaGrant, type Did, type Keys, type MediationId } from "@estoc/vault";
+import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, scanVault, verifyReplicaGrant, type Did, type Keys, type MediationId, type VaultFold } from "@estoc/vault";
 
 import { MediatorRefused, Unusable } from "./errors.js";
 import type { MediatorLink } from "./link.js";
@@ -20,20 +20,21 @@ import { INVALID_MESSAGE, REPLICA_LIST, REPLICAS } from "./protocol/replica-medi
 import type { ReplicaAddress } from "./replica-channel.js";
 import { accountOf, control } from "./replica-enrollment.js";
 
-/** A replica the account added, as the mediator lists it, under the grant the seed bears out. */
-export interface ListedReplica extends ReplicaAddress {
-  /** the replica's DID, in its short form */
-  did: Did;
-  state: "active" | "removed";
-  /** when the mediator added it, in seconds since the epoch by the mediator's clock */
-  addedTime: number;
-  /** when the mediator removed it; null while it is active */
-  removedTime: number | null;
-  /** whether it is this runtime's own replica */
-  self: boolean;
-}
+/** Whether the account still holds the replica, and when the mediator removed one it no longer holds, in seconds since the epoch by the mediator's clock. */
+type Standing = { state: "active"; removedTime: null } | { state: "removed"; removedTime: number };
 
-type Entry = Pick<ListedReplica, "state" | "addedTime" | "removedTime"> & { grant: string };
+/** A replica the account added, as the mediator lists it, under the grant the seed bears out. */
+export type ListedReplica = ReplicaAddress &
+  Standing & {
+    /** the replica's DID, in its short form */
+    did: Did;
+    /** when the mediator added it, in seconds since the epoch by the mediator's clock */
+    addedTime: number;
+    /** whether it is this runtime's own replica */
+    self: boolean;
+  };
+
+type Entry = Standing & { grant: string; addedTime: number };
 
 /** The page a listing asks for first: the most a mediator takes unless it is configured otherwise. */
 const PAGE = 16;
@@ -49,24 +50,31 @@ const PAGE = 16;
  * mediator refuses the listing or answers with no listing.
  */
 export async function listReplicas(link: MediatorLink, runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<ListedReplica[]> {
-  const mediation = accountOf(await scanVault(runtime.vault, keys), mediationId);
+  const mediation = listableAccountOf(await scanVault(runtime.vault, keys), mediationId);
   toward(link, mediation);
-  if (mediation.routingDid === null) throw new Unusable("mediation", mediationId, ["its account is not registered"]);
-  const listed: ListedReplica[] = [];
+  // a grant has more than one encoding that verifies, so a replica is told apart by its DID and not by its grant's characters
+  const listed = new Map<Did, ListedReplica>();
   const refused: string[] = [];
-  for (const entry of await listing(link)) {
+  for (const { grant: jws, ...entry } of await everyEntry(link)) {
     try {
-      const grant = await verifyReplicaGrant(keys, entry.grant, mediation.me.did);
+      const grant = await verifyReplicaGrant(keys, jws, mediation.me.did);
       if (grant.mediationId !== mediationId || !sameDid(grant.mediator, mediation.mediatorDid)) throw new IdentityMismatch(`the grant binds its replica to mediation ${grant.mediationId} at ${grant.mediator}`);
-      const { state, addedTime, removedTime } = entry;
-      listed.push({ replicaId: grant.replicaId, did: grant.replicaDid, longFormDid: grant.replicaLongForm, state, addedTime, removedTime, self: grant.replicaId === runtime.author });
+      if (!listed.has(grant.replicaDid)) listed.set(grant.replicaDid, { replicaId: grant.replicaId, did: grant.replicaDid, longFormDid: grant.replicaLongForm, ...entry, self: grant.replicaId === runtime.author });
     } catch (err) {
       if (!(err instanceof InvalidReplicaGrant || err instanceof IdentityMismatch || err instanceof InvalidDidDocument)) throw err;
       refused.push(err.message);
     }
   }
-  await link.observe("diag", "replica-list", { mediationId, listed: listed.map(({ did }) => did), refused });
-  return listed;
+  const replicas = [...listed.values()];
+  await link.observe("diag", "replica-list", { mediationId, listed: replicas.map(({ did }) => did), refused });
+  return replicas;
+}
+
+/** The arrangement as the fold has it, fit to be listed: fit to be enrolled in, and its account registered. */
+export function listableAccountOf(fold: VaultFold, mediationId: MediationId): ReturnType<typeof accountOf> {
+  const mediation = accountOf(fold, mediationId);
+  if (mediation.routingDid === null) throw new Unusable("mediation", mediationId, ["its account is not registered"]);
+  return mediation;
 }
 
 /**
@@ -76,32 +84,58 @@ export async function listReplicas(link: MediatorLink, runtime: VaultRuntime, ke
  * large only in answer to the account's registration. A listing whose
  * cursor is refused begins again, once.
  */
-async function listing(link: MediatorLink): Promise<Entry[]> {
+async function everyEntry(link: MediatorLink): Promise<Entry[]> {
   let limit = PAGE;
   let begunAgain = false;
   for (;;) {
-    const entries = new Map<string, Entry>();
-    let cursor: string | null = null;
+    const listing = new Listing();
     try {
-      do {
-        const page = pageOf(await control(link, REPLICA_LIST, { cursor, limit }, REPLICAS));
-        const before = entries.size;
-        for (const entry of page.entries) if (!entries.has(entry.grant)) entries.set(entry.grant, entry);
-        // a mediator that goes on without listing a replica it has not listed would be asked for pages forever
-        if (page.next !== null && entries.size === before) throw new MediatorRefused("replicas goes on to another page without listing a replica not listed before");
-        cursor = page.next;
-      } while (cursor !== null);
-      return [...entries.values()];
+      do listing.take(pageOf(await control(link, REPLICA_LIST, { cursor: listing.cursor, limit }, REPLICAS)));
+      while (listing.cursor !== null);
+      return listing.entries();
     } catch (err) {
       if (!(err instanceof MediatorRefused && err.code === INVALID_MESSAGE)) throw err;
-      if (cursor === null && limit > 1) limit = 1;
-      else if (cursor !== null && !begunAgain) begunAgain = true;
+      if (listing.cursor === null && limit > 1) limit = 1;
+      else if (listing.cursor !== null && !begunAgain) begunAgain = true;
       else throw err;
     }
   }
 }
 
-function pageOf(reply: IMessage): { entries: Entry[]; next: string | null } {
+interface Page {
+  entries: Entry[];
+  next: string | null;
+}
+
+/**
+ * One listing as far as it got: each entry once, and the cursor to ask
+ * with next, null before the first page and after the last. A page
+ * that goes on to a cursor the listing was given before, or that lists
+ * no entry not listed before, is refused: a mediator could otherwise
+ * have the listing ask for pages forever.
+ */
+class Listing {
+  cursor: string | null = null;
+  private readonly listed = new Map<string, Entry>();
+  private readonly cursors = new Set<string>();
+
+  take(page: Page): void {
+    const before = this.listed.size;
+    for (const entry of page.entries) if (!this.listed.has(entry.grant)) this.listed.set(entry.grant, entry);
+    if (page.next !== null) {
+      if (this.cursors.has(page.next)) throw new MediatorRefused("replicas goes on to a cursor it gave before");
+      if (this.listed.size === before) throw new MediatorRefused("replicas goes on to another page without listing an entry not listed before");
+      this.cursors.add(page.next);
+    }
+    this.cursor = page.next;
+  }
+
+  entries(): Entry[] {
+    return [...this.listed.values()];
+  }
+}
+
+function pageOf(reply: IMessage): Page {
   const { entries, next_cursor: next } = reply.body as { entries?: unknown; next_cursor?: unknown };
   if (!Array.isArray(entries) || !(next === null || typeof next === "string")) throw new MediatorRefused("replicas is not a page of entries and the cursor of the next");
   return { entries: entries.map(entryOf), next };
@@ -109,9 +143,13 @@ function pageOf(reply: IMessage): { entries: Entry[]; next: string | null } {
 
 function entryOf(entry: unknown): Entry {
   const { grant, state, added_time: addedTime, removed_time: removedTime } = isJsonObject(entry) ? entry : {};
-  const removed = state === "removed";
-  if (typeof grant !== "string" || !(state === "active" || removed) || !Number.isSafeInteger(addedTime) || (removed ? !Number.isSafeInteger(removedTime) : removedTime !== null)) {
-    throw new MediatorRefused("a replicas entry is not a grant, a state and the times that state has");
-  }
-  return { grant, state, addedTime: addedTime as number, removedTime: removedTime as number | null };
+  const standing = standingOf(state, removedTime);
+  if (typeof grant !== "string" || standing === null || !Number.isSafeInteger(addedTime)) throw new MediatorRefused("a replicas entry is not a grant, a state and the times that state has");
+  return { grant, addedTime: addedTime as number, ...standing };
+}
+
+function standingOf(state: unknown, removedTime: unknown): Standing | null {
+  if (state === "active" && removedTime === null) return { state, removedTime };
+  if (state === "removed" && Number.isSafeInteger(removedTime)) return { state, removedTime: removedTime as number };
+  return null;
 }
