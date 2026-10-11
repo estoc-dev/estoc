@@ -26,8 +26,10 @@ DASL objects. Capitalized requirement words have their BCP 14 meanings.
 ## 1. Scope
 
 This profile owns CID identity, the object API, verification and retention
-semantics. [event-store.md](event-store.md) owns atomic vault commits;
-[vault-sqlite.md](vault-sqlite.md) owns persistence and maintenance.
+semantics. [event-store.md](event-store.md) owns event identity and commit
+durability; the vault commit is [vault.ts](../../packages/event-store/src/vault.ts)'s
+under [SQ §9.1](vault-sqlite.md#atomic-vault-commit); [vault-sqlite.md](vault-sqlite.md)
+owns persistence and maintenance.
 This is not an IPFS node, discovery service, automatic graph traversal or public
 retrieval protocol. The normative CID dependency is
 [DASL Content IDs](https://dasl.ing/cid.html).

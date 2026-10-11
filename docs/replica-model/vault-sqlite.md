@@ -8,7 +8,9 @@ Status: **version 5** — schema 2, CID-keyed events. SQLite is the sole
 persistent vault and portable backup format.
 
 The capitalized requirement words in this document have their BCP 14 meanings.
-[event-store.md](event-store.md) owns the API and event semantics;
+[event-store.md](event-store.md) owns event identity, commit durability and
+versioning, and the API is [event.ts](../../packages/event-store/src/event.ts) and
+[vault.ts](../../packages/event-store/src/vault.ts)'s;
 [dasl-objects.md](dasl-objects.md) owns CID identity and object verification;
 [vault-events.md](vault-events.md) owns payloads and held roots, and the folds
 over them are code. This file owns SQLite storage and recovery, not a second implementation of SQLite's
@@ -230,7 +232,7 @@ the frontier; a consumer checkpoints only after consuming the complete result.
 Positions/tokens never travel in portable state.
 
 Portable inspection exposes the read-only [`Vault`](../../packages/event-store/src/vault.ts)
-`Vault` and scans the immutable event set in canonical order without local
+and scans the immutable event set in canonical order without local
 control tables. It has no change frontier; `changes` is rejected, as
 [the portable snapshot](../../packages/event-store/README.md) has it. Its scans return stored CIDs under the same
 verification rules; inspection does not replace full source validation.
@@ -372,7 +374,7 @@ No particular VFS, WAL mode or stronger power-loss guarantee is mandated.
 ### 9.1 Atomic commit
 
 Under the operation lock, validate drafts and prepare objects, assign events
-under ES's batch rules, and require every root to have sound accepted bytes under
+under the batch rules of [event.ts](../../packages/event-store/src/event.ts), and require every root to have sound accepted bytes under
 [DO §6.3](dasl-objects.md#read-operations) or verified prepared bytes. One transaction
 accepts all supplied objects, including repairs under
 [DO §6.2](dasl-objects.md#putobject), the whole event batch and positions, and

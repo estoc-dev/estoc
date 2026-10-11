@@ -105,8 +105,9 @@ endings.
 
 ## Rule ownership
 
-Change the defining section and align its consumers. ES owns event envelopes,
-DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel identity,
+Change the defining section and align its consumers. ES owns event identity,
+commit durability and versioning, and the envelope and batch rules are
+[event.ts](../../packages/event-store/src/event.ts)'s; DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel identity,
 invitations and the rotation, admission and denial payloads; the continuity
 adapter, operation eligibility, admission and dispatch authority are owned by
 their code in `packages/vault` and `packages/agent-core`.

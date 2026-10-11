@@ -41,7 +41,6 @@ const envelope: EventEnvelope = {
 };
 const base: Event = { ...envelope, cid: eventCidOf(envelope) };
 
-// the fixed example: this envelope has this CID
 const EXAMPLE: EventEnvelope = {
   at: "2026-09-25T00:00:00.000Z",
   author: "019b0000-0000-7000-8000-000000000001" as AuthorId,
