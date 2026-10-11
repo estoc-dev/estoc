@@ -43,12 +43,18 @@ accepted event set, never on arrival or physical row order.
 
 Content addressing does not authenticate the author or the supplied history.
 `author` is provenance, not a credential: it names one writable incarnation of
-the vault, not hardware, a person or an execution-host key. Creation and
-portable restore mint a fresh author; an exact move may keep it only with the
-old writer permanently stopped. Two writable copies never share an author. A
-store that meets, under its own author, an event it does not hold refuses the
-whole input as a fork; the recovery is an identity reset, and the historical
-events are never rewritten.
+the vault, not hardware, a person or an execution-host key, and it is the
+runtime's replica ID. Creation and portable restore mint a fresh author. Only
+an exact move keeps it and the store generation: the complete current runtime,
+moved once the old writer is permanently stopped and the database is cleanly
+closed or recovered into one standalone file. A runtime copy taken before later
+writes of its source is not an exact move: opening it to write MUST renew both
+IDs, which invalidates every change token of the old generation and every
+record keyed by the old replica ID (`resetIdentity` in
+[`@estoc/event-store`](../../packages/event-store/README.md)). Two writable
+copies never share an author. A store that meets, under its own author, an
+event it does not hold refuses the whole input as a fork; the recovery is an
+identity reset, and the historical events are never rewritten.
 
 Equal envelopes are one event, however many times they are drafted. A domain
 that must distinguish occurrences records that distinction in its payload, such

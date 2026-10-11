@@ -357,8 +357,9 @@ everything, reads included, and drafts it minted are not resubmitted
 blindly. `close()` admits nothing more, waits for the operations
 already admitted, then closes the database and with it ownership; a
 stream still open fails at its next chunk. `openRuntime(driver, {
-anchor, resetIdentity: true })` is the recovery from `ForkedAuthor`:
-once every check has passed, one transaction gives the runtime a
+anchor, resetIdentity: true })` is the recovery from `ForkedAuthor`,
+and the open of a runtime copy taken before later writes of its
+source: once every check has passed, one transaction gives the runtime a
 fresh replica ID and generation and drops the cache, the events,
 positions, objects, options and keystore staying and every token of
 the old generation refused. `vaultSuite` in `test/suite/` is what
