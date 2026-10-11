@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@estoc/did-peer": "workspace:^",
+    "@estoc/did-web": "workspace:^",
     "@estoc/didcomm": "^0.4.1-estoc.4",
     "@estoc/didcomm-node": "^0.4.1-estoc.4",
     "@hono/node-server": "^1.19.17",
@@ -35,10 +36,8 @@
     "bs58": "^6.0.0",
     "canonicalize": "^5.1.0",
     "hono": "^4.13.1",
-    "ipaddr.js": "^2.5.0",
     "jose": "^6.2.12",
-    "multiformats": "^14.0.5",
-    "undici": "^7.29.0"
+    "multiformats": "^14.0.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260821.1",

@@ -3,8 +3,8 @@ import path from "node:path";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { DatabaseExists, type SqliteDriver } from "@estoc/event-store";
 import type { DidcommApi } from "@estoc/agent-core";
+import { guardedFetch } from "@estoc/did-web/node";
 
-import { guardedFetch } from "./guarded-fetch.js";
 import { TooLarge } from "../errors.js";
 import type { DaemonHost, DaemonStorage } from "../host.js";
 

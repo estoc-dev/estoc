@@ -38,6 +38,7 @@
   ],
   "dependencies": {
     "@estoc/did-peer": "workspace:^",
+    "@estoc/did-web": "workspace:^",
     "@noble/curves": "^1.9.7",
     "@estoc/event-store": "workspace:^",
     "@estoc/keystore": "workspace:^",

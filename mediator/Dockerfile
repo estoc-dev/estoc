@@ -1,5 +1,5 @@
-# Built from the workspace root, which holds the lockfile and the one
-# workspace library the mediator imports:
+# Built from the workspace root, which holds the lockfile and the
+# workspace libraries the mediator imports:
 #   docker build -f mediator/Dockerfile .
 FROM node:26-slim AS build
 RUN npm install --global pnpm@9.15.9
@@ -8,7 +8,7 @@ COPY . .
 # better-sqlite3 ships its prebuilt binaries; its install script would only
 # reach for node-gyp, which the slim image cannot run.
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter "@estoc/mediator..."
-RUN pnpm --filter @estoc/did-peer run build \
+RUN pnpm --filter @estoc/did-peer --filter @estoc/did-web run build \
  && pnpm --filter @estoc/mediator exec tsc \
  && pnpm --filter @estoc/mediator deploy --prod --ignore-scripts /app
 

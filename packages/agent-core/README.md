@@ -51,7 +51,7 @@ races, crashes, restore, closing and a hostile peer.
 | How is a blob sealed, and opened? | `sealed-blob.ts` | `sealBlob`, `openBlob`, `SEAL_OVERHEAD` |
 | Which keys does this runtime hold in hand? | `keyring.ts` | `Keyring`, `secretsOf` |
 | How is a communication DID minted, disclosed, retired? | `dids.ts` | `createDid`, `disclose`, `retireDid`, `routeOf` |
-| What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `webDidUrl`, `WebResolverOptions` |
+| What does a presented DID resolve to? | `resolver.ts` | `resolve`, `knownLongForms`, `WebResolverOptions` |
 | What is retained of a peer's document, and how does didcomm read it? | `evidence.ts` | `commitResolution`, `readResolution`, `pinnedResolver` |
 | What is a message, before any network work? | `send.ts` | `send`, `automaticDraft`, `manualNotificationDraft` |
 | What goes on the wire for an intent, and which preparation does this runtime carry? | `prepare.ts` | `prepare`, `prepareAll`, `carriage`, `hasExpired` |

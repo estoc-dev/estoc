@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The Node host's default fetch is `guardedFetch` from
+  `@estoc/did-web/node`**, the transport the mediator uses too. A
+  refused IP literal or scheme now carries the code `EBLOCKED`, as a
+  refused address at lookup did. The `ipaddr.js` and `undici`
+  dependencies go with it.
 - **Snapshot links**: `publishSnapshotLink` seals the vault's snapshot
   under a key of its own and puts it at the selected mediator as this
   replica's blob, answering the link (the blob's URL, its name and its
