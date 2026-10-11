@@ -4,7 +4,7 @@ Status: **version 5**. The folds over the vault's events and the procedures
 that append them are specified by the code under
 [`packages/`](../../packages/) and its tests, see
 [`packages/vault/README.md`](../../packages/vault/README.md).
-The suite has four specifications and one vectors appendix. A vault may run
+The suite has four specifications. A vault may run
 one writable full runtime or several as distinct replicas of one
 replica-mediation arrangement. SQLite is the sole persistent vault and portable
 interchange format. This guide is informative; linked specification sections
@@ -63,7 +63,6 @@ permits at most one compatible intent per execution.
 | Domain facts | [Vault events](vault-events.md) | The vault model, its principles and boundaries; payloads, identifiers, held roots and the folds over them are code |
 | Communication authority | [Channels](channels.md) | Fixed DID pairs, addresses, DID profiles and resolution, and the boundaries of admission, continuity and denial; the channel payloads, the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Message layers and CIDs, channel-local identity, ACK paths, preparations, runtime-local delivery records and live dispatch actions |
-| Vectors | [Message vectors](message-vectors.md) | Fixed inputs with their canonical bytes and CIDs for the message layers |
 
 Ordinary DIDComm messages need no Estoc wire handshake or contact ID.
 
@@ -136,7 +135,7 @@ DD owns runtime ordering and message/effect identity.
 | Durable application admission and operation eligibility | [CH](channels.md#application-admission), [admission model](../../packages/vault/src/admission/model.ts) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
 | Fixed intent, preparation and manual dispatch | [live action](../../packages/agent-core/src/action.ts), [dispatch](../../packages/agent-core/src/dispatch.ts), [DD selected preparation](distributed-delivery.md#the-selected-preparation) | [intent and preparation](../../packages/vault/src/schema.ts), [DD send](distributed-delivery.md#send-an-ordinary-message) |
 | Inbound/execution IDs | [DD identity](distributed-delivery.md#observation-identity-logical-aliasing-and-execution-identity) | [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Message layers and their CIDs | [DD layers](distributed-delivery.md#canonical-projections-and-hashes), [stored document](../../packages/vault/src/document.ts), [vectors](message-vectors.md) | [intent, preparation and receipt](../../packages/vault/src/schema.ts) |
+| Message layers and their CIDs | [DD layers](distributed-delivery.md#canonical-projections-and-hashes), [stored document](../../packages/vault/src/document.ts), [vectors](../../packages/vault/test/message-vectors.test.ts) | [intent, preparation and receipt](../../packages/vault/src/schema.ts) |
 | Effect results | [DD automatic effects](distributed-delivery.md#automatic-effects) | [skipped effect](../../packages/vault/src/schema.ts), [effects](../../packages/agent-core/src/effects.ts) |
 | Runtime-local delivery records | [DD local records](distributed-delivery.md#runtime-local-delivery-records) | [responder](../../packages/agent-core/src/responder.ts), [prepare](../../packages/agent-core/src/prepare.ts), [dispatch](../../packages/agent-core/src/dispatch.ts) |
 | ACK selection and authorization | [DD ACKs](distributed-delivery.md#durable-end-to-end-acknowledgment) | [ACK witness](../../packages/vault/src/schema.ts) |
@@ -156,8 +155,8 @@ lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see
 [`packages/vault/README.md`](../../packages/vault/README.md)). The
-[message vectors](message-vectors.md) are fixed inputs with the bytes and
-CIDs the layers must give, and the vault's tests reproduce them.
+[message vectors](../../packages/vault/test/message-vectors.test.ts) are
+fixed inputs with the bytes and CIDs the layers must give.
 Mutable channel DIDs have only a [deferred design note](deferred/README.md),
 where network vault synchronization is listed as deferred too. Those notes
 reserve no current fields, error codes, key names or extension APIs; future
