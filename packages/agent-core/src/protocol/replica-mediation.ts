@@ -9,7 +9,12 @@ export const ACCOUNT_REGISTER = `${REPLICA_MEDIATION}/account-register`;
 export const ACCOUNT_REGISTERED = `${REPLICA_MEDIATION}/account-registered`;
 export const REPLICA_ADD = `${REPLICA_MEDIATION}/replica-add`;
 export const REPLICA_ADDED = `${REPLICA_MEDIATION}/replica-added`;
+export const REPLICA_LIST = `${REPLICA_MEDIATION}/replica-list`;
+export const REPLICAS = `${REPLICA_MEDIATION}/replicas`;
 export const RECIPIENT_ADD = `${REPLICA_MEDIATION}/recipient-add`;
 export const RECIPIENT_ADDED = `${REPLICA_MEDIATION}/recipient-added`;
 export const EXECUTION_REGISTER = `${REPLICA_MEDIATION}/execution-register`;
 export const EXECUTION_REGISTERED = `${REPLICA_MEDIATION}/execution-registered`;
+
+/** The problem code of a control the mediator does not take as written. */
+export const INVALID_MESSAGE = "e.estoc.replica-mediation.invalid-message";

@@ -79,6 +79,7 @@ import { STATUS } from "./protocol/mediation.js";
 import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
 import { enroll, type Confirmations, type Enrolled } from "./replica-enrollment.js";
 import { replicaReceiptOf, replicaRoute, sendOverRoute, type ReplicaAddress, type SnapshotLinkReceived } from "./replica-channel.js";
+import { listReplicas, type ListedReplica } from "./replica-list.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
@@ -336,6 +337,19 @@ export class Agent {
     this.forgetRetry(mediationId);
     await this.connectTo(mediationId);
     return enrolled;
+  }
+
+  /**
+   * The replicas the account of an arrangement ever added, as its
+   * mediator lists them and the seed bears them out (`listReplicas`):
+   * this runtime's own among them once it is added, and each other one
+   * an address `sendSnapshotLink` takes. Begins no request once the
+   * agent is closed.
+   */
+  async listReplicas(mediationId: MediationId): Promise<ListedReplica[]> {
+    this.refuseClosed();
+    const { link } = await this.lineOf(mediationId);
+    return listReplicas(link, this.runtime, this.keys, mediationId);
   }
 
   /** `disclose` over the line of the arrangement that routes the DID. */

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **The replicas an account added, as its mediator lists them**:
+  `Agent.listReplicas(mediationId)`, and `listReplicas` over a link,
+  ask the arrangement's mediator for its `replica-list` from the first
+  page to the last: sixteen a page, or one at a time once the mediator
+  refuses the first page, and a listing whose cursor is refused is
+  begun again once. Every grant listed is checked against the seed
+  (`verifyReplicaGrant`) and must name the arrangement and its
+  mediator; one that does not stand is left out, and why is traced
+  (`diag.replica-list`). A `ListedReplica` is the replica's ID, both
+  spellings of its DID, its `state`, `addedTime` and `removedTime`, and
+  `self` for this runtime's own; it is a `ReplicaAddress`, as
+  `sendSnapshotLink` takes. Nothing is written. An arrangement whose
+  account is not registered is `Unusable`, and no request is made.
+  `REPLICA_LIST`, `REPLICAS` and `INVALID_MESSAGE` are exported.
 - **Closing is checked where an effect happens** (breaking): an agent,
   and each part of it used alone, asks whether it closed in the step
   that makes each side effect: a request at the call and a socket at
