@@ -58,10 +58,10 @@ export function addressingOf({ sender, recipient, fromPrior }: Ends): Addressing
  * The recipient at `did` as `key` can seal to it: at the first method,
  * in document order, the resolved document authorizes for key
  * agreement, didcomm can seal to, and on `key`'s own curve. Null when
- * there is none. The document may authorize more: a method of a suite
- * didcomm does not pack with, which its projection marks `Other`, or a
- * key on another curve, since didcomm agrees both ends over one curve;
- * or a key that agrees nothing, a signing key or a low-order point.
+ * there is none. The document may authorize more: a method didcomm
+ * reads no key from, which its projection marks `Other`, or a key on
+ * another curve, since didcomm agrees both ends over one curve; or a
+ * key that agrees nothing, a signing key or a low-order point.
  * Each is authorized and still unusable here, and naming it as the
  * recipient key ID would fail the seal.
  */
@@ -75,9 +75,10 @@ export function recipientEndOf(did: Did, resolution: Resolution, key: LocalKey):
 
 /**
  * The sender at `did`, sealing from `key` under its own document. The
- * document is read, not rebuilt from a template, so it may authorize
- * the key under a suite didcomm does not pack with as well, which the
- * projection marks `Other`; naming that method would fail the seal.
+ * document is read, not rebuilt from a template, so it may also carry
+ * the key in a method didcomm reads no key from, under a suite didcomm
+ * does not know or over material that suite is not read from, which
+ * the projection marks `Other`; naming that method would fail the seal.
  */
 export function senderEndOf(did: Did, resolution: PeerResolution, key: LocalKey): SenderEnd | null {
   const packable = packableMethodIds(resolution);

@@ -11,11 +11,11 @@
   replica that sends elsewhere, it now names the mediator it expected.
 - **`signFromPrior` signs under a method didcomm reads**: of the
   predecessor's authentication methods carrying the entity's key, the
-  proof's `kid` is the first whose suite didcomm reads, since didcomm
+  proof's `kid` is the first didcomm reads the key from, since didcomm
   reads the issuer's key from that method when it seals the proof. A
   document another implementation wrote may also carry the key under a
-  suite didcomm does not read; with no other method, nothing is signed
-  (`InvalidFromPrior`).
+  suite didcomm does not know or over material that suite is not read
+  from; with no other method, nothing is signed (`InvalidFromPrior`).
 - **Verification relationships are read by `@estoc/did-peer`**
   (breaking): `authorizedMethodIds`, `definedMethod` and the service IDs
   of a retained document come from `@estoc/did-peer`, which

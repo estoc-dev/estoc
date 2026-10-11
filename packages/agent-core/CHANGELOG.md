@@ -25,11 +25,12 @@
   outcome `handed`. `BlobLink` is a blob's URL with what opens it.
 - **A preparation seals from a method didcomm packs with**: `prepare`
   seals from the first key-agreement method of the sender's own
-  document that carries its key under a suite didcomm seals from,
-  rather than the first the document authorizes, since a document
-  another implementation wrote may also authorize the key under a suite
-  didcomm does not pack with. A sender whose document has no such
-  method makes no preparation (`none`) instead of throwing.
+  document that carries its key in a form didcomm seals from, rather
+  than the first the document authorizes, since a document another
+  implementation wrote may also carry the key under a suite didcomm
+  does not know or over material that suite is not read from. A sender
+  whose document has no such method makes no preparation (`none`)
+  instead of throwing.
 - **did:web through `@estoc/did-web`** (breaking): the URL a did:web
   names, the fetch and the transport contract are that package's, and
   `webDidUrl`, `DEFINITIVE_TRANSPORT_CODES` and `MAX_DOCUMENT_BYTES` are

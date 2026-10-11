@@ -126,6 +126,31 @@ describe("toDIDCommDIDDoc", () => {
     ]);
   });
 
+  it("maps a method to Other unless didcomm-rust reads its key under its suite from the first material it carries", () => {
+    const ed25519 = "z6MkrCD1csqtgdj8sjrsu8jxcbeyP6m7LiK87NzhfWqio5yr";
+    const x25519 = "z6LSqPZfn9krvgXma2icTMKf2uVcYhKXsudCmPoUzqGYW24U";
+    const x = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo";
+    const methods: [Record<string, unknown>, string][] = [
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "X25519", x } }, "JsonWebKey2020"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed448", x } }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyMultibase: x25519 }, "Other"],
+      [{ type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed25519", x }, publicKeyMultibase: ed25519 }, "JsonWebKey2020"],
+      [{ type: "Ed25519VerificationKey2020", publicKeyMultibase: ed25519 }, "Ed25519VerificationKey2020"],
+      [{ type: "Ed25519VerificationKey2020", publicKeyJwk: { kty: "OKP", crv: "Ed25519", x } }, "Other"],
+      [{ type: "X25519KeyAgreementKey2020", publicKeyMultibase: ed25519 }, "Other"],
+      [{ type: "X25519KeyAgreementKey2019", publicKeyBase58: "JhNWeSVLMYccCk7iopQW4guaSJTojqpMEELgSLhKwRr" }, "X25519KeyAgreementKey2019"],
+      [{ type: "X25519KeyAgreementKey2019", publicKeyMultibase: x25519 }, "Other"],
+      [{ type: "EcdsaSecp256k1VerificationKey2019", publicKeyJwk: { kty: "EC", crv: "secp256k1", x, y: x } }, "Other"],
+      [{ type: "Ed25519VerificationKey2020" }, "Other"],
+    ];
+    const didDoc = toDIDCommDIDDoc({
+      id: "did:example:alice",
+      verificationMethod: methods.map(([method], i) => ({ id: `#key-${i}`, ...method })),
+    });
+
+    expect(didDoc.verificationMethod.map((method) => method.type)).toStrictEqual(methods.map(([, suite]) => suite));
+  });
+
   it("absolutizes relative routing keys", () => {
     const didDoc = toDIDCommDIDDoc({
       id: "did:example:alice",

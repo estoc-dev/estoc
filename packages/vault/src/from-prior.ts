@@ -23,12 +23,13 @@ import type { Did, DidId, VaultData } from "./types.js";
  * Sign that the successor continues the predecessor: `iss` is the
  * predecessor's long form, `sub` the successor's, `kid` the first method
  * of the predecessor's own document that carries the entity's
- * authentication key under a suite didcomm reads, whatever fragment
- * that document gave it, and the signature that key's. didcomm reads
- * the issuer's key from that method when it seals the proof, and a
- * document another implementation wrote may also carry the key under a
- * suite didcomm does not read. The token comes back verified against
- * the predecessor's document.
+ * authentication key in a form didcomm reads, whatever fragment that
+ * document gave it, and the signature that key's. didcomm reads the
+ * issuer's key from that method when it seals the proof, and a document
+ * another implementation wrote may also carry the key under a suite
+ * didcomm does not know or over material that suite is not read from,
+ * which the projection marks `Other`. The token comes back verified
+ * against the predecessor's document.
  */
 export async function signFromPrior(keys: Keys, predecessor: { didId: DidId; longFormDid: Did }, successorLongFormDid: Did, iat: number): Promise<string> {
   if (!isLongForm(predecessor.longFormDid) || !isLongForm(successorLongFormDid)) throw new InvalidFromPrior("iss and sub are did:peer:4 long forms", "profile");
@@ -42,7 +43,7 @@ export async function signFromPrior(keys: Keys, predecessor: { didId: DidId; lon
     if (err instanceof InvalidDidDocument || err instanceof DIDDocConversionError) throw new InvalidFromPrior(err.message, "document");
     throw err;
   }
-  if (methodId === undefined) throw new InvalidFromPrior(`${predecessor.longFormDid} authorizes no authentication method carrying the entity's key under a suite didcomm reads`, "document");
+  if (methodId === undefined) throw new InvalidFromPrior(`${predecessor.longFormDid} authorizes no authentication method carrying the entity's key in a form didcomm reads`, "document");
   const proof = await createFromPrior(
     { issuer: predecessor.longFormDid, change: { kind: "rotate", successor: successorLongFormDid }, iat, issuerLongForm: predecessor.longFormDid },
     { methodId, sign: (input) => key.sign(input) }

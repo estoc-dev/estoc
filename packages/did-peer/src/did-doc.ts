@@ -20,14 +20,15 @@ export class DIDDocConversionError extends Error {
 const ED25519_PUB = Uint8Array.from([0xed, 0x01]);
 const X25519_PUB = Uint8Array.from([0xec, 0x01]);
 
-const KNOWN_VERIFICATION_METHOD_TYPES = new Set([
-  "JsonWebKey2020",
-  "X25519KeyAgreementKey2019",
-  "Ed25519VerificationKey2018",
-  "EcdsaSecp256k1VerificationKey2019",
-  "X25519KeyAgreementKey2020",
-  "Ed25519VerificationKey2020",
+/** The curves didcomm-rust reads a `JsonWebKey2020` key on, by `kty`. */
+const JWK_CURVES: ReadonlyMap<unknown, ReadonlySet<unknown>> = new Map([
+  ["EC", new Set(["P-256", "secp256k1"])],
+  ["OKP", new Set(["Ed25519", "X25519"])],
 ]);
+
+const BASE58_SUITES = new Set(["X25519KeyAgreementKey2019", "Ed25519VerificationKey2018"]);
+
+type Material = Pick<VerificationMethod, "publicKeyJwk" | "publicKeyMultibase" | "publicKeyBase58">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -53,34 +54,37 @@ function prefixMatches(prefix: Uint8Array | null, expected: Uint8Array): boolean
 }
 
 /**
- * didcomm-rust has no `Multikey` variant, so a Multikey verification method is
- * rewritten to the equivalent 2020 suite based on its multicodec prefix.
+ * The suite didcomm-rust reads the method's key under. It reads the
+ * first of a JWK, a multibase and a base58 value the method carries,
+ * and only under the suite defined over that material: a JWK under
+ * `JsonWebKey2020` on a curve it supports, a multibase key under the
+ * 2020 suite of the key's own curve, a base58 key under the older
+ * suites. It has no `Multikey` variant, so a Multikey method is read
+ * under the 2020 suite of its multicodec prefix.
  *
- * Anything still unrecognized becomes `Other`. didcomm-rust's
- * VerificationMethodType has no catch-all deserializer, so leaving an unknown
- * type in place fails deserialization of the *entire* DIDDoc — one unusable
- * method in a counterparty's document would otherwise break every operation.
- * An `Other` method survives the round trip but cannot be used for crypto.
+ * Anything else becomes `Other`. didcomm-rust's VerificationMethodType
+ * has no catch-all deserializer, so leaving an unknown type in place
+ * fails deserialization of the *entire* DIDDoc, and a known type over
+ * material it does not read fails whatever operation picks the method:
+ * one unusable method in a counterparty's document would otherwise
+ * break every operation. An `Other` method survives the round trip but
+ * cannot be used for crypto.
  */
-function normalizeType(type: string, method: Record<string, unknown>): string {
-  if (KNOWN_VERIFICATION_METHOD_TYPES.has(type)) {
-    return type;
+function suiteOf(type: string, material: Material): string {
+  const { publicKeyJwk: jwk, publicKeyMultibase: multibase, publicKeyBase58: base58 } = material;
+  if (jwk !== undefined) {
+    return type === "JsonWebKey2020" && JWK_CURVES.get(jwk.kty)?.has(jwk.crv) === true ? type : "Other";
   }
-
-  if (type === "Multikey") {
-    const multibase = method.publicKeyMultibase;
-    if (typeof multibase === "string") {
-      const prefix = multicodecPrefix(multibase);
-      if (prefixMatches(prefix, ED25519_PUB)) {
-        return "Ed25519VerificationKey2020";
-      }
-      if (prefixMatches(prefix, X25519_PUB)) {
-        return "X25519KeyAgreementKey2020";
-      }
-    }
+  if (multibase !== undefined) {
+    const prefix = multicodecPrefix(multibase);
+    const suite = prefixMatches(prefix, ED25519_PUB)
+      ? "Ed25519VerificationKey2020"
+      : prefixMatches(prefix, X25519_PUB)
+        ? "X25519KeyAgreementKey2020"
+        : "Other";
+    return type === suite || type === "Multikey" ? suite : "Other";
   }
-
-  return "Other";
+  return base58 !== undefined && BASE58_SUITES.has(type) ? type : "Other";
 }
 
 function toVerificationMethod(
@@ -95,23 +99,18 @@ function toVerificationMethod(
   const controller =
     typeof method.controller === "string" ? method.controller : documentId;
 
-  const normalized: VerificationMethod = {
-    id,
-    type: normalizeType(type, method),
-    controller,
-  };
-
+  const material: Material = {};
   if (isRecord(method.publicKeyJwk)) {
-    normalized.publicKeyJwk = method.publicKeyJwk;
+    material.publicKeyJwk = method.publicKeyJwk;
   }
   if (typeof method.publicKeyMultibase === "string") {
-    normalized.publicKeyMultibase = method.publicKeyMultibase;
+    material.publicKeyMultibase = method.publicKeyMultibase;
   }
   if (typeof method.publicKeyBase58 === "string") {
-    normalized.publicKeyBase58 = method.publicKeyBase58;
+    material.publicKeyBase58 = method.publicKeyBase58;
   }
 
-  return normalized;
+  return { id, type: suiteOf(type, material), controller, ...material };
 }
 
 function firstEndpoint(serviceEndpoint: unknown): unknown {

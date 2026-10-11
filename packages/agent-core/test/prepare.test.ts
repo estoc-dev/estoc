@@ -110,12 +110,16 @@ async function rotated(alice: DirectParty, peer: DirectParty): Promise<{ next: D
  * A DID of Alice's as another implementation might write it: its
  * document authorizes her key-agreement key under the methods
  * `keyAgreement` names, where `#legacy` carries that key under a suite
- * didcomm does not pack with.
+ * didcomm does not know and `#mislabelled` under one it reads only from
+ * a JWK.
  */
 async function writtenElsewhere(alice: DirectParty, didId: DidId, keyAgreement: string[]): Promise<{ did: Did; longFormDid: Did }> {
   const keys = await alice.keys.didKeys(didId);
   const document = inputDocumentOf(keys, "https://alice.example/didcomm");
-  (document["verificationMethod"] as JsonObject[]).push({ id: "#legacy", type: "UnknownKeyType", publicKeyMultibase: keys.keyAgreement.publicKey });
+  (document["verificationMethod"] as JsonObject[]).push(
+    { id: "#legacy", type: "UnknownKeyType", publicKeyMultibase: keys.keyAgreement.publicKey },
+    { id: "#mislabelled", type: "JsonWebKey2020", publicKeyMultibase: keys.keyAgreement.publicKey }
+  );
   document["keyAgreement"] = keyAgreement;
   const longFormDid = encodeLongForm(document) as Did;
   const did = longToShort(longFormDid) as Did;
@@ -290,8 +294,8 @@ describe("prepare", () => {
 
   it("seals from the first key-agreement method of the sender's own document that didcomm seals from, and makes no preparation from a document that authorizes the key under none", async () => {
     const { alice, bob } = await parties();
-    const sealing = await writtenElsewhere(alice, ALICE_LEGACY, ["#legacy", KEY_AGREEMENT_METHOD]);
-    const unsealing = await writtenElsewhere(alice, ALICE_LEGACY_ONLY, ["#legacy"]);
+    const sealing = await writtenElsewhere(alice, ALICE_LEGACY, ["#legacy", "#mislabelled", KEY_AGREEMENT_METHOD]);
+    const unsealing = await writtenElsewhere(alice, ALICE_LEGACY_ONLY, ["#legacy", "#mislabelled"]);
     const entities = (await fold(alice)).dids.entities;
     expect([entities.get(ALICE_LEGACY)?.live, entities.get(ALICE_LEGACY_ONLY)?.live]).toEqual([true, true]);
 
