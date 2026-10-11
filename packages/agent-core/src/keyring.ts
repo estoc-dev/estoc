@@ -22,7 +22,6 @@ interface Held {
   secrets: Secret[];
 }
 
-/** The secret didcomm asks for by the key ID `id`: `key`'s private half. */
 export function secretOf(id: string, key: LocalKey): Secret {
   return { id, type: "JsonWebKey2020", privateKeyJwk: key.privateJwk() };
 }

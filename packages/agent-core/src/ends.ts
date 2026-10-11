@@ -50,7 +50,6 @@ export interface Ends {
   fromPrior: { proof: string; issuer: PeerResolution } | null;
 }
 
-/** The plaintext's addressing the ends make: from the sender, to the recipient alone, with the proof when there is one. */
 export function addressingOf({ sender, recipient, fromPrior }: Ends): Addressing {
   return { from: sender.did, to: [recipient.did], fromPrior: fromPrior?.proof ?? null };
 }
