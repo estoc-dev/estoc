@@ -262,7 +262,7 @@ showing missing evidence as pending.
 ## 5. Message layers and their CIDs
 
 A message has four content identities, one per representation. Each is the
-raw DASL CID of [dasl-objects.md](dasl-objects.md#accepted-dasl-cids) over
+raw DASL CID of [`@estoc/dasl`](../../packages/dasl/README.md) over
 one canonical byte string, each has its own nominal type in
 [types.ts](../../packages/vault/src/types.ts) and one constructor, and none
 is derived from another.

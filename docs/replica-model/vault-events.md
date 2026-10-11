@@ -29,10 +29,10 @@ to, the boundaries the vault promises the layers above, and what this version
 deliberately leaves out. Capitalized requirement words have their BCP 14
 meanings.
 
-[event-store.md](event-store.md) owns event identity, commit durability and
-versioning; [dasl-objects.md](dasl-objects.md) owns object identity;
-[vault-sqlite.md](vault-sqlite.md) owns storage, ownership, restore and
-import; [channels.md](channels.md) owns channel identity, the addresses,
+[event-store.md](event-store.md) owns event and object identity, commit
+durability and versioning, and storage, ownership, export, restore and import
+are [`@estoc/event-store`](../../packages/event-store/README.md)'s code;
+[channels.md](channels.md) owns channel identity, the addresses,
 the DID profiles and the boundaries of admission and continuity;
 [distributed-delivery.md](distributed-delivery.md) owns the
 message layers, their CIDs, the inbound identities and the commit and
@@ -133,7 +133,11 @@ by the reference alone.
   credentials are not vault communication keys and MUST NOT be derived from
   vault key names.
 - Runtime and portable SQLite databases contain plaintext retained message
-  content and attachments unless surrounding storage encrypts them.
+  content and attachments unless surrounding storage encrypts them. The
+  passphrase seals only the seed wrapper, not the history, and applications
+  MUST say so.
+- A full runtime, a hosted one included, MUST offer a complete portable
+  export, and recovering from it MUST NOT depend on the running service.
 - A rendezvous DID is intentionally disclosed and correlatable within its
   audience. Its Peer long form avoids DNS resolution for that DID; resolving
   a mediator may still involve a network resolver.

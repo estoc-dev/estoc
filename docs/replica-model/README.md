@@ -4,7 +4,7 @@ Status: **version 5**. The folds over the vault's events and the procedures
 that append them are specified by the code under
 [`packages/`](../../packages/) and its tests, see
 [`packages/vault/README.md`](../../packages/vault/README.md).
-The suite has six specifications and one vectors appendix. A vault may run
+The suite has four specifications and one vectors appendix. A vault may run
 one writable full runtime or several as distinct replicas of one
 replica-mediation arrangement. SQLite is the sole persistent vault and portable
 interchange format. This guide is informative; linked specification sections
@@ -59,8 +59,7 @@ permits at most one compatible intent per execution.
 
 | Layer | Documents | Responsibility |
 | --- | --- | --- |
-| Storage | [Event store](event-store.md), [DASL objects](dasl-objects.md) | Event identity, commit durability and versioning; object bytes and retention; the event API and the stores are code |
-| Persistence | [SQLite vault](vault-sqlite.md) | Schema, exclusive ownership, transactions and portable recovery |
+| Storage | [Event store](event-store.md) | Event and object identity, retention, commit durability and versioning; the stores, the SQLite vault and the portable snapshot are code |
 | Domain facts | [Vault events](vault-events.md) | The vault model, its principles and boundaries; payloads, identifiers, held roots and the folds over them are code |
 | Communication authority | [Channels](channels.md) | Fixed DID pairs, addresses, DID profiles and resolution, and the boundaries of admission, continuity and denial; the channel payloads, the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Message layers and CIDs, channel-local identity, ACK paths, preparations, runtime-local delivery records and live dispatch actions |
@@ -94,12 +93,12 @@ endings.
 | Task | Suggested path |
 | --- | --- |
 | Understand the system | [Vault model](vault-events.md#model) → [channels and continuity](channels.md#model) → [addresses](channels.md#addresses) → [commit/ACK boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
-| Implement storage | [DASL identity](dasl-objects.md#reading-guide) → [event store contracts](event-store.md) → [EventStore/Vault](../../packages/event-store/README.md) → [SQLite](vault-sqlite.md#reading-guide) |
+| Implement storage | [Event store contracts](event-store.md) → [DASL CIDs](../../packages/dasl/README.md) → [stores, SQLite vault and snapshot](../../packages/event-store/README.md) |
 | Implement application state | [Vault model](vault-events.md#model) → [types.ts](../../packages/vault/src/types.ts) → [schema.ts](../../packages/vault/src/schema.ts) → [folds and procedures](../../packages/vault/README.md) |
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](channels.md#sending) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
 | Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](channels.md#did-resolution) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Back up or recover | [Recovery material](vault-sqlite.md#recovery-material-and-product-requirement) → [export](vault-sqlite.md#snapshot-and-export) → [restore/import](vault-sqlite.md#restore-and-import) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
+| Back up or recover | [What a snapshot exposes](vault-events.md#privacy-and-security-boundaries) → [export](../../packages/event-store/src/sqlite/export.ts), [restore](../../packages/event-store/src/sqlite/restore.ts) and [import](../../packages/event-store/src/sqlite/import.ts) → [what a restore loses](channels.md#merge-restore-and-replicas) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
 
 <a id="rule-ownership"></a>
 
@@ -107,7 +106,9 @@ endings.
 
 Change the defining section and align its consumers. ES owns event identity,
 commit durability and versioning, and the envelope and batch rules are
-[event.ts](../../packages/event-store/src/event.ts)'s; DO owns raw objects/retention APIs and SQ owns SQLite lifecycle. CH owns channel identity,
+[event.ts](../../packages/event-store/src/event.ts)'s; the object profile is
+`@estoc/dasl`'s, and the stores, the SQLite lifecycle and the portable snapshot
+are owned by their code in `packages/event-store`. CH owns channel identity,
 addresses, the DID profiles and local resolution, and the boundaries of
 admission, continuity and denial; the channel payloads, the continuity
 adapter, operation eligibility, admission, the receive gate, the
@@ -123,8 +124,8 @@ DD owns runtime ordering and message/effect identity.
 | --- | --- | --- |
 | Event envelope and ordering | [event.ts](../../packages/event-store/src/event.ts), [ES identity](event-store.md#invariants) | [vault types](../../packages/vault/src/types.ts) |
 | Commit durability | [ES](event-store.md#commit-and-durability-terminology) | [DD boundaries](distributed-delivery.md#cross-layer-commit-and-acknowledgment-table) |
-| Storage ownership and recovery | [SQ](vault-sqlite.md#ownership-and-lifecycle) | [agent open](../../packages/agent-core/src/identity.ts) |
-| Object identity and held roots | [DO](dasl-objects.md#accepted-dasl-cids), [held roots](../../packages/vault/src/fold/held.ts) | [SQ objects](vault-sqlite.md#objects-and-streams) |
+| Storage ownership and recovery | [SQLite open](../../packages/event-store/src/sqlite/open.ts) | [agent open](../../packages/agent-core/src/identity.ts) |
+| Object identity and held roots | [ES identity](event-store.md#invariants), [DASL CIDs](../../packages/dasl/README.md), [held roots](../../packages/vault/src/fold/held.ts) | [object store](../../packages/event-store/src/sqlite/objects.ts) |
 | Channel pair and selectors | [CH identity](channels.md#channel-identity) | [vault types](../../packages/vault/src/types.ts), [contact selection](../../packages/vault/src/schema.ts) |
 | Proof verification and binding | [from-prior package](../../packages/from-prior/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [vault proofs](../../packages/vault/src/from-prior.ts) |
 | Links, joins and query semantics | [Continuity package](../../packages/continuity/README.md) | [channel evidence](../../packages/vault/src/fold/channels.ts), [continuity fold](../../packages/vault/src/fold/continuity.ts) |
@@ -144,13 +145,13 @@ DD owns runtime ordering and message/effect identity.
 | Invitations | [disclosure](../../packages/vault/src/schema.ts), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
 | Denial and contact views | [CH denial and contacts](channels.md#effects-and-recovery) | [contact selection](../../packages/vault/src/schema.ts), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
-| Restore and import | [SQ interchange](vault-sqlite.md#restore-and-import) | [DD recovery](distributed-delivery.md#receive-recovery) |
+| Restore and import | [restore](../../packages/event-store/src/sqlite/restore.ts), [import](../../packages/event-store/src/sqlite/import.ts) | [CH restore](channels.md#merge-restore-and-replicas), [DD recovery](distributed-delivery.md#receive-recovery) |
 
 <a id="evidence-and-references"></a>
 
 ## Evidence and references
 
-The six documents above define the current contract. No document
+The four documents above define the current contract. No document
 lists conformance cases: the tests of the package that implements a
 document are its evidence, and the folds and procedures over the vault's
 events are specified by their code (see

@@ -26,4 +26,4 @@ const car = encodeCar([root], new Map([[root, doc], [leaf, bytes]]));
 const { roots, blocks, bad } = await decodeCar(car);           // blocks: only what hashes to its name
 ```
 
-The tests pin the `dasl-objects.md` §4.2 CID vectors and RFC 8949 vectors, refuse some forty non-canonical encodings, and cross-check the DRISL encoder byte for byte against `@ipld/dag-cbor` and `@atcute/cbor` (dev dependencies, for the tests only). What a DRISL document *means* is the business of whoever reads it, not this package's; the version-3 vault ([dasl-objects.md](../../docs/replica-model/dasl-objects.md)) takes raw objects only and defers DRISL and CAR to a later profile.
+The tests pin the raw CIDs of the empty bytes and of `hello`, and RFC 8949 vectors, refuse some forty non-canonical encodings, and cross-check the DRISL encoder byte for byte against `@ipld/dag-cbor` and `@atcute/cbor` (dev dependencies, for the tests only). What a DRISL document *means* is the business of whoever reads it, not this package's; the vault ([event store contracts](../../docs/replica-model/event-store.md)) takes raw objects only and defers DRISL and CAR to a later profile.
