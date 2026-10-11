@@ -1,7 +1,11 @@
 import { describe, expect, expectTypeOf, it, test, vi } from "vitest";
 
 import * as core from "../src/index.js";
-import { LinkClosed, type AgentOptions, type DispatchOptions, type DispatcherOptions, type LinkOptions, type ReceiverOptions } from "../src/index.js";
+import { LinkClosed, type AgentOptions } from "../src/index.js";
+import type { DispatchOptions } from "../src/dispatch.js";
+import type { DispatcherOptions } from "../src/dispatcher.js";
+import type { LinkOptions } from "../src/link.js";
+import type { ReceiverOptions } from "../src/receive/receiver.js";
 import { Lifetime, refuses } from "../src/lifetime.js";
 import { handTimers } from "./helpers.js";
 

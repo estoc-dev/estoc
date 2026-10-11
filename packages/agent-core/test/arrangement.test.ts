@@ -3,8 +3,10 @@ import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import type { VaultRuntime } from "@estoc/event-store";
 import { scanVault, vaultDraft, type Did, type DidId, type Keys, type MediationId } from "@estoc/vault";
 
-import * as core from "../src/index.js";
-import { Agent, AgentTrace, BASIC_MESSAGE, LinkClosed, MediatorLink, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, createDid, createMediation, transientOptions, type Arrangement, type DispatchOptions, type Disclosure } from "../src/index.js";
+import { Agent, AgentTrace, BASIC_MESSAGE, LinkClosed, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, createDid, createMediation, type Arrangement, type Disclosure } from "../src/index.js";
+import type { DispatchOptions } from "../src/dispatch.js";
+import { MediatorLink } from "../src/link.js";
+import { transientOptions } from "../src/local-records.js";
 import type { Account } from "../src/arrangement.js";
 import { disclose } from "../src/dids.js";
 import type { FakeMediator } from "./fake-mediator.js";
@@ -123,7 +125,6 @@ describe("an arrangement taken from an agent", () => {
   it("is the account's three operations, and not its turn", () => {
     expectTypeOf<Awaited<ReturnType<Agent["arrangement"]>>>().toEqualTypeOf<Arrangement>();
     expectTypeOf<Arrangement>().not.toHaveProperty("turn");
-    for (const unbound of ["Account", "enroll", "addRecipients", "addRecipientsNow", "listReplicas", "disclose", "dispatch", "Dispatcher", "manualProcedures"]) expect(core).not.toHaveProperty(unbound);
   });
 
   it("is taken for an arrangement whose account is not registered, which lists nothing and has its mediator not even resolved", async () => {

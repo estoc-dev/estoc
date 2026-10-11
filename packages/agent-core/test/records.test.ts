@@ -31,31 +31,27 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
 import { PROFILE } from "../src/protocol/user-profile.js";
 import {
-  Keyring,
   LocalRecords,
-  Receiver,
   Unusable,
-  afterReceipt,
   createDid,
   effectTypesOf,
-  manualNotificationDraft,
-  readRecords,
-  receiptOf,
   recorder,
-  reportedProblem,
-  retireDid,
-  send,
   type ChannelRecord,
   type Dispatched,
   type Handler,
   type MessageRecord,
   type PendingWork,
   type Source,
-  routeOf,
 } from "../src/index.js";
-import { disclose } from "../src/dids.js";
+import { reportedProblem } from "../src/handlers/index.js";
+import { Keyring } from "../src/keyring.js";
+import { afterReceipt } from "../src/receive/after.js";
+import { receiptOf } from "../src/receive/receipt.js";
+import { Receiver } from "../src/receive/receiver.js";
+import { manualNotificationDraft, send } from "../src/send.js";
+import { disclose, retireDid, routeOf } from "../src/dids.js";
 import { Dispatcher } from "../src/dispatcher.js";
-import { manualProcedures } from "../src/views.js";
+import { manualProcedures, readRecords } from "../src/views.js";
 import { copyOf, didcomm, directParty, mediatedParty, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;

@@ -1,27 +1,26 @@
 import { describe, expect, it, test } from "vitest";
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type VaultFold } from "@estoc/vault";
+import { canonicalDid, readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type VaultFold } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
   Agent,
   EntityConflict,
-  Keyring,
   LinkClosed,
-  MediatorLink,
   MediatorRefused,
   REPLICA_ADD,
   STATUS_REQUEST,
   Unusable,
   WrongMediator,
-  canonicalDid,
   createMediation,
-  createReplica,
   selectMediation,
-  transientOptions,
   type LocalStore,
 } from "../src/index.js";
+import { Keyring } from "../src/keyring.js";
+import { MediatorLink } from "../src/link.js";
+import { transientOptions } from "../src/local-records.js";
+import { createReplica } from "../src/replica-enrollment.js";
 import type { Confirmations } from "../src/arrangement.js";
 import { decide } from "../src/procedure.js";
 import type { FakeMediator } from "./fake-mediator.js";

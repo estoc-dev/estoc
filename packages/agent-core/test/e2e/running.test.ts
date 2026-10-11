@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { DidId, MessageId } from "@estoc/vault";
+import { canonicalDid, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import { STATUS_REQUEST } from "../../src/protocol/mediation.js";
-import { canonicalDid } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import { newMediator } from "../helpers.js";
 import { LONG, channelOf, dieAt, restart, run, stopAll } from "./running.js";

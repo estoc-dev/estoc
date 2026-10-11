@@ -30,38 +30,33 @@ import {
   type WireMessageId,
 } from "@estoc/vault";
 
-import { responding } from "../src/action.js";
+import { Responding, responding } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
   EntityConflict,
-  Keyring,
-  Responding,
   NotificationConflict,
-  Receiver,
   UnknownEntity,
   Unusable,
-  completeNotification,
   createDid,
   createMediation,
-  manualNotificationDraft,
-  pinnedResolver,
-  privateAddress,
-  reactTo,
-  receiptOf,
-  retireDid,
-  rotate,
   selectMediation,
   unpack,
   type EffectOutcome,
   type Reacted,
-  type RotateOptions,
   type Rotated,
   type Source,
-  routeOf,
 } from "../src/index.js";
-import { disclose } from "../src/dids.js";
+import { reactTo } from "../src/effects.js";
+import { pinnedResolver } from "../src/evidence.js";
+import { Keyring } from "../src/keyring.js";
+import { privateAddress } from "../src/privacy.js";
+import { receiptOf } from "../src/receive/receipt.js";
+import { Receiver } from "../src/receive/receiver.js";
+import { completeNotification, rotate, type RotateOptions } from "../src/rotate.js";
+import { manualNotificationDraft } from "../src/send.js";
+import { disclose, retireDid, routeOf } from "../src/dids.js";
 import { dispatch } from "../src/dispatch.js";
 import { after, copyOf, didcomm, directParty, mediatedParty, merged, newMediator, party, peerSealer, posting, refuseCommits, sealed, type DirectParty, type Fresh, type Post, mediatedRoute } from "./helpers.js";
 

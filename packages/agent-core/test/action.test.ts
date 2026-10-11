@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, test } from "vitest";
 
 import type { EventReference, MessageId } from "@estoc/vault";
 
-import { LiveAction, LiveInput } from "../src/index.js";
+import { LiveAction, LiveInput } from "../src/action.js";
 
 const MESSAGE = "019b0000-0000-7000-8000-000000000001" as MessageId;
 const CID = "bafkreibamqxg7iv3qsdipkfn56owg2q4b5xkdpoz6s6ddoug7iugg75s64" as EventReference<"message.in">;

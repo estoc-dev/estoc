@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { longToShort } from "@estoc/did-peer";
 import { mintDid, scanVault, vaultDraft, type Did, type DidId } from "@estoc/vault";
 
-import { Keyring, createDid, retireDid } from "../src/index.js";
+import { createDid } from "../src/index.js";
+import { retireDid } from "../src/dids.js";
+import { Keyring } from "../src/keyring.js";
 import { freshVault, newMediator, party, reloaded } from "./helpers.js";
 
 const ENDPOINT = "https://ingress.example/didcomm";

@@ -13,7 +13,9 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import bs58 from "bs58";
 import { bases } from "multiformats/basics";
 
-import { AgentTrace, authorizedKeys, commitResolution, createMediation, didcommDocumentOf, knownLongForms, resolve, secretsResolverFor, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/index.js";
+import { AgentTrace, createMediation, secretsResolverFor } from "../src/index.js";
+import { authorizedKeys, commitResolution, didcommDocumentOf } from "../src/evidence.js";
+import { knownLongForms, resolve, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/resolver.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { didcomm, freshVault, json, newMediator, party, webFetch, webIdentity } from "./helpers.js";
 

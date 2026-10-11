@@ -31,25 +31,23 @@ import { resolve } from "../src/resolver.js";
 import {
   Agent,
   AgentTrace,
-  Keyring,
   NotAReplica,
-  Receiver,
   ReceiverClosed,
   SNAPSHOT_LINK,
   UnknownEntity,
   Unusable,
   blobName,
   createMediation,
-  deliveryKey,
   readSnapshotLink,
-  replicaReceiptOf,
   selectMediation,
   snapshotLinkBody,
   type BlobLink,
-  type Delivery,
   type Inbound,
   type SnapshotLinkReceived,
 } from "../src/index.js";
+import { Keyring } from "../src/keyring.js";
+import { Receiver, deliveryKey, type Delivery } from "../src/receive/receiver.js";
+import { replicaReceiptOf } from "../src/replica-channel.js";
 import { network, type FakeMediator } from "./fake-mediator.js";
 import { copyOf, didcomm, forwarded, newMediator, party, sealed, seedOf, type Fresh } from "./helpers.js";
 

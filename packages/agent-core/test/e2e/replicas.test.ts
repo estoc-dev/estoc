@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, test } from "vitest";
 
-import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, type Did, type DidId, type MessageId } from "@estoc/vault";
+import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, canonicalDid, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, canonicalDid, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";

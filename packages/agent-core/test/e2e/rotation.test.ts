@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { EMPTY_MESSAGE_TYPE, ROTATION_NOTIFICATION_EFFECT, channelKey, type Channel, type Did, type DidId, type MessageId, type Outbound, type VaultFold } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { LiveInput, type Rotated } from "../../src/index.js";
+import type { Rotated } from "../../src/index.js";
+import { LiveInput } from "../../src/action.js";
 import { newMediator, peerSealer, sealed, type DirectParty } from "../helpers.js";
 import { LONG, channelOf, foldOf, forwarded, run, stopAll, until, type Running } from "./running.js";
 

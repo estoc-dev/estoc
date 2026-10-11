@@ -29,11 +29,44 @@ it is responsible for.
 Runs wherever didcomm-rust's WASM does: the browser (Vite), workerd, Node.
 The WASM itself is *not* loaded here — see [Didcomm API](#didcomm-api).
 
+## Public API
+
+An operation that acts as the vault, using the seed's keys, speaking as
+one of the vault's DIDs or writing the vault, reaches a host only through
+an object and the entry points that hand it out. The parts those objects
+are assembled from stay inside the package. The index exports:
+
+- The objects and how a host gets them: `Agent` (and the `Arrangement` it
+  hands out), `AgentTrace`, `LocalRecords`, `createVault`, `openVault`,
+  `inspectRuntime`, `inspectSnapshot`.
+- The errors, so that a host can catch what those objects throw.
+- The wire vocabulary of `protocol/`, whole: the type URIs, reading and
+  writing bodies, `unpack`, `parseInvitation`, `secretsResolverFor`. These
+  compute over data and act as no one.
+- The computations and constants a host uses: `recorder`, `effectTypesOf`,
+  `BUILT_IN_HANDLERS`, `sealBlob`, `openBlob`, `blobName`, the trace levels
+  and streams, and the defaults of the public options (`UPKEEP`,
+  `RETRY_POLICY`, `MAX_WAITING`, `MAX_HELD_BYTES`, `DISPATCH_TIMEOUT_MS`,
+  `GLOBAL_TIMERS`).
+- `readBlob`, an I/O helper the host manages itself. It reads a public URL
+  and carries no vault identity; it goes over the host's `fetch`, bounded
+  by its own `timeoutMs` and `maxBytes`. No agent's lifetime holds it, so
+  closing an agent does not stop a read in progress.
+- The vault procedures the daemon still calls with the runtime and the
+  keys: `decide`, `serially`, `createDid`, `createMediation`,
+  `selectMediation`.
+
+The types are the ones these exports' signatures name. `test/index.test.ts`
+pins the exported values exactly and checks that every public type is
+still exported.
+
 ## Modules
 
 Each module answers one question. Its leading comment states its
-responsibility, its exports are the entry points, and `test/` mirrors
-`src/`; `test/e2e/` runs two agents against an in-process mediator over
+responsibility, its exports are the entry points within the package
+(what the index passes on is under [Public API](#public-api)), and
+`test/` mirrors `src/`; `test/e2e/` runs two agents against an
+in-process mediator over
 file vaults, one scenario per test: first contact, rotation, admission,
 races, crashes, restore, closing, an agent closed mid-work and a hostile
 peer.
@@ -79,7 +112,7 @@ peer.
 | How is a local DID replaced toward a peer? | `rotate.ts` | `rotate`, `decideRotation`, `selectRotation`, `notifyRotation`, `completeNotification` |
 | What is an application shown, and which manual steps are there? | `records.ts`, `views.ts` | `readRecords`, `manualProcedures`, `recorder` |
 | What did this runtime observe? | `trace.ts` | `AgentTrace`, `tracePolicy` |
-| What is on the wire? | `protocol/` | `unpack`, `parseInvitation`, `invitationUrl`, `resolveMediatorInput`, the type URIs |
+| What is on the wire? | `protocol/` | `unpack`, `parseInvitation`, `invitationUrl`, the type URIs |
 | Which entity is missing, or in conflict? | `errors.ts` | `UnknownEntity`, `EntityConflict`, `Unusable`, `NoTarget`, … |
 
 ## Reading order
@@ -131,9 +164,8 @@ you inject.
 against an in-process fake mediator that way (`test/fake-mediator.ts`).
 An agent, and each link and dispatcher, reaches them through a lifetime
 of its own, so that nothing goes out once it closed. Only a link given
-none and the host helpers that run outside any agent,
-`resolveMediatorInput` and `readBlob`, fall back to the global ones; the
-lint forbids them anywhere else in `src/`.
+none and `readBlob`, the host helper that runs outside any agent, fall
+back to the global ones; the lint forbids them anywhere else in `src/`.
 
 ## Development
 

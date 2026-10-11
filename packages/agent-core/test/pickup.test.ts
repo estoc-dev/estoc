@@ -5,7 +5,9 @@ import { resolveDIDCommDoc } from "@estoc/did-peer";
 
 import type { DidId } from "@estoc/vault";
 
-import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, Pickup, STATUS, plainMessage, secretsResolverFor, type Delivered, type IMessage, type MediatorLink, type Opened } from "../src/index.js";
+import { BASIC_MESSAGE, DELIVERY, PLAIN_TYP, STATUS, plainMessage, secretsResolverFor, type IMessage } from "../src/index.js";
+import type { MediatorLink, Opened } from "../src/link.js";
+import { Pickup, type Delivered } from "../src/pickup.js";
 import { holdAddresses, mediatedParty, newMediator, until } from "./helpers.js";
 
 const DID = "019b0000-0000-7000-8000-00000000000a" as DidId;

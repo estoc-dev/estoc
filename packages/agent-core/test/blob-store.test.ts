@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { scanVault, canonicalDid } from "@estoc/vault";
 
-import { Agent, BLOB_TOO_LARGE, BlobStore, BlobTooLarge, LinkClosed, MediatorLink, MediatorRefused, SEAL_OVERHEAD, openBlob, readBlob, sealBlob } from "../src/index.js";
+import { Agent, BLOB_TOO_LARGE, BlobTooLarge, LinkClosed, MediatorRefused, SEAL_OVERHEAD, openBlob, readBlob, sealBlob } from "../src/index.js";
+import { BlobStore } from "../src/blob-store.js";
+import { MediatorLink } from "../src/link.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { didcomm, newMediator, party, type Party } from "./helpers.js";
 

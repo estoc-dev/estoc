@@ -1,28 +1,26 @@
 import { describe, expect, it, test } from "vitest";
 
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
-import { inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MessageId, type MintedDid } from "@estoc/vault";
+import { canonicalDid, inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MessageId, type MintedDid } from "@estoc/vault";
 
 import {
   ACCOUNT_REGISTER,
   Agent,
   LinkClosed,
-  MediatorLink,
   RECIPIENT_ADD,
   REPLICA_ADD,
   STATUS_REQUEST,
   Unregistered,
   Unusable,
-  canonicalDid,
   createDid,
   createMediation,
-  holds,
-  retireDid,
   selectMediation,
-  send,
-  transientOptions,
 } from "../src/index.js";
-import { disclose } from "../src/dids.js";
+import { MediatorLink } from "../src/link.js";
+import { transientOptions } from "../src/local-records.js";
+import { holds } from "../src/replica-recipients.js";
+import { send } from "../src/send.js";
+import { disclose, retireDid } from "../src/dids.js";
 import { dispatch } from "../src/dispatch.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { accountOver, didcomm, directParty, newMediator, party, posting, type Party, mediatedRoute } from "./helpers.js";

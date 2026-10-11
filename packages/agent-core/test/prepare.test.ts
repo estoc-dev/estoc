@@ -24,28 +24,24 @@ import {
 } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { secretOf } from "../src/keyring.js";
+import { Keyring, secretOf } from "../src/keyring.js";
 import { secretsResolverFor } from "../src/protocol/didcomm.js";
 import {
   AgentTrace,
-  Keyring,
   LocalRecords,
   UnknownEntity,
   createDid,
   createVault,
-  pinnedResolver,
-  prepare,
-  prepareAll,
-  selectPreparation,
-  send,
-  transientOptions,
   unpack,
   type Content,
-  type PrepareOptions,
-  type Prepared,
   type Unpacked,
-  routeOf,
 } from "../src/index.js";
+import { routeOf } from "../src/dids.js";
+import { selectPreparation } from "../src/dispatch.js";
+import { pinnedResolver } from "../src/evidence.js";
+import { transientOptions } from "../src/local-records.js";
+import { prepare, prepareAll, type PrepareOptions, type Prepared } from "../src/prepare.js";
+import { send } from "../src/send.js";
 import { after, carrierWaitingForIssuer, didcomm, directParty, memoryDriver, merged, received, refuseCommits, ticking, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;

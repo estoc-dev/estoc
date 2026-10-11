@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **The index exports what a host acts through** (breaking): an
+  operation that acts as the vault reaches a host only through an
+  object. The index exports `Agent`, `AgentTrace`, `LocalRecords`,
+  `createVault`, `openVault`, `inspectRuntime` and `inspectSnapshot`;
+  the errors; the wire vocabulary of `protocol/`, whole; the
+  computations and constants a host uses (`recorder`, `effectTypesOf`,
+  `BUILT_IN_HANDLERS`, the sealed-blob functions, the trace vocabulary,
+  the defaults of the public options); `readBlob`, which the host
+  manages itself, outside any agent's lifetime; and `decide`,
+  `serially`, `createDid`, `createMediation` and `selectMediation`,
+  which the daemon still calls with the runtime and the keys. A type
+  stays exported where one of these signatures names it. No longer
+  exported: the procedures the agent is assembled from (`send`,
+  `prepare`, `rotate`, `receiptOf`, `afterReceipt`, `findResponder`,
+  `recordOwed`, `reactTo`, `resolve`, `commitResolution`, …), the parts
+  it holds (`Receiver`, `Pickup`, `MediatorLink`, `Keyring`,
+  `LiveAction`, `LiveInput`, `Responding`, and the link's `ritual`,
+  `sealData`, `sealerOf`, `senderOf` and `bounded`), the individual
+  built-in handlers with `handlerFor` and `handlersOf`, `readRecords`,
+  `transientOptions`, `MAX_ENVELOPE_BYTES` and `LONGEST_TIMER_MS`.
+  `BlobStore`, `LiveAction` and `LiveInput` remain as types, since
+  `Agent.blobStore()`, `Agent.manual` and `onInbound` hand them out.
+  `canonicalDid` and `sameDid` are `@estoc/vault`'s, and are imported
+  from there. `protocol/mediator-input.ts` (`didHost`,
+  `resolveMediatorInput`) is deleted: nothing called it.
+
 - **An arrangement's account, bound** (breaking):
   `Agent.arrangement(mediationId)` hands the host the account of one of
   the vault's arrangements as an `Arrangement`, with `enroll()`,

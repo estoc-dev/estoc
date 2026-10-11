@@ -8,6 +8,7 @@ import {
   canonicalDidOf,
   mediationIdOf,
   objectReader,
+  sameDid,
   scanVault,
   vaultDraft,
   vaultHeldRoots,
@@ -46,7 +47,6 @@ import {
   openVault,
   readBlob,
   recorder,
-  sameDid,
   sealBlob,
   selectMediation,
   serially,
@@ -69,7 +69,7 @@ import { SnapshotLinks, type Put } from "./snapshot-links.js";
 export interface DaemonCore extends Daemon {
   /** Take the files and land on the screen they dictate, published; once, a later call doing nothing. */
   boot(): Promise<void>;
-  /** whether `boot()` has run */
+  /** true from the moment `boot()` is first called, before what it does has finished */
   readonly booted: boolean;
   readonly publisher: Publisher<Snapshot, Lines>;
   /**

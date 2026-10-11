@@ -12,20 +12,20 @@ import {
   AgentTrace,
   EntityConflict,
   LinkClosed,
-  MediatorLink,
   RECIPIENT_ADDED,
   Unusable,
   UnverifiedReply,
   createDid,
   createMediation,
-  holds,
-  knownLongForms,
   plainMessage,
   secretsResolverFor,
   selectMediation,
-  transientOptions,
   type IMessage,
 } from "../src/index.js";
+import { MediatorLink } from "../src/link.js";
+import { transientOptions } from "../src/local-records.js";
+import { holds } from "../src/replica-recipients.js";
+import { knownLongForms } from "../src/resolver.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { accountOver, didcomm, freshVault, newMediator, party, reloaded, mediatedRoute, until } from "./helpers.js";
 
