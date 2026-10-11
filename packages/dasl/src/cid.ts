@@ -10,6 +10,7 @@
 
 import { base32 } from "multiformats/bases/base32";
 import { CID } from "multiformats/cid";
+import { create as createDigest } from "multiformats/hashes/digest";
 import { sha256 } from "multiformats/hashes/sha2";
 
 /** multicodec `raw`: the CID names the sha-256 of exactly these bytes. */
@@ -90,10 +91,16 @@ export function codecOf(text: string): number | null {
   }
 }
 
+/** The CID under `code` of a sha-256 digest already taken, incrementally or elsewhere. */
+export function cidFromDigest(code: number, digest: Uint8Array): DaslCid {
+  if (code !== RAW_CODE && code !== DRISL_CODE) throw new Error(`codec 0x${code.toString(16)} is neither raw nor drisl`);
+  if (digest.length !== DIGEST_LENGTH) throw new Error(`a sha-256 digest is ${DIGEST_LENGTH} bytes, not ${digest.length}`);
+  return fromCid(CID.create(1, code, createDigest(SHA256_CODE, digest)));
+}
+
 /** The CID that names `bytes` under `code`. */
 export async function cidOf(code: number, bytes: Uint8Array): Promise<DaslCid> {
-  if (code !== RAW_CODE && code !== DRISL_CODE) throw new Error(`codec 0x${code.toString(16)} is neither raw nor drisl`);
-  return fromCid(CID.create(1, code, await sha256.digest(bytes)));
+  return cidFromDigest(code, (await sha256.digest(bytes)).digest);
 }
 
 /** The raw CID string of bare bytes (a file, a leaf). */

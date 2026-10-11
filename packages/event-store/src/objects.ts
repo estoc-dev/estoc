@@ -7,7 +7,7 @@
  * one CID that names them.
  */
 
-import { RAW_CODE, cidFromBytes, compareBytes, parseCid, type DaslCid } from "@estoc/dasl";
+import { RAW_CODE, cidFromDigest, compareBytes, parseCid, type DaslCid } from "@estoc/dasl";
 import { sha256 } from "@noble/hashes/sha2";
 
 import { InvalidCid, ObjectTooLarge } from "./errors.js";
@@ -116,13 +116,10 @@ export function rawCidOf(cid: unknown): DaslCid {
   return parsed;
 }
 
-/** The raw DASL CID whose digest is `digest`: `01 55 12 20` and the 32 bytes. */
+/** The raw DASL CID whose sha-256 digest is `digest`. */
 export function rawCidFromDigest(digest: Uint8Array): DaslCid {
   if (digest.length !== 32) throw new InvalidCid(`a sha-256 digest is 32 bytes, not ${digest.length}`);
-  const bytes = new Uint8Array(36);
-  bytes.set([0x01, RAW_CODE, 0x12, 0x20]);
-  bytes.set(digest, 4);
-  return cidFromBytes(bytes);
+  return cidFromDigest(RAW_CODE, digest);
 }
 
 /** Binary-CID byte order, the order `list` and `collect` report in; not the string order, whose alphabet is not ASCII order. */

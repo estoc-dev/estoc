@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 import { CID } from "multiformats/cid";
 import { sha256 } from "multiformats/hashes/sha2";
-import { base32Decode, base32Encode, checkCid, cidFromBytes, cidOf, codecOf, drislCid, isDaslCid, parseCid, rawCid, DRISL_CODE, RAW_CODE } from "../src/index.js";
+import { base32Decode, base32Encode, checkCid, cidFromBytes, cidFromDigest, cidOf, codecOf, drislCid, isDaslCid, parseCid, rawCid, DRISL_CODE, RAW_CODE } from "../src/index.js";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
@@ -35,6 +35,15 @@ describe("DASL CID", () => {
     expect([...ours.bytes]).toEqual([...theirs.bytes]);
     expect(ours.bytes.length).toBe(36);
     expect(await drislCid(b)).toBe(theirs.toString());
+  });
+
+  test("a digest taken elsewhere names the same CID as the bytes do, under either codec; only a 32-byte digest under a DASL codec", async () => {
+    const b = utf8("<h1>hi</h1>");
+    const digest = (await sha256.digest(b)).digest;
+    expect(cidFromDigest(RAW_CODE, digest)).toEqual(await cidOf(RAW_CODE, b));
+    expect(cidFromDigest(DRISL_CODE, digest)).toEqual(await cidOf(DRISL_CODE, b));
+    expect(() => cidFromDigest(0x70, digest)).toThrow(/neither raw nor drisl/);
+    expect(() => cidFromDigest(RAW_CODE, digest.subarray(1))).toThrow(/32 bytes/);
   });
 
   it("parses only the canonical spelling of a DASL CID", async () => {

@@ -16,6 +16,7 @@ export {
   base32Encode,
   base32Decode,
   cidFromBytes,
+  cidFromDigest,
   parseCid,
   isDaslCid,
   codecOf,
