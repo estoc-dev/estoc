@@ -182,9 +182,11 @@ definitive failure that MUST NOT fall back to an unrestricted one. The
 presented Web DID string is the identity: the document's `id` MUST match it
 byte for byte, whatever URL or DNS processing the fetch went through. A
 mediator lookup failure grants no dispatch authority and does not show that a
-channel peer's key changed. The client's resolver is
-[resolver.ts](../../packages/agent-core/src/resolver.ts); the mediator's
-policy is in [its README](../../mediator/README.md).
+channel peer's key changed. The client and the mediator both fetch through
+[`@estoc/did-web`](../../packages/did-web/README.md); the client's
+[resolver.ts](../../packages/agent-core/src/resolver.ts) checks what the vault
+retains of the document, and the mediator's bounds are in
+[its README](../../mediator/README.md).
 
 <a id="continuity"></a>
 <a id="channel-linked"></a>

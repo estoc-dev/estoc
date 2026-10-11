@@ -180,8 +180,8 @@ runtime, `off` / `normal` / `verbose`: `traceLevel()` and
 A browser tab cannot reach a private network; a process can. Every
 address the agent is given — a mediator's, a peer's endpoint, a
 `did:web` document's — is somebody else's word, so the Node host's
-default `fetch` (`src/node/guarded-fetch.ts`) resolves the name, checks
-every address it has — and the literal in the URL — against `ipaddr.js`
-ranges, and connects only to public unicast. Redirects are not
-followed. A mediator on this machine needs `nodeHost(root, { fetch })`
-with a fetch that reaches it.
+default `fetch` (`guardedFetch` from `@estoc/did-web/node`) resolves
+the name, checks every address it has — and the literal in the URL —
+against `ipaddr.js` ranges, and connects only to public unicast.
+Redirects are not followed. A mediator on this machine needs
+`nodeHost(root, { fetch })` with a fetch that reaches it.

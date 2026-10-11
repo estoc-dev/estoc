@@ -77,6 +77,9 @@ importers:
       '@estoc/did-peer':
         specifier: workspace:^
         version: link:../packages/did-peer
+      '@estoc/did-web':
+        specifier: workspace:^
+        version: link:../packages/did-web
       '@estoc/didcomm':
         specifier: ^0.4.1-estoc.4
         version: 0.4.1-estoc.4
@@ -101,18 +104,12 @@ importers:
       hono:
         specifier: ^4.13.1
         version: 4.13.12
-      ipaddr.js:
-        specifier: ^2.5.0
-        version: 2.5.0
       jose:
         specifier: ^6.2.12
         version: 6.2.12
       multiformats:
         specifier: ^14.0.5
         version: 14.0.5
-      undici:
-        specifier: ^7.29.0
-        version: 7.29.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260821.1
@@ -150,6 +147,9 @@ importers:
       '@estoc/did-peer':
         specifier: workspace:^
         version: link:../did-peer
+      '@estoc/did-web':
+        specifier: workspace:^
+        version: link:../did-web
       '@estoc/event-store':
         specifier: workspace:^
         version: link:../event-store
@@ -267,6 +267,9 @@ importers:
       '@estoc/daemon-api':
         specifier: workspace:^
         version: link:../daemon-api
+      '@estoc/did-web':
+        specifier: workspace:^
+        version: link:../did-web
       '@estoc/didcomm-node':
         specifier: ^0.4.1-estoc.4
         version: 0.4.1-estoc.4
@@ -282,12 +285,6 @@ importers:
       '@scure/base':
         specifier: ^1.2.0
         version: 1.2.6
-      ipaddr.js:
-        specifier: ^2.2.0
-        version: 2.5.0
-      undici:
-        specifier: ^7.29.0
-        version: 7.29.0
       uuid:
         specifier: ^11.1.1
         version: 11.1.1
@@ -384,6 +381,25 @@ importers:
         version: 5.8.3
       vitest:
         specifier: ^3.0.0
+        version: 3.2.7(@types/node@26.6.2)(terser@5.50.0)(tsx@4.23.15)
+
+  packages/did-web:
+    dependencies:
+      ipaddr.js:
+        specifier: ^2.5.0
+        version: 2.5.0
+      undici:
+        specifier: ^7.29.0
+        version: 7.29.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ~5.8.0
+        version: 5.8.3
+      vitest:
+        specifier: ^3.2.7
         version: 3.2.7(@types/node@26.6.2)(terser@5.50.0)(tsx@4.23.15)
 
   packages/event-store:

@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { guardedFetch } from "@estoc/did-web/node";
 import type { Hono } from "hono";
 import type { Server } from "node:http";
 
@@ -9,7 +10,6 @@ import { BlobService } from "./blobs/service.js";
 import type { MediatorConfig } from "./config.js";
 import { DIDCommContext } from "./didcomm/didcomm.js";
 import { WebDids } from "./didcomm/did-resolver.js";
-import { guardedFetch } from "./guarded-fetch.js";
 import type { MediatorIdentity } from "./identity-core.js";
 import { dispatch } from "./protocols/dispatch.js";
 import type { MediationStore } from "./store/types.js";

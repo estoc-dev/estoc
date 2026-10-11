@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **did:web through `@estoc/did-web`** (breaking): the URL a did:web
+  names, the fetch and the transport contract are that package's, and
+  `webDidUrl`, `DEFINITIVE_TRANSPORT_CODES` and `MAX_DOCUMENT_BYTES` are
+  imported from there; this package no longer exports them.
+  `WebResolverOptions` is its `WebDidOptions` with the transport left
+  optional, and the document is still read as strict JSON and checked
+  here to be one the vault retains. `[::1]` is refused as an IP literal
+  even with `insecureLoopback`, which allows `localhost` and `127.0.0.1`.
 - **A replica's blobs at its mediator**: `Agent.blobStore(mediationId)`
   speaks blob-store/1.0 as this runtime's replica DID, so a blob put
   through it is the replica's, counted against the replica's quota and

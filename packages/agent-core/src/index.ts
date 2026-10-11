@@ -93,7 +93,7 @@ export {
   type RouteSpec,
   type RouteStanding,
 } from "./dids.js";
-export { DEFINITIVE_TRANSPORT_CODES, MAX_DOCUMENT_BYTES, knownLongForms, resolve, webDidUrl, type KnownLongForms, type Resolution, type Resolved, type ResolverOptions, type WebResolverOptions } from "./resolver.js";
+export { knownLongForms, resolve, type KnownLongForms, type Resolution, type Resolved, type ResolverOptions, type WebResolverOptions } from "./resolver.js";
 export {
   authorizedKeys,
   commitResolution,

@@ -3,7 +3,6 @@ import type { IMessage } from "@estoc/didcomm-node";
 
 import { DIDCommContext } from "../src/didcomm/didcomm.js";
 import {
-  didWebFromUrl,
   identityFor,
   loadOrCreateSecrets,
   mintIdentity,
@@ -21,27 +20,11 @@ import {
 
 const ENCRYPTED = "application/didcomm-encrypted+json";
 
-describe("did:web derivation", () => {
-  it("names the host", () => {
-    expect(didWebFromUrl("https://mediator.example.com")).toBe(
-      "did:web:mediator.example.com"
-    );
-  });
-
-  it("percent-encodes a port and colon-joins path segments", () => {
-    expect(didWebFromUrl("https://mediator.example.com:8443/didcomm/v2")).toBe(
-      "did:web:mediator.example.com%3A8443:didcomm:v2"
-    );
-  });
-
-  it("refuses non-loopback http — no resolver would ever fetch it", () => {
-    expect(() => didWebFromUrl("http://mediator.example.com")).toThrow(/https/);
-  });
-
-  it("allows loopback http — wrangler dev's world", () => {
-    expect(didWebFromUrl("http://localhost:8787")).toBe(
-      "did:web:localhost%3A8787"
-    );
+describe("did:web identity", () => {
+  it("is named by the public URL, and refused with the way out where no resolver would fetch it", async () => {
+    expect((await mintIdentity("https://mediator.example.com:8443/didcomm", "web")).did).toBe("did:web:mediator.example.com%3A8443:didcomm");
+    expect((await mintIdentity("http://localhost:8787", "web")).did).toBe("did:web:localhost%3A8787");
+    await expect(mintIdentity("http://mediator.example.com", "web")).rejects.toThrow(/fetched from https:\/\/mediator\.example\.com\/\.well-known\/did\.json; set MEDIATOR_DID_METHODS=peer2/);
   });
 });
 
@@ -281,13 +264,14 @@ describe("keys in the store", () => {
   it("mints once and every later load returns the same keys", async () => {
     const store = memoryStore();
     const minted = await loadOrCreateSecrets(store);
-    const reloaded = await loadOrCreateSecrets(store);
-    expect(reloaded).toEqual(minted);
+    expect(await loadOrCreateSecrets(store)).toEqual(minted);
+  });
 
-    // Same keys, same names — a restart cannot rename the mediator.
-    const first = identityFor(minted, TEST_CONFIG.publicUrl, ["peer2"]);
-    const again = identityFor(reloaded, TEST_CONFIG.publicUrl, ["peer2"]);
-    expect(again.did).toBe(first.did);
+  it("names the mediator after a restart as it did before", async () => {
+    const store = memoryStore();
+    const before = identityFor(await loadOrCreateSecrets(store), TEST_CONFIG.publicUrl, ["peer2"]);
+    const after = identityFor(await loadOrCreateSecrets(store), TEST_CONFIG.publicUrl, ["peer2"]);
+    expect(after.did).toBe(before.did);
   });
 
   it("a lost race yields the winner's keys, not the loser's mint", async () => {

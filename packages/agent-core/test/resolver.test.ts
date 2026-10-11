@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it, test } from "vitest";
 
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
+import { MAX_DOCUMENT_BYTES } from "@estoc/did-web";
 import { MemoryVault, canonicalize, envelopeOf, eventCidOf, type AuthorId, type JsonObject } from "@estoc/event-store";
 import { canonicalPublicKey, didKeyName, mediationIdOf, mintDid, peerResolution, rawCidOfBytes, scanVault, vaultDraft, type DidId, type Did, type DidUrl } from "@estoc/vault";
 
@@ -12,7 +13,7 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import bs58 from "bs58";
 import { bases } from "multiformats/basics";
 
-import { AgentTrace, DEFINITIVE_TRANSPORT_CODES, MAX_DOCUMENT_BYTES, authorizedKeys, commitResolution, createMediation, didcommDocumentOf, knownLongForms, resolve, secretsResolverFor, webDidUrl, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/index.js";
+import { AgentTrace, authorizedKeys, commitResolution, createMediation, didcommDocumentOf, knownLongForms, resolve, secretsResolverFor, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/index.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
 import { didcomm, freshVault, json, newMediator, party, webFetch, webIdentity } from "./helpers.js";
 
@@ -37,8 +38,6 @@ const SECP256K1_JWK = ((): JsonObject => {
 })();
 const multikey = (code: number[], bytes: Uint8Array) => bases.base58btc.encode(Uint8Array.of(...code, ...bytes));
 const answering = (respond: () => Response | Promise<Response>) => webFetch({ [BOB_URL]: respond }).fetch;
-const failing = (err: unknown) => answering(() => Promise.reject(err));
-const coded = (code: string, message = code) => Object.assign(new Error(message), { code });
 
 describe("did:peer:4", () => {
   test("a long form resolves from itself, to exactly what the vault retains", async () => {
@@ -154,45 +153,6 @@ describe("other methods", () => {
   });
 });
 
-describe("did:web URL", () => {
-  it("is derived the one standard way", () => {
-    const urlOf = (did: string, insecureLoopback = false) => {
-      const derived = webDidUrl(did, insecureLoopback);
-      return "url" in derived ? derived.url.href : `refused: ${derived.refused}`;
-    };
-    expect(urlOf("did:web:bob.example")).toBe(BOB_URL);
-    expect(urlOf("did:web:bob.example:user:alice")).toBe("https://bob.example/user/alice/did.json");
-    expect(urlOf("did:web:bob.example%3A8443:dids")).toBe("https://bob.example:8443/dids/did.json");
-    expect(urlOf("did:web:Bob.Example")).toBe(BOB_URL);
-    expect(urlOf("did:web:localhost%3A8080", true)).toBe("http://localhost:8080/.well-known/did.json");
-  });
-
-  it("refuses what an agent's fetch must never reach", () => {
-    const refused = (did: string, insecureLoopback = false) => {
-      const derived = webDidUrl(did, insecureLoopback);
-      return "refused" in derived ? derived.refused : `url: ${derived.url.href}`;
-    };
-    expect(refused("did:web:localhost%3A8080")).toBe("a loopback authority");
-    expect(refused("did:web:localhost.")).toBe("a loopback authority");
-    expect(refused("did:web:127.0.0.1")).toBe("a loopback authority");
-    expect(refused("did:web:10.0.0.1")).toBe("an IP-literal authority");
-    expect(refused("did:web:%5B2001%3Adb8%3A%3A1%5D")).toBe("an IP-literal authority");
-    expect(refused("did:web:0x7f000001")).toBe("a loopback authority");
-    expect(refused("did:web:printer.local")).toContain("a reserved name");
-    expect(refused("did:web:printer.local.")).toContain("a reserved name");
-    expect(refused("did:web:vault.internal")).toContain("a reserved name");
-    expect(refused("did:web:1.0.0.10.in-addr.arpa")).toContain("a reserved name");
-    expect(refused("did:web:alice%40bob.example")).toContain("nothing else");
-    expect(refused("did:web:bob.example%2Fadmin")).toContain("nothing else");
-    expect(refused("did:web:bob.example:..:secret")).toContain("path segment");
-    expect(refused("did:web:bob.example:a%2Fb")).toContain("path segment");
-    expect(refused("did:web:bob.example:did.json%3Fx")).toContain("path segment");
-    expect(refused("did:web:bob.example:")).toContain("path segment");
-    expect(refused("did:web:%ZZ")).toContain("percent-encoded");
-    expect(refused("did:web:")).toContain("nothing else");
-  });
-});
-
 describe("did:web resolution", () => {
   it("fetches the derived URL over the transport, uncached, without following redirects, and retains the document as the vault does", async () => {
     const bob = await webIdentity(BOB);
@@ -220,55 +180,14 @@ describe("did:web resolution", () => {
     expect(await resolve(BOB, none, { fetch: upper.fetch })).toMatchObject({ outcome: "definitive" });
   });
 
-  it("tells no answer now from an answer that closes the attempt", async () => {
+  it("passes the fetch's outcome on, reads the body as strict JSON and holds the document to what the vault retains", async () => {
     const bob = await webIdentity(BOB);
-    for (const status of [408, 429, 500, 502, 503]) {
-      expect(await resolve(BOB, none, { fetch: answering(() => new Response("", { status })) })).toEqual({ outcome: "unavailable", reason: `HTTP ${status}` });
-    }
-    for (const status of [404, 410]) {
-      expect(await resolve(BOB, none, { fetch: answering(() => new Response("", { status })) })).toMatchObject({ outcome: "definitive", reason: `HTTP ${status}: not found or deactivated` });
-    }
-    expect(await resolve(BOB, none, { fetch: answering(() => new Response("", { status: 401 })) })).toEqual({ outcome: "definitive", reason: "HTTP 401" });
-    expect(await resolve(BOB, none, { fetch: answering(() => Response.redirect("https://elsewhere.example/did.json", 302)) })).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("redirect") });
-    expect(await resolve(BOB, none, { fetch: answering(() => new Response("{", { status: 200 })) })).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("strict JSON") });
-    expect(await resolve(BOB, none, { fetch: answering(() => json([bob.document])) })).toMatchObject({ outcome: "definitive", reason: "the document is not a JSON object" });
+    expect(await resolve(BOB, none, { fetch: answering(() => new Response("", { status: 503 })) })).toEqual({ outcome: "unavailable", reason: "HTTP 503" });
+    expect(await resolve(BOB, none, { fetch: answering(() => new Response("", { status: 404 })) })).toEqual({ outcome: "definitive", reason: "HTTP 404: not found or deactivated" });
+    expect(await resolve(BOB, none, { fetch: answering(() => json(bob.document)), maxBytes: 100 })).toEqual({ outcome: "definitive", reason: "the document is larger than 100 bytes" });
+    const twice = JSON.stringify(bob.document).replace("{", `{"id":"${BOB}",`);
+    expect(await resolve(BOB, none, { fetch: answering(() => new Response(twice, { status: 200 })) })).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("the document is not JSON") });
     expect(await resolve(BOB, none, { fetch: answering(() => json({ ...bob.document, keyAgreement: [`${BOB}#nowhere`] })) })).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("references no verification method") });
-    expect(await resolve(BOB, none, { fetch: answering(() => json(bob.document)), maxBytes: 100 })).toMatchObject({ outcome: "definitive", reason: "the document is larger than 100 bytes" });
-    const padded = { ...bob.document, note: "x".repeat(MAX_DOCUMENT_BYTES) };
-    expect(await resolve(BOB, none, { fetch: answering(() => json(padded)) })).toMatchObject({ outcome: "definitive", reason: expect.stringContaining("larger than") });
-  });
-
-  test("a transport failure is final only by the transport's own code, found down the cause chain; the reason keeps the cause", async () => {
-    const refusal = "bob.example resolves to 10.0.0.7, not a public address";
-    expect(await resolve(BOB, none, { fetch: failing(new TypeError("fetch failed", { cause: coded(DEFINITIVE_TRANSPORT_CODES.refused, refusal) })) })).toEqual({ outcome: "definitive", reason: `the transport refused the connection: fetch failed: ${refusal}` });
-    expect(await resolve(BOB, none, { fetch: failing(coded("EBLOCKED", refusal)) })).toEqual({ outcome: "definitive", reason: `the transport refused the connection: ${refusal}` });
-    expect(await resolve(BOB, none, { fetch: failing(new TypeError("fetch failed", { cause: coded(DEFINITIVE_TRANSPORT_CODES.noAddress, "no such name: bob.example") })) })).toEqual({ outcome: "definitive", reason: "the authority has no address: fetch failed: no such name: bob.example" });
-    for (const code of ["ENOTFOUND", "ENODATA", "EAI_AGAIN", "ECONNREFUSED", "ETIMEDOUT", "ERR_TLS_CERT_ALTNAME_INVALID"]) {
-      expect(await resolve(BOB, none, { fetch: failing(new TypeError("fetch failed", { cause: coded(code) })) })).toEqual({ outcome: "unavailable", reason: `the fetch failed: fetch failed: ${code}` });
-      expect(await resolve(BOB, none, { fetch: failing(coded(code)) })).toEqual({ outcome: "unavailable", reason: `the fetch failed: ${code}` });
-    }
-    expect(await resolve(BOB, none, { fetch: failing(new TypeError("fetch failed")) })).toEqual({ outcome: "unavailable", reason: "the fetch failed: fetch failed" });
-    expect(await resolve(BOB, none, { fetch: failing("no") })).toEqual({ outcome: "unavailable", reason: "the fetch failed: no" });
-
-    const generic = (cause: unknown) => Object.assign(new Error("network operation failed", { cause }), { code: "ERR_NETWORK" });
-    expect(await resolve(BOB, none, { fetch: failing(generic(coded("EBLOCKED", refusal))) })).toEqual({ outcome: "definitive", reason: `the transport refused the connection: network operation failed: ${refusal}` });
-    expect(await resolve(BOB, none, { fetch: failing(generic(coded("ENXDOMAIN", "no such name"))) })).toEqual({ outcome: "definitive", reason: "the authority has no address: network operation failed: no such name" });
-    expect(await resolve(BOB, none, { fetch: failing(generic(coded("ENOTFOUND"))) })).toEqual({ outcome: "unavailable", reason: "the fetch failed: network operation failed: ENOTFOUND" });
-    expect(await resolve(BOB, none, { fetch: failing({ code: "EBLOCKED", message: refusal }) })).toEqual({ outcome: "definitive", reason: `the transport refused the connection: ${refusal}` });
-    expect(await resolve(BOB, none, { fetch: failing({ code: "ECONNRESET", message: "reset" }) })).toEqual({ outcome: "unavailable", reason: "the fetch failed: reset" });
-
-    const bodyFailing = (err: unknown) => answering(() => new Response(new ReadableStream({ start: (controller) => controller.error(err) }), { status: 200 }));
-    expect(await resolve(BOB, none, { fetch: bodyFailing(coded("EBLOCKED", refusal)) })).toEqual({ outcome: "definitive", reason: `the transport refused the connection: ${refusal}` });
-    expect(await resolve(BOB, none, { fetch: bodyFailing(generic(coded("ENXDOMAIN", "no such name"))) })).toEqual({ outcome: "definitive", reason: "the authority has no address: network operation failed: no such name" });
-    expect(await resolve(BOB, none, { fetch: bodyFailing(coded("ECONNRESET")) })).toEqual({ outcome: "unavailable", reason: "the body did not arrive whole: ECONNRESET" });
-  });
-
-  test("a body past the bound is definitive once it is past, whatever letting the stream go comes to", async () => {
-    const never = () => new Promise<never>(() => undefined);
-    for (const cancel of [() => undefined, () => Promise.reject(new Error("cancel failed")), never]) {
-      const oversize = answering(() => new Response(new ReadableStream({ start: (controller) => controller.enqueue(new Uint8Array(65)), cancel }), { status: 200 }));
-      expect(await resolve(BOB, none, { fetch: oversize, maxBytes: 64, timeoutMs: 20 })).toEqual({ outcome: "definitive", reason: "the document is larger than 64 bytes" });
-    }
   });
 
   test("one deadline covers the whole resolution, and the diagnostic neither holds the outcome nor overturns it", async () => {

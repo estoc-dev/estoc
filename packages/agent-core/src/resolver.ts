@@ -4,16 +4,12 @@
  * RFC 8785 bytes under their raw CID, the methods it authorizes and
  * the DIDComm service it names. A numalgo-4 long form resolves from
  * itself, its short form only through a long form already in
- * evidence. A `did:web` is fetched, and its document must call itself
- * by the presented string byte for byte: the spelling is the identity,
- * whatever URL or DNS processing the fetch went through.
+ * evidence. A `did:web` is fetched by `@estoc/did-web` over the
+ * host's transport, under its network policy, and its document is
+ * checked here to be one the vault retains.
  *
  * Every failure is `unavailable` — no answer now, the work stays
  * retryable — or `definitive` — an answer that closes the attempt.
- *
- * `web-did-resolver` is not used: it fetches through its own
- * transport, follows redirects and reads without a bound, and the
- * network policy has to hold on the transport itself.
  */
 
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -23,10 +19,11 @@ import { varint } from "multiformats";
 import { bases } from "multiformats/basics";
 
 import { isLongForm, isPeerDID4, isShortForm } from "@estoc/did-peer";
+import { DEFAULT_TIMEOUT_MS, fetchWebDid, type WebDidOptions } from "@estoc/did-web";
 import { InvalidJson, canonicalize, isJsonObject, parseStrict, type JsonObject } from "@estoc/event-store";
 import { InvalidDidDocument, InvalidPublicKey, authorizedMethodIds, canonicalDidOf, canonicalPublicKey, didcommServiceUris, peerResolution, rawCidOfBytes, type Cid, type Did, type DidUrl, type KeyType, type VaultFold } from "@estoc/vault";
 
-import { bounded, letGo } from "./link.js";
+import { bounded } from "./link.js";
 import type { AgentTrace } from "./trace.js";
 
 /** A resolved peer document, in the exact form the vault retains and the folds check. */
@@ -51,39 +48,12 @@ export type Resolved = { outcome: "resolved"; resolution: Resolution } | { outco
 export type KnownLongForms = (shortFormDid: Did) => Did | null;
 
 /**
- * The codes a transport failure carries when its answer is final, on
- * the error or down its `cause` chain. `refused`: the transport's
- * policy forbids the connection. `noAddress`: the name has no address
- * — NXDOMAIN, or NODATA for every usable address family. A transport
- * that cannot tell a name's absence from a lookup that failed leaves
- * the code off, and the failure counts as no answer now.
+ * How a `did:web` is fetched: `@estoc/did-web`'s policy, over the
+ * host's transport. The body is read as strict JSON.
  */
-export const DEFINITIVE_TRANSPORT_CODES = { refused: "EBLOCKED", noAddress: "ENXDOMAIN" } as const;
-
-export interface WebResolverOptions {
-  /**
-   * The transport a `did:web` document is fetched over, and where the
-   * network policy holds. A check on the name binds nothing: only what
-   * makes the connection sees every address the name resolves to, at
-   * lookup, and can refuse one that is not public unicast — on every
-   * connection, since the name may resolve differently next time. So
-   * the transport is the host's, under this contract: it refuses what
-   * its policy forbids, follows no redirect, answers from no cache,
-   * honours `signal`, and marks a failure that is final with a code
-   * from `DEFINITIVE_TRANSPORT_CODES`. Without one no `did:web` is
-   * resolved.
-   */
+export interface WebResolverOptions extends Omit<WebDidOptions, "fetch" | "parse"> {
+  /** the transport, under the contract `WebDidOptions` states; without one no `did:web` is resolved */
   fetch?: typeof fetch;
-  /** the most bytes a document may be; `MAX_DOCUMENT_BYTES` by default */
-  maxBytes?: number;
-  /** how long one resolution may take, all of it — connection, last byte, diagnostic; 10 s by default */
-  timeoutMs?: number;
-  /**
-   * Plain HTTP to `localhost`, `127.0.0.1` or `[::1]`: a mediator run
-   * on this machine for development. Every loopback name is refused
-   * without it, and nothing else is ever fetched over HTTP.
-   */
-  insecureLoopback?: boolean;
 }
 
 export interface ResolverOptions extends WebResolverOptions {
@@ -91,15 +61,7 @@ export interface ResolverOptions extends WebResolverOptions {
   trace?: AgentTrace;
 }
 
-export const MAX_DOCUMENT_BYTES = 256 * 1024;
-export const DEFAULT_TIMEOUT_MS = 10_000;
-
 const DID_METHOD = /^did:([a-z0-9]+):/;
-const WEB_PREFIX = "did:web:";
-const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
-/** name suffixes that never name a public host: loopback, mDNS, private naming, reverse DNS */
-const RESERVED_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa", ".in-addr.arpa", ".ip6.arpa"];
-const RETRYABLE_STATUS = new Set([408, 429]);
 
 const RELATIONSHIPS = ["authentication", "assertionMethod", "keyAgreement", "capabilityDelegation", "capabilityInvocation"];
 /** The members a JWK carries only when it holds a private or symmetric key. */
@@ -190,30 +152,6 @@ function unavailable(reason: string): Resolved {
 function messageOf(err: unknown): string {
   const message = (err as { message?: unknown } | null)?.message;
   return typeof message === "string" ? message : String(err);
-}
-
-function causeChain(err: unknown): unknown[] {
-  const chain: unknown[] = [];
-  for (let at = err; at !== undefined && at !== null && chain.length < 8; at = (at as { cause?: unknown }).cause) chain.push(at);
-  return chain;
-}
-
-function reasonOf(err: unknown): string {
-  return [...new Set(causeChain(err).map(messageOf))].join(": ");
-}
-
-/**
- * A failure of the transport or of the body as an outcome. A final
- * answer takes precedence over how it was wrapped: the definitive
- * code is looked for down the whole cause chain, past whatever
- * generic code an outer error carries, and past the deadline.
- */
-function transportFailure(err: unknown, what: string, signal: AbortSignal, timeoutMs: number): Resolved {
-  const codes = new Set(causeChain(err).map((at) => (at as { code?: unknown }).code));
-  if (codes.has(DEFINITIVE_TRANSPORT_CODES.refused)) return definitive(`the transport refused the connection: ${reasonOf(err)}`);
-  if (codes.has(DEFINITIVE_TRANSPORT_CODES.noAddress)) return definitive(`the authority has no address: ${reasonOf(err)}`);
-  if (signal.aborted) return unavailable(`timed out: not resolved within ${timeoutMs} ms`);
-  return unavailable(`${what}: ${reasonOf(err)}`);
 }
 
 function isIpLiteral(literal: string): boolean {
@@ -461,83 +399,28 @@ function resolvePeer(presented: string, known: KnownLongForms): Resolved {
   }
 }
 
-/** The one URL a `did:web` is fetched from, or the reason its authority is refused before any network is touched. */
-export function webDidUrl(did: string, insecureLoopback = false): { url: URL } | { refused: string } {
-  if (!did.startsWith(WEB_PREFIX)) return { refused: "not a did:web" };
-  let segments: string[];
+/** The fetched document as the vault retains it, or why it is not one, checked under the deadline of the whole resolution. */
+async function retained(did: Did, document: JsonObject, signal: AbortSignal, timeoutMs: number): Promise<Resolved> {
   try {
-    segments = did
-      .slice(WEB_PREFIX.length)
-      .split(":")
-      .map((segment) => decodeURIComponent(segment));
-  } catch {
-    return { refused: "the method-specific ID is not percent-encoded" };
+    await bounded(signal, () => checkShape(document, did, signal));
+  } catch (err) {
+    if (err instanceof InvalidDidDocument) return definitive(`the document is not one the vault retains: ${messageOf(err)}`);
+    if (signal.aborted) return unavailable(`timed out: not resolved within ${timeoutMs} ms`);
+    throw err;
   }
-  const [authority = "", ...path] = segments;
-  if (authority === "" || /[@/?#\\]/.test(authority)) return { refused: "the authority is a host name and an optional port, nothing else" };
-  for (const segment of path) {
-    if (segment === "" || segment === "." || segment === ".." || /[/?#\\]/.test(segment)) return { refused: `the path segment ${JSON.stringify(segment)} is not one` };
-  }
-  let url: URL;
   try {
-    url = new URL(`https://${authority}/`);
-  } catch {
-    return { refused: `the authority ${JSON.stringify(authority)} is not a host` };
+    const canonical = canonicalize(document);
+    return { outcome: "resolved", resolution: resolutionOf(did, did, document, canonical, rawCidOfBytes(canonical)) };
+  } catch (err) {
+    if (err instanceof InvalidDidDocument || err instanceof InvalidJson) return definitive(`the document is not one the vault retains: ${messageOf(err)}`);
+    throw err;
   }
-  const name = url.hostname.endsWith(".") ? url.hostname.slice(0, -1) : url.hostname;
-  const literal = name.startsWith("[") ? name.slice(1, -1) : name;
-  if (LOOPBACK_NAMES.has(name)) {
-    if (!insecureLoopback) return { refused: "a loopback authority" };
-    url.protocol = "http:";
-  } else if (ipaddr.isValid(literal)) {
-    return { refused: "an IP-literal authority" };
-  } else if (RESERVED_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
-    return { refused: `a reserved name: ${url.hostname}` };
-  }
-  url.pathname = path.length === 0 ? "/.well-known/did.json" : `/${path.map((segment) => encodeURIComponent(segment)).join("/")}/did.json`;
-  return { url };
 }
 
 /**
- * The body, or null once it runs past `maxBytes`; what fails while
- * reading is the transport's. Past the bound the answer is settled,
- * so the stream is let go rather than waited for: a cancel that fails
- * or never returns changes nothing.
- */
-async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) return null;
-  if (response.body === null) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return bytes.length > maxBytes ? null : bytes;
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.length;
-    if (length > maxBytes) {
-      letGo(reader);
-      return null;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(length);
-  let at = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, at);
-    at += chunk.length;
-  }
-  return bytes;
-}
-
-/**
- * A `did:web` fetched over the transport and checked to be its own:
- * the presented string, byte for byte, as the document's `id`. One
- * deadline covers the whole resolution; the diagnostic written after
- * it neither holds the outcome nor overturns it.
+ * A `did:web` fetched and retained. One deadline covers the whole
+ * resolution; the diagnostic written after it neither holds the
+ * outcome nor overturns it.
  */
 async function resolveWeb(presented: string, options: ResolverOptions): Promise<Resolved> {
   try {
@@ -546,63 +429,23 @@ async function resolveWeb(presented: string, options: ResolverOptions): Promise<
     if (err instanceof InvalidDidDocument) return definitive(err.message);
     throw err;
   }
-  const derived = webDidUrl(presented, options.insecureLoopback ?? false);
-  if ("refused" in derived) return definitive(`the resolver policy refuses ${presented}: ${derived.refused}`);
   if (options.fetch === undefined) return definitive("no transport: a did:web is fetched only over one that holds the network policy");
-  const { url } = derived;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const signal = AbortSignal.timeout(timeoutMs);
   const started = Date.now();
-  const outcome = await fetchWeb(presented as Did, url, options.fetch, options.maxBytes ?? MAX_DOCUMENT_BYTES, signal, timeoutMs);
+  const fetched = await fetchWebDid(presented, { fetch: options.fetch, maxBytes: options.maxBytes, timeoutMs, insecureLoopback: options.insecureLoopback, parse: parseStrict });
+  if (fetched.outcome === "refused") return definitive(fetched.reason);
+  let outcome: Resolved;
+  if (fetched.outcome === "unavailable") outcome = unavailable(fetched.reason);
+  else if (fetched.outcome === "definitive") outcome = definitive(fetched.reason);
+  // read by `parseStrict`, so the object is JSON as the vault holds it
+  else outcome = await retained(presented as Did, fetched.document as JsonObject, signal, timeoutMs);
   const trace = options.trace;
   if (trace !== undefined) {
-    const entry = { did: presented, url: url.href, outcome: outcome.outcome, ...(outcome.outcome === "resolved" ? { cid: outcome.resolution.cid } : { reason: outcome.reason }), ms: Date.now() - started };
+    const entry = { did: presented, url: fetched.url.href, outcome: outcome.outcome, ...(outcome.outcome === "resolved" ? { cid: outcome.resolution.cid } : { reason: outcome.reason }), ms: Date.now() - started };
     await bounded(signal, () => trace.append("diag", "resolve", entry)).catch(() => undefined);
   }
   return outcome;
-}
-
-async function fetchWeb(presented: Did, url: URL, fetch: typeof globalThis.fetch, maxBytes: number, signal: AbortSignal, timeoutMs: number): Promise<Resolved> {
-  let response: Response;
-  try {
-    response = await bounded(signal, () => fetch(url.href, { redirect: "manual", cache: "no-store", signal, headers: { accept: "application/did+json, application/json" } }));
-  } catch (err) {
-    return transportFailure(err, "the fetch failed", signal, timeoutMs);
-  }
-  const { status } = response;
-  if (response.type === "opaqueredirect" || (status >= 300 && status < 400)) return definitive(`a redirect (${status}) is not followed`);
-  if (RETRYABLE_STATUS.has(status) || status >= 500) return unavailable(`HTTP ${status}`);
-  if (status === 404 || status === 410) return definitive(`HTTP ${status}: not found or deactivated`);
-  if (status < 200 || status >= 300) return definitive(`HTTP ${status}`);
-  let bytes: Uint8Array | null;
-  try {
-    bytes = await bounded(signal, () => readBounded(response, maxBytes));
-  } catch (err) {
-    return transportFailure(err, "the body did not arrive whole", signal, timeoutMs);
-  }
-  if (bytes === null) return definitive(`the document is larger than ${maxBytes} bytes`);
-  let document: unknown;
-  try {
-    document = parseStrict(bytes);
-  } catch (err) {
-    return definitive(`the document is not strict JSON: ${messageOf(err)}`);
-  }
-  if (!isJsonObject(document)) return definitive("the document is not a JSON object");
-  if (document["id"] !== presented) return definitive(`the document is ${JSON.stringify(document["id"])}'s, not ${presented}'s`);
-  try {
-    await bounded(signal, () => checkShape(document, presented, signal));
-  } catch (err) {
-    if (err instanceof InvalidDidDocument) return definitive(`the document is not one the vault retains: ${messageOf(err)}`);
-    if (signal.aborted) return unavailable(`timed out: not resolved within ${timeoutMs} ms`);
-    throw err;
-  }
-  try {
-    const canonical = canonicalize(document);
-    return { outcome: "resolved", resolution: resolutionOf(presented, presented, document, canonical, rawCidOfBytes(canonical)) };
-  } catch (err) {
-    if (err instanceof InvalidDidDocument || err instanceof InvalidJson) return definitive(`the document is not one the vault retains: ${messageOf(err)}`);
-    throw err;
-  }
 }
 
 /**

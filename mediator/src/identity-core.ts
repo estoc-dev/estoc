@@ -9,6 +9,7 @@ import {
   encodeLongForm,
 } from "@estoc/did-peer";
 import type { DIDDoc, PeerDocument, Secret } from "@estoc/did-peer";
+import { didWebFromUrl } from "@estoc/did-web";
 
 import type { MediationStore } from "./store/types.js";
 
@@ -133,34 +134,16 @@ export function endpointsOf(publicUrl: string): string[] {
 }
 
 /**
- * The did:web name of the mediator's public URL: host (with an %3A-encoded
- * port), then one colon-joined segment per path element.
- *
- * https is a hard requirement, not a SHOULD — resolvers fetch only
- * `https://…/did.json`, so a did:web minted from an http URL would be
- * unresolvable by everyone else. The one exception is localhost: `wrangler
- * dev` serves plain http, our own resolver fetches such a DID over http for
- * a client that allows loopback, and a loopback name was never resolvable by
- * the outside world anyway.
+ * The mediator's did:web at its public URL, or a throw when no resolver
+ * would fetch its document from there, as over plain http to a public name:
+ * such a mediator is named by a peer method.
  */
-export function didWebFromUrl(publicUrl: string): string {
-  const url = new URL(publicUrl);
-  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new Error(
-      `did:web requires an https public URL (got ${publicUrl}); ` +
-        "set MEDIATOR_DID_METHODS=peer2 for non-loopback http"
-    );
+function webDidOf(publicUrl: string): string {
+  try {
+    return didWebFromUrl(publicUrl);
+  } catch (err) {
+    throw new Error(`${(err as Error).message}; set MEDIATOR_DID_METHODS=peer2 for this URL`, { cause: err });
   }
-
-  const host =
-    url.port === "" ? url.hostname : `${url.hostname}%3A${url.port}`;
-  const segments = url.pathname
-    .split("/")
-    .filter((segment) => segment !== "")
-    .map((segment) => encodeURIComponent(decodeURIComponent(segment)));
-
-  return ["did:web", host, ...segments].join(":");
 }
 
 function publicJwk(secret: Secret): Record<string, unknown> {
@@ -261,7 +244,7 @@ export function webDidDocument(
   secrets: Secret[],
   publicUrl: string
 ): Record<string, unknown> {
-  const did = didWebFromUrl(publicUrl);
+  const did = webDidOf(publicUrl);
   const skeleton = didDocumentSkeleton(secrets, endpointsOf(publicUrl));
   const absolute = (id: unknown) => `${did}${id}`;
 
@@ -303,7 +286,7 @@ export function deriveDid(
       return encodeLongForm(input);
     }
     case "web":
-      return didWebFromUrl(publicUrl);
+      return webDidOf(publicUrl);
     default:
       // The type is exhaustive, but a JS caller can still hand in anything.
       throw new Error(`Unknown DID method: ${String(method)}`);
