@@ -77,6 +77,14 @@ const publicKey: Check<PublicKey> = (value, at) => {
   }
 };
 const cid: Check<Cid> = (value, at) => (isRawCid(value) ? value : fail(at, "a raw DASL CID"));
+/**
+ * A payload reader checks a layer CID for its form. The intent CID of a
+ * message.out or message.in is also recomputed from the fields beside it,
+ * below; a preparation's is compared with its message's by the outbound
+ * fold. Plaintext bytes are not retained, so a plaintext CID is form
+ * alone. Envelope bytes are an object the preparation roots, and the
+ * object store answers for their digest.
+ */
 const intentCid: Check<IntentCid> = (value, at) => cid(value, at) as IntentCid;
 const plaintextCid: Check<PlaintextCid> = (value, at) => cid(value, at) as PlaintextCid;
 const envelopeCid: Check<EnvelopeCid> = (value, at) => cid(value, at) as EnvelopeCid;
