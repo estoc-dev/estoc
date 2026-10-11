@@ -1,7 +1,7 @@
 import { canonicalText } from "@estoc/event-store";
 import { describe, expect, test } from "vitest";
 
-import { PLAINTEXT_TYP, executionId, inboundMessageId, intentOf, intentProjection, plaintextCidOf, readPlaintext, storeMessage, wirePlaintext, type Cid, type ControlHeaders, type Did, type WireMessageId } from "../src/index.js";
+import { PLAINTEXT_TYP, PURE_ACK_EFFECT, automaticMessageId, effectKey, executionId, inboundMessageId, intentOf, intentProjection, plaintextCidOf, readPlaintext, storeMessage, wirePlaintext, type Cid, type ControlHeaders, type Did, type WireMessageId } from "../src/index.js";
 
 const OURS = "did:peer:4zQmd8CpeFPci817KDsbSAKWcXAE2mjvCQSasRewvbSF54Bd" as Did;
 const PEER = "did:peer:4zQmaszWy5nSWq5GjKaGPuRCuFfwBqML1SAQNxPJdpAxx3fP" as Did;
@@ -101,7 +101,7 @@ describe("the message layer vectors", () => {
     }
   });
 
-  test("the fixture plaintext received under its ID in two cases is one input and one execution under one intent CID, with two plaintext CIDs; under another ID it is another input", () => {
+  test("the fixture plaintext received under its ID in two cases is one input and one execution with the fixed IDs under one intent CID, with two plaintext CIDs; under another ID it is another input", () => {
     const lower = { typ: PLAINTEXT_TYP, id: "a1", type: BASIC_MESSAGE, from: PEER, to: [OURS], created_time: CREATED, please_ack: [""], body: BODY };
     const upper = { ...lower, id: "A1" };
     const other = { ...lower, id: "a2" };
@@ -111,16 +111,21 @@ describe("the message layer vectors", () => {
       return { messageId: inboundMessageId(PEER, OURS, wire), executionId: executionId(PEER, OURS, wire), intentCid: read.intent.cid, plaintextCid: read.plaintextCid };
     };
     const [a, b, c] = [identities(lower), identities(upper), identities(other)];
+    expect([a.messageId, a.executionId]).toEqual(["50569178-36de-5061-a370-272a02a5036f", "37686a53-d0bd-568e-b014-95e8ada4408a"]);
     expect([b.messageId, b.executionId, b.intentCid]).toEqual([a.messageId, a.executionId, a.intentCid]);
     expect(b.plaintextCid).not.toBe(a.plaintextCid);
     expect([c.messageId === a.messageId, c.executionId === a.executionId, c.intentCid]).toEqual([false, false, a.intentCid]);
   });
 
-  test("the pure ACK of the fixture carrier is one intent under the carrier's canonical wire ID, and another under a thread spelled otherwise", () => {
+  test("the pure ACK of the fixture carrier has the fixed effect key and message ID, and is one intent under the carrier's canonical wire ID and another under a thread spelled otherwise", () => {
     const EMPTY_DOCUMENT = storeMessage({}, undefined);
     expect(decoder.decode(EMPTY_DOCUMENT.bytes)).toBe('{"attachments":[],"body":{}}');
     expect(EMPTY_DOCUMENT.bodyCid).toBe("bafkreibjtfmb4ccyujuyheuyeejnjpxticpt347cqyzi2w7p5ocsa432ga");
-    const ack = (thid: string) => intentOf("48a1f735-5b37-501a-8b69-b56637fb50b0", { type: EMPTY, thid, pthid: null, createdTime: CREATED, expiresTime: null, pleaseAck: null, ack: ["a1"], headers: {} }, EMPTY_DOCUMENT.bodyCid);
+    const key = effectKey(executionId(PEER, OURS, "a1" as WireMessageId), PURE_ACK_EFFECT);
+    expect(key).toBe("HH_QvgJGEVcgwTEuVNQPO0NthGnocG3LNmb0pmn2xrA");
+    const messageId = automaticMessageId(key);
+    expect(messageId).toBe("48a1f735-5b37-501a-8b69-b56637fb50b0");
+    const ack = (thid: string) => intentOf(messageId, { type: EMPTY, thid, pthid: null, createdTime: CREATED, expiresTime: null, pleaseAck: null, ack: ["a1"], headers: {} }, EMPTY_DOCUMENT.bodyCid);
     expect(canonicalText(["estoc.message.intent", 1, intentProjection(ack("a1").value)])).toBe(
       '["estoc.message.intent",1,{"ack":["a1"],"created_time":1788442800,"document":"bafkreibjtfmb4ccyujuyheuyeejnjpxticpt347cqyzi2w7p5ocsa432ga","expires_time":null,"headers":{},"please_ack":null,"pthid":null,"thid":"a1","type":"https://didcomm.org/empty/1.0/empty"}]'
     );

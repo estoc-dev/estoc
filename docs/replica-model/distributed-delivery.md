@@ -23,8 +23,8 @@ that code cannot state about itself: the message layers and the
 derivations every replica must agree on, the commit and acknowledgment
 boundaries, what an ACK may name, which replica answers an input, the
 failure rules and the privacy budget. Capitalized requirement words have
-their BCP 14 meanings. [message-vectors.md](message-vectors.md) lists fixed
-inputs with the canonical bytes and CIDs the layers give over them.
+their BCP 14 meanings. [message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)
+pins the canonical bytes and CIDs the layers give over fixed inputs.
 
 <a id="what-it-is-for"></a>
 
@@ -285,7 +285,7 @@ top-level headers are reserved, how a self reference is folded and written
 back, that `please_ack` absent, `[]` and `[""]` are three intents, and that
 an intent put on the wire reads back to the same intent and CID are
 `RESERVED_HEADERS`, `SELF`, `intentOf`, `readPlaintext` and `wirePlaintext`
-with their tests; [message-vectors.md](message-vectors.md) pins the bytes.
+with their tests; [message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts) pins the bytes.
 A change to the projection's fields or encoding is a new version.
 
 Wire IDs are compared by canonical wire ID, the spelling with the ASCII
@@ -459,7 +459,7 @@ natural reply or rotation notification: body `{}`, no attachments or
 headers, the carrier's nullable creation time, no expiry, `pleaseAck` null,
 `thid = replyThread(carrier)` and `ack` the one target, so that the six
 spellings of one self-threaded carrier give one ACK intent
-([message-vectors.md](message-vectors.md#reply-thread-and-pure-ack)).
+([message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)).
 Built-in Ping replies and rotation notifications have `ack == []`; another
 protocol may define its own explicit ACKs under the same target checks.
 Never request an ACK for a pure ACK, or answer one with another. When the
@@ -526,9 +526,9 @@ The namespace derivation is [ids.ts](../../packages/vault/src/ids.ts)'s.
 The UUID naming fixtures and canonical wire-ID equivalence are tested in
 [ids.test.ts](../../packages/vault/test/ids.test.ts), and
 [message-vectors.test.ts](../../packages/vault/test/message-vectors.test.ts)
-checks that `a1` and `A1` name one input and one execution; the published
-values are in [message-vectors.md](message-vectors.md). `message.in` keeps
-the `id` as received, the transcript takes its canonical form.
+checks that `a1` and `A1` name one input and one execution, and pins their
+IDs. `message.in` keeps the `id` as received, the transcript takes its
+canonical form.
 
 Keys and source event CIDs remain exact authentication evidence; different
 authorized keys in one immutable DID document represent the same channel
