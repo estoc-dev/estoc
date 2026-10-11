@@ -109,9 +109,11 @@ address retain their own endpoint decisions.
 The mediator holds one replica-mediation account per arrangement; each
 runtime picks up as a replica of its own, under its own DID, and the
 mediator applies one recipient profile to all communication DIDs. It looks
-at a forward's envelope and never opens it. The sender's local CID for the
-normalized envelope is never part of Routing 2.0 and MUST NOT be sent
-merely to deliver the package. Every accepted forward is queued as new
+at a forward's envelope and never opens it; its size, count, retention and
+pickup limits are its README's, and recipient-add rate limiting is
+deployment policy, outside this delivery profile. The sender's local CID
+for the normalized envelope is never part of Routing 2.0 and MUST NOT be
+sent merely to deliver the package. Every accepted forward is queued as new
 mail, a repeated one included; the receiver's channel-local deduplication
 absorbs the copies. Mediator or HTTP acceptance means only `submitted`, and
 no transport error, timeout or remote Problem Report appends
