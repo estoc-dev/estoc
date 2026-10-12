@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, vaultDraft, type Did, type DidId, type Keys, type MediationId } from "@estoc/vault";
+import { scanVault, vaultDraft, type Did, type DidId, type MediationId } from "@estoc/vault";
 
-import { Agent, AgentTrace, BASIC_MESSAGE, LinkClosed, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, createDid, createMediation, type Arrangement, type Disclosure } from "../src/index.js";
+import { Agent, AgentTrace, BASIC_MESSAGE, LinkClosed, RECIPIENT_ADD, REPLICA_ADD, REPLICA_LIST, UnknownEntity, Unusable, WrongAccount, WrongMediator, type Arrangement, type Disclosure } from "../src/index.js";
+import { createDid } from "../src/dids.js";
+import { createMediation } from "../src/mediation.js";
 import type { DispatchOptions } from "../src/dispatch.js";
 import { MediatorLink } from "../src/link.js";
 import { transientOptions } from "../src/local-records.js";
 import type { Account } from "../src/arrangement.js";
 import { disclose } from "../src/dids.js";
+import type { Session } from "../src/session.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { accountOver, didcomm, directParty, freshVault, mediatedRoute, newMediator, party, posting, webFetch, type Party } from "./helpers.js";
 
@@ -31,7 +33,7 @@ async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party> {
 }
 
 async function agentOf(p: Party, fetch = p.linkOptions.fetch as typeof globalThis.fetch): Promise<Agent> {
-  const agent = await Agent.open(p, { didcomm, fetch, WebSocket: p.mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false });
+  const agent = await Agent.open(p.session, { didcomm, fetch, WebSocket: p.mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false });
   closing.unshift(agent);
   return agent;
 }
@@ -67,7 +69,7 @@ describe("an arrangement", () => {
   it("takes one turn at a time for what it writes, whichever binding of the account asks, and lists without waiting for a turn", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
-    await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    await createDid(p.session, mediatedRoute(p.mediationId));
     const { link, answered, release } = held(p);
     const done: string[] = [];
     const enrolling = accountOver(p, { link, confirmations: transientOptions() })
@@ -90,14 +92,14 @@ describe("an arrangement", () => {
   it("discloses a mediated address in one turn of its own, the address added and the disclosure committed there, behind the turn already taken", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
-    const { created, minted } = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const { created, minted } = await createDid(p.session, mediatedRoute(p.mediationId));
     const { link, answered, release } = held(p);
     const done: string[] = [];
     const enrolling = accountOver(p, { link, confirmations: transientOptions() })
       .enroll()
       .then(() => done.push("enroll"));
     await answered;
-    const disclosing = disclose(p.account, p.runtime, p.keys, created.data.didId, { as: "oob" }).then(() => done.push("disclose"));
+    const disclosing = disclose(p.account, p.session, created.data.didId, { as: "oob" }).then(() => done.push("disclose"));
     const adding = accountOver(p)
       .addRecipients()
       .then(() => done.push("recipients"));
@@ -130,9 +132,9 @@ describe("an arrangement taken from an agent", () => {
   it("is taken for an arrangement whose account is not registered, which lists nothing and has its mediator not even resolved", async () => {
     const fresh = await freshVault();
     closing.push(fresh.runtime);
-    const { mediationId } = (await createMediation(fresh.runtime, fresh.keys, "did:web:mediator.example" as Did)).data;
+    const { mediationId } = (await createMediation(fresh.session, "did:web:mediator.example" as Did)).data;
     const web = webFetch({});
-    const agent = await Agent.open(fresh, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
+    const agent = await Agent.open(fresh.session, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
     closing.unshift(agent);
     const arrangement = await agent.arrangement(mediationId);
     const refused = await arrangement.listReplicas().catch((err: unknown) => err);
@@ -160,7 +162,7 @@ describe("an arrangement taken from an agent", () => {
     expect((await arrangement.enroll()).steps).toEqual([]);
     expect((await arrangement.addRecipients()).added).toEqual([]);
     await expect(arrangement.listReplicas()).rejects.toBeInstanceOf(LinkClosed);
-    await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    await createDid(p.session, mediatedRoute(p.mediationId));
     await expect(arrangement.addRecipients()).rejects.toBeInstanceOf(LinkClosed);
     expect(mediator.seenTypes).toHaveLength(asked);
   });
@@ -168,9 +170,9 @@ describe("an arrangement taken from an agent", () => {
   it("makes no line once the agent closed, nor resolves the mediator for one", async () => {
     const fresh = await freshVault();
     closing.push(fresh.runtime);
-    const { mediationId } = (await createMediation(fresh.runtime, fresh.keys, "did:web:mediator.example" as Did)).data;
+    const { mediationId } = (await createMediation(fresh.session, "did:web:mediator.example" as Did)).data;
     const web = webFetch({});
-    const agent = await Agent.open(fresh, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
+    const agent = await Agent.open(fresh.session, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
     const arrangement = await agent.arrangement(mediationId);
     agent.close();
     await expect(arrangement.enroll()).rejects.toBeInstanceOf(LinkClosed);
@@ -188,7 +190,7 @@ describe("an agent opened again over the same local options", () => {
     const fetch: typeof globalThis.fetch = (input, init) => (String(input).startsWith(BOB_ENDPOINT) ? wire.fetch(input, init) : (p.linkOptions.fetch as typeof globalThis.fetch)(input, init));
     const first = await agentOf(p, fetch);
     await first.enroll(p.mediationId);
-    const { created, minted } = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const { created, minted } = await createDid(p.session, mediatedRoute(p.mediationId));
     await first.disclose(created.data.didId, { as: "oob" });
     first.close();
 
@@ -199,7 +201,7 @@ describe("an agent opened again over the same local options", () => {
     expect(wire.posts).toHaveLength(1);
     expect(mediator.seenTypes).toHaveLength(asked);
 
-    const later = (await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).minted;
+    const later = (await createDid(p.session, mediatedRoute(p.mediationId))).minted;
     const again = await agent.send({ channel: { localDid: later.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello again" } });
     expect(again.dispatched).toMatchObject({ outcome: "submitted" });
     expect(sent(mediator, RECIPIENT_ADD)).toBe(2);
@@ -213,6 +215,6 @@ describe("a dispatch and a disclosure", () => {
     expectTypeOf<DispatchOptions>().not.toHaveProperty("confirmations");
     expectTypeOf<DispatchOptions>().not.toHaveProperty("links");
     expectTypeOf<DispatchOptions["accounts"]>().toEqualTypeOf<((mediationId: MediationId) => Account | null) | undefined>();
-    expectTypeOf<Parameters<typeof disclose>>().toEqualTypeOf<[account: Account | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure]>();
+    expectTypeOf<Parameters<typeof disclose>>().toEqualTypeOf<[account: Account | null, session: Session, didId: DidId, disclosure: Disclosure]>();
   });
 });

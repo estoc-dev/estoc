@@ -10,7 +10,7 @@
  */
 
 import { isJsonObject } from "@estoc/event-store";
-import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, scanVault, verifyReplicaGrant, type Did } from "@estoc/vault";
+import { IdentityMismatch, InvalidDidDocument, InvalidReplicaGrant, sameDid, verifyReplicaGrant, type Did } from "@estoc/vault";
 
 import type { Account } from "./arrangement.js";
 import { MediatorRefused } from "./errors.js";
@@ -50,16 +50,16 @@ const PAGE = 16;
  * with no listing.
  */
 export async function listReplicas(account: Account): Promise<ListedReplica[]> {
-  const { runtime, keys, mediationId } = account;
-  const mediation = registeredAccountOf(await scanVault(runtime.vault, keys), mediationId);
+  const { session, mediationId } = account;
+  const mediation = registeredAccountOf(await session.fold(), mediationId);
   // a grant has more than one encoding that verifies, so a replica is told apart by its DID and not by its grant's characters
   const listed = new Map<Did, ListedReplica>();
   const refused: string[] = [];
   for (const { grant: jws, ...entry } of await everyEntry(await account.link(mediation))) {
     try {
-      const grant = await verifyReplicaGrant(keys, jws, mediation.me.did);
+      const grant = await verifyReplicaGrant(session.keys, jws, mediation.me.did);
       if (grant.mediationId !== mediationId || !sameDid(grant.mediator, mediation.mediatorDid)) throw new IdentityMismatch(`the grant binds its replica to mediation ${grant.mediationId} at ${grant.mediator}`);
-      if (!listed.has(grant.replicaDid)) listed.set(grant.replicaDid, { replicaId: grant.replicaId, did: grant.replicaDid, longFormDid: grant.replicaLongForm, ...entry, self: grant.replicaId === runtime.author });
+      if (!listed.has(grant.replicaDid)) listed.set(grant.replicaDid, { replicaId: grant.replicaId, did: grant.replicaDid, longFormDid: grant.replicaLongForm, ...entry, self: grant.replicaId === session.runtime.author });
     } catch (err) {
       if (!(err instanceof InvalidReplicaGrant || err instanceof IdentityMismatch || err instanceof InvalidDidDocument)) throw err;
       refused.push(err.message);

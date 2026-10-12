@@ -4,14 +4,14 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { SqliteVault, exportVault, openPortable, restoreVault } from "@estoc/event-store";
+import { exportVault, openPortable, restoreVault } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
 import { unlockSeedKeystore } from "@estoc/keystore";
 import { Keys, vaultDraft, vaultHeldRoots, type Channel, type Did } from "@estoc/vault";
 
-import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName, createMediation, decide, selectMediation } from "@estoc/agent-core";
+import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName, openRestoredVault, type VaultSession } from "@estoc/agent-core";
 import { newMediator } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
@@ -107,7 +107,7 @@ async function backupPreferring(backup: Uint8Array, mediatorDid: string): Promis
   const root = await folder();
   await writeFile(path.join(root, "backup.sqlite"), backup);
   const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
-  let runtime: SqliteVault;
+  let vault: VaultSession;
   let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
   try {
     const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
@@ -117,18 +117,17 @@ async function backupPreferring(backup: Uint8Array, mediatorDid: string): Promis
         return Keys.anchorOf(seedKey);
       },
     });
-    runtime = new SqliteVault(restored.runtime);
+    vault = await openRestoredVault(restored.runtime, seedKey);
   } finally {
     source.close();
   }
   try {
-    const keys = await Keys.open(seedKey, runtime.metadata.anchor);
-    const { mediationId } = (await createMediation(runtime, keys, mediatorDid as Did)).data;
-    await decide(runtime, keys, () => [vaultDraft("mediation.granted", { mediationId, routingDid: mediatorDid as Did })]);
-    await selectMediation(runtime, keys, mediationId);
-    await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "preferring.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+    const { mediationId } = (await vault.createMediation(mediatorDid as Did)).data;
+    await vault.decide(() => [vaultDraft("mediation.granted", { mediationId, routingDid: mediatorDid as Did })]);
+    await vault.selectMediation(mediationId);
+    await exportVault(vault.runtime, (mode) => openNodeSqlite(path.join(root, "preferring.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
   } finally {
-    await runtime.close();
+    await vault.runtime.close();
   }
   return new Uint8Array(await readFile(path.join(root, "preferring.sqlite")));
 }

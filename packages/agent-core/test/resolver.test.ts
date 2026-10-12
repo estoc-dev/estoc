@@ -13,7 +13,8 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import bs58 from "bs58";
 import { bases } from "multiformats/basics";
 
-import { AgentTrace, createMediation, secretsResolverFor } from "../src/index.js";
+import { AgentTrace, secretsResolverFor } from "../src/index.js";
+import { createMediation } from "../src/mediation.js";
 import { authorizedKeys, commitResolution, didcommDocumentOf } from "../src/evidence.js";
 import { knownLongForms, resolve, type KnownLongForms, type Resolution, type ResolverOptions } from "../src/resolver.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
@@ -110,14 +111,14 @@ describe("did:peer:4", () => {
     const short = longToShort(mediator.did) as Did;
     const mediationId = mediationIdOf(short);
     const creationFirst = await freshVault(1);
-    await createMediation(creationFirst.runtime, creationFirst.keys, short);
+    await createMediation(creationFirst.session, short);
     expect(knownLongForms(await scanVault(creationFirst.runtime.vault, creationFirst.keys))(short)).toBeNull();
     await creationFirst.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
     expect(knownLongForms(await scanVault(creationFirst.runtime.vault, creationFirst.keys))(short)).toBe(mediator.did);
 
     const grantFirst = await freshVault(2);
     await grantFirst.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
-    await createMediation(grantFirst.runtime, grantFirst.keys, short);
+    await createMediation(grantFirst.session, short);
     const fold = await scanVault(grantFirst.runtime.vault, grantFirst.keys);
     expect(fold.mediations.mediations.get(mediationId)).toMatchObject({ mediatorDid: short, routingDid: mediator.did });
     expect(knownLongForms(fold)(short)).toBe(mediator.did);
@@ -129,8 +130,8 @@ describe("did:peer:4", () => {
   test("a mediator's long form that only a retained document of this vault's own entity sends through resolves its short form, while the arrangement itself is in evidence by the short form alone; one whose nested document fails its hash supplies nothing", async () => {
     const mediator = await newMediator();
     const short = longToShort(mediator.did) as Did;
-    const { runtime, keys } = await freshVault(3);
-    const creation = await createMediation(runtime, keys, short);
+    const { session, runtime, keys } = await freshVault(3);
+    const creation = await createMediation(session, short);
     await runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: creation.data.mediationId, routingDid: short })]);
     const forged = `${short}:${creation.data.me.did.slice(creation.data.me.did.lastIndexOf(":") + 1)}` as Did;
     const bad = await mintDid(keys, "019b0000-0000-7000-8000-00000000000e" as DidId, { kind: "mediated", routingDid: forged });

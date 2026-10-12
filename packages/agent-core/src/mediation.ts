@@ -10,13 +10,13 @@
  */
 
 import { isLongForm } from "@estoc/did-peer";
-import type { VaultRuntime } from "@estoc/event-store";
-import { canonicalDidOf, mediationIdOf, mediationKeyName, mintMediationDid, sameDid, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { canonicalDidOf, mediationIdOf, mediationKeyName, mintMediationDid, sameDid, vaultDraft, type Did, type Mediation, type MediationId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { EntityConflict, UnknownEntity, Unusable, WrongAccount, WrongMediator } from "./errors.js";
 import type { MediatorLink } from "./link.js";
 import { decide } from "./procedure.js";
 import { knownLongForms } from "./resolver.js";
+import type { Session } from "./session.js";
 
 /** The arrangement as the fold has it; `UnknownEntity` when it has none. */
 export function mediationOf(fold: VaultFold, mediationId: MediationId): Mediation {
@@ -86,12 +86,12 @@ export function toward(link: MediatorLink, mediation: Mediation): void {
  * the replica-mediation protocol at the mediator, and is `enroll`ed
  * there.
  */
-export async function createMediation(runtime: VaultRuntime, keys: Keys, mediatorDid: Did): Promise<VaultEvent<"mediation.created">> {
+export async function createMediation(session: Session, mediatorDid: Did): Promise<VaultEvent<"mediation.created">> {
   const mediationId = mediationIdOf(mediatorDid);
   const mediator = canonicalDidOf(mediatorDid);
-  const me = await mintMediationDid(keys, mediationId);
+  const me = await mintMediationDid(session.keys, mediationId);
   const data = { mediationId, mediatorDid, me: { keyName: mediationKeyName(mediationId), did: me.longFormDid } };
-  const { fold, events } = await decide(runtime, keys, (fold) => {
+  const { fold, events } = await decide(session, (fold) => {
     const existing = fold.mediations.mediations.get(mediationId);
     if (existing === undefined || (existing.me === null && existing.faults.length === 0)) return [vaultDraft("mediation.created", data)];
     if (existing.mediatorDid === null || !sameDid(existing.mediatorDid, data.mediatorDid) || existing.me?.did !== data.me.did) {
@@ -103,8 +103,8 @@ export async function createMediation(runtime: VaultRuntime, keys: Keys, mediato
 }
 
 /** `mediation.selected`: the arrangement policy prefers for new mediated routes. Needs a usable one; already the latest selection, nothing is written. */
-export async function selectMediation(runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<VaultEvent<"mediation.selected"> | null> {
-  const { events } = await decide(runtime, keys, (fold) => {
+export async function selectMediation(session: Session, mediationId: MediationId): Promise<VaultEvent<"mediation.selected"> | null> {
+  const { events } = await decide(session, (fold) => {
     const mediation = mediationOf(fold, mediationId);
     if (mediation.status !== "usable") throw new Unusable("mediation", mediationId, mediation.faults.length > 0 ? mediation.faults : [mediation.status]);
     return fold.mediations.selected === mediationId ? [] : [vaultDraft("mediation.selected", { mediationId })];

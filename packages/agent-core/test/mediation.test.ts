@@ -5,23 +5,9 @@ import { InvalidDidDocument, VaultEventSet, foldWithSeed, mediationIdOf, mediati
 
 import { Message } from "@estoc/didcomm-node";
 
-import {
-  ACCOUNT_REGISTER,
-  ACCOUNT_REGISTERED,
-  Agent,
-  AgentTrace,
-  EntityConflict,
-  LinkClosed,
-  RECIPIENT_ADDED,
-  Unusable,
-  UnverifiedReply,
-  createDid,
-  createMediation,
-  plainMessage,
-  secretsResolverFor,
-  selectMediation,
-  type IMessage,
-} from "../src/index.js";
+import { ACCOUNT_REGISTER, ACCOUNT_REGISTERED, Agent, AgentTrace, EntityConflict, LinkClosed, RECIPIENT_ADDED, Unusable, UnverifiedReply, plainMessage, secretsResolverFor, type IMessage } from "../src/index.js";
+import { createDid } from "../src/dids.js";
+import { createMediation, selectMediation } from "../src/mediation.js";
 import { MediatorLink } from "../src/link.js";
 import { transientOptions } from "../src/local-records.js";
 import { holds } from "../src/replica-recipients.js";
@@ -38,11 +24,11 @@ describe("creating an arrangement", () => {
     expect(p.created.data.me.did.startsWith("did:peer:4zQm")).toBe(true);
     expect(p.created.data.me.did).toContain(":z");
     expect(mediator.seenTypes).toEqual([]);
-    const again = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    const again = await createMediation(p.session, mediator.did as Did);
     expect(again.cid).toBe(p.created.cid);
-    const respelled = await createMediation(p.runtime, p.keys, longToShort(mediator.did) as Did);
+    const respelled = await createMediation(p.session, longToShort(mediator.did) as Did);
     expect(respelled.cid).toBe(p.created.cid);
-    const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
+    const other = await createMediation(p.session, (await newMediator(201, "http://other-mediator/")).did as Did);
     expect(other.data.mediationId).not.toBe(p.mediationId);
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(p.mediationId)?.status).toBe("pending");
     await p.runtime.close();
@@ -52,10 +38,10 @@ describe("creating an arrangement", () => {
     const mediator = await newMediator();
     const a = await party(mediator);
     await a.account.enroll();
-    const address = await createDid(a.runtime, a.keys, mediatedRoute(a.mediationId));
+    const address = await createDid(a.session, mediatedRoute(a.mediationId));
     const b = await freshVault(1, "the same seed elsewhere");
     const short = longToShort(mediator.did) as Did;
-    const created = await createMediation(b.runtime, b.keys, short);
+    const created = await createMediation(b.session, short);
     expect(created.data).toEqual({ ...a.created.data, mediatorDid: short });
     await b.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: a.mediationId, routingDid: short })]);
     const joined = VaultEventSet.of([...(await scanVault(a.runtime.vault, a.keys)).set.all(), ...(await scanVault(b.runtime.vault, b.keys)).set.all()]);
@@ -77,7 +63,7 @@ describe("creating an arrangement", () => {
     const mediationId = mediationIdOf(mediator.did as Did);
     await p.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(mediationId)).toMatchObject({ status: "pending", me: null });
-    const created = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    const created = await createMediation(p.session, mediator.did as Did);
     expect(created.data.mediationId).toBe(mediationId);
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(mediationId)).toMatchObject({ status: "usable", me: { did: created.data.me.did } });
     await p.runtime.close();
@@ -87,26 +73,26 @@ describe("creating an arrangement", () => {
     const mediator = await newMediator();
     const p = await freshVault(1);
     const short = longToShort(mediator.did) as Did;
-    const first = await createMediation(p.runtime, p.keys, short);
+    const first = await createMediation(p.session, short);
     const mediationId = first.data.mediationId;
     const options = { didcomm, fetch: ((input, init) => mediator.fetch(input, init)) as typeof fetch, WebSocket: mediator.WebSocket, trace: await AgentTrace.open(p.runtime.local), liveDelivery: false };
-    const unresolved = await Agent.open(p, options);
+    const unresolved = await Agent.open(p.session, options);
     await expect(unresolved.enroll(mediationId)).rejects.toThrow(/does not resolve/);
     unresolved.close();
     expect(mediator.seenTypes).toEqual([]);
 
-    const second = await createMediation(p.runtime, p.keys, mediator.did as Did);
+    const second = await createMediation(p.session, mediator.did as Did);
     expect(second.cid).not.toBe(first.cid);
     expect(second.data).toEqual({ ...first.data, mediatorDid: mediator.did });
     let fold = await scanVault(p.runtime.vault, p.keys);
     expect(fold.mediations.mediations.get(mediationId)).toMatchObject({ status: "pending", faults: [], mediatorDid: short });
     expect(knownLongForms(fold)(short)).toBe(mediator.did);
-    await createMediation(p.runtime, p.keys, mediator.did as Did);
-    await createMediation(p.runtime, p.keys, short);
+    await createMediation(p.session, mediator.did as Did);
+    await createMediation(p.session, short);
     fold = await scanVault(p.runtime.vault, p.keys);
     expect(fold.set.of("mediation.created")).toHaveLength(2);
 
-    const agent = await Agent.open(p, options);
+    const agent = await Agent.open(p.session, options);
     expect((await agent.enroll(mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
     agent.close();
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.mediations.get(mediationId)?.status).toBe("usable");
@@ -117,7 +103,7 @@ describe("creating an arrangement", () => {
     const mediator = await newMediator();
     const p = await freshVault(1);
     const tampered = (mediator.did.slice(0, -1) + (mediator.did.endsWith("a") ? "b" : "a")) as Did;
-    await expect(createMediation(p.runtime, p.keys, tampered)).rejects.toBeInstanceOf(InvalidDidDocument);
+    await expect(createMediation(p.session, tampered)).rejects.toBeInstanceOf(InvalidDidDocument);
     expect((await scanVault(p.runtime.vault, p.keys)).set.of("mediation.created")).toEqual([]);
     await p.runtime.close();
   });
@@ -126,7 +112,7 @@ describe("creating an arrangement", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await p.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId: p.mediationId, routingDid: mediator.did as Did }), vaultDraft("mediation.granted", { mediationId: p.mediationId, routingDid: "did:web:elsewhere.example" as Did })]);
-    await expect(createMediation(p.runtime, p.keys, mediator.did as Did)).rejects.toBeInstanceOf(EntityConflict);
+    await expect(createMediation(p.session, mediator.did as Did)).rejects.toBeInstanceOf(EntityConflict);
     await p.runtime.close();
   });
 });
@@ -136,7 +122,7 @@ describe("the line to the mediator", () => {
     const mediator = await newMediator();
     const impostor = await newMediator(201, "http://impostor/");
     const p = await party(mediator);
-    const otherAccount = await createMediation(p.runtime, p.keys, impostor.did as Did);
+    const otherAccount = await createMediation(p.session, impostor.did as Did);
     await reloaded(p);
     const to = p.created.data.me.did;
     let forge: ((message: IMessage) => Promise<string>) | null = null;
@@ -195,7 +181,7 @@ describe("the line to the mediator", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     await p.account.enroll();
-    const a = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const a = await createDid(p.session, mediatedRoute(p.mediationId));
     const stalled = Object.create(p.trace) as AgentTrace;
     (stalled as { append: AgentTrace["append"] }).append = (stream, what, data) => (stream === "envelope" && what === "rejected" ? new Promise(() => undefined) : p.trace.append(stream, what, data));
     const forged = plainMessage(RECIPIENT_ADDED, mediator.did, p.link.me, { recipient_did: a.minted.did, added_time: 1 });
@@ -263,11 +249,11 @@ describe("a line closed", () => {
 describe("selecting", () => {
   it("records the preferred arrangement once it is usable, and nothing twice", async () => {
     const p = await party(await newMediator());
-    await expect(selectMediation(p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    await expect(selectMediation(p.session, p.mediationId)).rejects.toBeInstanceOf(Unusable);
     await p.account.enroll();
-    const selected = await selectMediation(p.runtime, p.keys, p.mediationId);
+    const selected = await selectMediation(p.session, p.mediationId);
     expect(selected?.data).toEqual({ mediationId: p.mediationId });
-    expect(await selectMediation(p.runtime, p.keys, p.mediationId)).toBeNull();
+    expect(await selectMediation(p.session, p.mediationId)).toBeNull();
     expect((await scanVault(p.runtime.vault, p.keys)).mediations.preferred).toBe(p.mediationId);
     await p.runtime.close();
   });

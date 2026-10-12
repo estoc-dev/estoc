@@ -1,6 +1,6 @@
 /**
  * This runtime's replica as a member of its arrangement, bound to this
- * runtime: the runtime and its keys, the replica's ID, arrangement, DID
+ * runtime: the vault session, the replica's ID, arrangement, DID
  * and mediator, and the link that speaks as that DID to the
  * arrangement's mediator, with the queue picked up over it and the blob
  * store spoken to through it. Every request the replica makes goes
@@ -27,8 +27,7 @@
  */
 
 import type { Secret } from "@estoc/did-peer";
-import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, type ExecutionId, type Keys, type MediationId, type ReplicaId, type VaultFold } from "@estoc/vault";
+import type { ExecutionId, MediationId, ReplicaId, VaultFold } from "@estoc/vault";
 
 import type { Account } from "./arrangement.js";
 import { BlobStore } from "./blob-store.js";
@@ -45,6 +44,7 @@ import { replicaRoute, sendOverRoute, usableReplica, type BoundReplica, type Rep
 import { knownLongForms } from "./resolver.js";
 import { registerExecution, type Responder } from "./responder.js";
 import type { BlobLink } from "./sealed-blob.js";
+import type { Session } from "./session.js";
 
 /** What a host does as this runtime's replica at its arrangement's mediator. */
 export interface Membership {
@@ -117,8 +117,7 @@ export class Member implements Membership, BoundReplica {
   private picking: Pickup | null = null;
 
   constructor(
-    private readonly runtime: VaultRuntime,
-    private readonly keys: Keys,
+    private readonly session: Session,
     binding: BoundReplica,
     private readonly account: Account,
     private readonly holder: Pick<Lifetime, "closed">,
@@ -136,7 +135,7 @@ export class Member implements Membership, BoundReplica {
 
   async sendSnapshotLink(to: ReplicaAddress, link: BlobLink): Promise<void> {
     const fold = await this.admitted();
-    const route = await replicaRoute(this.keys, this, to);
+    const route = await replicaRoute(this.session.keys, this, to);
     const plaintext = plainMessage(SNAPSHOT_LINK, route.ends.sender.did, route.ends.recipient.did, snapshotLinkBody({ replicaId: this.replicaId, link }));
     await sendOverRoute(await this.spoken(), route, plaintext, knownLongForms(fold), this.options);
   }
@@ -190,7 +189,7 @@ export class Member implements Membership, BoundReplica {
   /** The gate every request passes, and taking the membership too: the agent that bound the replica still open, and the replica found enrolled over the fold as it stands, which is returned for what the request derives from it. */
   async admitted(): Promise<VaultFold> {
     if (this.holder.closed) throw new LinkClosed();
-    const fold = await scanVault(this.runtime.vault, this.keys);
+    const fold = await this.session.fold();
     await enrolledReplica(fold, this.account, this.replicaId);
     return fold;
   }
@@ -208,7 +207,7 @@ export class Member implements Membership, BoundReplica {
   private async spoken(): Promise<MediatorLink> {
     if (this.linked !== null) return this.linked;
     const linkAs = await this.line();
-    const secrets = await replicaSecrets(this.keys, this);
+    const secrets = await replicaSecrets(this.session.keys, this);
     this.linked ??= linkAs(this.longFormDid, () => secrets);
     return this.linked;
   }

@@ -36,16 +36,17 @@ export {
   createVault,
   inspectRuntime,
   inspectSnapshot,
+  openRestoredVault,
   openVault,
   type CreateVaultOptions,
   type InspectSnapshotOptions,
   type InspectedRuntime,
   type InspectedSnapshot,
-  type OpenedVault,
   type Unlock,
   type OpenVaultOptions,
   type VaultOptions,
 } from "./identity.js";
+export type { LockedVault, VaultSession } from "./session.js";
 export {
   AgentTrace,
   TRACE_LEVELS,
@@ -68,15 +69,14 @@ export {
 export { readBlob, type BlobLimits, type BlobPlacement, type BlobStore, type ReadBlobOptions } from "./blob-store.js";
 export { SEAL_OVERHEAD, blobName, openBlob, sealBlob, type BlobKey, type BlobLink, type SealedBlob } from "./sealed-blob.js";
 export type { Drained } from "./pickup.js";
-export { decide, serially, type Decided } from "./procedure.js";
-export { createMediation, selectMediation } from "./mediation.js";
+export type { Decided } from "./procedure.js";
 export type { Arrangement } from "./arrangement.js";
 export type { Membership } from "./membership.js";
 export type { EnrollStep, Enrolled } from "./replica-enrollment.js";
 export { LocalRecords, type LeftTo, type LocalStore } from "./local-records.js";
 export type { RecipientsAdded } from "./replica-recipients.js";
 export type { ListedReplica } from "./replica-list.js";
-export { createDid, type CreatedDid, type Disclosed, type Disclosure, type RouteSpec } from "./dids.js";
+export type { CreatedDid, Disclosed, Disclosure, RouteSpec } from "./dids.js";
 export type { Content, EffectContent, SendOptions, Sent, Target } from "./send.js";
 export { MAX_CONTENT_BYTES } from "./prepare.js";
 export type { ActionKind, LiveAction, LiveInput } from "./action.js";

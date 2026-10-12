@@ -3,7 +3,7 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-import { serially } from "../src/index.js";
+import { serially } from "../src/procedure.js";
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
 

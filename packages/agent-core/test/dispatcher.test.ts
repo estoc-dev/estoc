@@ -38,7 +38,7 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
   const timers = handTimers();
   const wire = posting(answer);
   const log: string[] = [];
-  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, timers, now: () => T0, log: (line) => log.push(line), ...over });
+  const dispatcher = new Dispatcher(alice.session, { didcomm, fetch: wire.fetch, timers, now: () => T0, log: (line) => log.push(line), ...over });
   return {
     alice,
     bob,
@@ -55,9 +55,9 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
 }
 
 /** A message to Bob's short form: its long form is not in evidence, so the preparation waits for it. */
-const toShortForm = (s: Scene, messageId: MessageId) => send(s.alice.runtime, s.alice.keys, { channel: { localDid: s.alice.did, peerDid: s.bob.did } }, HELLO, { messageId });
+const toShortForm = (s: Scene, messageId: MessageId) => send(s.alice.session, { channel: { localDid: s.alice.did, peerDid: s.bob.did } }, HELLO, { messageId });
 /** A message to Bob's long form: it brings the long form into evidence for every message to Bob. */
-const toLongForm = (s: Scene, messageId: MessageId) => send(s.alice.runtime, s.alice.keys, { channel: { localDid: s.alice.did, peerDid: s.bob.longFormDid } }, HELLO, { messageId });
+const toLongForm = (s: Scene, messageId: MessageId) => send(s.alice.session, { channel: { localDid: s.alice.did, peerDid: s.bob.longFormDid } }, HELLO, { messageId });
 
 describe("Dispatcher", () => {
   it("waits out a prerequisite for as long as the action lives, doubling the wait, and makes the call once it is there", async () => {
@@ -165,7 +165,7 @@ describe("Dispatcher", () => {
     expect(sent.action.spent).toBe(false);
     expect(s.dispatcher.waiting()).toEqual([]);
     expect(s.timers.waits).toEqual([]);
-    expect(await dispatch(s.alice.runtime, s.alice.keys, sent.action, { didcomm, fetch: s.wire.fetch })).toMatchObject({ outcome: "submitted" });
+    expect(await dispatch(s.alice.session, sent.action, { didcomm, fetch: s.wire.fetch })).toMatchObject({ outcome: "submitted" });
     expect(s.wire.posts).toHaveLength(1);
     await s.close();
   });
@@ -176,12 +176,12 @@ describe("Dispatcher", () => {
     expect(await s.dispatcher.run(sent.action)).toMatchObject({ outcome: "pending" });
     const ring = await Keyring.load(s.alice.keys, await scanVault(s.alice.runtime.vault, s.alice.keys));
     const receipt = async () => ({ outcome: "terminal", reason: "kept for the test" }) as const;
-    new Receiver(s.alice.runtime, s.alice.keys, ring, { didcomm, receipt }).close();
+    new Receiver(s.alice.session, ring, { didcomm, receipt }).close();
     expect(s.dispatcher.waiting()).toMatchObject([{ messageId: MESSAGE, attempts: 1, nextAt: T0 + 30_000 }]);
     s.timers.waits[0]!.fire();
     await until("the second attempt waited", () => s.timers.waits.length === 2);
 
-    const receiver = new Receiver(s.alice.runtime, s.alice.keys, ring, { didcomm, receipt });
+    const receiver = new Receiver(s.alice.session, ring, { didcomm, receipt });
     s.dispatcher.close();
     expect(await receiver.receive({ packed: "not an envelope", source: { kind: "direct" } })).toMatchObject({ outcome: "terminal" });
     receiver.close();

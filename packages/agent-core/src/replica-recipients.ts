@@ -15,7 +15,7 @@
  * is mail this runtime never sees.
  */
 
-import { IdentityMismatch, scanVault, signRecipientProof, type Did, type DidId, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
+import { IdentityMismatch, signRecipientProof, type Did, type DidId, type LocalDidEntity, type MediationId, type VaultData, type VaultFold } from "@estoc/vault";
 
 import type { Account } from "./arrangement.js";
 import { RECIPIENT_ADD, RECIPIENT_ADDED } from "./protocol/replica-mediation.js";
@@ -64,12 +64,13 @@ export function holds(recipients: RecipientsAdded, did: Did): boolean {
  * turn.
  */
 export async function addRecipients(account: Account): Promise<RecipientsAdded> {
-  const { runtime, keys, mediationId } = account;
-  const fold = await scanVault(runtime.vault, keys);
+  const { session, mediationId } = account;
+  const { author } = session.runtime;
+  const fold = await session.fold();
   const mediation = registeredAccountOf(fold, mediationId);
-  const replica = fold.replicas.replicas.get(runtime.author);
-  if (replica === undefined || replica.status !== "member" || replica.did === null || replica.mediationId !== mediationId || !(await replicaAdded(account, runtime.author, replica.did))) {
-    throw new Unusable("replica", runtime.author, [`not confirmed added to mediation ${mediationId}`]);
+  const replica = fold.replicas.replicas.get(author);
+  if (replica === undefined || replica.status !== "member" || replica.did === null || replica.mediationId !== mediationId || !(await replicaAdded(account, author, replica.did))) {
+    throw new Unusable("replica", author, [`not confirmed added to mediation ${mediationId}`]);
   }
 
   const addresses = sharedAddresses(fold, mediationId);
@@ -79,7 +80,7 @@ export async function addRecipients(account: Account): Promise<RecipientsAdded> 
     const key = recipientAddedKey(mediationId, didId);
     if (await account.confirmed(key, "recipientDid", created.did)) continue;
     try {
-      const proof = await signRecipientProof(keys, created, mediation.me.did, mediation.mediatorDid);
+      const proof = await signRecipientProof(session.keys, created, mediation.me.did, mediation.mediatorDid);
       const answer = await control(await account.link(mediation), RECIPIENT_ADD, { recipient_did: created.did, resolution_material: created.longFormDid, proof }, RECIPIENT_ADDED);
       if (!echoes(answer, "recipient_did", created.did)) throw new MediatorRefused("recipient-added names another recipient than the one asked for");
     } catch (err) {

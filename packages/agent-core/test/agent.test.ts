@@ -7,7 +7,8 @@ import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { MESSAGES_RECEIVED, STATUS_REQUEST } from "../src/protocol/mediation.js";
 import { FORWARD, PROBLEM_REPORT } from "../src/protocol/spec.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { Agent, AgentTrace, ReceiverInUse, createMediation, selectMediation, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
+import { Agent, AgentTrace, ReceiverInUse, type AgentLines, type AgentOptions, type Inbound, type Timers } from "../src/index.js";
+import { createMediation, selectMediation } from "../src/mediation.js";
 import { LiveInput } from "../src/action.js";
 import { Pickup } from "../src/pickup.js";
 import { receiptOf } from "../src/receive/receipt.js";
@@ -37,7 +38,7 @@ async function partyOf(mediator: FakeMediator, fill: number, didId: DidId): Prom
 }
 
 async function agentOf(party: MediatedParty, how: "open" | "start", over: Partial<AgentOptions> = {}): Promise<Agent> {
-  const agent = await Agent[how](party, optionsOf(party, over));
+  const agent = await Agent[how](party.session, optionsOf(party, over));
   opened.find((each) => each.party === party)!.agent = agent;
   return agent;
 }
@@ -88,7 +89,7 @@ describe("opening an agent", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.account, alice.runtime, alice.keys, ALICE, { as: "oob" });
+    const { invitation } = await disclose(alice.account, alice.session, ALICE, { as: "oob" });
     const bobAgent = await agentOf(bob, "start");
     const ping = await bobAgent.send(
       { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: invitation!.from },
@@ -97,7 +98,7 @@ describe("opening an agent", () => {
     );
     expect(ping.dispatched).toMatchObject({ outcome: "submitted" });
 
-    const receiver = new Receiver(alice.runtime, alice.keys, alice.ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
+    const receiver = new Receiver(alice.session, alice.ring, { didcomm, receipt: receiptOf(alice.session) });
     expect(await new Pickup(alice.inbox, receiver.pickupHandle(alice.mediationId)).drain()).toMatchObject({ acked: 1 });
     receiver.close();
     expect((await fold(alice)).set.of("message.admitted")).toHaveLength(1);
@@ -127,7 +128,7 @@ describe("opening an agent", () => {
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
     await holdAddresses(alice);
-    const sent = await send(bob.runtime, bob.keys, { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: alice.longFormDid }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const sent = await send(bob.session, { channel: { localDid: bob.did, peerDid: alice.did }, recipientDid: alice.longFormDid }, { type: BASIC_MESSAGE, body: { content: "hello" } });
 
     const agent = await agentOf(bob, "start");
     expect(forwardsSeen(mediator)).toBe(0);
@@ -154,16 +155,16 @@ describe("opening an agent", () => {
     const alice = await freshVault(4);
     const trace = await AgentTrace.open(alice.runtime.local);
     const web = await webIdentity("did:web:mediator.example", 78, "https://mediator.example/didcomm");
-    const { mediationId } = (await createMediation(alice.runtime, alice.keys, web.did as Did)).data;
+    const { mediationId } = (await createMediation(alice.session, web.did as Did)).data;
     await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: web.did as Did })]);
-    await selectMediation(alice.runtime, alice.keys, mediationId);
+    await selectMediation(alice.session, mediationId);
     let offline = true;
     const fetch: typeof globalThis.fetch = async (input) => {
       if (offline) throw new Error("the network is down");
       return String(input) === "https://mediator.example/.well-known/did.json" ? json(web.document) : new Response(null, { status: 503 });
     };
     const log: string[] = [];
-    const agent = await Agent.start(alice, { didcomm, fetch, trace, liveDelivery: false, log: (line) => log.push(line) });
+    const agent = await Agent.start(alice.session, { didcomm, fetch, trace, liveDelivery: false, log: (line) => log.push(line) });
     try {
       expect(agent.connections()).toMatchObject([{ mediationId, unreachable: expect.stringContaining("does not resolve"), live: false }]);
       expect(log.filter((line) => line.includes(mediationId))).toHaveLength(1);
@@ -434,9 +435,9 @@ describe("opening an agent", () => {
       yield* scan.apply(this, args);
     } as typeof scan;
     try {
-      (await Agent.open(alice, optionsOf(alice))).close();
+      (await Agent.open(alice.session, optionsOf(alice))).close();
       failAt = scans * 2 + 1;
-      await expect(Agent.start(alice, optionsOf(alice))).rejects.toThrow("the disk does not read for now");
+      await expect(Agent.start(alice.session, optionsOf(alice))).rejects.toThrow("the disk does not read for now");
     } finally {
       events.scan = scan;
     }
@@ -451,7 +452,7 @@ describe("opening an agent", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const first = await agentOf(alice, "open");
-    await expect(Agent.open(alice, optionsOf(alice))).rejects.toBeInstanceOf(ReceiverInUse);
+    await expect(Agent.open(alice.session, optionsOf(alice))).rejects.toBeInstanceOf(ReceiverInUse);
     first.close();
     const second = await agentOf(alice, "open");
     await expect(first.send({ channel: { localDid: alice.did, peerDid: alice.did } }, { type: BASIC_MESSAGE, body: {} })).rejects.toThrow("the agent is closed");
@@ -478,7 +479,7 @@ describe("a live input", () => {
     await bobAgent.send(target, { type: PING_TYPE, body: { response_requested: true }, pleaseAck: [""] }, { messageId: PING });
     const packed = JSON.stringify((forwards[0]!.attachments as unknown as { data: { json: unknown } }[])[0]!.data.json);
 
-    const receiver = new Receiver(alice.runtime, alice.keys, alice.ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
+    const receiver = new Receiver(alice.session, alice.ring, { didcomm, receipt: receiptOf(alice.session) });
     expect(await new Pickup(alice.inbox, receiver.pickupHandle(alice.mediationId)).drain()).toMatchObject({ acked: 0, ended: "left" });
     receiver.close();
 
@@ -513,8 +514,8 @@ describe("a live input", () => {
     const mediator = await newMediator();
     const alice = await partyOf(mediator, 1, ALICE);
     const bob = await partyOf(mediator, 2, BOB);
-    const { invitation } = await disclose(alice.account, alice.runtime, alice.keys, ALICE, { as: "oob" });
-    await disclose(bob.account, bob.runtime, bob.keys, BOB, { as: "direct" });
+    const { invitation } = await disclose(alice.account, alice.session, ALICE, { as: "oob" });
+    await disclose(bob.account, bob.session, BOB, { as: "direct" });
     const inbounds: Inbound[] = [];
     const log: string[] = [];
     const agent = await agentOf(alice, "start", { onInbound: (inbound) => inbounds.push(inbound), log: (line) => log.push(line) });

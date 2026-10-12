@@ -41,8 +41,8 @@
  */
 
 import { isShortForm, splitDidUrl, type Secret } from "@estoc/did-peer";
-import { canonicalize, parseStrict, type VaultRuntime } from "@estoc/event-store";
-import { rawCidOfBytes, sameDid, scanVault, type Did, type DidId, type DidUrl, type EventReference, type Keys, type KeyName, type MediationId, type VaultFold } from "@estoc/vault";
+import { canonicalize, parseStrict, type SqliteVault } from "@estoc/event-store";
+import { rawCidOfBytes, sameDid, type Did, type DidId, type DidUrl, type EventReference, type KeyName, type MediationId, type VaultFold } from "@estoc/vault";
 
 import { secretsResolverFor, unpack, type DidcommApi, type IMessage, type Unpacked, type UnpackMetadata } from "../protocol/didcomm.js";
 import { envelopeHeader, type EnvelopeHeader } from "../protocol/envelope.js";
@@ -51,8 +51,8 @@ import { ReceiverClosed, ReceiverInUse } from "../errors.js";
 import { pinnedResolver } from "../evidence.js";
 import { replicaSecrets, type Keyring } from "../keyring.js";
 import type { Delivered, Fate, Handle } from "../pickup.js";
-import { serially } from "../procedure.js";
 import type { BoundReplica } from "../replica-channel.js";
+import type { Session } from "../session.js";
 import { note, type AgentTrace, type TraceData } from "../trace.js";
 import { classifyRecipients, sealingOf, senderEvidence, senderProof, type AuthenticatedSender, type Recipients } from "./gate.js";
 
@@ -218,7 +218,7 @@ type Failed = { outcome: "failed"; reason: string };
 
 const utf8 = new TextEncoder();
 
-const receivers = new WeakMap<VaultRuntime, Receiver>();
+const receivers = new WeakMap<SqliteVault, Receiver>();
 
 export class Receiver {
   private readonly options: Omit<ReceiverOptions, "receipt" | "replicaReceipt">;
@@ -236,13 +236,13 @@ export class Receiver {
   private changes = 0;
   private closed = false;
 
-  /** Throws `ReceiverInUse` while another receiver of `runtime` is open. */
+  /** Throws `ReceiverInUse` while another receiver of the session's runtime is open. */
   constructor(
-    private readonly runtime: VaultRuntime,
-    private readonly keys: Keys,
+    private readonly session: Session,
     private readonly ring: Keyring,
     options: ReceiverOptions
   ) {
+    const { runtime } = session;
     if (receivers.has(runtime)) throw new ReceiverInUse();
     receivers.set(runtime, this);
     const { receipt, replicaReceipt, ...rest } = options;
@@ -338,7 +338,7 @@ export class Receiver {
     this.held.clear();
     this.heldBytes = 0;
     this.ended.clear();
-    if (receivers.get(this.runtime) === this) receivers.delete(this.runtime);
+    if (receivers.get(this.session.runtime) === this) receivers.delete(this.session.runtime);
   }
 
   private refuseClosed(): void {
@@ -352,12 +352,12 @@ export class Receiver {
 
   /** Steps for one delivery run one at a time under its runtime, so that a receiver closed while finishing one still goes before the next receiver's. */
   private inTurn<T>(key: string, work: () => Promise<T>): Promise<T> {
-    return serially(this.runtime, key, work);
+    return this.session.turn(key, work);
   }
 
   private async foldOrNull(): Promise<VaultFold | null> {
     try {
-      return await scanVault(this.runtime.vault, this.keys);
+      return await this.session.fold();
     } catch {
       return null;
     }
@@ -404,13 +404,13 @@ export class Receiver {
     const defer = (reason: string, watch: Watch, fold: VaultFold, after: After): Promise<Received> => this.defer(key, delivery, observed, { reason, watch, fold }, after);
     let fold: VaultFold;
     try {
-      fold = await scanVault(this.runtime.vault, this.keys);
+      fold = await this.session.fold();
     } catch (err) {
       return this.leave(key, delivery, `the vault is not read: ${messageOf(err)}`, "gate");
     }
     const header = envelopeHeader(delivery.packed);
     if (header.kind !== "authcrypt" && header.kind !== "anoncrypt") return this.finish(key, delivery, `not an envelope encrypted to its recipients (${header.kind})`, "gate");
-    const recipients = classifyRecipients(fold, header.kids ?? [], this.runtime.author);
+    const recipients = classifyRecipients(fold, header.kids ?? [], this.session.runtime.author);
     if (recipients.verdict === "terminal") return this.finish(key, delivery, recipients.reason, "gate");
     if (recipients.verdict === "pending") return defer(recipients.reason, recipientWatch(recipients.waitingOn), fold, "gate");
     if (recipients.verdict === "replica") return this.attemptReplica(key, delivery, fold, header, recipients);
@@ -460,7 +460,7 @@ export class Receiver {
     if (header.skid === undefined) return terminal(`the envelope to the replica DID ${replica.did} is anonymous`);
     const [sealer] = splitDidUrl(header.skid);
     if (isShortForm(sealer)) return terminal(`the sender names itself by the short form ${sealer}, and a replica's mail is taken only from a long form`);
-    const secrets = (await replicaSecrets(this.keys, replica)).filter((secret) => secret.id === kid);
+    const secrets = (await replicaSecrets(this.session.keys, replica)).filter((secret) => secret.id === kid);
     const opened = await this.open(key, delivery, fold, header, secrets, replica.did);
     if ("ended" in opened) return opened.ended;
     const { unpacked, sender } = opened;

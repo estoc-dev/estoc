@@ -12,13 +12,12 @@
  * open finds waiting is listed for the user, who retries or cancels.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, unfinishedWork, type EventReference, type Keys, type MessageId, type Outbound } from "@estoc/vault";
+import { unfinishedWork, type EventReference, type MessageId, type Outbound } from "@estoc/vault";
 
 import { LiveAction, type ActionKind } from "./action.js";
 import { cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
 import { Lifetime, type Timer, type Timers } from "./lifetime.js";
-import { scanOptions } from "./prepare.js";
+import type { Session } from "./session.js";
 
 export interface RetryPolicy {
   /** the wait after an attempt held up by a prerequisite; each such attempt in a row doubles it */
@@ -74,8 +73,7 @@ export class Dispatcher {
   private readonly waits = new Map<MessageId, Wait>();
 
   constructor(
-    private readonly runtime: VaultRuntime,
-    private readonly keys: Keys,
+    private readonly session: Session,
     options: DispatcherOptions
   ) {
     this.lifetime = new Lifetime(options.timers);
@@ -108,17 +106,17 @@ export class Dispatcher {
   /** `cancel`, with the action waiting on the message, if any, dropped first. */
   cancel(messageId: MessageId): Promise<Cancelled> {
     this.drop(messageId);
-    return cancel(this.runtime, this.keys, messageId, this.options);
+    return cancel(this.session, messageId, this.options);
   }
 
   /** The user's choice of the preparation the message's calls carry; a retry carries it. */
   select(messageId: MessageId, preparationEventCid: EventReference<"message.prepared">): Promise<Selected> {
-    return selectPreparation(this.runtime, this.keys, messageId, preparationEventCid, this.options);
+    return selectPreparation(this.session, messageId, preparationEventCid, this.options);
   }
 
   /** Every outbound the fold lists for manual action, in message order, with what this runtime is waiting on for it. */
   async pending(): Promise<PendingOutbound[]> {
-    const fold = await scanVault(this.runtime.vault, this.keys, scanOptions(this.options));
+    const fold = await this.session.fold();
     return unfinishedWork(fold).outbounds.map((outbound) => ({ outbound, waiting: this.waitingOn(outbound.messageId) }));
   }
 
@@ -143,7 +141,7 @@ export class Dispatcher {
     wait.nextAt = null;
     let result: Dispatched;
     try {
-      result = await dispatch(this.runtime, this.keys, wait.action, this.options);
+      result = await dispatch(this.session, wait.action, this.options);
     } catch (err) {
       this.forget(wait);
       throw err;

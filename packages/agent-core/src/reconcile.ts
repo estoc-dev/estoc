@@ -14,10 +14,10 @@
  * decided elsewhere over the same fold.
  */
 
-import type { Held, VaultRuntime } from "@estoc/event-store";
-import { admitReceipts, readVaultEvent, scanVault, type Keys, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { readVaultEvent, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { acknowledgementDrafts } from "./acknowledgements.js";
+import type { Locked, Session } from "./session.js";
 
 /** What one pass recorded, an earlier observation's included. */
 export interface Owed {
@@ -25,18 +25,18 @@ export interface Owed {
   acknowledged: VaultEvent<"delivery.acknowledged">[];
 }
 
-export async function recordOwed(runtime: VaultRuntime, keys: Keys): Promise<Owed> {
-  const { admitted, acknowledged } = await runtime.locked((held) => recordOwedUnderLock(held, keys));
+export async function recordOwed(session: Session): Promise<Owed> {
+  const { admitted, acknowledged } = await session.locked((locked) => recordOwedUnderLock(locked));
   return { admitted, acknowledged };
 }
 
 /** The pass for a caller that holds the writer lock already: the fold returned is the one the pass left, every event it committed folded in, for whatever the caller decides next. */
-export async function recordOwedUnderLock(held: Held, keys: Keys): Promise<Owed & { fold: VaultFold }> {
-  const { fold: admittedFold, events: admitted } = await admitReceipts(held, await scanVault(held, keys));
+export async function recordOwedUnderLock(locked: Locked): Promise<Owed & { fold: VaultFold }> {
+  const { fold: admittedFold, events: admitted } = await locked.admitReceipts(await locked.fold());
   const drafts = acknowledgementDrafts(admittedFold);
-  const events = drafts.length === 0 ? [] : (await held.commit([], drafts)).map(readVaultEvent);
+  const events = drafts.length === 0 ? [] : (await locked.held.commit([], drafts)).map(readVaultEvent);
   return {
-    fold: events.length === 0 ? admittedFold : await scanVault(held, keys),
+    fold: events.length === 0 ? admittedFold : await locked.fold(),
     admitted,
     acknowledged: events.filter((event): event is VaultEvent<"delivery.acknowledged"> => event.type === "delivery.acknowledged"),
   };

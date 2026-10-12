@@ -30,19 +30,8 @@ import {
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
 import { PROFILE } from "../src/protocol/user-profile.js";
-import {
-  LocalRecords,
-  Unusable,
-  createDid,
-  effectTypesOf,
-  recorder,
-  type ChannelRecord,
-  type Dispatched,
-  type Handler,
-  type MessageRecord,
-  type PendingWork,
-  type Source,
-} from "../src/index.js";
+import { LocalRecords, Unusable, recorder, type ChannelRecord, type Dispatched, type Handler, type MessageRecord, type PendingWork, type Source } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { reportedProblem } from "../src/handlers/index.js";
 import { Keyring } from "../src/keyring.js";
 import { afterReceipt } from "../src/receive/after.js";
@@ -52,7 +41,7 @@ import { manualNotificationDraft, send } from "../src/send.js";
 import { disclose, retireDid, routeOf } from "../src/dids.js";
 import { Dispatcher } from "../src/dispatcher.js";
 import { manualProcedures, readRecords } from "../src/views.js";
-import { copyOf, didcomm, directParty, mediatedParty, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
+import { copyOf, didcomm, directParty, mediatedParty, memoryDriver, newMediator, observed, peerSealer, posting, received, sealed, type DirectParty, type Fresh, type Post } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const ALICE_OTHER = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -65,13 +54,14 @@ const DIRECT: Source = { kind: "direct" };
 const accepted = (): Response => new Response(null, { status: 202 });
 const refused = (): Response => new Response("no", { status: 500 });
 
-type Holder = Pick<Fresh, "runtime" | "keys">;
+type Holder = Pick<Fresh, "session" | "runtime" | "keys">;
 
 /** The rotations listed off the holder's fold for no runtime in particular. */
 const unassumed = async (holder: Holder) => (await recorder(await scanVault(holder.runtime.vault, holder.keys), objectReader(holder.runtime.vault.objects))).pending().rotationCandidates;
 
-async function parties(): Promise<{ alice: DirectParty; bob: DirectParty }> {
-  return { alice: await directParty(1, "https://alice.example/didcomm", ALICE), bob: await directParty(2, "https://bob.example/didcomm", BOB) };
+/** Alice and Bob, each on a direct route; Alice's vault reads under `scan`, for a handler of hers that declares an effect type of its own. */
+async function parties(scan: Parameters<typeof directParty>[4] = {}): Promise<{ alice: DirectParty; bob: DirectParty }> {
+  return { alice: await directParty(1, "https://alice.example/didcomm", ALICE, memoryDriver(), scan), bob: await directParty(2, "https://bob.example/didcomm", BOB) };
 }
 
 async function closeAll(...holders: Holder[]): Promise<void> {
@@ -80,18 +70,18 @@ async function closeAll(...holders: Holder[]): Promise<void> {
 
 async function hosting(alice: DirectParty, answer: (post: Post) => Response = accepted, handlers: readonly Handler[] = []) {
   const ring = await Keyring.load(alice.keys, await scanVault(alice.runtime.vault, alice.keys));
-  const receiver = new Receiver(alice.runtime, alice.keys, ring, { didcomm, receipt: receiptOf(alice.runtime, alice.keys) });
+  const receiver = new Receiver(alice.session, ring, { didcomm, receipt: receiptOf(alice.session) });
   const wire = posting((post) => answer(post));
   const local = new LocalRecords(alice.runtime.local.options, alice.runtime.author);
-  const dispatcher = new Dispatcher(alice.runtime, alice.keys, { didcomm, fetch: wire.fetch, effectTypes: effectTypesOf(handlers), local });
-  const manual = manualProcedures(alice.runtime, alice.keys, dispatcher, { handlers, now: () => CREATED * 1000 });
+  const dispatcher = new Dispatcher(alice.session, { didcomm, fetch: wire.fetch, local });
+  const manual = manualProcedures(alice.session, dispatcher, { handlers, now: () => CREATED * 1000 });
   const receive = async (peer: DirectParty, extra: Partial<IMessage>, to: string = alice.longFormDid): Promise<EventReference<"message.in">> => {
     const outcome = await receiver.receive({ packed: await sealed(await peerSealer(peer), to, extra), source: DIRECT });
     if (outcome.outcome !== "received") throw new Error(`not received: ${JSON.stringify(outcome)}`);
     return outcome.cid;
   };
-  const channel = async (pair: Channel): Promise<ChannelRecord> => (await readRecords(alice.runtime, alice.keys, { handlers, local })).channel(pair);
-  const pending = async (): Promise<PendingWork> => (await readRecords(alice.runtime, alice.keys, { handlers, local })).pending();
+  const channel = async (pair: Channel): Promise<ChannelRecord> => (await readRecords(alice.session, { handlers, local })).channel(pair);
+  const pending = async (): Promise<PendingWork> => (await readRecords(alice.session, { handlers, local })).pending();
   return { wire, dispatcher, manual, receive, channel, pending };
 }
 
@@ -110,7 +100,7 @@ describe("records", () => {
     const wireId = crypto.randomUUID();
     await receive(bob, { id: wireId, body: { content: "hi alice" }, please_ack: [""], created_time: CREATED });
 
-    const records = await readRecords(alice.runtime, alice.keys);
+    const records = await readRecords(alice.session);
     expect([records.channels(), records.contactIds()]).toEqual([[pair], [CONTACT]]);
     const record = await records.channel(pair);
     const input = only(record, "in");
@@ -139,7 +129,7 @@ describe("records", () => {
     const after = await channel(pair);
     expect(only(after, "in")).toMatchObject({ manualAction: "none", completes: [] });
     expect(only(after, "out")).toMatchObject({ msg: { type: EMPTY_MESSAGE_TYPE }, effectType: PURE_ACK_EFFECT, outcome: { status: "submitted" }, manualAction: "none", contactIds: [CONTACT] });
-    expect((await readRecords(alice.runtime, alice.keys)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
+    expect((await readRecords(alice.session)).pending()).toEqual({ pendingOutbounds: [], missingResponses: [], rotationCandidates: [], missingNotifications: [], notificationConflicts: [], pendingProofs: [] });
     await closeAll(alice, bob);
   });
 
@@ -148,7 +138,7 @@ describe("records", () => {
     let answer = refused;
     const { wire, dispatcher, manual, channel, pending } = await hosting(alice, () => answer());
     const pair = { localDid: alice.did, peerDid: bob.did };
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
     const failed = await dispatcher.run(sent.action);
     expect(failed).toMatchObject({ outcome: "failed" });
     const { preparationEventCid } = failed as Extract<Dispatched, { outcome: "failed" }>;
@@ -161,11 +151,11 @@ describe("records", () => {
     expect(wire.posts.map((post) => post.body)).toEqual([wire.posts[0]!.body, wire.posts[0]!.body]);
     expect(only(await channel(pair), "out")).toMatchObject({ outcome: { status: "submitted" }, manualAction: "none" });
 
-    const second = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "never mind" } });
+    const second = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "never mind" } });
     expect(await manual.cancel(second.messageId)).toMatchObject({ outcome: "cancelled" });
     const cancelled = (await channel(pair)).messages.find((message) => message.messageId === second.messageId)!;
     expect(cancelled).toMatchObject({ outcome: { status: "terminal", code: "cancelled" }, manualAction: "none" });
-    expect((await readRecords(alice.runtime, alice.keys)).pending().pendingOutbounds).toEqual([]);
+    expect((await readRecords(alice.session)).pending().pendingOutbounds).toEqual([]);
     await closeAll(alice, bob);
   });
 
@@ -174,7 +164,7 @@ describe("records", () => {
     let answer = refused;
     const { manual, receive, channel } = await hosting(alice, () => answer());
     const route = routeOf((await scanVault(alice.runtime.vault, alice.keys)).dids.entities.get(ALICE)!)!;
-    const { minted: other } = await createDid(alice.runtime, alice.keys, route, ALICE_OTHER);
+    const { minted: other } = await createDid(alice.session, route, ALICE_OTHER);
     const pair = { localDid: alice.did, peerDid: bob.did };
     const elsewhere = { localDid: other.did, peerDid: bob.did };
 
@@ -184,9 +174,9 @@ describe("records", () => {
     expect(named.peerName).toEqual({ name: "Bob", messageId: only(named, "in").messageId });
     expect((await channel(elsewhere)).peerName).toBeNull();
     const fold = await scanVault(alice.runtime.vault, alice.keys);
-    expect([fold.contacts.contacts.size, (await readRecords(alice.runtime, alice.keys)).contactIds()]).toEqual([0, []]);
+    expect([fold.contacts.contacts.size, (await readRecords(alice.session)).contactIds()]).toEqual([0, []]);
 
-    const profile = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: PROFILE, body: { profile: { displayName: "Alice" } } });
+    const profile = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: PROFILE, body: { profile: { displayName: "Alice" } } });
     expect(await manual.retry(profile.messageId)).toMatchObject({ outcome: "failed" });
     expect((await channel(pair)).profileSubmitted).toBeNull();
     answer = accepted;
@@ -204,8 +194,8 @@ describe("records", () => {
     const { dispatcher, manual, channel } = await hosting(alice);
     const pair = { localDid: alice.did, peerDid: bob.did };
     const content = { type: PROFILE, body: { profile: { displayName: "Alice" } } };
-    const first = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content);
-    const second = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content);
+    const first = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content);
+    const second = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content);
     for (const sent of [first, second]) expect(await dispatcher.run(sent.action)).toMatchObject({ outcome: "submitted" });
     expect((await channel(pair)).profileSubmitted).toBe(second.messageId);
 
@@ -246,7 +236,7 @@ describe("records", () => {
     ]);
     expect([await before.unplaced(), before.pending().missingResponses]).toEqual([{ inputs: [], outputs: [] }, []]);
 
-    const after = await (await readRecords(alice.runtime, alice.keys)).channel(pair);
+    const after = await (await readRecords(alice.session)).channel(pair);
     expect(after.observations).toMatchObject([{ sourceEventCid: cid, standing: { status: "complete" }, disposition: { status: "admitted" } }]);
     expect(after.messages).toMatchObject([{ messageId: source.event.data.messageId, input: { status: "complete" }, manualAction: "complete" }]);
     expect(after.peerName).toMatchObject({ name: "Bob" });
@@ -258,12 +248,12 @@ describe("records", () => {
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const pair = { localDid: alice.did, peerDid: bob.did };
     const toCharlie = { localDid: alice.did, peerDid: charlie.did };
-    const write = (peer: DirectParty, content: string) => send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: peer.longFormDid } }, { type: BASIC_MESSAGE, body: { content } });
+    const write = (peer: DirectParty, content: string) => send(alice.session, { channel: { localDid: alice.did, peerDid: peer.longFormDid } }, { type: BASIC_MESSAGE, body: { content } });
     const [one, two, three, elsewhere] = [await write(bob, "one"), await write(bob, "two"), await write(bob, "three"), await write(charlie, "elsewhere")];
     const intentOf = async (messageId: MessageId) => (await scanVault(alice.runtime.vault, alice.keys)).outbound.outbounds.get(messageId)!.intents[0]!.data;
     await alice.runtime.vault.commit([], [vaultDraft("message.out", { ...(await intentOf(two.messageId)), messageId: one.messageId }), vaultDraft("message.out", { ...(await intentOf(elsewhere.messageId)), messageId: three.messageId })]);
 
-    const records = await readRecords(alice.runtime, alice.keys);
+    const records = await readRecords(alice.session);
     expect(records.channels()).toEqual([pair, toCharlie].sort(compareChannels));
     const conflict = { status: "conflict", because: "the intents recorded under one message ID disagree" };
     const shown = (await records.channel(pair)).messages.find((message) => message.messageId === one.messageId)!;
@@ -286,13 +276,13 @@ describe("records", () => {
       effectTypes: [ECHO],
       respond: async ({ source, readBody }) => [{ effectType: ECHO, content: { type: ECHO, body: (await readBody()) ?? {}, thid: source.event.data.wireMessageId, pleaseAck: null, ack: [] } }],
     };
-    const { alice, bob } = await parties();
+    const { alice, bob } = await parties({ effectTypes: [ECHO] });
     const { wire, manual, receive, channel } = await hosting(alice, accepted, [echo]);
     const pair = { localDid: alice.did, peerDid: bob.did };
     await receive(bob, { id: crypto.randomUUID(), type: REQUEST, body: { echo: "this" } });
 
-    expect(only(await (await readRecords(alice.runtime, alice.keys)).channel(pair), "in")).toMatchObject({ manualAction: "none", completes: [] });
-    const records = await readRecords(alice.runtime, alice.keys, { handlers: [echo] });
+    expect(only(await (await readRecords(alice.session)).channel(pair), "in")).toMatchObject({ manualAction: "none", completes: [] });
+    const records = await readRecords(alice.session, { handlers: [echo] });
     const input = only(await records.channel(pair), "in");
     expect(input).toMatchObject({ manualAction: "complete", completes: [ECHO] });
     const owed = records.pending().missingResponses;
@@ -318,9 +308,9 @@ describe("records", () => {
         return [{ effectType: NOTED, content: { type: NOTED, body: {}, thid: source.event.data.wireMessageId, pleaseAck: null, ack: [] } }];
       },
     };
-    const { alice, bob } = await parties();
+    const { alice, bob } = await parties({ effectTypes: [NOTED] });
     const { wire, manual, receive } = await hosting(alice, accepted, [noted]);
-    const owed = async () => (await readRecords(alice.runtime, alice.keys, { handlers: [noted] })).pending().missingResponses;
+    const owed = async () => (await readRecords(alice.session, { handlers: [noted] })).pending().missingResponses;
     await receive(bob, { id: crypto.randomUUID(), type: PING_TYPE, body: { response_requested: true }, created_time: CREATED });
     await receive(bob, { id: crypto.randomUUID(), type: NOTICE, body: { note: "gone soon" } });
     expect((await owed()).map((response) => response.effectType).sort()).toEqual([NOTED, PING_RESPONSE_EFFECT].sort());
@@ -340,7 +330,7 @@ describe("records", () => {
     const charlie = await directParty(3, "https://charlie.example/didcomm", CHARLIE);
     const { dispatcher, manual, receive, channel } = await hosting(alice);
     const pair = { localDid: alice.did, peerDid: bob.did };
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, { type: BASIC_MESSAGE, body: { content: "hello" } });
     await dispatcher.run(sent.action);
 
     const report = { type: PROBLEM_REPORT_TYPE, pthid: sent.messageId, body: { code: "e.p.msg.unsupported", comment: "no handler for {1}", args: ["basicmessage"] } };
@@ -371,7 +361,7 @@ describe("records", () => {
     const first = await received(alice, bob, wireId, { type: BASIC_MESSAGE, body: { content: "first" }, created_time: CREATED });
     const second = await observed(alice, bob, wireId, { type: BASIC_MESSAGE, body: { content: "second" }, created_time: CREATED });
 
-    const record = await (await readRecords(alice.runtime, alice.keys)).channel(pair);
+    const record = await (await readRecords(alice.session)).channel(pair);
     expect(record.messages).toMatchObject([{ direction: "in", body: { state: "available", body: { content: "first" } }, input: { status: "complete" }, diagnostics: [{ kind: "contradicting", because: "1 authenticated observation carries another content than the one admitted" }] }]);
     expect(record.observations.map(({ sourceEventCid, disposition, contradicting }) => [sourceEventCid, disposition, contradicting])).toEqual([
       [first, { status: "admitted" }, false],
@@ -423,7 +413,7 @@ describe("records", () => {
 
     const other = manualNotificationDraft(fold, uuidv7() as MessageId, successor, { type: EMPTY_MESSAGE_TYPE, body: {}, pleaseAck: [""], ack: [] }, rotationEventCid);
     await alice.runtime.vault.commit(other.objects, [other.draft]);
-    const records = await readRecords(alice.runtime, alice.keys);
+    const records = await readRecords(alice.session);
     for (const message of (await records.channel(successor)).messages) expect(message).toMatchObject({ outcome: { status: "conflict" }, manualAction: "none", diagnostics: [{ kind: "outcome", because: "another notification is selected for the rotation" }] });
     const pending = records.pending();
     expect(pending.notificationConflicts).toEqual([{ rotationEventCid, messageIds: [notified.messageId, other.draft.data.messageId].sort(), entries: [] }]);
@@ -440,7 +430,7 @@ describe("records", () => {
     const first = await receive(bob, { body: { content: "hi alice" } });
     const second = await receive(bob, { body: { content: "hi again" } });
     const pair = { localDid: alice.did, peerDid: bob.did };
-    const candidates = async (holder: Holder, privateAddresses?: boolean) => (await readRecords(holder.runtime, holder.keys, { privateAddresses })).pending().rotationCandidates;
+    const candidates = async (holder: Holder, privateAddresses?: boolean) => (await readRecords(holder.session, { privateAddresses })).pending().rotationCandidates;
     expect(await candidates(alice)).toEqual([{ channel: pair, sourceEventCids: [first, second], status: "ready", because: null, entries: ["rotate"] }]);
     expect(await candidates(alice, false)).toEqual([]);
     const copy = await copyOf(1, alice);
@@ -449,7 +439,7 @@ describe("records", () => {
     expect(JSON.parse(JSON.stringify(await candidates(alice)))).toEqual(await candidates(alice));
 
     const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
-    const pending = (await readRecords(alice.runtime, alice.keys)).pending();
+    const pending = (await readRecords(alice.session)).pending();
     expect([pending.rotationCandidates, pending.missingNotifications.map(({ rotationEventCid }) => rotationEventCid)]).toEqual([[], rotated.notification.outcome === "created" ? [] : [rotated.decision.cid]]);
     await closeAll(alice, bob, copy);
   });
@@ -461,7 +451,7 @@ describe("records", () => {
     const { manual, receive } = await hosting(alice);
     await alice.runtime.vault.commit([], [vaultDraft("did.disclosed", { didId: ALICE, as: "direct", oobId: null, goal: null })]);
     const first = await receive(bob, { body: { content: "hi alice" } });
-    const candidates = async (holder: Holder) => (await readRecords(holder.runtime, holder.keys)).pending().rotationCandidates;
+    const candidates = async (holder: Holder) => (await readRecords(holder.session)).pending().rotationCandidates;
     const listed = (status: "ready" | "waiting" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
     const events = async (holder: Holder) => [...(await scanVault(holder.runtime.vault, holder.keys)).set.all()];
     const ended = `the predecessor's route does not carry: the arrangement ${alice.mediationId} is retired: gone`;
@@ -492,7 +482,7 @@ describe("records", () => {
     const successorId = startDidId(alice.did, bob.did);
     const retiring = await mintDid(alice.keys, successorId, { kind: "mediated", routingDid: mediator.did as Did });
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
-    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    await retireDid(alice.session, successorId, "gone");
     const held = `the successor ${successorId} is recorded already and is not live: retired: gone`;
     expect(await candidates(alice)).toEqual(listed("blocked", held));
     const before = (await events(alice)).length;
@@ -513,12 +503,12 @@ describe("records", () => {
     const first = await receive(bob, { body: { content: "hi alice" } });
     const listed = (status: "ready" | "blocked", because: string | null) => [{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status, because, entries: status === "ready" ? ["rotate"] : [] }];
     expect(await unassumed(alice)).toEqual(listed("ready", null));
-    expect(await unassumed(alice)).toEqual((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates);
+    expect(await unassumed(alice)).toEqual((await readRecords(alice.session)).pending().rotationCandidates);
 
     const successorId = startDidId(alice.did, bob.did);
     const retiring = await mintDid(alice.keys, successorId, { kind: "direct", endpoint: "https://alice.example/didcomm" });
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: successorId, did: retiring.did, longFormDid: retiring.longFormDid, generation: { kind: "start", profile: "v1", predecessor: alice.did, binding: bob.did } })]);
-    await retireDid(alice.runtime, alice.keys, successorId, "gone");
+    await retireDid(alice.session, successorId, "gone");
     expect(await unassumed(alice)).toEqual(listed("blocked", `the successor ${successorId} is recorded already and is not live: retired: gone`));
     await closeAll(alice, bob);
   });
@@ -536,7 +526,7 @@ describe("records", () => {
     const fold = await scanVault(alice.runtime.vault, alice.keys);
     expect(fold.dids.entities.get(successorId)).toMatchObject({ live: true, identity: "verified" });
     const held = `the successor's ID ${successorId} is held by an entity under another document`;
-    expect((await readRecords(alice.runtime, alice.keys)).pending().rotationCandidates).toEqual([{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status: "blocked", because: held, entries: [] }]);
+    expect((await readRecords(alice.session)).pending().rotationCandidates).toEqual([{ channel: { localDid: alice.did, peerDid: bob.did }, sourceEventCids: [first], status: "blocked", because: held, entries: [] }]);
     await expect(manual.rotate({ localDidId: ALICE, peerDid: bob.did })).rejects.toThrow(new Unusable("DID", ALICE, [held]));
     expect([...(await scanVault(alice.runtime.vault, alice.keys)).set.all()]).toHaveLength([...fold.set.all()].length);
     await closeAll(alice, bob);
@@ -552,7 +542,7 @@ describe("records", () => {
     );
     await receive(bob, { id: crypto.randomUUID(), type: PROFILE, body: { profile: { displayName: "Robert" } } });
 
-    let contact = await (await readRecords(alice.runtime, alice.keys)).contact(CONTACT);
+    let contact = await (await readRecords(alice.session)).contact(CONTACT);
     expect(contact).toMatchObject({ contacts: [{ contactId: CONTACT, origin: "user", deleted: false, petname: "Bobby" }], petname: "Bobby", flags: { pinned: true }, writeTo: [pair], defaultWriteTo: pair, preference: null, diagnostics: [] });
     expect(contact.channels).toMatchObject([{ channel: pair, selected: true, peerName: { name: "Robert" }, send: { status: "open" } }]);
     expect(JSON.parse(JSON.stringify(contact))).toEqual(contact);
@@ -560,7 +550,7 @@ describe("records", () => {
     const rotated = await manual.rotate({ localDidId: ALICE, peerDid: bob.did });
     const { did: successorDid, longFormDid } = (await scanVault(alice.runtime.vault, alice.keys)).dids.entities.get(rotated.successor)!.created!;
     await receive(bob, { id: crypto.randomUUID(), body: { content: "got your new address" } }, longFormDid);
-    contact = await (await readRecords(alice.runtime, alice.keys)).contact(CONTACT);
+    contact = await (await readRecords(alice.session)).contact(CONTACT);
     const successor = { localDid: successorDid, peerDid: bob.did };
     expect(contact.channels.map(({ channel, selected }) => ({ channel, selected }))).toEqual([
       { channel: pair, selected: true },
@@ -569,11 +559,11 @@ describe("records", () => {
     expect([contact.writeTo, contact.defaultWriteTo, contact.channels[1]!.peerName]).toEqual([[successor], successor, null]);
 
     await manual.blockChannels([pair], true);
-    contact = await (await readRecords(alice.runtime, alice.keys)).contact(CONTACT);
+    contact = await (await readRecords(alice.session)).contact(CONTACT);
     expect([contact.writeTo, contact.channels.map((record) => record.blocked)]).toEqual([[], [true, true]]);
 
     await manual.deleteContact(CONTACT);
-    const records = await readRecords(alice.runtime, alice.keys);
+    const records = await readRecords(alice.session);
     contact = await records.contact(CONTACT);
     expect([records.contactIds(), contact.channels, contact.diagnostics]).toEqual([[], [], [`the contact ${CONTACT} is deleted`]]);
     expect((await records.channel(pair)).messages).toHaveLength(1);
@@ -588,7 +578,7 @@ describe("records", () => {
     await alice.runtime.vault.commit([], [vaultDraft("contact.created", { contactId: CONTACT, because: "user" }), ...names.map((name) => flag(CONTACT, name, true))]);
     await alice.runtime.vault.commit([], [vaultDraft("contact.created", { contactId: other, because: "user" }), flag(other, "constructor", true), flag(other, "toString", false), flag(other, "muted", false)]);
 
-    const records = await readRecords(alice.runtime, alice.keys);
+    const records = await readRecords(alice.session);
     const alone = (await records.contact(CONTACT)).flags;
     expect(Object.entries(alone).sort()).toEqual(names.map((name) => [name, true]).sort());
     expect(Object.entries(JSON.parse(JSON.stringify(alone)) as object).sort()).toEqual(Object.entries(alone).sort());
@@ -599,12 +589,12 @@ describe("records", () => {
   it("lists an invitation as available, still after a peer's first message under it", async () => {
     const { alice, bob } = await parties();
     const { receive } = await hosting(alice);
-    const disclosed = await disclose(null, alice.runtime, alice.keys, ALICE, { as: "oob" });
-    const before = (await readRecords(alice.runtime, alice.keys)).invitations();
+    const disclosed = await disclose(null, alice.session, ALICE, { as: "oob" });
+    const before = (await readRecords(alice.session)).invitations();
     expect(before).toEqual([{ disclosureEventCid: disclosed.disclosed.cid, oobId: disclosed.invitation!.id, didId: ALICE, localDid: alice.did, state: { status: "available" } }]);
 
-    await afterReceipt(alice.runtime, alice.keys, await receive(bob, { id: crypto.randomUUID(), pthid: before[0]!.oobId, body: { content: "hello" } }));
-    expect((await readRecords(alice.runtime, alice.keys)).invitations()).toEqual(before);
+    await afterReceipt(alice.session, await receive(bob, { id: crypto.randomUUID(), pthid: before[0]!.oobId, body: { content: "hello" } }));
+    expect((await readRecords(alice.session)).invitations()).toEqual(before);
     await closeAll(alice, bob);
   });
 });

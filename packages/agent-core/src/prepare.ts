@@ -39,7 +39,7 @@
  */
 
 import { isShortForm } from "@estoc/did-peer";
-import { parseStrict, type Held, type VaultRuntime } from "@estoc/event-store";
+import { parseStrict, type Held } from "@estoc/event-store";
 import {
   envelopeOf,
   intentOfOutbound,
@@ -49,7 +49,6 @@ import {
   readVaultEvent,
   rotationIntent,
   sameChannel,
-  scanVault,
   vaultDraft,
   wirePlaintext,
   type Channel,
@@ -65,7 +64,6 @@ import {
   type Outbound,
   type PeerResolution,
   type Preparation,
-  type ScanOptions,
   type StoredMessageDocument,
   type VaultEvent,
   type VaultFold,
@@ -79,8 +77,8 @@ import { commitResolution } from "./evidence.js";
 import { recordOwedUnderLock } from "./reconcile.js";
 import { sealData } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
-import { serially } from "./procedure.js";
 import { knownLongForms, resolve } from "./resolver.js";
+import type { Locked, Session } from "./session.js";
 import { noteAll, type AgentTrace, type Note } from "./trace.js";
 
 /** The most bytes a message's body or one attachment payload may run to and still go on the wire. */
@@ -88,8 +86,6 @@ export const MAX_CONTENT_BYTES = 16 * 1024 * 1024;
 
 export interface PrepareOptions {
   didcomm: DidcommApi;
-  /** the operations beyond the built-in ones whose intents this runtime produces, as its handlers declare them; an intent of another operation is no work of this runtime's */
-  effectTypes?: readonly string[];
   /** the seal of every preparation goes to the `envelope` stream */
   trace?: AgentTrace;
   /** the clock expiry is compared with, in milliseconds since the epoch; `Date.now` when left out */
@@ -110,14 +106,9 @@ export type Prepared =
   /** the expiry had come when the message was looked at, whether or not a preparation was made: the message is terminated */
   | { outcome: "expired"; messageId: MessageId; failed: VaultEvent<"delivery.failed"> };
 
-/** The key every piece of work on one outbound runs under, serially per runtime (`serially`): its preparation here, its transport call after. */
+/** The key every piece of work on one outbound runs under, in turn per runtime (`VaultSession.turn`): its preparation here, its transport call after. */
 export function outboundWorkKey(messageId: MessageId): string {
   return `outbound ${messageId}`;
-}
-
-/** What every scan over an outbound is told, so that the fold counts the runtime's own operations as its work. */
-export function scanOptions(options: Pick<PrepareOptions, "effectTypes">): ScanOptions {
-  return options.effectTypes === undefined ? {} : { effectTypes: options.effectTypes };
 }
 
 export function hasExpired(intent: MessageOut, now: () => number): boolean {
@@ -145,22 +136,22 @@ export function expiryPhase(outbound: Outbound): "preparation" | "dispatch" {
 }
 
 /** The preparation of one queued outbound: made here, or the one selected. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
-export function prepare(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: PrepareOptions): Promise<Prepared> {
-  const local = localRecordsOf(runtime, options.local);
-  return serially(runtime, outboundWorkKey(messageId), async () => {
-    await recordOwedAcceptance(runtime, local, messageId);
-    const { result, notes } = await runtime.locked((held) => prepareUnderLock(held, keys, messageId, options, local));
+export function prepare(session: Session, messageId: MessageId, options: PrepareOptions): Promise<Prepared> {
+  const local = localRecordsOf(session.runtime, options.local);
+  return session.turn(outboundWorkKey(messageId), async () => {
+    await recordOwedAcceptance(session.runtime, local, messageId);
+    const { result, notes } = await session.locked((locked) => prepareUnderLock(locked, messageId, options, local));
     await noteAll(options.trace ?? null, notes);
     return result;
   });
 }
 
 /** Every outbound the fold says needs a preparation, in message order. */
-export async function prepareAll(runtime: VaultRuntime, keys: Keys, options: PrepareOptions): Promise<Prepared[]> {
-  const fold = await scanVault(runtime.vault, keys, scanOptions(options));
+export async function prepareAll(session: Session, options: PrepareOptions): Promise<Prepared[]> {
+  const fold = await session.fold();
   const results: Prepared[] = [];
   for (const outbound of [...fold.outbound.outbounds.values()].sort((a, b) => (a.messageId < b.messageId ? -1 : a.messageId > b.messageId ? 1 : 0))) {
-    if (outbound.work.kind === "prepare") results.push(await prepare(runtime, keys, outbound.messageId, options));
+    if (outbound.work.kind === "prepare") results.push(await prepare(session, outbound.messageId, options));
   }
   return results;
 }
@@ -176,16 +167,16 @@ export async function expireUnderLock(held: Held, messageId: MessageId, phase: "
 }
 
 /** `prepare` for a caller that already holds the message's turn and the writer lock. */
-export async function prepareUnderLock(held: Held, keys: Keys, messageId: MessageId, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
-  const fold = await scanVault(held, keys, scanOptions(options));
+export async function prepareUnderLock(locked: Locked, messageId: MessageId, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
+  const fold = await locked.fold();
   const outbound = fold.outbound.outbounds.get(messageId);
   if (outbound === undefined) throw new UnknownEntity("message", messageId);
   const closed = closedBecause(outbound);
   if (closed !== null) return { result: { outcome: "none", messageId, because: closed }, notes: [] };
   const intent = (outbound.intent as { data: MessageOut }).data;
-  if (hasExpired(intent, options.now ?? Date.now)) return expireUnderLock(held, messageId, expiryPhase(outbound));
-  const settled = await preparationOf(held, keys, fold, outbound, intent, options, local);
-  settled.notes.push(...(await owedRecorded(held, keys, messageId)));
+  if (hasExpired(intent, options.now ?? Date.now)) return expireUnderLock(locked.held, messageId, expiryPhase(outbound));
+  const settled = await preparationOf(locked, fold, outbound, intent, options, local);
+  settled.notes.push(...(await owedRecorded(locked, messageId)));
   return settled;
 }
 
@@ -234,7 +225,8 @@ export function carriage(outbound: Outbound, selected: EventCid | null): Carriag
  * the local options refuse leaves the message uncarried, the
  * preparation made or found standing for the next step to select.
  */
-async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
+async function preparationOf(locked: Locked, fold: VaultFold, outbound: Outbound, intent: MessageOut, options: PrepareOptions, local: LocalRecords): Promise<Settled<Prepared>> {
+  const { held, keys } = locked;
   const { messageId } = outbound;
   const notes: Note[] = [];
   const none = (because: string): Settled<Prepared> => ({ result: { outcome: "none", messageId, because }, notes });
@@ -294,9 +286,9 @@ async function preparationOf(held: Held, keys: Keys, fold: VaultFold, outbound: 
  * What it decided stands whether it ran through or stopped; one that
  * stopped is noted, and left to the next pass.
  */
-async function owedRecorded(held: Held, keys: Keys, messageId: MessageId): Promise<Note[]> {
+async function owedRecorded(locked: Locked, messageId: MessageId): Promise<Note[]> {
   try {
-    await recordOwedUnderLock(held, keys);
+    await recordOwedUnderLock(locked);
     return [];
   } catch (err) {
     return [{ stream: "diag", what: "admission", data: { messageId, reason: `the pass the preparation runs stopped: ${err instanceof Error ? err.message : String(err)}` } }];

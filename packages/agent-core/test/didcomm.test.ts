@@ -9,7 +9,7 @@ import { InvalidJson, canonicalize, parseStrict } from "@estoc/event-store";
 import { intentOf, scanVault, storeMessage, wirePlaintext, type Did, type DidId } from "@estoc/vault";
 
 import { EnvelopeRefused, secretsResolverFor, unpack, type DidcommApi, type IMessage, type SecretsResolver } from "../src/protocol/didcomm.js";
-import { createDid } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { Keyring } from "../src/keyring.js";
 import { sealingOf, senderProof } from "../src/receive/gate.js";
 import { didcomm, freshVault, newMediator, webIdentity, type Fresh, type WebIdentity } from "./helpers.js";
@@ -22,7 +22,7 @@ const DID = "019b0000-0000-7000-8000-00000000000b" as DidId;
 /** Alice: a vault with one communication DID on a direct route, and her keys in hand. */
 async function alice(): Promise<Fresh & { longFormDid: Did; ring: Keyring; secrets: SecretsResolver }> {
   const fresh = await freshVault();
-  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
+  const { minted } = await createDid(fresh.session, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
   const ring = await Keyring.load(fresh.keys, await scanVault(fresh.runtime.vault, fresh.keys));
   return { ...fresh, longFormDid: minted.longFormDid, ring, secrets: secretsResolverFor(ring.secrets()) };
 }

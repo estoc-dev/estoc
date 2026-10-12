@@ -8,10 +8,10 @@
  * hold whatever the pass recorded, an earlier observation's included.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import type { Disposition, EventReference, Keys, Status } from "@estoc/vault";
+import type { Disposition, EventReference, Status } from "@estoc/vault";
 
 import { recordOwedUnderLock, type Owed } from "../reconcile.js";
+import type { Session } from "../session.js";
 import { note, type AgentTrace } from "../trace.js";
 
 export interface AfterReceipt extends Owed {
@@ -26,8 +26,8 @@ export interface AfterReceiptOptions {
   trace?: AgentTrace;
 }
 
-export async function afterReceipt(runtime: VaultRuntime, keys: Keys, cid: EventReference<"message.in">, options: AfterReceiptOptions = {}): Promise<AfterReceipt> {
-  const { fold, ...owed } = await runtime.locked((held) => recordOwedUnderLock(held, keys));
+export async function afterReceipt(session: Session, cid: EventReference<"message.in">, options: AfterReceiptOptions = {}): Promise<AfterReceipt> {
+  const { fold, ...owed } = await session.locked((locked) => recordOwedUnderLock(locked));
   const trace = options.trace ?? null;
   const proof = fold.continuity.status(cid);
   if (proof.status !== "verified" && proof.status !== "not-present") await note(trace, { stream: "diag", what: "proof", data: { cid, ...proof } });

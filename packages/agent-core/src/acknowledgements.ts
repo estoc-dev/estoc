@@ -15,10 +15,10 @@
  * every pass over the fold, an open's included.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { vaultDraft, type Keys, type VaultData, type VaultDraft, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { vaultDraft, type VaultData, type VaultDraft, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import { decide } from "./procedure.js";
+import type { Session } from "./session.js";
 
 /** The acknowledgements the complete witnesses earn and no record repeats yet, in message order, then canonical event order. */
 export function acknowledgementDrafts(fold: VaultFold): VaultDraft<"delivery.acknowledged">[] {
@@ -44,8 +44,8 @@ export function acknowledgementDrafts(fold: VaultFold): VaultDraft<"delivery.ack
 }
 
 /** Record the acknowledgements the fold's witnesses earn, in one commit under the lock; none when every one is recorded already. */
-export async function recordAcks(runtime: VaultRuntime, keys: Keys): Promise<VaultEvent<"delivery.acknowledged">[]> {
-  const { events } = await decide(runtime, keys, acknowledgementDrafts);
+export async function recordAcks(session: Session): Promise<VaultEvent<"delivery.acknowledged">[]> {
+  const { events } = await decide(session, acknowledgementDrafts);
   return events as VaultEvent<"delivery.acknowledged">[];
 }
 

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **The vault, bound** (breaking): `createVault` and `openVault` return a
+  `VaultSession` — the runtime with the seed's keys and the fold options
+  bound once — instead of `{ runtime, keys, fold }`, and a runtime the
+  event store restored is bound by the new `openRestoredVault`, which
+  checks the seed against the anchor and closes the runtime otherwise.
+  The keys are not on the session: a host reads `fold()`, runs `locked`
+  and `decide` under the writer lock, takes a `turn` per key, mints
+  through `createDid`, `createMediation` and `selectMediation`, and hands
+  the event store `heldRoots()` and `retainedRoots()`, which fold
+  whatever vault the store hands them. `decide`, `serially`, `createDid`,
+  `createMediation` and `selectMediation` are no longer exported.
+  `Agent.open` and `Agent.start` take the session, refuse one this
+  package did not make, and refuse handlers whose effect types the vault
+  was not opened with: the fold options are the session's alone, read by
+  every fold of the vault — the one a receipt re-reads after its
+  admissions and the one a rotation rehearses over included — so
+  `DispatcherOptions.effectTypes` is gone and the handlers given to
+  `records()` no longer shape the fold. The options are copied at open:
+  a generator or a set the host changes afterwards changes nothing.
 - **This runtime's replica, bound** (breaking): `Arrangement.membership()`
   hands the host this runtime's replica at that arrangement as a
   `Membership`, with `replicaId`, `mediationId`, `blobs` (blob-store/1.0

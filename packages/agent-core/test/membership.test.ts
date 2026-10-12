@@ -4,7 +4,8 @@ import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import type { JsonValue, LocalOptions } from "@estoc/event-store";
 import { mintReplicaDid, scanVault, signReplicaGrant, vaultDraft, type Did, type DidId, type MediationId, type ReplicaId } from "@estoc/vault";
 
-import { ACCOUNT_REGISTER, Agent, AgentTrace, BLOB_PUT, EntityConflict, LIVE_DELIVERY_CHANGE, LinkClosed, REPLICA_ADD, STATUS_REQUEST, UnknownEntity, Unusable, blobName, createMediation, sealBlob, type Arrangement, type BlobLink, type Membership, type ReplicaAddress } from "../src/index.js";
+import { ACCOUNT_REGISTER, Agent, AgentTrace, BLOB_PUT, EntityConflict, LIVE_DELIVERY_CHANGE, LinkClosed, REPLICA_ADD, STATUS_REQUEST, UnknownEntity, Unusable, blobName, sealBlob, type Arrangement, type BlobLink, type Membership, type ReplicaAddress } from "../src/index.js";
+import { createMediation } from "../src/mediation.js";
 import { createReplica } from "../src/replica-enrollment.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { copyOf, didcomm, forwarded, freshVault, mediatedParty, newMediator, party, sealed, until, webFetch, type Fresh, type Party } from "./helpers.js";
@@ -18,13 +19,13 @@ afterEach(async () => {
 const ADDRESS = "019b0000-0000-7000-8000-0000000000a0" as DidId;
 
 /** The party's agent, open and not connected, and every request it sent; its confirmations the runtime's unless `localOptions` says otherwise. */
-async function opened(p: Pick<Party, "runtime" | "keys" | "trace">, mediator: FakeMediator, localOptions: LocalOptions = p.runtime.local.options): Promise<{ agent: Agent; sent: string[] }> {
+async function opened(p: Pick<Party, "session" | "runtime" | "trace">, mediator: FakeMediator, localOptions: LocalOptions = p.runtime.local.options): Promise<{ agent: Agent; sent: string[] }> {
   const sent: string[] = [];
   const fetch: typeof globalThis.fetch = (input, init) => {
     sent.push(`${init?.method ?? "GET"} ${String(input)}`);
     return mediator.fetch(input, init);
   };
-  const agent = await Agent.open(p, { didcomm, fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions, privateAddresses: false, liveDelivery: false });
+  const agent = await Agent.open(p.session, { didcomm, fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions, privateAddresses: false, liveDelivery: false });
   closing.unshift(agent);
   return { agent, sent };
 }
@@ -70,7 +71,7 @@ async function liveHeldBack(mediator: FakeMediator): Promise<Party & { agent: Ag
     return undefined;
   };
   const logs: string[] = [];
-  const agent = await Agent.open(p, { didcomm, fetch: mediator.fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, log: (line) => logs.push(line) });
+  const agent = await Agent.open(p.session, { didcomm, fetch: mediator.fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, log: (line) => logs.push(line) });
   closing.unshift(agent);
   await agent.enroll(p.mediationId);
   await until("live delivery asked for", () => asked);
@@ -90,7 +91,7 @@ async function leftWaiting(mediator: FakeMediator): Promise<Fresh & { agent: Age
   const elsewhereOnly = (type: string): boolean => type.startsWith("mediation.") || type.startsWith("replica.");
   const copy = await copyOf(1, alice, (event) => !elsewhereOnly(event.type));
   closing.push(copy.runtime);
-  const { mediationId } = (await createMediation(copy.runtime, copy.keys, mediator.did as Did)).data;
+  const { mediationId } = (await createMediation(copy.session, mediator.did as Did)).data;
   const { agent } = await opened({ ...copy, trace: await AgentTrace.open(copy.runtime.local) }, mediator);
   await expect((await agent.arrangement(mediationId)).membership()).rejects.toBeInstanceOf(UnknownEntity);
 
@@ -127,9 +128,9 @@ describe("a runtime's membership", () => {
   it("is not bound while the runtime has no replica, and nothing is asked of the mediator, nor is it resolved", async () => {
     const fresh = await freshVault();
     closing.push(fresh.runtime);
-    const { mediationId } = (await createMediation(fresh.runtime, fresh.keys, "did:web:mediator.example" as Did)).data;
+    const { mediationId } = (await createMediation(fresh.session, "did:web:mediator.example" as Did)).data;
     const web = webFetch({});
-    const agent = await Agent.open(fresh, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
+    const agent = await Agent.open(fresh.session, { didcomm, fetch: web.fetch, trace: await AgentTrace.open(fresh.runtime.local), liveDelivery: false });
     closing.unshift(agent);
     await expect((await agent.arrangement(mediationId)).membership()).rejects.toBeInstanceOf(UnknownEntity);
     expect(web.calls).toEqual([]);
@@ -139,7 +140,7 @@ describe("a runtime's membership", () => {
     const mediator = await newMediator();
     const p = await party(mediator);
     closing.push(p.runtime);
-    await createReplica(p.runtime, p.keys, p.mediationId);
+    await createReplica(p.session, p.mediationId);
     const fold = await scanVault(p.runtime.vault, p.keys);
     expect(fold.replicas.replicas.get(p.runtime.author)?.status).toBe("member");
     expect(fold.mediations.mediations.get(p.mediationId)?.routingDid).toBeNull();
@@ -181,7 +182,7 @@ describe("a runtime's membership", () => {
     const p = await party(mediator);
     closing.push(p.runtime);
     await p.account.enroll();
-    const other = (await createMediation(p.runtime, p.keys, elsewhere.did as Did)).data.mediationId;
+    const other = (await createMediation(p.session, elsewhere.did as Did)).data.mediationId;
     const { agent, sent } = await opened(p, mediator);
 
     const refused = (await agent.arrangement(other)).membership();
@@ -218,7 +219,7 @@ describe("a runtime's membership", () => {
     const m = await member(mediator);
     const to = await sibling(m, mediator);
     const link = await snapshot(mediator);
-    const other = await createMediation(m.runtime, m.keys, elsewhere.did as Did);
+    const other = await createMediation(m.session, elsewhere.did as Did);
     const grant = await signReplicaGrant(m.keys, other.data, m.runtime.author);
     await m.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: m.runtime.author, mediationId: other.data.mediationId, grant })]);
     expect((await scanVault(m.runtime.vault, m.keys)).replicas.replicas.get(m.runtime.author)).toMatchObject({ status: "conflict", mediationId: null });
@@ -278,7 +279,7 @@ describe("a runtime's membership", () => {
       const p = await party(mediator, index + 1);
       closing.push(p.runtime);
       if (state !== "no replica yet") await p.account.enroll();
-      const other = (await createMediation(p.runtime, p.keys, elsewhere.did as Did)).data.mediationId;
+      const other = (await createMediation(p.session, elsewhere.did as Did)).data.mediationId;
       const { agent, sent } = await opened(p, mediator);
       if (state === "a member elsewhere, taken at its own") await (await agent.arrangement(p.mediationId)).membership();
       const arrangement = await agent.arrangement(state.startsWith("a member elsewhere") ? other : p.mediationId);

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The daemon holds the vault as the `VaultSession` `@estoc/agent-core`
+  binds, and reads, decides, mints, exports and merges through it; a
+  restore is bound by `openRestoredVault`. Nothing changes over the API.
 - **The Node host's default fetch is `guardedFetch` from
   `@estoc/did-web/node`**, the transport the mediator uses too. It now
   follows no redirect, as the README said, whatever the request asks: a

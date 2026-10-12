@@ -25,9 +25,8 @@
  * which only its live receipt may.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
 import { isPeerDID4 } from "@estoc/did-peer";
-import { InvalidDidDocument, canonicalDidOf, scanVault, type Did, type ExecutionId, type Keys, type MediationId } from "@estoc/vault";
+import { InvalidDidDocument, canonicalDidOf, type Did, type ExecutionId, type MediationId } from "@estoc/vault";
 
 import { responding, type LiveInput, type Responding } from "./action.js";
 import { owesEffects, messageOf, type EffectOptions } from "./effects.js";
@@ -37,6 +36,7 @@ import type { LocalRecords } from "./local-records.js";
 import type { Member } from "./membership.js";
 import type { IMessage } from "./protocol/didcomm.js";
 import { EXECUTION_REGISTER, EXECUTION_REGISTERED } from "./protocol/replica-mediation.js";
+import type { Session } from "./session.js";
 import { note } from "./trace.js";
 
 export interface ExecutionRegistration {
@@ -75,8 +75,8 @@ export type Found =
  * picked up from. The registration that lists another replica first is
  * kept as this runtime's replica leaving the input to it.
  */
-export async function findResponder(runtime: VaultRuntime, keys: Keys, live: LiveInput, options: ResponderOptions): Promise<Found> {
-  const fold = await scanVault(runtime.vault, keys);
+export async function findResponder(session: Session, live: LiveInput, options: ResponderOptions): Promise<Found> {
+  const fold = await session.fold();
   if (!options.rotated && !owesEffects(fold, live, options)) return { responder: null, answering: null };
   const source = fold.channels.sources.get(live.cid);
   const execution = fold.inbound.ofSource(live.cid);

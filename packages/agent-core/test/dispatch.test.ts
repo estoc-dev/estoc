@@ -25,27 +25,7 @@ import { prepare } from "../src/prepare.js";
 import { automaticDraft, send } from "../src/send.js";
 import { cancel, dispatch, selectPreparation, type DispatchOptions } from "../src/dispatch.js";
 import { MEDIATOR_HTTP } from "./fake-mediator.js";
-import {
-  after,
-  carrierWaitingForIssuer,
-  delivered,
-  didcomm,
-  directParty,
-  issuerRecovered,
-  mediatedParty,
-  memoryDriver,
-  merged,
-  newMediator,
-  observed,
-  posting,
-  proofOfSuccession,
-  received,
-  refuseSubmissions,
-  ticking,
-  type DirectParty,
-  type MediatedParty,
-  holdAddresses,
-} from "./helpers.js";
+import { after, carrierWaitingForIssuer, delivered, didcomm, directParty, holdAddresses, issuerRecovered, mediatedParty, memoryDriver, merged, newMediator, observed, opened, posting, proofOfSuccession, received, refuseSubmissions, ticking, type DirectParty, type MediatedParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -100,11 +80,11 @@ describe("dispatch to a direct endpoint", () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
     const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     expect(sent.action).toBeInstanceOf(LiveAction);
     expect(sent.action).toMatchObject({ messageId: MESSAGE, kind: "initial", spent: false });
 
-    const result = submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, trace }));
+    const result = submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, trace }));
     expect(result.submitted.data).toEqual({ messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
     expect(sent.action.spent).toBe(true);
     const envelope = await envelopeOf(alice, MESSAGE);
@@ -125,11 +105,11 @@ describe("dispatch to a direct endpoint", () => {
     expect(entries[1]!.data).toMatchObject({ parent: entries[0]!.seq, status: 202 });
     expect((await trace.traceOf(MESSAGE)).map((entry) => entry.type)).toEqual(["envelope.seal", "wire.out", "wire.in"]);
 
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "spent", messageId: MESSAGE });
-    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "spent", messageId: MESSAGE });
+    expect(await dispatch(alice.session, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await prepare(alice.session, MESSAGE, { didcomm })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
     expect(wire.posts).toHaveLength(1);
-    const again = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const again = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     expect(again).toMatchObject({ existed: true, action: { messageId: MESSAGE, kind: "manual" } });
     f = await fold(alice);
     expect(f.set.of("delivery.submitted")).toHaveLength(1);
@@ -139,8 +119,8 @@ describe("dispatch to a direct endpoint", () => {
   test("a refusal or a lost line spends the action and writes nothing; each manual retry carries the same bytes, until the acceptance", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await prepare(alice.session, MESSAGE, { didcomm });
     const envelope = await envelopeOf(alice, MESSAGE);
     const before = [...(await fold(alice)).set.applied()].length;
     const answers: (() => Response | Promise<Response>)[] = [
@@ -152,12 +132,12 @@ describe("dispatch to a direct endpoint", () => {
     const wire = posting(() => answers.shift()!());
     const options: DispatchOptions = { didcomm, fetch: wire.fetch, trace };
 
-    const lost = await dispatch(alice.runtime, alice.keys, sent.action, options);
+    const lost = await dispatch(alice.session, sent.action, options);
     expect(lost).toMatchObject({ outcome: "uncertain", messageId: MESSAGE, reason: "connection reset" });
     expect(sent.action.spent).toBe(true);
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, options)).toEqual({ outcome: "spent", messageId: MESSAGE });
+    expect(await dispatch(alice.session, sent.action, options)).toEqual({ outcome: "spent", messageId: MESSAGE });
     for (const status of [503, 307]) {
-      const refused = await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options);
+      const refused = await dispatch(alice.session, LiveAction.manual(MESSAGE), options);
       expect(refused).toMatchObject({ outcome: "failed", messageId: MESSAGE, reason: `the endpoint answered ${status}` });
     }
     let f = await fold(alice);
@@ -165,7 +145,7 @@ describe("dispatch to a direct endpoint", () => {
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ outcome: { status: "prepared" }, work: { kind: "dispatch" } });
     expect(wire.posts).toHaveLength(3);
 
-    submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options));
+    submitted(await dispatch(alice.session, LiveAction.manual(MESSAGE), options));
     expect(wire.posts).toHaveLength(4);
     expect(wire.posts.every((post) => post.url === BOB_ENDPOINT && post.body === envelope)).toBe(true);
     f = await fold(alice);
@@ -188,15 +168,15 @@ describe("dispatch to a direct endpoint", () => {
   it("records what the vault owes before the call: a carrier the host's evidence left unadmitted is admitted by the manual retry of a preparation to the carrier's own address, once, and the preparation goes out as it is", async () => {
     const { alice, bob } = await parties();
     const { cid, prior } = await carrierWaitingForIssuer(alice, bob, BOB_PRIOR);
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    expect((await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm })).outcome).toBe("prepared");
+    await send(alice.session, { channel: channelOf(alice.did, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    expect((await prepare(alice.session, MESSAGE, { didcomm })).outcome).toBe("prepared");
     await issuerRecovered(alice, prior);
     let f = await fold(alice);
     expect([f.continuity.status(cid), f.dispositions.disposition(cid), f.outbound.outbounds.get(MESSAGE)!.work.kind]).toEqual([{ status: "verified" }, { status: "pending-admission", because: "the observation is not yet reconciled" }, "dispatch"]);
     const envelope = await envelopeOf(alice, MESSAGE);
 
     const wire = posting(accepted);
-    submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch }));
+    submitted(await dispatch(alice.session, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch }));
     f = await fold(alice);
     expect([f.dispositions.disposition(cid).status, f.set.of("message.admitted").map(({ data }) => data.sourceEventCid), f.set.of("message.prepared").length, f.set.of("message.out").length]).toEqual(["admitted", [cid], 1, 1]);
     expect(wire.posts.map((post) => [post.url, post.body])).toEqual([[BOB_ENDPOINT, envelope]]);
@@ -216,7 +196,7 @@ describe("dispatch to a direct endpoint", () => {
     expect([f.dispositions.disposition(sourceEventCid).status, f.outbound.ackTarget(sourceEventCid), before.effect, before.work]).toEqual(["pending-admission", { status: "none", because: "the carrier is not admitted" }, { status: "complete" }, { kind: "prepare" }]);
 
     const wire = posting(accepted);
-    submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(drafted.messageId), { didcomm, fetch: wire.fetch }));
+    submitted(await dispatch(alice.session, LiveAction.manual(drafted.messageId), { didcomm, fetch: wire.fetch }));
     f = await fold(alice);
     expect([f.dispositions.disposition(sourceEventCid).status, f.set.of("message.admitted").map(({ data }) => data.sourceEventCid), f.outbound.outbounds.get(drafted.messageId)!.outcome.status]).toEqual(["admitted", [sourceEventCid], "submitted"]);
     expect(wire.posts.map((post) => post.url)).toEqual([BOB_ENDPOINT]);
@@ -232,7 +212,7 @@ describe("dispatch to a direct endpoint", () => {
     expect([f.dispositions.disposition(ignored).status, f.outbound.ackTarget(carrier)]).toEqual(["ignored-superseded", { status: "eligible", wireMessageId: "shared" }]);
 
     const wire = posting(accepted);
-    const made = await completeResponse(alice.runtime, alice.keys, f.inbound.ofSource(carrier)!.id, PURE_ACK_EFFECT, { dispatch: (action) => dispatch(alice.runtime, alice.keys, action, { didcomm, fetch: wire.fetch }) });
+    const made = await completeResponse(alice.session, f.inbound.ofSource(carrier)!.id, PURE_ACK_EFFECT, { dispatch: (action) => dispatch(alice.session, action, { didcomm, fetch: wire.fetch }) });
     if (made.outcome !== "created") throw new Error(JSON.stringify(made));
     expect([made.intent.data.ack, made.dispatched.outcome, wire.posts.map((post) => post.url)]).toEqual([["shared"], "submitted", [BOB_ENDPOINT]]);
     f = await fold(alice);
@@ -259,9 +239,9 @@ describe("dispatch to a direct endpoint", () => {
     const { carrier, messageId } = await carrierRequestingItsReceipt(alice, bob, asPrior, proof);
     await received(alice, bob, "carrier", { type: BASIC_MESSAGE, body: { content: "another reading" } });
     const wire = posting(accepted);
-    const blocked = await dispatch(alice.runtime, alice.keys, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
+    const blocked = await dispatch(alice.session, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
     const ignored = await delivered(alice, asPrior, { id: "carrier" });
-    const still = await dispatch(alice.runtime, alice.keys, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
+    const still = await dispatch(alice.session, LiveAction.manual(messageId), { didcomm, fetch: wire.fetch });
     const f = await fold(alice);
     expect([blocked.outcome, still.outcome, wire.posts, f.dispositions.disposition(ignored).status, f.outbound.ackTarget(carrier).status]).toEqual(["none", "none", [], "ignored-superseded", "none"]);
     expect(f.outbound.outbounds.get(messageId)!).toMatchObject({ effect: { status: "conflict", because: "the source's input is in conflict: 2 intents are admitted for one input" }, work: { kind: "none" }, outcome: { status: "conflict" } });
@@ -272,32 +252,32 @@ describe("dispatch to a direct endpoint", () => {
     const { alice, bob } = await parties();
     const { prior, proof } = await proofOfSuccession(bob, BOB_PRIOR);
     const toPrior = { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid };
-    await send(alice.runtime, alice.keys, toPrior, HELLO, { messageId: MESSAGE });
-    const second = await send(alice.runtime, alice.keys, toPrior, HELLO, { messageId: SECOND });
-    const third = await send(alice.runtime, alice.keys, toPrior, HELLO, { messageId: THIRD });
-    expect((await prepare(alice.runtime, alice.keys, SECOND, { didcomm })).outcome).toBe("prepared");
-    expect((await prepare(alice.runtime, alice.keys, THIRD, { didcomm })).outcome).toBe("prepared");
+    await send(alice.session, toPrior, HELLO, { messageId: MESSAGE });
+    const second = await send(alice.session, toPrior, HELLO, { messageId: SECOND });
+    const third = await send(alice.session, toPrior, HELLO, { messageId: THIRD });
+    expect((await prepare(alice.session, SECOND, { didcomm })).outcome).toBe("prepared");
+    expect((await prepare(alice.session, THIRD, { didcomm })).outcome).toBe("prepared");
     const envelope = await envelopeOf(alice, THIRD);
     const wire = posting(async () => {
       await delivered(alice, bob, { from_prior: proof });
       return accepted();
     });
-    submitted(await dispatch(alice.runtime, alice.keys, third.action, { didcomm, fetch: wire.fetch }));
+    submitted(await dispatch(alice.session, third.action, { didcomm, fetch: wire.fetch }));
     const replaced = (messageId: MessageId) => ({ outcome: "none", messageId, because: "the peer has replaced its DID" });
     let f = await fold(alice);
     expect([f.continuity.superseded(toPrior.channel), f.outbound.outbounds.get(THIRD)!.outcome, f.outbound.outbounds.get(SECOND)!.work.kind, f.outbound.outbounds.get(MESSAGE)!.work.kind]).toEqual([true, { status: "submitted" }, "none", "none"]);
 
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm })).toEqual(replaced(MESSAGE));
-    expect(await dispatch(alice.runtime, alice.keys, second.action, { didcomm, fetch: wire.fetch })).toEqual(replaced(SECOND));
-    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(SECOND), { didcomm, fetch: wire.fetch })).toEqual(replaced(SECOND));
-    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(THIRD), { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
-    await expect(send(alice.runtime, alice.keys, toPrior, HELLO)).rejects.toThrow("the peer has replaced its DID");
+    expect(await prepare(alice.session, MESSAGE, { didcomm })).toEqual(replaced(MESSAGE));
+    expect(await dispatch(alice.session, second.action, { didcomm, fetch: wire.fetch })).toEqual(replaced(SECOND));
+    expect(await dispatch(alice.session, LiveAction.manual(SECOND), { didcomm, fetch: wire.fetch })).toEqual(replaced(SECOND));
+    expect(await dispatch(alice.session, LiveAction.manual(THIRD), { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
+    await expect(send(alice.session, toPrior, HELLO)).rejects.toThrow("the peer has replaced its DID");
     f = await fold(alice);
     expect([wire.posts.map((post) => [post.url, post.body]), second.action.spent, f.set.of("message.prepared").length, f.set.of("delivery.submitted").length, f.set.of("message.out").length]).toEqual([[[BOB_ENDPOINT, envelope]], false, 2, 1, 3]);
     expect(f.outbound.outbounds.get(SECOND)).toMatchObject({ outcome: { status: "prepared" }, work: { kind: "none", because: "the peer has replaced its DID" } });
 
-    const moved = await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, bob.did), recipientDid: bob.longFormDid }, HELLO);
-    submitted(await dispatch(alice.runtime, alice.keys, moved.action, { didcomm, fetch: wire.fetch }));
+    const moved = await send(alice.session, { channel: channelOf(alice.did, bob.did), recipientDid: bob.longFormDid }, HELLO);
+    submitted(await dispatch(alice.session, moved.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(2);
     await closeAll(alice, bob);
   });
@@ -305,16 +285,16 @@ describe("dispatch to a direct endpoint", () => {
   test("a prerequisite still to come leaves the action live and the wire untouched; the same action carries the message once it is there", async () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.did } }, HELLO, { messageId: MESSAGE });
-    const waiting = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.did } }, HELLO, { messageId: MESSAGE });
+    const waiting = await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch });
     expect(waiting).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((waiting as { because: string }).because).toMatch(/no long form of/);
     expect(sent.action.spent).toBe(false);
     expect(wire.posts).toEqual([]);
     expect((await fold(alice)).set.of("message.prepared")).toEqual([]);
 
-    await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch }));
+    await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
+    submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(1);
     const f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)!.submitted).toBe(true);
@@ -325,8 +305,8 @@ describe("dispatch to a direct endpoint", () => {
   test("one action is one call: two dispatches under it make one", async () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const results = await Promise.all([dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch }), dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch })]);
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const results = await Promise.all([dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch }), dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch })]);
     expect(results.map((result) => result.outcome).sort()).toEqual(["spent", "submitted"]);
     expect(wire.posts).toHaveLength(1);
     await closeAll(alice, bob);
@@ -335,18 +315,18 @@ describe("dispatch to a direct endpoint", () => {
   test("an acceptance the disk would not record is owed: recorded before the message is worked on again, without another call", async () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await prepare(alice.session, MESSAGE, { didcomm });
     refuseSubmissions(alice.runtime, 1);
-    await expect(dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch })).rejects.toThrow(/disk is full/);
+    await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch })).rejects.toThrow(/disk is full/);
     expect(wire.posts).toHaveLength(1);
     expect((await fold(alice)).outbound.outbounds.get(MESSAGE)!.submitted).toBe(false);
 
-    const result = submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch }));
+    const result = submitted(await dispatch(alice.session, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(1);
     const f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: true, preparations: [{ event: { cid: result.preparationEventCid } }] });
-    expect(await cancel(alice.runtime, alice.keys, MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await cancel(alice.session, MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
     await closeAll(alice, bob);
   });
 
@@ -354,17 +334,17 @@ describe("dispatch to a direct endpoint", () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
     const timed: Content = { ...HELLO, createdTime: 1_000, expiresTime: 2_000 };
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, timed, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, timed, { messageId: MESSAGE });
     refuseSubmissions(alice.runtime, 2);
-    await expect(dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, now: () => 1_999_999 })).rejects.toThrow(/disk is full/);
+    await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, now: () => 1_999_999 })).rejects.toThrow(/disk is full/);
     expect(wire.posts).toHaveLength(1);
 
-    await expect(prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, now: () => 2_000_000 })).rejects.toThrow(/disk is full/);
+    await expect(prepare(alice.session, MESSAGE, { didcomm, now: () => 2_000_000 })).rejects.toThrow(/disk is full/);
     let f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: false, terminal: null, outcome: { status: "prepared" } });
     expect(f.set.of("delivery.failed")).toEqual([]);
 
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, now: () => 2_000_000 })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await prepare(alice.session, MESSAGE, { didcomm, now: () => 2_000_000 })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
     f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: true, outcome: { status: "submitted" } });
     expect(f.set.of("delivery.submitted")).toHaveLength(1);
@@ -380,16 +360,16 @@ describe("dispatch to a direct endpoint", () => {
     const disk = transientOptions();
     let full = false;
     const local = new LocalRecords({ ...disk, set: async (key, value) => (full ? Promise.reject(new Error("the disk is full for now")) : disk.set(key, value)) }, alice.runtime.author);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, local });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await prepare(alice.session, MESSAGE, { didcomm, local });
     full = true;
     refuseSubmissions(alice.runtime, 1);
-    await expect(dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, local, trace })).rejects.toThrow(/disk is full/);
+    await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, local, trace })).rejects.toThrow(/disk is full/);
     expect((await trace.read({ stream: "diag" })).map((entry) => entry.data.reason)).toContainEqual("the acceptance could not be kept as owed: the disk is full for now");
     expect([await local.owedAcceptance(MESSAGE), (await fold(alice)).outbound.outbounds.get(MESSAGE)!.outcome.status, wire.posts.length]).toEqual([null, "prepared", 1]);
 
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm, local })).toMatchObject({ outcome: "reused" });
-    submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch, local }));
+    expect(await prepare(alice.session, MESSAGE, { didcomm, local })).toMatchObject({ outcome: "reused" });
+    submitted(await dispatch(alice.session, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch, local }));
     expect(wire.posts.map((post) => post.body)).toEqual([wire.posts[0]!.body, wire.posts[0]!.body]);
     await closeAll(alice, bob);
   });
@@ -399,19 +379,19 @@ describe("dispatch to a direct endpoint", () => {
     const wire = posting(accepted);
     const disk = transientOptions();
     const options = (set = disk.set): DispatchOptions => ({ didcomm, fetch: wire.fetch, local: new LocalRecords({ ...disk, set }, alice.runtime.author) });
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, options(async () => Promise.reject(new Error("the disk is full for now"))))).toMatchObject({ outcome: "none", messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    expect(await dispatch(alice.session, sent.action, options(async () => Promise.reject(new Error("the disk is full for now"))))).toMatchObject({ outcome: "none", messageId: MESSAGE });
     expect([sent.action.spent, wire.posts.length]).toEqual([false, 0]);
     const [made] = (await fold(alice)).set.of("message.prepared");
     const elsewhere = (await merged(alice.runtime, "message.prepared", made!.data, after(made!.at, 1))).cid as EventReference<"message.prepared">;
 
     const choose = { outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" };
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, options())).toEqual(choose);
-    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options())).toEqual(choose);
+    expect(await dispatch(alice.session, sent.action, options())).toEqual(choose);
+    expect(await dispatch(alice.session, LiveAction.manual(MESSAGE), options())).toEqual(choose);
     expect([sent.action.spent, wire.posts.length]).toEqual([false, 0]);
 
-    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, elsewhere, options())).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
-    const carried = submitted(await dispatch(alice.runtime, alice.keys, LiveAction.manual(MESSAGE), options()));
+    expect(await selectPreparation(alice.session, MESSAGE, elsewhere, options())).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
+    const carried = submitted(await dispatch(alice.session, LiveAction.manual(MESSAGE), options()));
     expect([carried.preparationEventCid, carried.submitted.data.preparationEventCid, wire.posts.length]).toEqual([elsewhere, elsewhere, 1]);
     await closeAll(alice, bob);
   });
@@ -422,15 +402,15 @@ describe("dispatch to a direct endpoint", () => {
     const wire = posting(accepted);
     const timed: Content = { ...HELLO, createdTime: 1_000, expiresTime: 2_000 };
     const target = { channel: { localDid: alice.did, peerDid: bob.longFormDid } };
-    const first = await send(alice.runtime, alice.keys, target, timed, { messageId: MESSAGE });
-    const expired = await dispatch(alice.runtime, alice.keys, first.action, { didcomm, fetch: wire.fetch, trace, now: () => 2_000_000 });
+    const first = await send(alice.session, target, timed, { messageId: MESSAGE });
+    const expired = await dispatch(alice.session, first.action, { didcomm, fetch: wire.fetch, trace, now: () => 2_000_000 });
     expect(expired).toMatchObject({ outcome: "expired", messageId: MESSAGE, failed: { data: { messageId: MESSAGE, code: "expired" } } });
     expect(first.action.spent).toBe(false);
-    expect(await dispatch(alice.runtime, alice.keys, first.action, { didcomm, fetch: wire.fetch, now: () => 2_000_000 })).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: expired" });
+    expect(await dispatch(alice.session, first.action, { didcomm, fetch: wire.fetch, now: () => 2_000_000 })).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: expired" });
 
-    const second = await send(alice.runtime, alice.keys, target, timed, { messageId: SECOND });
-    expect(await prepare(alice.runtime, alice.keys, SECOND, { didcomm, now: () => 1_999_999 })).toMatchObject({ outcome: "prepared" });
-    expect(await dispatch(alice.runtime, alice.keys, second.action, { didcomm, fetch: wire.fetch, trace, now: () => 2_000_000 })).toMatchObject({ outcome: "expired", messageId: SECOND });
+    const second = await send(alice.session, target, timed, { messageId: SECOND });
+    expect(await prepare(alice.session, SECOND, { didcomm, now: () => 1_999_999 })).toMatchObject({ outcome: "prepared" });
+    expect(await dispatch(alice.session, second.action, { didcomm, fetch: wire.fetch, trace, now: () => 2_000_000 })).toMatchObject({ outcome: "expired", messageId: SECOND });
     expect(wire.posts).toEqual([]);
     const f = await fold(alice);
     expect([MESSAGE, SECOND].map((id) => f.outbound.outbounds.get(id)!.outcome)).toEqual([
@@ -450,24 +430,24 @@ describe("dispatch to a direct endpoint", () => {
     const before = { didcomm, fetch: wire.fetch, now: () => 1_999_999 };
     const after = { didcomm, fetch: wire.fetch, now: () => 2_000_000 };
 
-    const blocked = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, timed, { messageId: MESSAGE });
-    await prepare(alice.runtime, alice.keys, MESSAGE, before);
+    const blocked = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, timed, { messageId: MESSAGE });
+    await prepare(alice.session, MESSAGE, before);
     const envelopeCid = (await fold(alice)).outbound.outbounds.get(MESSAGE)!.preparations[0]!.event.data.envelopeCid;
     await alice.runtime.vault.commit([], [vaultDraft("channel.blocked", { localDid: alice.did, peerDid: bob.did, includeSuccessors: false })]);
-    expect(await dispatch(alice.runtime, alice.keys, blocked.action, before)).toEqual({ outcome: "none", messageId: MESSAGE, because: "the channel is denied" });
-    expect(await dispatch(alice.runtime, alice.keys, blocked.action, after)).toMatchObject({ outcome: "expired", messageId: MESSAGE, failed: { data: { code: "expired" } } });
-    expect(await dispatch(alice.runtime, alice.keys, blocked.action, after)).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: expired" });
+    expect(await dispatch(alice.session, blocked.action, before)).toEqual({ outcome: "none", messageId: MESSAGE, because: "the channel is denied" });
+    expect(await dispatch(alice.session, blocked.action, after)).toMatchObject({ outcome: "expired", messageId: MESSAGE, failed: { data: { code: "expired" } } });
+    expect(await dispatch(alice.session, blocked.action, after)).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: expired" });
     let f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ outcome: { status: "terminal", code: "expired" }, released: true });
     expect(f.held.has(envelopeCid)).toBe(false);
 
-    await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: carol.longFormDid } }, timed, { messageId: SECOND });
-    const packaged = await prepare(alice.runtime, alice.keys, SECOND, before);
+    await send(alice.session, { channel: { localDid: alice.did, peerDid: carol.longFormDid } }, timed, { messageId: SECOND });
+    const packaged = await prepare(alice.session, SECOND, before);
     if (packaged.outcome !== "prepared") throw new Error(`not prepared: ${JSON.stringify(packaged)}`);
     const events: VaultEvent[] = [];
     for await (const event of alice.runtime.vault.events.scan()) events.push(event as VaultEvent);
     const partial = events.filter((event) => event.cid !== packaged.resolved.cid);
-    const copy = await createVault(memoryDriver(), { seedKey: alice.seedKey, wrapped: alice.keystore, label: "without the resolution", now: ticking() });
+    const copy = opened(await createVault(memoryDriver(), { seedKey: alice.seedKey, wrapped: alice.keystore, label: "without the resolution", now: ticking() }));
     const ingested = await copy.runtime.locked((held) =>
       held.ingest(partial, async (stage) => {
         for (const root of new Set(partial.flatMap((event) => event.roots))) await stage.putObject(root, (await alice.runtime.vault.objects.read(root, 1 << 20)) as Uint8Array);
@@ -475,15 +455,15 @@ describe("dispatch to a direct endpoint", () => {
     );
     expect(ingested.rejected).toEqual([]);
     const manual = LiveAction.manual(SECOND);
-    expect(await dispatch(copy.runtime, copy.keys, manual, before)).toEqual({ outcome: "none", messageId: SECOND, because: "the resolution it names is not here" });
-    expect(await dispatch(copy.runtime, copy.keys, manual, after)).toMatchObject({ outcome: "expired", messageId: SECOND });
+    expect(await dispatch(copy.session, manual, before)).toEqual({ outcome: "none", messageId: SECOND, because: "the resolution it names is not here" });
+    expect(await dispatch(copy.session, manual, after)).toMatchObject({ outcome: "expired", messageId: SECOND });
     expect((await scanVault(copy.runtime.vault, copy.keys)).outbound.outbounds.get(SECOND)).toMatchObject({ outcome: { status: "terminal", code: "expired" }, released: true });
     expect(manual.spent).toBe(false);
 
-    const carried = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: carol.longFormDid } }, timed, { messageId: THIRD });
-    submitted(await dispatch(alice.runtime, alice.keys, carried.action, before));
-    expect(await dispatch(alice.runtime, alice.keys, LiveAction.manual(THIRD), after)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
-    expect(await cancel(alice.runtime, alice.keys, THIRD)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
+    const carried = await send(alice.session, { channel: { localDid: alice.did, peerDid: carol.longFormDid } }, timed, { messageId: THIRD });
+    submitted(await dispatch(alice.session, carried.action, before));
+    expect(await dispatch(alice.session, LiveAction.manual(THIRD), after)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
+    expect(await cancel(alice.session, THIRD)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
     f = await fold(alice);
     expect(f.set.of("delivery.failed").map((event) => event.data.messageId)).toEqual([MESSAGE]);
     expect(wire.posts).toHaveLength(1);
@@ -494,8 +474,8 @@ describe("dispatch to a direct endpoint", () => {
   test("a deadline that passes while the lock is waited for costs the action nothing: nothing is called, and the same action calls once the lock is free", async () => {
     const { alice, bob } = await parties();
     const wire = posting(accepted);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await prepare(alice.session, MESSAGE, { didcomm });
     const locked = alice.runtime.locked.bind(alice.runtime);
     let holding: Promise<void> | null = null;
     vi.spyOn(alice.runtime, "locked").mockImplementation((async (work: (held: Held) => Promise<unknown>) => {
@@ -503,12 +483,12 @@ describe("dispatch to a direct endpoint", () => {
       holding ??= locked(() => new Promise((resolve) => setTimeout(resolve, 80)));
       return value;
     }) as VaultRuntime["locked"]);
-    expect(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, timeoutMs: 10 })).toEqual({ outcome: "pending", messageId: MESSAGE, because: "the deadline passed before the call" });
+    expect(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, timeoutMs: 10 })).toEqual({ outcome: "pending", messageId: MESSAGE, because: "the deadline passed before the call" });
     expect(wire.posts).toEqual([]);
     expect(sent.action.spent).toBe(false);
     await holding;
     vi.restoreAllMocks();
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch }));
+    submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(1);
     expect(sent.action.spent).toBe(true);
     await closeAll(alice, bob);
@@ -519,27 +499,27 @@ describe("dispatch to a direct endpoint", () => {
     const trace = await AgentTrace.open(alice.runtime.local);
     const wire = posting(accepted);
     const target = { channel: { localDid: alice.did, peerDid: bob.longFormDid } };
-    await expect(cancel(alice.runtime, alice.keys, MESSAGE)).rejects.toBeInstanceOf(UnknownEntity);
+    await expect(cancel(alice.session, MESSAGE)).rejects.toBeInstanceOf(UnknownEntity);
 
-    const first = await send(alice.runtime, alice.keys, target, HELLO, { messageId: MESSAGE });
-    expect(await cancel(alice.runtime, alice.keys, MESSAGE, { trace })).toMatchObject({ outcome: "cancelled", messageId: MESSAGE, failed: { data: { messageId: MESSAGE, code: "cancelled" } } });
-    expect(await dispatch(alice.runtime, alice.keys, first.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: cancelled" });
-    expect(await cancel(alice.runtime, alice.keys, MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: cancelled" });
+    const first = await send(alice.session, target, HELLO, { messageId: MESSAGE });
+    expect(await cancel(alice.session, MESSAGE, { trace })).toMatchObject({ outcome: "cancelled", messageId: MESSAGE, failed: { data: { messageId: MESSAGE, code: "cancelled" } } });
+    expect(await dispatch(alice.session, first.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: cancelled" });
+    expect(await cancel(alice.session, MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "terminated: cancelled" });
 
-    const second = await send(alice.runtime, alice.keys, target, HELLO, { messageId: SECOND });
-    await prepare(alice.runtime, alice.keys, SECOND, { didcomm });
+    const second = await send(alice.session, target, HELLO, { messageId: SECOND });
+    await prepare(alice.session, SECOND, { didcomm });
     let f = await fold(alice);
     const envelopeCid = f.outbound.outbounds.get(SECOND)!.preparations[0]!.event.data.envelopeCid;
     expect(f.held.has(envelopeCid)).toBe(true);
-    expect(await cancel(alice.runtime, alice.keys, SECOND)).toMatchObject({ outcome: "cancelled" });
+    expect(await cancel(alice.session, SECOND)).toMatchObject({ outcome: "cancelled" });
     f = await fold(alice);
     expect(f.outbound.outbounds.get(SECOND)).toMatchObject({ outcome: { status: "terminal", code: "cancelled" }, work: { kind: "none" }, released: true });
     expect(f.held.has(envelopeCid)).toBe(false);
     expect(f.held.has(second.intent.data.bodyCid)).toBe(true);
 
-    const third = await send(alice.runtime, alice.keys, target, HELLO, { messageId: THIRD });
-    submitted(await dispatch(alice.runtime, alice.keys, third.action, { didcomm, fetch: wire.fetch }));
-    expect(await cancel(alice.runtime, alice.keys, THIRD)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
+    const third = await send(alice.session, target, HELLO, { messageId: THIRD });
+    submitted(await dispatch(alice.session, third.action, { didcomm, fetch: wire.fetch }));
+    expect(await cancel(alice.session, THIRD)).toEqual({ outcome: "none", messageId: THIRD, because: "submitted" });
     expect(wire.posts).toHaveLength(1);
     expect((await trace.read({ stream: "diag" })).map((entry) => [entry.data.messageId, entry.data.code])).toEqual([[MESSAGE, "cancelled"]]);
     await closeAll(alice, bob);
@@ -553,8 +533,8 @@ describe("dispatch through a mediator", () => {
     await holdAddresses(bob);
     const alice = await directParty(1, ALICE_ENDPOINT, ALICE);
     const trace = await AgentTrace.open(alice.runtime.local);
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const result = submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: mediator.fetch, trace }));
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const result = submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: mediator.fetch, trace }));
 
     expect(mediator.seenTypes).toContain(FORWARD);
     const queued = mediator.queues.get(bob.replica.did) ?? [];
@@ -580,34 +560,34 @@ describe("dispatch through a mediator", () => {
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const wire = posting(accepted);
     const through = (party: MediatedParty) => ({ accounts: (mediationId: string) => (mediationId === party.mediationId ? party.account : null) });
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
 
-    const unlinked = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch });
+    const unlinked = await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch });
     expect(unlinked).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((unlinked as { because: string }).because).toMatch(/no account of .* is bound/);
     alice.offline.reason = "no route to host";
-    const unreachable = await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) });
+    const unreachable = await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) });
     expect((unreachable as { because: string }).because).toMatch(/could not be asked to hold .*no route to host/);
     alice.offline.reason = null;
     expect(mediator.sharedRecipients.has(alice.did)).toBe(false);
     expect(wire.posts).toEqual([]);
     expect(sent.action.spent).toBe(false);
 
-    submitted(await dispatch(alice.runtime, alice.keys, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) }));
+    submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, ...through(alice) }));
     expect(mediator.sharedRecipients.has(alice.did)).toBe(true);
     expect(wire.posts).toHaveLength(1);
     expect(wire.posts[0]!.url).toBe(BOB_ENDPOINT);
     expect(await openedBy(bob, alice, wire.posts[0]!.body)).toMatchObject({ id: MESSAGE, from: alice.longFormDid });
 
     mediator.refuseShared.add(carol.did);
-    const fromCarol = await send(carol.runtime, carol.keys, { channel: { localDid: carol.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
-    const refused = await dispatch(carol.runtime, carol.keys, fromCarol.action, { didcomm, fetch: wire.fetch, ...through(carol) });
+    const fromCarol = await send(carol.session, { channel: { localDid: carol.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
+    const refused = await dispatch(carol.session, fromCarol.action, { didcomm, fetch: wire.fetch, ...through(carol) });
     expect((refused as { because: string }).because).toMatch(/does not hold/);
     expect(wire.posts).toHaveLength(1);
 
     await received(carol as unknown as DirectParty, bob, "wire-1", { type: BASIC_MESSAGE, body: { content: "I know this address" } });
     expect((await fold(carol)).continuity.confirmedBy(carol.did, bob.did)).not.toBeNull();
-    submitted(await dispatch(carol.runtime, carol.keys, fromCarol.action, { didcomm, fetch: wire.fetch }));
+    submitted(await dispatch(carol.session, fromCarol.action, { didcomm, fetch: wire.fetch }));
     expect(wire.posts).toHaveLength(2);
     expect(mediator.sharedRecipients.has(carol.did)).toBe(false);
     await closeAll(alice, carol, bob);

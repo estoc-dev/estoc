@@ -24,17 +24,14 @@
  * network wait happens under the writer lock.
  */
 
-import type { Held, VaultRuntime } from "@estoc/event-store";
 import {
   forwardId,
   objectReader,
   readVaultEvent,
-  scanVault,
   vaultDraft,
   type Channel,
   type Did,
   type EventReference,
-  type Keys,
   type LocalDidEntity,
   type MediationId,
   type MessageId,
@@ -55,9 +52,9 @@ import { refuses } from "./lifetime.js";
 import { bounded, letGo, sealData } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import { holds } from "./replica-recipients.js";
-import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, scanOptions, type PrepareOptions, type Settled } from "./prepare.js";
-import { serially } from "./procedure.js";
+import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, type PrepareOptions, type Settled } from "./prepare.js";
 import { knownLongForms, type KnownLongForms, type ResolverOptions } from "./resolver.js";
+import type { Locked, Session } from "./session.js";
 import { note, noteAll, type AgentTrace } from "./trace.js";
 
 /** How long one attempt may take by default: the mediator resolved, the forward sealed and the call answered. */
@@ -95,18 +92,19 @@ export type Dispatched =
   | { outcome: "spent"; messageId: MessageId };
 
 /** The one transport call of the message under `action`, serially with every other piece of work on that message. */
-export function dispatch(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
-  const local = localRecordsOf(runtime, options.local);
-  return serially(runtime, outboundWorkKey(action.messageId), () => attempt(runtime, keys, action, options, local));
+export function dispatch(session: Session, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
+  const local = localRecordsOf(session.runtime, options.local);
+  return session.turn(outboundWorkKey(action.messageId), () => attempt(session, action, options, local));
 }
 
-async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, options: DispatchOptions, local: LocalRecords): Promise<Dispatched> {
+async function attempt(session: Session, action: LiveAction, options: DispatchOptions, local: LocalRecords): Promise<Dispatched> {
   const { messageId } = action;
+  const { runtime } = session;
   const trace = options.trace ?? null;
   const owed = await recordOwedAcceptance(runtime, local, messageId);
   if (owed !== null) return { outcome: "submitted", messageId, preparationEventCid: owed.data.preparationEventCid, submitted: owed };
   if (action.spent) return { outcome: "spent", messageId };
-  const readied = await runtime.locked((held) => ready(held, keys, messageId, options, local));
+  const readied = await session.locked((locked) => ready(locked, messageId, options, local));
   await noteAll(trace, readied.notes);
   if ("outcome" in readied.result) return readied.result;
   const { preparation, envelope, destination, known, registerWith } = readied.result;
@@ -123,7 +121,7 @@ async function attempt(runtime: VaultRuntime, keys: Keys, action: LiveAction, op
   const carried = await carry(destination, envelope, forwardId(preparationEventCid), known, options, deadline);
   if ("because" in carried) return { outcome: "none", messageId, because: carried.because };
   if ("reason" in carried) return pending("route", carried.reason);
-  const rechecked = await runtime.locked((held) => recheck(held, keys, action, preparationEventCid, options));
+  const rechecked = await session.locked((locked) => recheck(locked, action, preparationEventCid, options));
   await noteAll(trace, rechecked.notes);
   if (rechecked.result !== null) return rechecked.result;
   const answer = await call(options, carried, deadline, action);
@@ -160,12 +158,12 @@ interface Ready {
  * that step made or selected needs for the wire, read off the fold as
  * that left it and the object store.
  */
-async function ready(held: Held, keys: Keys, messageId: MessageId, options: DispatchOptions, local: LocalRecords): Promise<Settled<Dispatched | Ready>> {
-  const { result, notes } = await prepareUnderLock(held, keys, messageId, options, local);
+async function ready(locked: Locked, messageId: MessageId, options: DispatchOptions, local: LocalRecords): Promise<Settled<Dispatched | Ready>> {
+  const { result, notes } = await prepareUnderLock(locked, messageId, options, local);
   const done = (result: Dispatched): Settled<Dispatched | Ready> => ({ result, notes });
   if (result.outcome !== "prepared" && result.outcome !== "reused") return done(result);
   const chosen = result.outcome === "prepared" ? result.prepared.cid : result.preparation.event.cid;
-  const fold = await scanVault(held, keys, scanOptions(options));
+  const fold = await locked.fold();
   const outbound = fold.outbound.outbounds.get(messageId)!;
   const { work } = outbound;
   if (work.kind === "none") return done({ outcome: "none", messageId, because: work.because });
@@ -174,7 +172,7 @@ async function ready(held: Held, keys: Keys, messageId: MessageId, options: Disp
   if (preparation === undefined) return done({ outcome: "pending", messageId, because: "the preparation is no valid candidate yet" });
   const resolved = fold.set.resolve(preparation.event.data.peerResolutionEventCid, "peer.resolved");
   if (resolved.status !== "present") return done({ outcome: "pending", messageId, because: "the resolution the preparation names is not here" });
-  const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
+  const bytes = await objectReader(locked.held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
   if (bytes === null) return done({ outcome: "pending", messageId, because: `the envelope ${preparation.event.data.envelopeCid} is not here` });
   const registerWith = unconfirmedMediatedSender(fold, outbound.sender as LocalDidEntity, outbound.channel as Channel);
   const destination = { did: preparation.event.data.recipientDid, service: resolved.event.data.service };
@@ -215,12 +213,12 @@ async function confirmRegistration({ mediationId, did }: NonNullable<Ready["regi
  * consumed at the call itself, not here, so that a deadline passed
  * while this lock was waited for costs the action nothing.
  */
-async function recheck(held: Held, keys: Keys, action: LiveAction, preparationEventCid: EventReference<"message.prepared">, options: DispatchOptions): Promise<Settled<Dispatched | null>> {
+async function recheck(locked: Locked, action: LiveAction, preparationEventCid: EventReference<"message.prepared">, options: DispatchOptions): Promise<Settled<Dispatched | null>> {
   const { messageId } = action;
-  const outbound = (await scanVault(held, keys, scanOptions(options))).outbound.outbounds.get(messageId)!;
+  const outbound = (await locked.fold()).outbound.outbounds.get(messageId)!;
   const closed = closedBecause(outbound);
   if (closed !== null) return { result: { outcome: "none", messageId, because: closed }, notes: [] };
-  if (hasExpired((outbound.intent as { data: MessageOut }).data, options.now ?? Date.now)) return expireUnderLock(held, messageId, expiryPhase(outbound));
+  if (hasExpired((outbound.intent as { data: MessageOut }).data, options.now ?? Date.now)) return expireUnderLock(locked.held, messageId, expiryPhase(outbound));
   const { work } = outbound;
   if (work.kind === "none") return { result: { outcome: "none", messageId, because: work.because }, notes: [] };
   if (work.kind === "prepare") return { result: { outcome: "pending", messageId, because: "the preparation is no longer here" }, notes: [] };
@@ -278,17 +276,17 @@ export type Cancelled =
  * unknown may have arrived. The content stays; the envelope is
  * released.
  */
-export function cancel(runtime: VaultRuntime, keys: Keys, messageId: MessageId, options: Pick<DispatchOptions, "trace" | "local"> = {}): Promise<Cancelled> {
-  const local = localRecordsOf(runtime, options.local);
-  return serially(runtime, outboundWorkKey(messageId), async () => {
-    const owed = await recordOwedAcceptance(runtime, local, messageId);
+export function cancel(session: Session, messageId: MessageId, options: Pick<DispatchOptions, "trace" | "local"> = {}): Promise<Cancelled> {
+  const local = localRecordsOf(session.runtime, options.local);
+  return session.turn(outboundWorkKey(messageId), async () => {
+    const owed = await recordOwedAcceptance(session.runtime, local, messageId);
     if (owed !== null) return { outcome: "none", messageId, because: "submitted" };
-    const result = await runtime.locked(async (held): Promise<Cancelled> => {
-      const outbound = (await scanVault(held, keys)).outbound.outbounds.get(messageId);
+    const result = await session.locked(async (locked): Promise<Cancelled> => {
+      const outbound = (await locked.fold()).outbound.outbounds.get(messageId);
       if (outbound === undefined) throw new UnknownEntity("message", messageId);
       const closed = closedBecause(outbound);
       if (closed !== null) return { outcome: "none", messageId, because: closed };
-      const [event] = (await held.commit([], [vaultDraft("delivery.failed", { messageId, code: "cancelled" })])).map(readVaultEvent);
+      const [event] = (await locked.held.commit([], [vaultDraft("delivery.failed", { messageId, code: "cancelled" })])).map(readVaultEvent);
       return { outcome: "cancelled", messageId, failed: event as VaultEvent<"delivery.failed"> };
     });
     if (result.outcome === "cancelled") await note(options.trace ?? null, { stream: "diag", what: "delivery", data: { messageId, code: "cancelled", reason: "cancelled by the user" } });
@@ -308,19 +306,19 @@ export type Selected =
  * its envelope here, before the choice is written. Choosing calls
  * nothing; a manual retry carries the choice.
  */
-export function selectPreparation(runtime: VaultRuntime, keys: Keys, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">, options: Pick<DispatchOptions, "effectTypes" | "local"> = {}): Promise<Selected> {
-  const local = localRecordsOf(runtime, options.local);
-  return serially(runtime, outboundWorkKey(messageId), async () => {
+export function selectPreparation(session: Session, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">, options: Pick<DispatchOptions, "local"> = {}): Promise<Selected> {
+  const local = localRecordsOf(session.runtime, options.local);
+  return session.turn(outboundWorkKey(messageId), async () => {
     const none = (because: string): Selected => ({ outcome: "none", messageId, because });
-    if ((await recordOwedAcceptance(runtime, local, messageId)) !== null) return none("submitted");
-    const because = await runtime.locked(async (held): Promise<string | null> => {
-      const outbound = (await scanVault(held, keys, scanOptions(options))).outbound.outbounds.get(messageId);
+    if ((await recordOwedAcceptance(session.runtime, local, messageId)) !== null) return none("submitted");
+    const because = await session.locked(async (locked): Promise<string | null> => {
+      const outbound = (await locked.fold()).outbound.outbounds.get(messageId);
       if (outbound === undefined) throw new UnknownEntity("message", messageId);
       const { work } = outbound;
       if (work.kind === "none") return work.because;
       const preparation = work.kind === "dispatch" ? work.candidates.find((candidate) => candidate.event.cid === preparationEventCid) : undefined;
       if (preparation === undefined) return `the preparation ${preparationEventCid} is no valid preparation of the message`;
-      const bytes = await objectReader(held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
+      const bytes = await objectReader(locked.held.objects, MAX_ENVELOPE_BYTES)(preparation.event.data.envelopeCid);
       return bytes === null ? `the envelope ${preparation.event.data.envelopeCid} is not here` : null;
     });
     if (because !== null) return none(because);

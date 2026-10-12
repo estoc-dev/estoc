@@ -3,25 +3,16 @@ import { describe, expect, it, test } from "vitest";
 import { encodeLongForm, longToShort } from "@estoc/did-peer";
 import { canonicalDid, inputDocumentOf, scanVault, vaultDraft, type Did, type DidId, type MessageId, type MintedDid } from "@estoc/vault";
 
-import {
-  ACCOUNT_REGISTER,
-  Agent,
-  LinkClosed,
-  RECIPIENT_ADD,
-  REPLICA_ADD,
-  STATUS_REQUEST,
-  Unregistered,
-  Unusable,
-  createDid,
-  createMediation,
-  selectMediation,
-} from "../src/index.js";
+import { ACCOUNT_REGISTER, Agent, LinkClosed, RECIPIENT_ADD, REPLICA_ADD, STATUS_REQUEST, Unregistered, Unusable } from "../src/index.js";
+import { createDid } from "../src/dids.js";
+import { createMediation, selectMediation } from "../src/mediation.js";
 import { MediatorLink } from "../src/link.js";
 import { transientOptions } from "../src/local-records.js";
 import { holds } from "../src/replica-recipients.js";
 import { send } from "../src/send.js";
 import { disclose, retireDid } from "../src/dids.js";
 import { dispatch } from "../src/dispatch.js";
+import type { Session } from "../src/session.js";
 import type { FakeMediator } from "./fake-mediator.js";
 import { accountOver, didcomm, directParty, newMediator, party, posting, type Party, mediatedRoute } from "./helpers.js";
 
@@ -39,7 +30,7 @@ async function enrolled(mediator: FakeMediator, fill = 1): Promise<Party & { acc
 }
 
 async function address(p: Party): Promise<MintedDid> {
-  return (await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).minted;
+  return (await createDid(p.session, mediatedRoute(p.mediationId))).minted;
 }
 
 describe("adding recipients", () => {
@@ -83,10 +74,10 @@ describe("adding recipients", () => {
   it("holds a retired address still, and no address of another arrangement or of a direct route", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
-    const retired = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
-    await retireDid(p.runtime, p.keys, retired.created.data.didId, "no longer given out");
-    await createDid(p.runtime, p.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" });
-    const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
+    const retired = await createDid(p.session, mediatedRoute(p.mediationId));
+    await retireDid(p.session, retired.created.data.didId, "no longer given out");
+    await createDid(p.session, { kind: "direct", endpoint: "https://alice.example/didcomm" });
+    const other = await createMediation(p.session, (await newMediator(201, "http://other-mediator/")).did as Did);
     const recipients = await p.account.addRecipients();
     expect(recipients.wanted).toEqual([retired.minted.did]);
     expect([...mediator.sharedRecipients.keys()]).toEqual([retired.minted.did]);
@@ -113,7 +104,7 @@ describe("adding recipients", () => {
   test("an address whose document names no method a proof is signed under stops no other, and is not held", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
-    const sound = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const sound = await createDid(p.session, mediatedRoute(p.mediationId));
     const didId = "019b0000-0000-7000-8000-0000000000d1" as DidId;
     const input = inputDocumentOf(await p.keys.didKeys(didId), mediator.did);
     (input.verificationMethod as { type: string }[])[0]!.type = "Ed25519VerificationKey2018";
@@ -128,8 +119,8 @@ describe("adding recipients", () => {
     expect(recipients.refused).toEqual([{ did: unsigned, because: expect.stringMatching(/authentication method/) }]);
     expect(holds(recipients, unsigned)).toBe(false);
     expect([...mediator.sharedRecipients.keys()]).toEqual([sound.minted.did]);
-    expect((await disclose(p.account, p.runtime, p.keys, sound.created.data.didId, { as: "oob" })).invitation?.from).toBe(sound.minted.longFormDid);
-    await expect(disclose(p.account, p.runtime, p.keys, didId, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
+    expect((await disclose(p.account, p.session, sound.created.data.didId, { as: "oob" })).invitation?.from).toBe(sound.minted.longFormDid);
+    await expect(disclose(p.account, p.session, didId, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
     await p.runtime.close();
   });
 
@@ -144,7 +135,7 @@ describe("adding recipients", () => {
         return p.keys.didKeys(didId);
       },
     });
-    await expect(accountOver({ ...p, keys, link }).addRecipients()).rejects.toBeInstanceOf(LinkClosed);
+    await expect(accountOver({ ...p, session: Object.assign(Object.create(p.session) as Session, { keys }), link }).addRecipients()).rejects.toBeInstanceOf(LinkClosed);
     expect(sent(mediator, RECIPIENT_ADD)).toBe(0);
     expect(mediator.sharedRecipients.size).toBe(0);
     expect((await p.account.addRecipients()).added).toEqual([a.did]);
@@ -175,13 +166,13 @@ describe("a mediated address", () => {
   it("is disclosed only once its account holds it", async () => {
     const mediator = await newMediator();
     const p = await enrolled(mediator);
-    const { minted, created } = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const { minted, created } = await createDid(p.session, mediatedRoute(p.mediationId));
     const didId = created.data.didId;
     mediator.refuseShared.add(minted.did);
-    await expect(disclose(p.account, p.runtime, p.keys, didId, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
+    await expect(disclose(p.account, p.session, didId, { as: "oob" })).rejects.toBeInstanceOf(Unregistered);
     expect((await scanVault(p.runtime.vault, p.keys)).dids.entities.get(didId)?.disclosures).toEqual([]);
     mediator.refuseShared.clear();
-    const disclosed = await disclose(p.account, p.runtime, p.keys, didId, { as: "oob" });
+    const disclosed = await disclose(p.account, p.session, didId, { as: "oob" });
     expect(disclosed.invitation?.from).toBe(minted.longFormDid);
     expect(mediator.sharedRecipients.get(minted.did)).toBe(p.accountDid);
     await p.runtime.close();
@@ -191,13 +182,13 @@ describe("a mediated address", () => {
     const mediator = await newMediator();
     const p = await party(mediator, 1);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false };
-    const agent = await Agent.open(p, options);
+    const agent = await Agent.open(p.session, options);
     await agent.enroll(p.mediationId);
-    await selectMediation(p.runtime, p.keys, p.mediationId);
+    await selectMediation(p.session, p.mediationId);
     const a = await address(p);
     const [connection] = await agent.connect();
     expect(connection?.recipients).toMatchObject({ wanted: [a.did], added: [a.did], refused: [] });
-    const b = await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId));
+    const b = await createDid(p.session, mediatedRoute(p.mediationId));
     await agent.disclose(b.created.data.didId, { as: "direct" });
     expect(mediator.sharedRecipients.has(b.minted.did)).toBe(true);
     agent.close();
@@ -212,15 +203,15 @@ describe("a mediated address", () => {
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const wire = posting(() => new Response(null, { status: 202 }));
     const accounts = (mediationId: string) => (mediationId === alice.mediationId ? alice.account : null);
-    const message = await send(alice.runtime, alice.keys, { channel: { localDid: from.did, peerDid: bob.longFormDid } }, { type: "https://didcomm.org/basicmessage/2.0/message", body: { content: "hello" } }, { messageId: MESSAGE });
+    const message = await send(alice.session, { channel: { localDid: from.did, peerDid: bob.longFormDid } }, { type: "https://didcomm.org/basicmessage/2.0/message", body: { content: "hello" } }, { messageId: MESSAGE });
 
     mediator.refuseShared.add(from.did);
-    const refused = await dispatch(alice.runtime, alice.keys, message.action, { didcomm, fetch: wire.fetch, accounts });
+    const refused = await dispatch(alice.session, message.action, { didcomm, fetch: wire.fetch, accounts });
     expect(refused).toMatchObject({ outcome: "pending" });
     expect((refused as { because: string }).because).toMatch(/does not hold/);
     expect(wire.posts).toEqual([]);
     mediator.refuseShared.clear();
-    expect(await dispatch(alice.runtime, alice.keys, message.action, { didcomm, fetch: wire.fetch, accounts })).toMatchObject({ outcome: "submitted" });
+    expect(await dispatch(alice.session, message.action, { didcomm, fetch: wire.fetch, accounts })).toMatchObject({ outcome: "submitted" });
     expect(mediator.sharedRecipients.get(from.did)).toBe(alice.accountDid);
     expect(wire.posts).toHaveLength(1);
     await alice.runtime.close();

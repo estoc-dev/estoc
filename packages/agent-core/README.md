@@ -36,10 +36,10 @@ one of the vault's DIDs or writing the vault, reaches a host only through
 an object and the entry points that hand it out. The parts those objects
 are assembled from stay inside the package. The index exports:
 
-- The objects and how a host gets them: `Agent` (and the `Arrangement` it
-  hands out, and the `Membership` an arrangement hands out), `AgentTrace`,
-  `LocalRecords`, `createVault`, `openVault`, `inspectRuntime`,
-  `inspectSnapshot`.
+- The objects and how a host gets them: `VaultSession` from `createVault`,
+  `openVault` and `openRestoredVault`; `Agent` over it (and the
+  `Arrangement` it hands out, and the `Membership` an arrangement hands
+  out); `AgentTrace`, `LocalRecords`, `inspectRuntime`, `inspectSnapshot`.
 - The errors, so that a host can catch what those objects throw.
 - The wire vocabulary of `protocol/`, whole: the type URIs, reading and
   writing bodies, `unpack`, `parseInvitation`, `secretsResolverFor`. These
@@ -53,10 +53,6 @@ are assembled from stay inside the package. The index exports:
   and carries no vault identity; it goes over the host's `fetch`, bounded
   by its own `timeoutMs` and `maxBytes`. No agent's lifetime holds it, so
   closing an agent does not stop a read in progress.
-- The vault procedures the daemon still calls with the runtime and the
-  keys: `decide`, `serially`, `createDid`, `createMediation`,
-  `selectMediation`.
-
 The types are the ones these exports' signatures name. `test/index.test.ts`
 pins the exported values exactly and checks that every public type is
 still exported.
@@ -74,11 +70,12 @@ peer.
 
 | Question | Module | Entry points |
 | --- | --- | --- |
-| How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
+| How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `openRestoredVault`, `inspectRuntime`, `inspectSnapshot` |
+| What is the vault as this runtime runs it, and what does a host do with it? | `session.ts` | `VaultSession`, `LockedVault`; `Session`, `Locked` for the package |
 | What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
 | What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
-| How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |
+| How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially`, reached by a host as `VaultSession.decide` and `turn` |
 | How is an arrangement with a mediator recorded? | `mediation.ts` | `createMediation`, `selectMediation`, `mediationOf`, `accountOf` |
 | What speaks as an arrangement's account, and with what? | `arrangement.ts` | `Arrangement`, `Account` |
 | What speaks as this runtime's replica at its arrangement, and with what? | `membership.ts` | `Membership`, `Member`, `bindingOf`, `enrolledReplica` |
@@ -134,10 +131,16 @@ import { openNodeSqlite } from "@estoc/event-store/node";
 
 The host opens the SQLite driver — `openNodeSqlite` on Node,
 `openSqlitePool` from `@estoc/event-store/browser` in a Worker — and
-hands it to `createVault` or `openVault`, which return the runtime and
-the seed's `Keys`. `Agent.open(vault, options)` runs the agent with
-networking off; `Agent.start` also connects every mediation the vault
-must keep receiving on. `@estoc/daemon` is the host most programs want:
+hands it to `createVault` or `openVault`, which return a `VaultSession`:
+the runtime bound with the seed's keys and the options every fold is read
+under. The keys stay inside; the host reads the fold, decides under the
+lock and mints DIDs and arrangements through the session, and hands the
+event store the session's `heldRoots()` and `retainedRoots()` for an
+export or a merge. A runtime the event store restored from a snapshot is
+bound by `openRestoredVault`. `Agent.open(vault, options)` runs the
+agent with networking off and takes only a session this package made,
+whose effect types cover those the handlers declare; `Agent.start` also
+connects every mediation the vault must keep receiving on. `@estoc/daemon` is the host most programs want:
 it does this wiring and serves records and procedures over RPC.
 
 ## Didcomm API

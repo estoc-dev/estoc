@@ -101,7 +101,7 @@ describe("the local records", () => {
       expect(await read(new LocalRecords(reopened.runtime.local.options, reopened.runtime.author))).toEqual([LEFT, PREPARED, ACCEPTED]);
 
       const snapshot = path.join(dir, "snapshot.sqlite");
-      await exportVault(reopened.runtime, (mode) => openNodeSqlite(snapshot, { mode }), { heldRoots: vaultHeldRoots(reopened.keys) });
+      await exportVault(reopened.runtime, (mode) => openNodeSqlite(snapshot, { mode }), { heldRoots: reopened.heldRoots() });
       const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
       const restoredFile = path.join(dir, "restored.sqlite");
       const restored = new SqliteVault((await restoreVault(source, (mode) => openNodeSqlite(restoredFile, { mode }), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(alice.seedKey) })).runtime);

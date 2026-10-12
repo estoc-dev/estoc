@@ -28,23 +28,8 @@ import { recipientEndOf, seal, type Ends } from "../src/ends.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { plainMessage } from "../src/protocol/didcomm.js";
 import { resolve } from "../src/resolver.js";
-import {
-  Agent,
-  AgentTrace,
-  NotAReplica,
-  ReceiverClosed,
-  SNAPSHOT_LINK,
-  UnknownEntity,
-  Unusable,
-  blobName,
-  createMediation,
-  readSnapshotLink,
-  selectMediation,
-  snapshotLinkBody,
-  type BlobLink,
-  type Inbound,
-  type SnapshotLinkReceived,
-} from "../src/index.js";
+import { Agent, AgentTrace, NotAReplica, ReceiverClosed, SNAPSHOT_LINK, UnknownEntity, Unusable, blobName, readSnapshotLink, snapshotLinkBody, type BlobLink, type Inbound, type SnapshotLinkReceived } from "../src/index.js";
+import { createMediation, selectMediation } from "../src/mediation.js";
 import { Keyring } from "../src/keyring.js";
 import { Receiver, deliveryKey, type Delivery } from "../src/receive/receiver.js";
 import { replicaReceiptOf } from "../src/replica-channel.js";
@@ -78,7 +63,7 @@ afterEach(async () => {
 });
 
 async function opened(fresh: Fresh, transport: Transport, links: SnapshotLinkReceived[] = [], inbounds: Inbound[] = [], trace?: AgentTrace): Promise<Agent> {
-  const agent = await Agent.open(fresh, {
+  const agent = await Agent.open(fresh.session, {
     didcomm,
     fetch: transport.fetch,
     WebSocket: transport.WebSocket,
@@ -109,7 +94,7 @@ async function running(fresh: Fresh, mediationId: MediationId, transport: Transp
 async function first(mediator: FakeMediator, transport: Transport = mediator): Promise<Running> {
   const p = await party(mediator, 1);
   const r = await running(p, p.mediationId, transport);
-  await selectMediation(p.runtime, p.keys, p.mediationId);
+  await selectMediation(p.session, p.mediationId);
   return r;
 }
 
@@ -329,7 +314,7 @@ describe("the replica channel", () => {
     const both = network(m1, m2);
     const a = await first(m1, both);
     const copy = await copyOf(1, a);
-    const m2Id = (await createMediation(copy.runtime, copy.keys, m2.did as Did)).data.mediationId;
+    const m2Id = (await createMediation(copy.session, m2.did as Did)).data.mediationId;
     const c = await running(copy, m2Id, both);
     await a.runtime.ingest([...(await scanVault(c.runtime.vault, c.keys)).set.all()]);
     const fold = await scanVault(a.runtime.vault, a.keys);
@@ -377,7 +362,7 @@ describe("the replica channel", () => {
     const ring = await Keyring.load(a.keys, await scanVault(a.runtime.vault, a.keys));
     const replicaReceipt = replicaReceiptOf(a.keys, { mediatorEndpoint: () => MEDIATOR, onSnapshotLink: (received) => void a.links.push(received) });
     const receipt = () => Promise.reject(new Error("only mail to the replica is sent here"));
-    const receiver: Receiver = new Receiver(a.runtime, a.keys, ring, {
+    const receiver: Receiver = new Receiver(a.session, ring, {
       didcomm,
       receipt,
       replicaReceipt,
@@ -393,7 +378,7 @@ describe("the replica channel", () => {
 
     await expect(receiver.receive(delivery)).rejects.toThrow(ReceiverClosed);
     expect(a.links).toEqual([]);
-    const next = new Receiver(a.runtime, a.keys, ring, { didcomm, receipt, replicaReceipt });
+    const next = new Receiver(a.session, ring, { didcomm, receipt, replicaReceipt });
     expect(await next.receive(delivery)).toEqual({ outcome: "handed", key: deliveryKey(delivery) });
     expect(a.links).toEqual([{ mediationId: a.mediationId, replicaId: sibling.replicaId, link }]);
     next.close();

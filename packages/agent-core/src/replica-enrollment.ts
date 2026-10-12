@@ -19,8 +19,7 @@
  * that account once more needs a new replica ID.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { scanVault, signReplicaGrant, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type Replica, type ReplicaId, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { signReplicaGrant, vaultDraft, type Did, type Keys, type Mediation, type MediationId, type Replica, type ReplicaId, type VaultEvent, type VaultFold } from "@estoc/vault";
 
 import type { Account } from "./arrangement.js";
 import { ACCOUNT_REGISTER, ACCOUNT_REGISTERED, REPLICA_ADD, REPLICA_ADDED } from "./protocol/replica-mediation.js";
@@ -28,6 +27,7 @@ import { EntityConflict, MediatorRefused, Unusable } from "./errors.js";
 import { control, echoes } from "./link.js";
 import { accountOf } from "./mediation.js";
 import { decide } from "./procedure.js";
+import type { Session } from "./session.js";
 
 /** That a replica was added is kept under its replica ID, so the one a runtime takes at an identity reset finds none. */
 const replicaAddedKey = (mediationId: MediationId, replicaId: ReplicaId): string => `replica-mediation/replica-added/${mediationId}/${replicaId}`;
@@ -53,10 +53,10 @@ async function grantWanted(fold: VaultFold, keys: Keys, mediationId: MediationId
  * mediator is asked to add the replica. The grant already recorded for
  * this arrangement is returned as it is.
  */
-export async function createReplica(runtime: VaultRuntime, keys: Keys, mediationId: MediationId): Promise<VaultEvent<"replica.created">> {
-  const replicaId: ReplicaId = runtime.author;
-  const { fold, events } = await decide(runtime, keys, async (fold) => {
-    const grant = await grantWanted(fold, keys, mediationId, replicaId);
+export async function createReplica(session: Session, mediationId: MediationId): Promise<VaultEvent<"replica.created">> {
+  const replicaId: ReplicaId = session.runtime.author;
+  const { fold, events } = await decide(session, async (fold) => {
+    const grant = await grantWanted(fold, session.keys, mediationId, replicaId);
     return grant === null ? [] : [vaultDraft("replica.created", { replicaId, mediationId, grant })];
   });
   return (events[0] as VaultEvent<"replica.created"> | undefined) ?? (fold.set.of("replica.created").find((event) => event.data.replicaId === replicaId) as VaultEvent<"replica.created">);
@@ -87,11 +87,11 @@ export interface Enrolled {
  * request settled is recorded first.
  */
 export async function enroll(account: Account): Promise<Enrolled> {
-  const { runtime, keys, mediationId } = account;
+  const { session, mediationId } = account;
   const steps: EnrollStep[] = [];
-  const replicaId: ReplicaId = runtime.author;
-  let fold = await scanVault(runtime.vault, keys);
-  await grantWanted(fold, keys, mediationId, replicaId);
+  const replicaId: ReplicaId = session.runtime.author;
+  let fold = await session.fold();
+  await grantWanted(fold, session.keys, mediationId, replicaId);
 
   let mediation = accountOf(fold, mediationId);
   if (mediation.routingDid === null) {
@@ -100,14 +100,14 @@ export async function enroll(account: Account): Promise<Enrolled> {
       throw new MediatorRefused("account-registered names another account or routing DID than the one asked for");
     }
     const routingDid = mediation.mediatorDid;
-    const decided = await decide(runtime, keys, (fold) => (accountOf(fold, mediationId).routingDid === null ? [vaultDraft("mediation.granted", { mediationId, routingDid })] : []));
+    const decided = await decide(session, (fold) => (accountOf(fold, mediationId).routingDid === null ? [vaultDraft("mediation.granted", { mediationId, routingDid })] : []));
     if (decided.events.length > 0) steps.push("account-registered");
-    fold = await scanVault(runtime.vault, keys);
+    fold = await session.fold();
   }
 
   if (!fold.replicas.replicas.has(replicaId)) steps.push("replica-created");
-  await createReplica(runtime, keys, mediationId);
-  fold = await scanVault(runtime.vault, keys);
+  await createReplica(session, mediationId);
+  fold = await session.fold();
   mediation = accountOf(fold, mediationId);
 
   const replica = fold.replicas.replicas.get(replicaId);

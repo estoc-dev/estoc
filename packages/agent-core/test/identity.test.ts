@@ -9,7 +9,7 @@ import { createSeedKeystore } from "@estoc/keystore";
 import { Keys, vaultDraft, vaultHeldRoots } from "@estoc/vault";
 
 import { createVault, inspectRuntime, inspectSnapshot, openVault } from "../src/index.js";
-import { PASSPHRASE, freshVault, memoryDriver, seedOf, ticking } from "./helpers.js";
+import { PASSPHRASE, freshVault, memoryDriver, opened, seedOf, ticking } from "./helpers.js";
 
 let dir: string;
 let n = 0;
@@ -31,19 +31,20 @@ describe("the vault opened with the seed", () => {
     const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
     const made = await createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", now: ticking() });
     expect(made.runtime.metadata.anchor).toBe(await Keys.anchorOf(seedKey));
-    expect(made.fold.label).toBe("Alice");
-    expect(made.fold.authors.map((author) => author.author)).toEqual([made.runtime.author]);
+    const fold = await made.fold();
+    expect(fold.label).toBe("Alice");
+    expect(fold.authors.map((author) => author.author)).toEqual([made.runtime.author]);
     await made.runtime.close();
 
     const bySeed = await openVault(open(file, "readwrite"), seedKey);
     expect(bySeed.runtime.metadata.anchor).toBe(made.runtime.metadata.anchor);
     expect(bySeed.runtime.author).toBe(made.runtime.author);
-    expect(bySeed.fold.label).toBe("Alice");
-    expect(bySeed.keys.locked).toBe(false);
+    expect((await bySeed.fold()).label).toBe("Alice");
+    expect(opened(bySeed).keys.locked).toBe(false);
     await bySeed.runtime.close();
 
     const byPassphrase = await openVault(open(file, "readwrite"), { passphrase: PASSPHRASE });
-    expect(byPassphrase.fold.label).toBe("Alice");
+    expect((await byPassphrase.fold()).label).toBe("Alice");
     await byPassphrase.runtime.close();
   });
 
@@ -56,7 +57,7 @@ describe("the vault opened with the seed", () => {
     await expect(openVault(open(file, "readwrite"), { passphrase: "wrong" })).rejects.toThrow();
     // the file is not held by the refused opens: it opens again
     const again = await openVault(open(file, "readwrite"), made.seedKey);
-    expect(again.fold.label).toBe("Alice");
+    expect((await again.fold()).label).toBe("Alice");
     await again.runtime.close();
   });
 });
@@ -78,9 +79,9 @@ describe("the runtime inspected without the seed", () => {
     await expect(Keys.unlock(inspected.wrapped, "wrong", inspected.runtime.metadata.anchor)).rejects.toThrow();
     await inspected.runtime.close();
 
-    const opened = await openVault(open(file, "readwrite"), made.seedKey);
-    expect(opened.fold.label).toBe("Alice");
-    await opened.runtime.close();
+    const reopened = await openVault(open(file, "readwrite"), made.seedKey);
+    expect((await reopened.fold()).label).toBe("Alice");
+    await reopened.runtime.close();
   });
 });
 
@@ -118,7 +119,7 @@ describe("a snapshot inspected", () => {
 describe("in memory", () => {
   it("makes and folds a vault on a private in-memory database", async () => {
     const made = await freshVault(3, "Carol", memoryDriver());
-    expect(made.fold.label).toBe("Carol");
+    expect((await made.session.fold()).label).toBe("Carol");
     await made.runtime.close();
   });
 });
