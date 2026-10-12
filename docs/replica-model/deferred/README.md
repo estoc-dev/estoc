@@ -104,5 +104,5 @@ The current rules are:
   responder registration promises neither automatic takeover nor exactly-once
   business execution.
 
-Replica administration, membership across mediators and history synchronization
-remain deferred as described above.
+Replica administration, membership across mediators and continuous history
+synchronization remain deferred as described above.

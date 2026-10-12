@@ -36,7 +36,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-/** Which replica a runtime is shows in no snapshot of its vault; the mediator's store sees the replicas each account enrolls. */
+/** The replicas each account enrolled, as the mediator's own store added them, apart from what any daemon lists. */
 class Enrolling extends SqliteStore {
   readonly enrolled = new Map<string, Set<string>>();
 
