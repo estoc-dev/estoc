@@ -7,14 +7,6 @@ import { qrSvgOf } from "./qr.js";
 import Sheet from "./Sheet.vue";
 import { dateOf, timeOf } from "./util.js";
 
-/**
- * Links to sealed copies of this vault, each under a key the link itself
- * carries. The one a new device joins with holds the vault's name, its
- * mediators and its devices; the new device registers and receives from
- * then on. The history goes over as a copy of the whole vault, whose
- * holder reads the messages. Either way the seed inside stays sealed
- * under the passphrase.
- */
 const emit = defineEmits<{ close: [] }>();
 
 const reasonOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));

@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 
 import type { OpenedSnapshotLink } from "../../src/core/store.js";
-import type { MergeResult, Phase, ReplicaId, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "../../src/core/types.js";
+import type { MergeResult, Phase, ReplicaId, ReplicaRecord, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "../../src/core/types.js";
 
 /**
  * Stands in for the app's store where a vault is restored from a link,
@@ -10,7 +10,9 @@ import type { MergeResult, Phase, ReplicaId, Snapshot, SnapshotLink, SnapshotLin
  * the links it is given and writes down what it is asked. A publish here
  * leaves its pending link behind and fails, as an upload cut short does;
  * an import answers `merged`, or fails with `unmerged` while that is set,
- * once `held` lets it; history sent goes to the devices `told` names.
+ * once `held` lets it; history sent goes to the devices `told` names, and
+ * the mediator, asked which devices there are, answers `relisted` or
+ * fails with `unasked`.
  */
 export const daemon = {
   calls: [] as { name: string; args: unknown[] }[],
@@ -24,6 +26,10 @@ export const daemon = {
   held: null as Promise<void> | null,
   /** the devices history sent goes to: those asked for, or none */
   told: null as ReplicaId[] | null,
+  /** the devices the mediator lists when asked next, while set; the listing shown stays as it is while not */
+  relisted: null as ReplicaRecord[] | null,
+  /** why the mediator cannot be asked, while it cannot */
+  unasked: null as string | null,
 };
 
 /** What the devices section reads of the vault. */
@@ -70,6 +76,9 @@ export async function importFromLink(input: string): Promise<MergeResult> {
 
 export async function refreshReplicas(): Promise<void> {
   daemon.calls.push({ name: "refreshReplicas", args: [] });
+  if (daemon.unasked !== null) throw new Error(daemon.unasked);
+  const selected = state.snapshot?.mediations.find((mediation) => mediation.selected);
+  if (daemon.relisted !== null && selected !== undefined) selected.replicas = { listedAt: new Date().toISOString() as never, replicas: daemon.relisted };
 }
 
 export async function sendHistory(replicaId?: ReplicaId): Promise<ReplicaId[]> {

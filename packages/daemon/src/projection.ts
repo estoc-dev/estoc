@@ -48,7 +48,6 @@ export interface ReadVault {
 
 const apiId = <Id extends string>(id: string): Id => id as Id;
 
-/** The arrangements, each with the last listing of its replicas among `listings`. */
 export function mediationRecords(mediations: VaultFold["mediations"], listings: ReadonlyMap<MediationId, ReplicaListing> = new Map()): MediationRecord[] {
   return [...mediations.mediations.values()].map((mediation) => ({
     mediationId: apiId(mediation.mediationId),

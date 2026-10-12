@@ -24,9 +24,9 @@ export interface ReplicaRecord {
   self: boolean;
   /** `removed` once the mediator holds it no more: it takes no mail then, and no history is sent to it */
   state: "active" | "removed";
-  /** by the mediator's clock; null where the time it gave names no instant */
+  /** by the mediator's clock; null where the time it gave is none a `DisplayTime` spells */
   addedAt: DisplayTime | null;
-  /** null while the mediator holds it, or where the time it gave names no instant */
+  /** null while the mediator holds it, or where the time it gave is none a `DisplayTime` spells */
   removedAt: DisplayTime | null;
   /** null while this daemon has sent it none */
   sent: HistorySent | null;
@@ -38,5 +38,5 @@ export interface ReplicaListing {
   replicas: ReplicaRecord[];
 }
 
-/** The last history another replica sent this daemon's: from which, when it came, and how its import went or is going. */
+/** The last history another replica sent this daemon's: from which, when it came, and how its import went or is going; one the daemon stopped in the middle of is shown as failed. */
 export type HistoryReceived = { from: ReplicaId; at: DisplayTime } & ({ status: "importing" } | { status: "imported"; merged: MergeResult } | { status: "failed"; because: string });

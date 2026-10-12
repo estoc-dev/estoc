@@ -65,7 +65,7 @@ import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
-import { ReplicaRecords, type Imported } from "./replicas.js";
+import { Receipts, ReplicaRecords, type Ended, type Receipt } from "./replicas.js";
 import { SnapshotLinks, type PublishedSnapshot, type Put, type SnapshotLink } from "./snapshot-links.js";
 
 /** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
@@ -256,6 +256,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   let current: Phase = "booting";
   /** the vault file's name for as long as it stands, whatever phase it stands in */
   let held: Hold | null = null;
+  const receipts = new Receipts();
 
   let closed: Promise<void> | null = null;
   const closing = () => closed !== null;
@@ -473,14 +474,17 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     );
   }
 
-  /** The agent's lines connected, in the background: a mediator out of reach keeps no screen waiting. Once the preferred arrangement is connected, its mediator is asked which replicas it holds. */
+  /** The agent's lines connected; once the preferred arrangement is, its mediator is asked in the background which replicas it holds. */
+  async function connected(running: Open, agent: Agent): Promise<void> {
+    const connections = await agent.connect();
+    const { preferred } = (await running.session.fold()).mediations;
+    if (connections.some(({ mediationId, unreachable }) => mediationId === preferred && unreachable === null)) listInBackground(running);
+  }
+
+  /** `connected`, in the background: a mediator out of reach keeps no screen waiting. */
   function connect(running: Open): void {
     const { attached } = running;
-    during(attached, async (agent) => {
-      const connections = await agent.connect();
-      const { preferred } = (await running.session.fold()).mediations;
-      if (connections.some(({ mediationId, unreachable }) => mediationId === preferred && unreachable === null)) listInBackground(running);
-    }).catch((err) => {
+    during(attached, (agent) => connected(running, agent)).catch((err) => {
       if (!attached.ended) log(`the agent did not come up: ${failure(err)}`);
     });
   }
@@ -516,6 +520,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     try {
       if (closing()) throw new Error(CLOSED);
       if (held === null) throw new Error("no vault file is held");
+      await receipts.keep(held, session.runtime.local.options).catch((err: unknown) => log(`what came of the history received was not kept: ${failure(err)}`));
       const trace = await AgentTrace.open(session.runtime.local);
       running = { session, seedKey, trace, attached: attach(session, trace), publishing: publisher.open(held, sourceOf({ session })) };
     } catch (err) {
@@ -899,39 +904,40 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     return replicas;
   }
 
-  /** A snapshot link another replica sent over the agent `session` runs under, imported once the delivery that brought it is over: the import replaces that agent. */
+  /** What the receipts leave unwritten, written into the vault open now. */
+  const keepReceipts = (): Promise<void> =>
+    exclusively(async () => {
+      if (open === null || held === null) return;
+      await receipts.keep(held, open.session.runtime.local.options);
+      changed();
+    }).catch((err: unknown) => {
+      if (!closing()) log(`what came of the history received was not kept: ${failure(err)}`);
+    });
+
+  /** A snapshot link another replica sent over the agent `session` runs under, imported in the background: the delivery that brought it waits for none of the import. */
   function historyFrom(session: VaultSession, received: SnapshotLinkReceived): void {
     const running = open;
-    if (running === null || running.session !== session) return;
-    void importHistory(running, received);
+    if (running === null || running.session !== session || held === null) return;
+    void importHistory(running, received, receipts.begin(held, received.replicaId));
   }
 
   /**
    * History another replica sent, merged into the vault it was sent to
    * as a link pasted here would be, read at most as far as a blob at the
-   * mediator holds. How the import goes is kept with the vault file
-   * while this daemon holds it, though a merge may have reopened it.
+   * mediator holds. The read takes no turn of the files; the merge waits
+   * for the work under way over the agent it replaces.
    */
-  async function importHistory(running: Open, { mediationId, replicaId: from, link }: SnapshotLinkReceived): Promise<void> {
-    const hold = held;
-    const at = Date.now();
-    const keep = async (imported: Imported) => {
-      const now = open;
-      if (now === null || held !== hold) return;
-      try {
-        await new ReplicaRecords(now.session.runtime.local.options).keepReceived({ from, at, ...imported });
-        changed();
-      } catch (err) {
-        log(`what came of the history from replica ${from} was not kept: ${failure(err)}`);
-      }
-    };
-    await keep({ status: "importing" });
+  async function importHistory(running: Open, { mediationId, replicaId: from, link }: SnapshotLinkReceived, receipt: Receipt): Promise<void> {
+    void keepReceipts();
+    let ended: Ended;
     try {
       const maxBytes = await during(running.attached, async (agent) => blobBound(await (await agent.arrangement(mediationId)).membership()));
-      await keep({ status: "imported", merged: await mergeSnapshot(running, await snapshotAt(link, maxBytes)) });
+      ended = { status: "imported", merged: await mergeSnapshot(running, await snapshotAt(link, maxBytes)) };
     } catch (err) {
-      await keep({ status: "failed", because: failure(err) });
+      ended = { status: "failed", because: failure(err) };
     }
+    if (!receipt.end(ended)) log(`the history replica ${from} sent before the one shown ${ended.status === "imported" ? `was imported too, adding ${ended.merged.added} events` : `was not imported: ${ended.because}`}`);
+    await keepReceipts();
   }
 
   host.onOnline?.(() => {
@@ -1293,9 +1299,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     refresh: () => publisher.refresh(),
 
     async reconnect() {
-      await during(vault().attached, async (agent) => {
-        await agent.connect();
-      });
+      const running = vault();
+      await during(running.attached, (agent) => connected(running, agent));
     },
 
     traceLevel: async () => vault().trace.level,

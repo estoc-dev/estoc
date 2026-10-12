@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import { heldNow, openIndex, refreshReplicas, sendHistory } from "../core/store.js";
 import type { ReplicaId, ReplicaRecord } from "../core/types.js";
+import AddDevice from "./AddDevice.vue";
+import Icon from "./Icon.vue";
 import { dateOf, mergedNote, whenOf } from "./util.js";
 
 const snapshot = computed(() => openIndex()?.snapshot ?? null);
@@ -16,7 +18,6 @@ const empty = computed(() => snapshot.value !== null && snapshot.value.conversat
 
 const nameOf = (replicaId: ReplicaId): string => `Device ${replicaId.slice(-4).toUpperCase()}`;
 
-/** One that joined after this device and was sent nothing from here. */
 const joinedSince = (replica: ReplicaRecord): boolean => replica.state === "active" && replica.sent === null && replica.addedAt !== null && own.value?.addedAt != null && replica.addedAt > own.value.addedAt;
 
 function aboutOf(replica: ReplicaRecord): string {
@@ -68,23 +69,45 @@ async function send(to?: ReplicaId) {
   }
 }
 
-const listingAgain = ref(false);
+const asking = ref(false);
+/** why the mediator could not be asked the last time: the listing shown is the one before */
+const unasked = ref<string | null>(null);
 
-async function listAgain() {
-  listingAgain.value = true;
-  note.value = null;
-  failed.value = false;
+// Asked whenever the devices come into view, and when the sheet a device is added from closes: a device that joined meanwhile shows up with nothing to press.
+async function ask() {
+  if (asking.value) return;
+  asking.value = true;
   const held = heldNow();
   try {
     await refreshReplicas();
+    if (held()) unasked.value = null;
   } catch (err) {
-    if (held()) {
-      note.value = `The mediator could not be asked: ${reasonOf(err)}`;
-      failed.value = true;
-    }
+    if (held()) unasked.value = reasonOf(err);
   } finally {
-    listingAgain.value = false;
+    asking.value = false;
   }
+}
+
+const askWhenShown = () => {
+  if (document.visibilityState === "visible") void ask();
+};
+
+onMounted(() => {
+  void ask();
+  document.addEventListener("visibilitychange", askWhenShown);
+});
+onUnmounted(() => document.removeEventListener("visibilitychange", askWhenShown));
+
+const listedNote = computed(() => {
+  const listed = listing.value === null ? (asking.value ? "Asking the mediator…" : "Not asked of the mediator yet.") : `As the mediator listed them ${whenOf(listing.value.listedAt)}.`;
+  return unasked.value === null ? listed : `${listed} It could not be asked just now: ${unasked.value}`;
+});
+
+const addingDevice = ref(false);
+
+function added() {
+  addingDevice.value = false;
+  void ask();
 }
 </script>
 
@@ -117,14 +140,22 @@ async function listAgain() {
       </button>
       <div class="row">
         <span class="row-main">
-          <span class="row-sub" data-devices-listed>{{ listing === null ? "Not asked of the mediator yet." : `As the mediator listed them ${whenOf(listing.listedAt)}.` }}</span>
+          <span class="row-sub" data-devices-listed>{{ listedNote }}</span>
         </span>
         <span class="row-end">
-          <button class="link alone" type="button" :disabled="listingAgain" data-list-devices @click="listAgain">{{ listingAgain ? "asking…" : "ask again" }}</button>
+          <button class="link alone" type="button" :disabled="asking" data-list-devices @click="ask">{{ asking ? "asking…" : "ask again" }}</button>
         </span>
       </div>
+      <button class="row" type="button" data-add-device @click="addingDevice = true">
+        <span class="row-main">
+          <span>Add a device</span>
+          <span class="row-sub">links that set it up and bring your history over</span>
+        </span>
+        <Icon name="chevron" class="chevron" :size="20" />
+      </button>
     </div>
     <p v-if="note" class="note" :class="{ 'error-text': failed }" data-devices-note>{{ note }}</p>
     <p v-if="receivedNote" class="note" :class="{ 'error-text': received?.status === 'failed' }" data-history-received>{{ receivedNote }}</p>
+    <AddDevice v-if="addingDevice" @close="added" />
   </div>
 </template>

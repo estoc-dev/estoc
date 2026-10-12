@@ -22,13 +22,14 @@ const SCREENS = { onboarding: Onboarding, "add-device": AddDevice, "import-link"
 
 export type Screen = keyof typeof SCREENS;
 
-/** what the page was opened with, the vault's phase and what it shows, and whether the daemon can list its links and import, when the screen is mounted */
+/** what the page was opened with, the vault's phase and what it shows, and whether the daemon can list its links, import and ask the mediator, when the screen is mounted */
 export interface Given {
   opened?: OpenedSnapshotLink;
   phase?: Phase;
   vault?: ShownVault;
   unlistable?: string;
   unmerged?: string;
+  unasked?: string;
 }
 
 const fixture = {
@@ -45,6 +46,8 @@ const fixture = {
     daemon.unmerged = given.unmerged ?? null;
     daemon.held = null;
     daemon.told = null;
+    daemon.relisted = null;
+    daemon.unasked = given.unasked ?? null;
     state.pendingSnapshotLink = given.opened ?? null;
     state.snapshot = given.vault ?? null;
     state.vault.phase = given.phase ?? "onboarding";

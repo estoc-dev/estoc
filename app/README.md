@@ -73,15 +73,17 @@ your data never touches the place the app was served from.
   *Import a backup* into a live vault *merges*: events the vault lacks are
   added, nothing already here is touched, so backups from two devices fold
   together. A message a backup holds unsent is not sent on its own.
-- **A new device from a link.** *Add a device*, on the You screen, makes
-  a link the new device joins with: the vault's name, its mediators and
+- **A new device from a link.** *Add a device*, under *Your devices* on
+  the You screen, makes a link the new device joins with: the vault's name, its mediators and
   its devices, sealed under a key of its own and put at the mediator, shown
   as a QR code and as text. A fresh install opened at the link, or given
   it pasted or scanned under *Restore*, restores it under the vault's
   passphrase and registers at the mediator as one more device: it receives
-  from then on, with no conversations yet. *Your devices*, on the You
-  screen, lists the vault's devices as the mediator holds them, one it
-  removed greyed out; one that joined since and was sent nothing yet is
+  from then on, with no conversations yet. *Your devices* lists the
+  vault's devices as the mediator holds them, asked again each time the
+  list comes into view and when the sheet closes, one it removed greyed
+  out, and the last list while the mediator is out of reach; one that
+  joined since and was sent nothing yet is
   marked new, with *Send history* on its row, and *Sync now* sends to
   every other. Either puts a copy of the whole vault at the mediator and
   mails its link to the device, which takes in what it lacks as the link

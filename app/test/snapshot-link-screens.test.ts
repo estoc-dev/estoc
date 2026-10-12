@@ -232,9 +232,42 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
       expect(await tab.locator("[data-devices-note]").textContent()).toBe("Sent the history to Device 00B2; each takes it in as it arrives.");
       await tab.evaluate((told) => (window.snapshotFixture.daemon.told = told), [joined.replicaId]);
       await tab.click("[data-sync-now]");
-      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.length === 2);
+      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "sendHistory").length === 2);
       expect(await sent()).toEqual([[joined.replicaId], [null]]);
       expect(await tab.locator("[data-devices-note]").textContent()).toContain("It did not go to every one");
+    });
+
+    it("are asked of the mediator as they come into view and as the sheet a device is added from closes, so that one that joined shows up with nothing pressed", async () => {
+      const asked = () => tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "refreshReplicas").length);
+      await mount("devices", { phase: "open", vault: listing([self]) });
+      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.length === 1);
+      expect(await asked()).toBe(1);
+      expect(await tab.locator("[data-sync-now]").count()).toBe(0);
+
+      await tab.evaluate((replicas) => (window.snapshotFixture.daemon.relisted = replicas), [self, joined]);
+      await tab.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await tab.locator("[data-device-new]").waitFor();
+      expect(await asked()).toBe(2);
+      expect(await tab.locator("[data-device]").count()).toBe(2);
+
+      await tab.click("[data-add-device]");
+      await tab.locator("[data-add-device-sheet]").waitFor();
+      expect(await asked()).toBe(2);
+      await tab.click("[data-add-device-close]");
+      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "refreshReplicas").length === 3);
+      expect(await tab.locator("[data-add-device-sheet]").count()).toBe(0);
+    });
+
+    it("are shown as last listed where the mediator cannot be asked, with why", async () => {
+      await mount("devices", { phase: "open", vault: listing([self, older]), unasked: "the network is down" });
+      await tab.waitForFunction(() => document.querySelector("[data-devices-listed]")?.textContent?.includes("could not be asked") === true);
+      expect(await tab.locator("[data-devices-listed]").textContent()).toMatch(/^As the mediator listed them .+\. It could not be asked just now: the network is down$/);
+      expect(await tab.locator("[data-device]").count()).toBe(2);
+
+      await tab.evaluate(() => (window.snapshotFixture.daemon.unasked = null));
+      await tab.click("[data-list-devices]");
+      await tab.waitForFunction(() => document.querySelector("[data-devices-listed]")?.textContent?.includes("could not be asked") === false);
+      expect(await tab.locator("[data-device]").count()).toBe(2);
     });
 
     it("say so when history went to none of them", async () => {
