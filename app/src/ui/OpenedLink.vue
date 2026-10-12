@@ -6,11 +6,10 @@ import { mergedNote } from "./util.js";
 
 /**
  * A snapshot link the page was opened with, where a vault is held
- * already: what the copy holds is the open vault's to merge, once the
- * person asks. A locked vault is unlocked first; the link waits.
+ * already: imported into the open vault once the person asks, and a
+ * locked one is unlocked first.
  */
 const importing = ref(false);
-/** what the import came to, said until the person dismisses it */
 const outcome = ref<{ text: string; failed: boolean } | null>(null);
 
 const offered = computed(() => {
@@ -19,17 +18,17 @@ const offered = computed(() => {
   return opened !== null && (phase === "open" || phase === "locked") ? opened : null;
 });
 
-async function accept(link: string) {
+async function accept(opened: { link: string }) {
+  dismissPendingSnapshotLink(opened);
   importing.value = true;
   const held = heldNow();
   try {
-    const merged = await importFromLink(link);
+    const merged = await importFromLink(opened.link);
     if (held()) outcome.value = { text: mergedNote(merged, "that copy"), failed: false };
   } catch (err) {
     if (held()) outcome.value = { text: `That link was not imported: ${err instanceof Error ? err.message : String(err)}`, failed: true };
   } finally {
     importing.value = false;
-    dismissPendingSnapshotLink();
   }
 }
 </script>
@@ -46,17 +45,17 @@ async function accept(link: string) {
 
   <div v-else-if="offered && 'unreadable' in offered" class="update-chip" data-snapshot-link-unusable>
     <span>The link this page was opened with cannot be used: {{ offered.unreadable }}.</span>
-    <button class="btn" type="button" @click="dismissPendingSnapshotLink">OK</button>
+    <button class="btn" type="button" @click="dismissPendingSnapshotLink(offered)">OK</button>
   </div>
 
   <div v-else-if="offered && state.vault.phase === 'locked'" class="update-chip" data-opened-link-locked>
     <span>That link holds a copy of a vault. Unlock to import what it holds here.</span>
-    <button class="link" type="button" @click="dismissPendingSnapshotLink">Not now</button>
+    <button class="link" type="button" @click="dismissPendingSnapshotLink(offered)">Not now</button>
   </div>
 
   <div v-else-if="offered" class="update-chip" data-opened-link>
     <span>That link holds a copy of a vault. Import what it holds into this one?</span>
-    <button class="btn" type="button" data-import-opened-link @click="accept(offered.link)">Import</button>
-    <button class="link" type="button" @click="dismissPendingSnapshotLink">Not now</button>
+    <button class="btn" type="button" data-import-opened-link @click="accept(offered)">Import</button>
+    <button class="link" type="button" @click="dismissPendingSnapshotLink(offered)">Not now</button>
   </div>
 </template>

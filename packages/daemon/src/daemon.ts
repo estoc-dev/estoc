@@ -113,7 +113,6 @@ const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
 const PUT_REFUSALS = new Set([BLOB_TOO_LARGE, BLOB_QUOTA, BLOB_REFUSED]);
 /** The queue a runtime's snapshot puts and revocations wait their turns in: a revocation comes after a put under way has settled, so nothing that put writes lands after it. */
 const SNAPSHOT_PUTS = "snapshot-puts";
-/** The event types a snapshot of each selection carries, every one where none are named. */
 const SELECTED_TYPES: Record<SnapshotSelection, ReadonlySet<string> | undefined> = { enrollment: ENROLLMENT_EVENT_TYPES, all: undefined };
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
@@ -762,9 +761,16 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       await start(session, seedKey);
     });
 
-  /** A portable snapshot's bytes merged into the open vault; the agent goes on over the merged vault. */
-  const mergeSnapshot = (bytes: Uint8Array) =>
+  /**
+   * A portable snapshot's bytes merged into the vault open when they were
+   * asked for; the agent goes on over the merged vault. A vault let go of
+   * meanwhile takes nothing, though by then the same file, or one restored
+   * from the same backup, may be open again: the anchor cannot tell those
+   * apart from the vault the merge was asked into.
+   */
+  const mergeSnapshot = (running: Open, bytes: Uint8Array) =>
     exclusively(async () => {
+      if (open !== running) throw new WrongPhase("the vault was let go of before the snapshot could be merged into it");
       const merge = (session: VaultSession) =>
         withSnapshot(MERGE_SOURCE, bytes, async (driver) => {
           const source = openPortable(driver);
@@ -778,7 +784,6 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           }
         });
       const counted = ({ added, duplicates, objects, repaired }: Awaited<ReturnType<typeof merge>>, renewed: boolean) => ({ added, duplicates, objects, repaired, renewed });
-      const running = vault();
       const imported = await merge(running.session).catch((err: unknown) => {
         if (err instanceof ForkedAuthor) return null;
         throw err;
@@ -904,9 +909,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     },
 
     async importFromLink(link, maxBytes) {
-      // Nothing is read for a daemon with no vault open to merge it into; the merge looks again once the snapshot is in.
-      vault();
-      return mergeSnapshot(await snapshotAt(link, maxBytes));
+      const into = vault();
+      return mergeSnapshot(into, await snapshotAt(link, maxBytes));
     },
 
     async explainedRestore() {
@@ -1036,7 +1040,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       return new SnapshotLinks(runtime.local.options, runtime.author).list(Date.now());
     },
 
-    mergeBackup: mergeSnapshot,
+    mergeBackup: async (bytes) => mergeSnapshot(vault(), bytes),
 
     setMediator: (mediatorDid) =>
       act((agent, { session }) =>

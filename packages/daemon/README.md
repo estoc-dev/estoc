@@ -142,13 +142,14 @@ link into a URL's fragment and reads it back.
 The selection is what the snapshot carries. `all` is the whole vault.
 `enrollment` is the events a new replica enrolls from
 (`ENROLLMENT_EVENT_TYPES` of `@estoc/vault`): the vault's name, its
-arrangements and its replicas, and no object, so it is small however
-large the vault. A device restored from it is an ordinary replica: it
-registers at the preferred arrangement, picks up and stays live. Mail
-it receives before it holds the vault's DIDs is discarded there, and
-recorded by the replicas that received it too; the history, that mail
-among it, comes by importing a snapshot of `all`. A restore does the
-same whatever the selection, and a link does not say which it is.
+arrangements and its replicas, which name no object when well formed;
+one malformed keeps its roots, as it would in any snapshot. A device
+restored from it is an ordinary replica: it registers at the preferred
+arrangement, picks up and stays live. Mail it receives before it holds
+the vault's DIDs is discarded there, and recorded by the replicas that
+received it too; the history, that mail among it, comes by importing a
+snapshot of `all`. A restore does the same whatever the selection, and
+a link does not say which it is.
 
 What is put is kept in the runtime's local state, the key among it, and
 not in the vault: pending before the put, with where it goes and
@@ -182,10 +183,14 @@ them and a wrong passphrase each refuse it with nothing written.
 `importFromLink(link, maxBytes)`, on a daemon with a vault open, reads
 the blob the same way and merges what it holds as `mergeBackup` does:
 the result counts what it brought, and an import of the same snapshot
-again brings nothing. A failed read, another vault's snapshot, or a
-merge that fails each leave the vault as it was. Each record a daemon
-keeps says what its snapshot carries, so the list can show it; a record
-kept without it is none this daemon wrote, and is forgotten.
+again brings nothing. A failed read and another vault's snapshot each
+leave the vault as it was, and so does a vault let go of while the
+blob is read: the merge goes into the vault open when it was asked, or
+none, though the same vault, or one restored from the same backup, is
+open again by then. Past those checks a merge fails as `mergeBackup`
+does, with what it may have done said as its effect. Each record a
+daemon keeps says what its snapshot carries, so the list can show it;
+a record kept without it is none this daemon wrote, and is forgotten.
 
 ## The trace
 

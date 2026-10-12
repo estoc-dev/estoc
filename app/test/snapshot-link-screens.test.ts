@@ -1,8 +1,8 @@
+import type { DisplayTime } from "@estoc/daemon-api/contract";
 import { snapshotLinkUrl } from "@estoc/daemon-api/views";
 import { type Browser, chromium, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { SnapshotLinkRecord } from "../src/core/types.js";
 import type { Given, Screen } from "./browser/snapshot-page.js";
 import { browserPath, fixturePage } from "./chromium.js";
 
@@ -121,7 +121,7 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
 
       await tab.evaluate(() => {
         window.snapshotFixture.daemon.unlistable = null;
-        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: null } as SnapshotLinkRecord];
+        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", selection: "all", placedAt: "2026-10-10T12:00:00.000Z" as DisplayTime, retainUntil: null }];
       });
       await tab.click("[data-reload-snapshot-links]");
       await tab.locator('[data-snapshot-link="pending"]').waitFor();
@@ -171,6 +171,26 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
       await tab.evaluate(() => (window.snapshotFixture.state.vault.phase = "open"));
       await tab.locator("[data-import-opened-link]").waitFor();
       expect(await called()).toEqual([]);
+    });
+
+    it("keeps a link it is opened with again during an import, and offers it once that import is told, failed or not", async () => {
+      const later = snapshotLinkUrl("http://app.test/", { url: "https://mediator.test/b/blob-2", hash: "bciqlaterhash", key: "l".repeat(43) });
+      for (const unmerged of [undefined, "no snapshot is at that link any more"]) {
+        await mount("opened-link", { opened: { link }, phase: "open", unmerged });
+        await tab.evaluate(() => window.snapshotFixture.holdImports());
+        await tab.click("[data-import-opened-link]");
+        await tab.locator("[data-opened-link-importing]").waitFor();
+        await tab.evaluate((later) => window.snapshotFixture.open({ link: later }), later);
+        await tab.evaluate(() => window.snapshotFixture.releaseImports());
+        await tab.locator("[data-opened-link-outcome]").waitFor();
+        expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toEqual({ link: later });
+
+        await tab.click("[data-opened-link-outcome] button");
+        await tab.click("[data-import-opened-link]");
+        await tab.locator("[data-opened-link-outcome]").waitFor();
+        expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.map((call) => call.args))).toEqual([[link], [later]]);
+        expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toBeNull();
+      }
     });
 
     it("says why the import failed, and lets the link go", async () => {

@@ -631,4 +631,70 @@ describe("an import from a link", () => {
     },
     LONG
   );
+
+  it(
+    "merges nothing into a vault opened while the snapshot was read, though it is the same vault or one of the same backup",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const early = await a.daemon.exportBackup();
+      await a.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const brought = new Set((await eventsOf(await linked(mediator, link))).cids);
+      for (const cid of (await eventsOf(early.bytes)).cids) brought.delete(cid);
+      expect(brought.size).toBeGreaterThan(0);
+
+      let reading: { reached: () => void; gate: Promise<void> } | null = null;
+      const b = await newcomer(mediator, {
+        wrap: (fetch) => async (input, init) => {
+          const held = reading;
+          if (held !== null && String(input) === link.url) {
+            held.reached();
+            await held.gate;
+          }
+          return fetch(input, init);
+        },
+      });
+      await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+      /** An import of the link whose read is held until `meanwhile` is done. */
+      const importAround = async (meanwhile: () => Promise<void>): Promise<ApiError> => {
+        const reached = latch();
+        const gate = latch();
+        reading = { reached: reached.release, gate: gate.reached };
+        const refusal = b.refused("importFromLink", { link });
+        await reached.reached;
+        try {
+          await meanwhile();
+        } finally {
+          reading = null;
+          gate.release();
+        }
+        return refusal;
+      };
+      const letGo = { code: "WrongPhase", message: "the vault was let go of before the snapshot could be merged into it", effect: "none", messageId: null };
+      const merged = async () => {
+        const held = (await eventsOf((await b.daemon.exportBackup()).bytes)).cids;
+        return held.filter((cid) => brought.has(cid));
+      };
+
+      expect(
+        await importAround(async () => {
+          const { hold } = b.daemon.publisher.current.state.value;
+          await b.daemon.forgetIdentity(hold!);
+          await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+        })
+      ).toEqual(letGo);
+      expect(await merged()).toEqual([]);
+
+      expect(
+        await importAround(async () => {
+          await b.daemon.lock();
+          await b.daemon.unlock(PASSPHRASE);
+        })
+      ).toEqual(letGo);
+      expect(await merged()).toEqual([]);
+      expect(shown(b.daemon).conversations.map((conversation) => conversation.petname)).toEqual(["Bob"]);
+    },
+    LONG
+  );
 });

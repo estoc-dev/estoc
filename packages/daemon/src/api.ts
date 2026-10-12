@@ -78,7 +78,7 @@ export interface Daemon {
   forgetIdentity(hold: Hold): Promise<void>;
   /** A portable snapshot of the vault, refused whole when its events and objects, or the file they make, come to more than `maxBytes`. */
   exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
-  /** A portable snapshot's file merged into the open vault; refused, with nothing written, when it is another vault's. */
+  /** A portable snapshot's file merged into the vault open when it is asked; refused, with nothing written, when it is another vault's or that vault is let go of before its turn. */
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
   /**
    * The vault's snapshot of `selection` sealed under a key of its own
@@ -112,7 +112,8 @@ export interface Daemon {
   /**
    * A link's snapshot merged into the open vault as `mergeBackup`
    * merges one, read as `restoreFromLink` reads it. Refused before
-   * anything is read where no vault is open.
+   * anything is read where no vault is open, and with nothing written
+   * where the vault is let go of while it is read.
    */
   importFromLink(link: SnapshotLink, maxBytes: number): Promise<Merged>;
 

@@ -13,9 +13,10 @@ export const SNAPSHOT_SELECTIONS = ["enrollment", "all"] as const;
 /**
  * What a snapshot carries. `enrollment` is the events a new replica
  * enrolls from: the vault's name, its arrangements and its replicas,
- * and no object. A device restored from it registers at the mediator
- * and receives from then on; the history comes later, by importing a
- * snapshot of `all`, the whole vault. A restore is the same either way.
+ * which name no object when well formed. A device restored from it
+ * registers at the mediator and receives from then on; the history
+ * comes later, by importing a snapshot of `all`, the whole vault. A
+ * restore is the same either way.
  */
 export type SnapshotSelection = (typeof SNAPSHOT_SELECTIONS)[number];
 

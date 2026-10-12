@@ -9,7 +9,8 @@
   saying whether the daemon can still revoke it), `restoreFromLink`
   (`{ link, passphrase }`) and `importFromLink` (`{ link }`, answering
   a `MergeResult`). A `SnapshotSelection` is `enrollment`, the events a
-  new replica enrolls from and no object, or `all`, the whole vault. A
+  new replica enrolls from, which name no object when well formed, or
+  `all`, the whole vault. A
   `SnapshotLink` is the sealed snapshot's URL, its name and its key; the
   views' `snapshotLinkUrl` writes one as base64url JSON in the
   `snapshot` parameter of a URL's fragment, and `parseSnapshotLink`

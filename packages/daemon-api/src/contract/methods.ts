@@ -145,7 +145,7 @@ export interface Methods {
   snapshotLinks: Method<Empty, { links: SnapshotLinkRecord[] }>;
   /** A vault restored from a link as `restoreIdentity` restores one from a backup: the sealed snapshot read, checked against its name and opened first. One over `maxBackupBytes` is refused under the common `ResourceLimit` once the read runs past it, and nothing is written. */
   restoreFromLink: Method<{ link: SnapshotLink; passphrase: string }, null>;
-  /** A link's snapshot merged into the open vault as `mergeBackup` merges a backup, read as `restoreFromLink` reads it: nothing is read where no vault is open, and nothing is written when the read, the opening or the merge fails. A merge of it again brings nothing. */
+  /** A link's snapshot merged into the open vault as `mergeBackup` merges a backup, read as `restoreFromLink` reads it: nothing is read where no vault is open, and nothing is written when the read or the opening fails, when the snapshot is another vault's, or when the vault is let go of while it is read. A merge of it again brings nothing. */
   importFromLink: Method<{ link: SnapshotLink }, MergeResult>;
 
   /** The arrangement with that mediator, made and enrolled in when none stands, and selected for new DIDs. */

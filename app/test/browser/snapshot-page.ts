@@ -41,6 +41,7 @@ const fixture = {
     daemon.links = [];
     daemon.unlistable = given.unlistable ?? null;
     daemon.unmerged = given.unmerged ?? null;
+    daemon.held = null;
     state.pendingSnapshotLink = given.opened ?? null;
     state.vault.phase = given.phase ?? "onboarding";
     app = createApp({ render: () => h(SCREENS[screen]) });
@@ -49,7 +50,17 @@ const fixture = {
   open(opened: OpenedSnapshotLink) {
     state.pendingSnapshotLink = opened;
   },
+  /** imports asked from now on answer only once `releaseImports` is called */
+  holdImports() {
+    daemon.held = new Promise((resolve) => (letImportsGo = resolve));
+  },
+  releaseImports() {
+    daemon.held = null;
+    letImportsGo();
+  },
 };
+
+let letImportsGo = () => {};
 
 declare global {
   interface Window {

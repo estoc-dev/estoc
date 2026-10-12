@@ -9,7 +9,7 @@ import type { MergeResult, Phase, SnapshotLink, SnapshotLinkRecord, SnapshotSele
  * test's, which holds the links it is given and writes down what it is
  * asked. A publish here leaves its pending link behind and fails, as an
  * upload cut short does; an import answers `merged`, or fails with
- * `unmerged` while that is set.
+ * `unmerged` while that is set, once `held` lets it.
  */
 export const daemon = {
   calls: [] as { name: string; args: unknown[] }[],
@@ -19,12 +19,14 @@ export const daemon = {
   merged: { added: 3, duplicates: 7, objects: 0, repaired: 0, renewed: false } as MergeResult,
   /** why an import fails, while it does */
   unmerged: null as string | null,
+  /** what an import waits on before it answers, while set */
+  held: null as Promise<void> | null,
 };
 
 export const state = reactive({ pendingSnapshotLink: null as OpenedSnapshotLink | null, away: null as string | null, vault: { phase: "onboarding" as Phase } });
 
-export function dismissPendingSnapshotLink(): void {
-  state.pendingSnapshotLink = null;
+export function dismissPendingSnapshotLink(opened: OpenedSnapshotLink): void {
+  if (state.pendingSnapshotLink === opened) state.pendingSnapshotLink = null;
 }
 
 export const heldNow = () => () => true;
@@ -53,6 +55,7 @@ export async function publishSnapshotLink(selection: SnapshotSelection): Promise
 
 export async function importFromLink(input: string): Promise<MergeResult> {
   daemon.calls.push({ name: "importFromLink", args: [input] });
+  await daemon.held;
   if (daemon.unmerged !== null) throw new Error(daemon.unmerged);
   return daemon.merged;
 }

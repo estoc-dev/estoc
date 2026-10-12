@@ -66,10 +66,11 @@ export const state = shallowReactive({
   pendingInvitation: null as Invitation | null,
   pendingMediatorInvitation: null as string | null,
   /**
-   * What this page was opened with as `#snapshot=`, until a vault is made
-   * or restored here: the link to another device's vault, offered where
-   * a vault is restored, or why what came is not one. While this device
-   * holds a vault it is only said to be of no use here.
+   * What this page was opened with as `#snapshot=`, or why what came is
+   * not a link to another device's vault. Kept here, not in the URL, which
+   * the key leaves at once: where no vault is held it is offered to
+   * restore from, where one is, to import once the vault is open, until it
+   * is used or set aside.
    */
   pendingSnapshotLink: null as OpenedSnapshotLink | null,
   /** the invitations made since this page opened, by ID, as the links they were handed over as: the vault keeps the disclosure and not what it was said to be for */
@@ -239,8 +240,9 @@ function takePendingSnapshotLink(): void {
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
 }
 
-export function dismissPendingSnapshotLink(): void {
-  state.pendingSnapshotLink = null;
+/** `opened` set aside, if it is still the link pending: one the page was opened with since waits for its own turn. */
+export function dismissPendingSnapshotLink(opened: OpenedSnapshotLink): void {
+  if (state.pendingSnapshotLink === opened) state.pendingSnapshotLink = null;
 }
 
 /**
