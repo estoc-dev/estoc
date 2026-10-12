@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { schemas, type JsonObject } from "../../src/contract/index.js";
-import { HEAD_CHANNEL, LOCAL, PEER_HEAD, contact, conversation, headChannel, inbound, linesState, outbound, snapshot, withPath } from "./fixtures.js";
+import { HEAD_CHANNEL, LOCAL, PEER_HEAD, contact, conversation, headChannel, inbound, linesState, mediation, outbound, snapshot, withPath } from "./fixtures.js";
 
 const { snapshot: snapshotSchema, messageRecord, channelRecord, channelId, linesState: linesStateSchema, jsonValue, deliveryOutcome, conversationRecord, contactRecord, frame } = schemas;
 
@@ -72,6 +72,35 @@ describe("the snapshot schema", () => {
   it("requires an input's standing and an output's delivery to be nullable in the other direction", () => {
     expect(messageRecord.safeParse(withPath(outbound, ["delivery"], undefined)).success).toBe(false);
     expect(messageRecord.parse(withPath(outbound, ["input"], null)).input).toBeNull();
+  });
+});
+
+describe("the replicas a snapshot shows", () => {
+  const { mediationRecord, historyReceived } = schemas;
+
+  it("list each with whether it is this daemon's own, whether the mediator still holds it, and the last history sent it, gone or not", () => {
+    expect(mediationRecord.parse(mediation)).toEqual(mediation);
+    expect(mediationRecord.safeParse({ ...mediation, replicas: null }).success).toBe(true);
+    expect(mediationRecord.safeParse({ ...mediation, replicas: undefined }).success).toBe(false);
+    for (const [path, bad] of [
+      [["replicas", "replicas", 1, "state"], "retired"],
+      [["replicas", "replicas", 1, "sent", "outcome"], "queued"],
+      [["replicas", "replicas", 2, "sent", "because"], undefined],
+      [["replicas", "replicas", 0, "replicaId"], ""],
+      [["replicas", "listedAt"], "2026-10-12"],
+    ] as const) {
+      expect(mediationRecord.safeParse(withPath(mediation, path, bad)).success, path.join(".")).toBe(false);
+    }
+  });
+
+  it("say of the history last received from which replica it came and how its import went or is going", () => {
+    const from = { from: "r-2", at: "2026-10-12T08:50:00.000Z" };
+    expect(historyReceived.safeParse({ ...from, status: "importing" }).success).toBe(true);
+    expect(historyReceived.safeParse({ ...from, status: "failed", because: "no snapshot is at that link any more" }).success).toBe(true);
+    expect(historyReceived.safeParse({ ...from, status: "failed" }).success).toBe(false);
+    expect(historyReceived.safeParse({ ...from, status: "imported" }).success).toBe(false);
+    expect(snapshotSchema.safeParse({ ...snapshot, historyReceived: null }).success).toBe(true);
+    expect(snapshotSchema.safeParse(withPath(snapshot, ["historyReceived"], undefined)).success).toBe(false);
   });
 });
 

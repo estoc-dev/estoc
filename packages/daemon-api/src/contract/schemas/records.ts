@@ -34,6 +34,7 @@ import type {
   UnplacedRecord,
   VerificationStatus,
 } from "../records.js";
+import { historyReceived, replicaListing } from "./replicas.js";
 import { channelId, contactId, conversationId, didId, displayTime, eventCid, executionId, finite, jsonObject, mediationId, messageId, record } from "./values.js";
 
 const because = z.object({ because: z.string() });
@@ -46,6 +47,7 @@ export const mediationRecord: z.ZodType<MediationRecord> = z.object({
   usable: z.boolean(),
   retired: z.string().nullable(),
   diagnostics: strings,
+  replicas: replicaListing.nullable(),
 });
 
 export const localDidRecord: z.ZodType<LocalDidRecord> = z.object({
@@ -251,6 +253,7 @@ export const snapshot: z.ZodType<Snapshot> = z.object({
   label: z.string(),
   restoreUnexplained: z.boolean(),
   mediations: z.array(mediationRecord),
+  historyReceived: historyReceived.nullable(),
   dids: z.array(localDidRecord),
   contacts: z.array(contactRecord),
   channels: z.array(channelRecord),

@@ -9,7 +9,7 @@ const ok = (name: MethodName, side: "input" | "result", value: unknown) => metho
 
 describe("the method table", () => {
   it("names each public operation once, and nothing else is a method", () => {
-    expect(METHOD_NAMES).toHaveLength(37);
+    expect(METHOD_NAMES).toHaveLength(39);
     expect(new Set(METHOD_NAMES).size).toBe(METHOD_NAMES.length);
     expect(isMethodName("send")).toBe(true);
     expect(isMethodName("boot")).toBe(false);
@@ -265,5 +265,23 @@ describe("snapshot links", () => {
     expect(ok("revokeSnapshotLink", "input", { hash: link.hash })).toBe(true);
     expect(ok("revokeSnapshotLink", "input", { hash: "" })).toBe(false);
     expect(ok("revokeSnapshotLink", "input", { link })).toBe(false);
+  });
+});
+
+describe("history sent between replicas", () => {
+  it("goes to one replica named, or to every other when none is, and answers with those the mediator took it for", () => {
+    expect(ok("sync", "input", { replicaId: "r-2" })).toBe(true);
+    expect(ok("sync", "input", {})).toBe(true);
+    expect(ok("sync", "input", { replicaId: "" })).toBe(false);
+    expect(ok("sync", "input", { replicaId: null })).toBe(false);
+    expect(ok("sync", "result", { told: ["r-2", "r-4"] })).toBe(true);
+    expect(ok("sync", "result", { told: [] })).toBe(true);
+    expect(ok("sync", "result", {})).toBe(false);
+  });
+
+  it("is sent to the replicas asked of the mediator again by a call that takes nothing and answers nothing", () => {
+    expect(ok("refreshReplicas", "input", {})).toBe(true);
+    expect(ok("refreshReplicas", "result", null)).toBe(true);
+    expect(ok("refreshReplicas", "result", { replicas: [] })).toBe(false);
   });
 });

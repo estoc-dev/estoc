@@ -1,9 +1,10 @@
-import type { DisplayTime } from "@estoc/daemon-api/contract";
+import type { DisplayTime, ReplicaRecord } from "@estoc/daemon-api/contract";
 import { snapshotLinkUrl } from "@estoc/daemon-api/views";
 import { type Browser, chromium, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Given, Screen } from "./browser/snapshot-page.js";
+import type { ShownVault } from "./browser/snapshot-store-stub.js";
 import { browserPath, fixturePage } from "./chromium.js";
 
 /**
@@ -12,6 +13,19 @@ import { browserPath, fixturePage } from "./chromium.js";
  * and a camera of the test's.
  */
 const link = snapshotLinkUrl("http://app.test/", { url: "https://mediator.test/b/blob-1", hash: "bciqblobhash", key: "k".repeat(43) });
+
+const device = (id: string, about: Partial<ReplicaRecord>): ReplicaRecord => ({ replicaId: `0199c3a0-7e1d-7000-8000-00000000${id}` as ReplicaRecord["replicaId"], did: `did:peer:4zQm${id}`, self: false, state: "active", addedAt: "2026-10-01T08:00:00.000Z" as DisplayTime, removedAt: null, sent: null, ...about });
+const self = device("00a1", { self: true });
+const joined = device("00b2", { addedAt: "2026-10-12T08:30:00.000Z" as DisplayTime });
+const older = device("00c3", { addedAt: "2026-09-01T08:00:00.000Z" as DisplayTime, sent: { at: "2026-10-02T08:00:00.000Z" as DisplayTime, outcome: "failed", because: "the mediator answered 500 to the forward" } });
+const gone = device("00d4", { state: "removed", removedAt: "2026-10-05T08:00:00.000Z" as DisplayTime });
+
+/** A vault whose mediator listed `replicas`, holding `conversations` conversations, sent no history yet. */
+const listing = (replicas: ReplicaRecord[], conversations = 1): ShownVault => ({
+  mediations: [{ mediationId: "med-1" as never, mediatorDid: "did:web:mediator.test", selected: true, usable: true, retired: null, diagnostics: [], replicas: { listedAt: "2026-10-12T09:00:00.000Z" as DisplayTime, replicas } }],
+  historyReceived: null,
+  conversations: Array.from({ length: conversations }, () => ({}) as ShownVault["conversations"][number]),
+});
 
 describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
   let browser: Browser;
@@ -199,6 +213,56 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
       await tab.locator("[data-opened-link-outcome].alarm").waitFor();
       expect(await tab.locator("[data-opened-link-outcome] span").textContent()).toBe("That link was not imported: that snapshot is of another vault, and is not merged into this one");
       expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toBeNull();
+    });
+  });
+
+  describe("the vault's devices", () => {
+    const sent = () => tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "sendHistory").map((call) => call.args));
+
+    it("are listed as the mediator listed them, the one that joined since and was sent nothing marked new and sent history from its own row, every other from Sync now", async () => {
+      await mount("devices", { phase: "open", vault: listing([self, joined, older, gone]) });
+      expect(await tab.locator("[data-device]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-device")))).toEqual(["self", "active", "active", "removed"]);
+      expect(await tab.locator("[data-device]").evaluateAll((rows) => rows.map((row) => row.querySelector("[data-device-new]") !== null))).toEqual([false, true, false, false]);
+      expect(await tab.locator('[data-device="active"]').nth(1).locator(".row-sub").textContent()).toContain("history not sent");
+      expect(await tab.locator('[data-device="removed"]').getAttribute("class")).toContain("gone");
+      expect(await tab.locator("[data-devices-empty]").count()).toBe(0);
+
+      await tab.click("[data-send-history]");
+      await tab.locator("[data-devices-note]").waitFor();
+      expect(await tab.locator("[data-devices-note]").textContent()).toBe("Sent the history to Device 00B2; each takes it in as it arrives.");
+      await tab.evaluate((told) => (window.snapshotFixture.daemon.told = told), [joined.replicaId]);
+      await tab.click("[data-sync-now]");
+      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.length === 2);
+      expect(await sent()).toEqual([[joined.replicaId], [null]]);
+      expect(await tab.locator("[data-devices-note]").textContent()).toContain("It did not go to every one");
+    });
+
+    it("say so when history went to none of them", async () => {
+      await mount("devices", { phase: "open", vault: listing([self, older]) });
+      await tab.evaluate(() => (window.snapshotFixture.daemon.told = []));
+      await tab.click("[data-sync-now]");
+      await tab.locator("[data-devices-note].error-text").waitFor();
+      expect(await tab.locator("[data-devices-note]").textContent()).toBe("The history did not go: what stopped it is beside each device.");
+    });
+
+    it("tell a device holding nothing yet where its history comes from, and then how the history sent it is taken in", async () => {
+      await mount("devices", { phase: "open", vault: listing([device("00b2", {}), device("00e5", { self: true, addedAt: "2026-10-12T08:30:00.000Z" as DisplayTime })], 0) });
+      expect(await tab.locator("[data-devices-empty]").textContent()).toContain("This device holds none of your conversations yet");
+      expect(await tab.locator("[data-device-new]").count()).toBe(0);
+
+      const from = { from: joined.replicaId, at: "2026-10-12T09:30:00.000Z" };
+      await tab.evaluate((from) => (window.snapshotFixture.state.snapshot!.historyReceived = { ...from, status: "importing" } as never), from);
+      await tab.locator("[data-history-received]").waitFor();
+      expect(await tab.locator("[data-history-received]").textContent()).toBe("Importing the history Device 00B2 sent…");
+      expect(await tab.locator("[data-devices-empty]").count()).toBe(0);
+
+      await tab.evaluate((from) => (window.snapshotFixture.state.snapshot!.historyReceived = { ...from, status: "imported", merged: { added: 3, duplicates: 7, objects: 0, repaired: 0, renewed: false } } as never), from);
+      await tab.waitForFunction(() => document.querySelector("[data-history-received]")?.textContent?.includes("Merged") === true);
+      expect(await tab.locator("[data-history-received]").textContent()).toContain(": Merged 3 new events and 0 objects.");
+
+      await tab.evaluate((from) => (window.snapshotFixture.state.snapshot!.historyReceived = { ...from, status: "failed", because: "no snapshot is at that link any more" } as never), from);
+      await tab.locator("[data-history-received].error-text").waitFor();
+      expect(await tab.locator("[data-history-received]").textContent()).toContain("was not imported: no snapshot is at that link any more");
     });
   });
 });

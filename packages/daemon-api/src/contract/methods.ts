@@ -5,7 +5,7 @@
  * whatever the daemon object has.
  */
 
-import type { ChannelId, ContactId, DidId, EventCid, ExecutionId, Hold, MediationId, MessageId } from "./ids.js";
+import type { ChannelId, ContactId, DidId, EventCid, ExecutionId, Hold, MediationId, MessageId, ReplicaId } from "./ids.js";
 import type { LinesState } from "./lines.js";
 import type { Invitation, TraceLevel } from "./protocol.js";
 import type { MessageContent } from "./records.js";
@@ -147,6 +147,14 @@ export interface Methods {
   restoreFromLink: Method<{ link: SnapshotLink; passphrase: string }, null>;
   /** A link's snapshot merged into the open vault as `mergeBackup` merges a backup, read as `restoreFromLink` reads it: nothing is read where no vault is open, and nothing is written when the read or the opening fails, when the snapshot is another vault's, or when the vault is let go of while it is read. A merge of it again brings nothing. */
   importFromLink: Method<{ link: SnapshotLink }, MergeResult>;
+  /** The replicas of the arrangement this daemon's replica is in, asked of its mediator again; the snapshot shows them. */
+  refreshReplicas: Method<Empty, null>;
+  /**
+   * The whole vault's snapshot published as `publishSnapshotLink` publishes one, and its link mailed to `replicaId`, or to every
+   * other replica the mediator lists active when it is left out; each imports it as the link arrives. Refused before anything is
+   * put when there is no such replica. `told` is those the mediator took the mail for; why another was not is in the snapshot.
+   */
+  sync: Method<{ replicaId?: ReplicaId }, { told: ReplicaId[] }>;
 
   /** The arrangement with that mediator, made and enrolled in when none stands, and selected for new DIDs. */
   setMediator: Method<{ mediatorDid: string }, { mediationId: MediationId }>;

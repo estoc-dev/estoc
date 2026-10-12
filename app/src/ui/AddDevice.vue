@@ -124,8 +124,8 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <input v-if="readable" class="field mono" readonly :value="shownUrl" aria-label="The link" data-snapshot-text @focus="selectAll" />
       <p v-if="readable" class="note">It could not be copied from here: select the link above and copy it yourself.</p>
       <p v-if="shown.selection === 'enrollment'" class="note" data-shown-selection="enrollment">
-        On the new device, open this link or scan the code, then type this vault's passphrase. It joins as one more device of yours and receives from then on; your
-        conversations so far go over as a copy, made here once it has joined.
+        On the new device, open this link or scan the code, then type this vault's passphrase. It joins as one more device of yours and receives from then on. Once
+        it has, it shows up under You › Your devices here: send it your conversations so far from there.
       </p>
       <p v-else class="note" data-shown-selection="all">
         On a device of yours, open this link or scan the code: what the copy holds is merged into the vault there. On a device with no vault yet, it restores this
@@ -149,7 +149,8 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <div class="section">
         <div class="eyebrow">Your history</div>
         <p class="note">
-          Once the new device has joined, bring your conversations over with a copy of this vault: open its link there, or paste it under You › Import from a link.
+          Once the new device has joined, send it your conversations from You › Your devices. A copy of this vault on a link does the same by hand: open it there, or
+          paste it under You › Import from a link.
         </p>
         <button class="btn-quiet" type="button" :disabled="making !== null" data-make-copy-link @click="make('all')">
           {{ making === "all" ? "Sealing and uploading…" : "Back up to a link" }}

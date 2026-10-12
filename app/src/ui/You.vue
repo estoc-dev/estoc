@@ -6,6 +6,7 @@ import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import AddDevice from "./AddDevice.vue";
+import Devices from "./Devices.vue";
 import Icon from "./Icon.vue";
 import ImportLink from "./ImportLink.vue";
 import MediatorForm from "./MediatorForm.vue";
@@ -212,6 +213,8 @@ function forget() {
         </div>
         <p class="note">A link is for whoever you hand it to, your DID for anyone who finds it: each one is answered from an address minted for them alone.</p>
       </div>
+
+      <Devices v-if="mediation !== null" />
 
       <div class="section">
         <div class="eyebrow">Your vault</div>

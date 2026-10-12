@@ -475,6 +475,10 @@ a.row:hover {
   color: var(--alarm);
 }
 
+.row.gone {
+  color: var(--ink-soft);
+}
+
 .row:disabled {
   opacity: 0.5;
   cursor: default;

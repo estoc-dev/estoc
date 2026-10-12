@@ -12,7 +12,7 @@ import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
-import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, SnapshotSelection, TraceLevel } from "./types.js";
+import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, ReplicaId, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, SnapshotSelection, TraceLevel } from "./types.js";
 
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
 /** A `#snapshot=` this page was opened with: the link as it came, or why it is not one. */
@@ -363,6 +363,18 @@ export async function importFromLink(input: string): Promise<MergeResult> {
   const merged = await call((daemon) => daemon.importFromLink({ link }), "Export a backup on the device that made the link, and import the file here instead.");
   log(`imported a link: ${brought(merged)}`);
   return merged;
+}
+
+/** The other devices of this vault asked of its mediator again; the snapshot shows them. */
+export async function refreshReplicas(): Promise<void> {
+  await call((daemon) => daemon.refreshReplicas({}));
+}
+
+/** This vault's history sent to the device `replicaId`, or to every other device of it, as a copy each imports as it arrives; answers those it went to. */
+export async function sendHistory(replicaId?: ReplicaId): Promise<ReplicaId[]> {
+  const { told } = await call((daemon) => daemon.sync(replicaId === undefined ? {} : { replicaId }), "A link cannot carry this vault: export a backup and import the file on the other device instead.");
+  log(`sent the history to ${told.length} device${told.length === 1 ? "" : "s"}`);
+  return told;
 }
 
 export async function chooseMediator(mediatorDid: string): Promise<void> {

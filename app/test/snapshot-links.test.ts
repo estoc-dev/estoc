@@ -62,7 +62,7 @@ vi.stubGlobal("history", {
 vi.stubGlobal("navigator", { storage: { getDirectory: () => Promise.resolve({}), persist: () => Promise.resolve(false) } });
 
 opened(snapshotLinkUrl("http://app.test/?lang=en", link));
-const { boot, createIdentity, importFromLink, publishSnapshotLink, restoreFromLink, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
+const { boot, createIdentity, importFromLink, publishSnapshotLink, refreshReplicas, restoreFromLink, sendHistory, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
 await boot();
 
 const heldLink = (): SnapshotLink | null => {
@@ -157,5 +157,26 @@ describe("a link made here", () => {
     const made = (hash: string, placedAt: string): SnapshotLinkRecord => ({ status: "pending", hash, selection: "all", placedAt, retainUntil: null }) as SnapshotLinkRecord;
     fake.answers.set("snapshotLinks", () => Promise.resolve({ links: [made("older", "2026-10-01T00:00:00Z"), made("newer", "2026-10-02T00:00:00Z")] }));
     expect((await snapshotLinks()).map((record) => record.hash)).toEqual(["newer", "older"]);
+  });
+});
+
+describe("history sent to the vault's other devices", () => {
+  it("is asked of the daemon for the one device named, or for every other, and answers those it went to", async () => {
+    fake.answers.set("sync", () => Promise.resolve({ told: ["r-2"] }));
+    expect(await sendHistory("r-2" as never)).toEqual(["r-2"]);
+    expect(fake.calls.at(-1)).toEqual({ method: "sync", input: { replicaId: "r-2" } });
+    expect(await sendHistory()).toEqual(["r-2"]);
+    expect(fake.calls.at(-1)).toEqual({ method: "sync", input: {} });
+  });
+
+  it("points to a backup file when the vault is too large for a link", async () => {
+    fake.answers.set("sync", () => Promise.reject(refused("ResourceLimit", "the snapshot's events and objects come to 120 bytes, over the 100 a blob at the mediator holds once sealed")));
+    await expect(sendHistory()).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
+  });
+
+  it("goes to the devices the mediator lists, which are asked of it again on request", async () => {
+    fake.answers.set("refreshReplicas", () => Promise.resolve(null));
+    await refreshReplicas();
+    expect(fake.calls.at(-1)).toEqual({ method: "refreshReplicas", input: {} });
   });
 });

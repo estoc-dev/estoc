@@ -9,9 +9,11 @@
    "selected": true,
    "usable": true,
    "retired": null,
-   "diagnostics": []
+   "diagnostics": [],
+   "replicas": null
   }
  ],
+ "historyReceived": null,
  "dids": [
   {
    "didId": "01a11b50-bb5c-7334-abe6-b31e082f6dc5",

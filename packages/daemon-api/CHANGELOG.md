@@ -16,6 +16,16 @@
   `snapshot` parameter of a URL's fragment, and `parseSnapshotLink`
   reads it from such a URL or the parameter alone.
 
+- Replicas: `MediationRecord.replicas` is the mediator's last listing of
+  the arrangement's replicas (`ReplicaListing`: when it came, and each
+  `ReplicaRecord` with its `ReplicaId`, DID, whether it is the daemon's
+  own, `active` or `removed`, when it was added and removed, and the
+  last history sent it), null while none was listed; the method
+  `refreshReplicas` asks again. `sync` (`{ replicaId? }`, answering
+  `{ told }`) sends a copy of the whole vault to that replica, or every
+  other, and `Snapshot.historyReceived` says how the last history
+  another replica sent is being or was imported.
+
 - A message with several valid preparations is the person's to choose
   for: `PendingOutbound` gains `candidates`, the valid preparations by
   event CID, and `selected`, the one this daemon's calls carry or null,

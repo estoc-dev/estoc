@@ -68,6 +68,7 @@ export async function readPortable(source: PortableDatabase, keys: Keys): Promis
     restoreUnexplained: false,
     mediations: mediationRecords(fold.mediations),
     dids: localDidRecords(fold.dids),
+    historyReceived: null,
   });
   return { fold, snapshot };
 }

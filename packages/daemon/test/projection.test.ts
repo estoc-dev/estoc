@@ -15,7 +15,7 @@ const pair = (local: string, peer: string): Channel => pairOf(did(local), did(pe
 const idOf = (local: string, peer: string): ChannelId => channelIdOf(pair(local, peer));
 const at = (second: number): string => `2026-01-01T00:00:${String(second).padStart(2, "0")}.000Z`;
 
-const VAULT: ReadVault = { anchor: "did:key:zAlice", label: "Alice", restoreUnexplained: false, mediations: [], dids: [] };
+const VAULT: ReadVault = { anchor: "did:key:zAlice", label: "Alice", restoreUnexplained: false, mediations: [], dids: [], historyReceived: null };
 const OPEN = { status: "open" } as const;
 const CLOSED = { status: "closed", because: "superseded" } as const;
 
@@ -347,8 +347,8 @@ describe("the snapshot", () => {
     const vault: ReadVault = {
       ...VAULT,
       mediations: [
-        { mediationId: "m2" as never, mediatorDid: null, selected: false, usable: false, retired: "gone", diagnostics: [] },
-        { mediationId: "m1" as never, mediatorDid: "did:example:m", selected: true, usable: true, retired: null, diagnostics: ["slow"] },
+        { mediationId: "m2" as never, mediatorDid: null, selected: false, usable: false, retired: "gone", diagnostics: [], replicas: null },
+        { mediationId: "m1" as never, mediatorDid: "did:example:m", selected: true, usable: true, retired: null, diagnostics: ["slow"], replicas: null },
       ],
       dids: [
         { didId: "d2" as never, did: null, longFormDid: null, live: false, retired: null, disclosures: [], diagnostics: [] },

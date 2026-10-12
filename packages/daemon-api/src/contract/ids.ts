@@ -23,6 +23,9 @@ export type DidId = Id<"DidId">;
 /** An arrangement with a mediator. */
 export type MediationId = Id<"MediationId">;
 
+/** A replica of the vault: one runtime holding it, as its arrangement's mediator knows it. */
+export type ReplicaId = Id<"ReplicaId">;
+
 /** The execution an established input is handled under. */
 export type ExecutionId = Id<"ExecutionId">;
 

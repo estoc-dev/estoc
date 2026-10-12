@@ -1,4 +1,4 @@
-import type { ChannelRecord, ContactId, ContactRecord, ConversationRecord, EventCid, InvitationRecord, Lines, LinesState, LocalDidRecord, MediationRecord, MessageId, MessageRecord, ObservationRecord, PendingWork, Snapshot, State } from "../../src/contract/index.js";
+import type { ChannelRecord, ContactId, ContactRecord, ConversationRecord, DisplayTime, EventCid, InvitationRecord, Lines, LinesState, LocalDidRecord, MediationRecord, MessageId, MessageRecord, ObservationRecord, PendingWork, ReplicaListing, Snapshot, State } from "../../src/contract/index.js";
 
 /** Fixture IDs are spelled as the daemon would spell them; the brand is asserted, not derived. */
 export const as = <Id extends string>(text: string): Id => text as Id;
@@ -11,7 +11,16 @@ export const channelId = (localDid: string, peerDid: string) => as<ChannelRecord
 export const OLD_CHANNEL = channelId(LOCAL, PEER);
 export const HEAD_CHANNEL = channelId(LOCAL, PEER_HEAD);
 
-export const mediation: MediationRecord = { mediationId: as("med-1"), mediatorDid: "did:web:mediator.example", selected: true, usable: true, retired: null, diagnostics: [] };
+export const replicas: ReplicaListing = {
+  listedAt: as("2026-10-12T09:00:00.000Z"),
+  replicas: [
+    { replicaId: as("r-1"), did: "did:peer:4zQmReplicaOne", self: true, state: "active", addedAt: as<DisplayTime>("2026-10-01T08:00:00.000Z"), removedAt: null, sent: null },
+    { replicaId: as("r-2"), did: "did:peer:4zQmReplicaTwo", self: false, state: "active", addedAt: as<DisplayTime>("2026-10-12T08:30:00.000Z"), removedAt: null, sent: { at: as<DisplayTime>("2026-10-12T08:45:00.000Z"), outcome: "sent" } },
+    { replicaId: as("r-3"), did: "did:peer:4zQmReplicaThree", self: false, state: "removed", addedAt: as<DisplayTime>("2026-10-02T08:00:00.000Z"), removedAt: as<DisplayTime>("2026-10-05T08:00:00.000Z"), sent: { at: as<DisplayTime>("2026-10-03T08:00:00.000Z"), outcome: "failed", because: "the mediator answered 500 to the forward" } },
+  ],
+};
+
+export const mediation: MediationRecord = { mediationId: as("med-1"), mediatorDid: "did:web:mediator.example", selected: true, usable: true, retired: null, diagnostics: [], replicas };
 
 export const localDid: LocalDidRecord = { didId: as("did-1"), did: LOCAL, longFormDid: `${LOCAL}:zLong`, live: true, retired: null, disclosures: [{ as: "oob" }], diagnostics: [] };
 
@@ -149,6 +158,7 @@ export const snapshot: Snapshot = {
   label: "Ada's vault",
   restoreUnexplained: false,
   mediations: [mediation],
+  historyReceived: { from: as("r-2"), at: as("2026-10-12T08:50:00.000Z"), status: "imported", merged: { added: 41, duplicates: 6, objects: 2, repaired: 0, renewed: false } },
   dids: [localDid],
   contacts: [contact],
   channels: [oldChannel, headChannel],
