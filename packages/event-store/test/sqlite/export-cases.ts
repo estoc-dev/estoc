@@ -478,29 +478,35 @@ export const exportCases: ExportCase[] = [
     },
   },
   {
-    name: "an export of some types carries their events alone and exactly the objects those events hold on their own, folded over them with the vault's objects to read; the file validates and restores; the bound weighs the selected events, not the history, before the fold runs",
+    name: "an export of some types carries their events alone and exactly the objects those events hold on their own, folded over them, read only, with the vault's objects to read; the file validates and restores; the bound weighs the selected events, not the history, before the fold runs",
     run: async (h) => {
       const c = clock();
       const { vault } = await make(h, h.fresh(), c.now);
       const of = (type: string, roots: Cid[], data: Record<string, unknown> = {}) => ({ ...draft(roots, data), type });
-      const [kept, , also] = await vault.vault.commit(
+      const committed = await vault.vault.commit(
         [
           { cid: HELLO_CID, source: HELLO },
           { cid: BIG_CID, source: BIG },
         ],
         [of("test.kept", [HELLO_CID]), of("test.left", [HELLO_CID, BIG_CID]), of("test.also", []), of("test.left", [], { text: "x".repeat(64 * 1024) })]
       );
+      const [kept, , also] = committed;
       const selected = [kept, also] as Event[];
       const types = new Set(["test.kept", "test.also"]);
-      const folds: { events: string[]; reads: boolean }[] = [];
+      const folds: { commit: string; events: string[]; reads: boolean }[] = [];
       const heldRoots: HeldRoots = async (v) => {
-        folds.push({ events: ids(await all(v.events.scan())), reads: await v.objects.has(BIG_CID) });
+        const commit = await v.commit([], [of("test.kept", [])]).then(
+          () => "committed",
+          (err: Error) => err.name
+        );
+        folds.push({ commit, events: ids(await all(v.events.scan())), reads: await v.objects.has(BIG_CID) });
         return rootsOf(v);
       };
       const weight = expectedValidated(selected, 1, 5);
       const target = h.fresh();
       assertEqual(await exportVault(vault, destination(h, target), { heldRoots, types }), weight, "what the export reports");
-      assertEqual(folds[0], { events: ids(selected), reads: true }, "the fold saw the selected events, and the vault's objects");
+      assertEqual(folds[0], { commit: "UnsupportedOperation", events: ids(selected), reads: true }, "the fold saw the selected events, and the vault's objects, and its commit was refused");
+      assertEqual(ids(await all(vault.vault.events.scan())), ids(committed as Event[]), "the vault as committed");
       const snapshot = await opened(h, target);
       try {
         assertEqual((await all(snapshot.vault.events.scan())).map((e) => e.cid), ids(selected), "the selected events, in canonical order: one commit's share its time");

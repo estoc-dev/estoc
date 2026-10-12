@@ -396,7 +396,7 @@ events are read, before the fold runs; then the wrapper, every event of
 the cut in canonical order, and `heldRoots`, the caller's fold of the
 roots those events hold — through the held view, or for a selection
 through a vault in memory of the selected events alone that reads
-objects through the held view — each
+objects through the held view and refuses a commit — each
 root's presence and size checked, refused as `IncompleteSnapshot`
 when the history has damage or a held root is absent or known
 damaged, and as `SnapshotTooLarge` when the events' bytes and the

@@ -7,7 +7,7 @@
  * through the interfaces every runtime presents.
  */
 
-import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge } from "../errors.js";
+import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge, UnsupportedOperation } from "../errors.js";
 import { canonicalEventBytes, compareEvents, type Cid, type Event } from "../event.js";
 import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
 import { Packer, hashSource, sortCids } from "../objects.js";
@@ -128,7 +128,6 @@ async function select(runtime: VaultRuntime, held: Held, options: ExportOptions)
   return { wrapped, events, eventBytes, roots };
 }
 
-/** The events of the cut in canonical order: every event, or every event of the selected types. */
 async function eventsOf(held: Held, types: ReadonlySet<string> | undefined): Promise<Event[]> {
   const events: Event[] = [];
   if (types === undefined) {
@@ -139,11 +138,16 @@ async function eventsOf(held: Held, types: ReadonlySet<string> | undefined): Pro
   return events.sort(compareEvents);
 }
 
-/** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as the snapshot's validation folds them from its own events. */
+/** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as the snapshot's validation folds them from its own events. Read only, as the snapshot is: a commit is refused. */
 async function selection(runtime: VaultRuntime, held: Held, events: Event[]): Promise<Vault> {
   const selected = new MemoryVault({ metadata: runtime.metadata });
   await selected.ingest(events);
-  return { ...selected.vault, objects: held.objects };
+  return {
+    metadata: runtime.metadata,
+    events: selected.vault.events,
+    objects: held.objects,
+    commit: () => Promise.reject(new UnsupportedOperation("a commit to the selection an export folds")),
+  };
 }
 
 /** The destination as a portable database, not yet ready: the schema, the metadata, the wrapper and every event, in one transaction. */

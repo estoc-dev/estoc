@@ -15,13 +15,14 @@ import type { VaultEventType } from "./types.js";
 /**
  * The event types a new replica enrolls from: the vault's name, every
  * arrangement as it was created, granted, selected and retired, and
- * every replica enrolled at one. None of them holds a root, so a
- * snapshot of them alone carries no object. Restored, it is an
- * ordinary replica that enrolls at the preferred arrangement and
- * receives; the history comes by an import. No DID is among them:
- * mail to the vault's DIDs that reaches the replica before the import
- * is what the other replicas received and recorded as well, and the
- * import brings it.
+ * every replica enrolled at one. A valid event of these types holds no
+ * root, so a snapshot of them alone carries no object; one whose
+ * payload is malformed keeps its roots, under the ordinary retention.
+ * Restored, it is an ordinary replica that enrolls at the preferred
+ * arrangement and receives; the history comes by an import. No `did.*`
+ * event is among them: mail to the vault's DIDs that reaches the
+ * replica before the import is what the other replicas received and
+ * recorded as well, and the import brings it.
  */
 export const ENROLLMENT_EVENT_TYPES: ReadonlySet<VaultEventType> = new Set<VaultEventType>(["identity.label", "mediation.created", "mediation.granted", "mediation.selected", "mediation.retired", "replica.created"]);
 
