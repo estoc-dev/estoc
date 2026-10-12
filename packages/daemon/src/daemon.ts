@@ -385,11 +385,6 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
   const explained = async (runtime: SqliteVault): Promise<boolean> => (await runtime.local.options.get(RESTORE_EXPLAINED)) === true;
 
-  /** A send of the user's and every manual dispatch wait for the restore to be explained; nothing the vault does on its own does. */
-  async function refuseUnexplained({ session }: Open): Promise<void> {
-    if (!(await explained(session.runtime))) throw new RestoreUnexplained();
-  }
-
   /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
   const settle = (): Promise<void> => publisher.refresh().then(() => undefined, () => undefined);
 
@@ -577,6 +572,19 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     });
   }
 
+  /**
+   * `act` for a call of the user's that may send something out: it waits
+   * for the restore to be explained. Cancelling and choosing a
+   * preparation send nothing, and what the vault does on its own,
+   * receiving and answering among it, does not wait.
+   */
+  function actSending<T>(work: (agent: Agent, running: Open) => Promise<T>): Promise<T> {
+    return act(async (agent, running) => {
+      if (!(await explained(running.session.runtime))) throw new RestoreUnexplained();
+      return work(agent, running);
+    });
+  }
+
   const commit = ({ session }: Open, choose: (fold: VaultFold) => VaultDraft[]) => session.decide(choose);
 
   const handingOut = new WeakMap<Open, Promise<{ didId: DidId; did: Did }>>();
@@ -629,15 +637,16 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     return peerDid;
   }
 
-  async function reach(agent: Agent, running: Open, recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
-    await refuseUnexplained(running);
-    const peerDid = await peerDidOf(running, recipientDid);
-    const { minted } = await running.session.createDid(await preferredRoute(running));
-    const channel: Channel = { localDid: minted.did, peerDid };
-    const contactId = uuidv7() as ContactId;
-    await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
-    const sent = await agent.send({ channel, recipientDid }, { type: PING_TYPE, body: { response_requested: true }, pthid, pleaseAck: [""] });
-    return { contactId, ...outcomeOf(sent.dispatched), messageId: sent.messageId, channel: sent.channel };
+  function reach(recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
+    return actSending(async (agent, running) => {
+      const peerDid = await peerDidOf(running, recipientDid);
+      const { minted } = await running.session.createDid(await preferredRoute(running));
+      const channel: Channel = { localDid: minted.did, peerDid };
+      const contactId = uuidv7() as ContactId;
+      await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
+      const sent = await agent.send({ channel, recipientDid }, { type: PING_TYPE, body: { response_requested: true }, pthid, pleaseAck: [""] });
+      return { contactId, ...outcomeOf(sent.dispatched), messageId: sent.messageId, channel: sent.channel };
+    });
   }
 
   /**
@@ -1030,9 +1039,9 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         return { didId: created.data.didId, invitation };
       }),
 
-    acceptInvitation: (invitation, petname) => act((agent, running) => reach(agent, running, invitation.from, invitation.id, petname)),
+    acceptInvitation: (invitation, petname) => reach(invitation.from, invitation.id, petname),
 
-    addContactByDid: (did, petname) => act((agent, running) => reach(agent, running, did, null, petname)),
+    addContactByDid: (did, petname) => reach(did, null, petname),
 
     publicDid: () =>
       act((agent, running) => {
@@ -1091,17 +1100,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }),
 
     send: (target, content) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
+      actSending(async (agent) => {
         const sent = await agent.send(target, content);
         return { ...outcomeOf(sent.dispatched), messageId: sent.messageId, channel: sent.channel };
       }),
 
     retry: (messageId) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
-        return outcomeOf(await agent.manual.retry(messageId));
-      }),
+      actSending(async (agent) => outcomeOf(await agent.manual.retry(messageId))),
 
     cancel: (messageId) =>
       act(async (agent) => {
@@ -1116,27 +1121,19 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }),
 
     completeResponse: (executionId, effectType) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
-        return effectOutcomeOf(await agent.manual.completeResponse(executionId, effectType));
-      }),
+      actSending(async (agent) => effectOutcomeOf(await agent.manual.completeResponse(executionId, effectType))),
 
     completeNotification: (rotationEventCid) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
-        return effectOutcomeOf(await agent.manual.completeNotification(rotationEventCid));
-      }),
+      actSending(async (agent) => effectOutcomeOf(await agent.manual.completeNotification(rotationEventCid))),
 
     rotate: (localDidId, peerDid) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
+      actSending(async (agent) => {
         const rotated = await agent.manual.rotate({ localDidId, peerDid });
         return { successor: rotated.successor, existed: rotated.existed, ...effectOutcomeOf(rotated.notification) };
       }),
 
     rotateChannel: (channel) =>
-      act(async (agent, running) => {
-        await refuseUnexplained(running);
+      actSending(async (agent, running) => {
         const entities = [...(await running.session.fold()).dids.entities.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
         const live = entities.filter((entity) => entity.live);
         const candidates = live.length > 0 ? live : entities;
