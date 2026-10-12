@@ -7,8 +7,9 @@ handlers, bytes at `/b/<id>`), client side in `@estoc/agent-core` 0.16.0
 2026-08-27. The client side left `@estoc/agent-core` with the version-2
 agent (0.19.0, 2026-09-20) and came back to it on 2026-10-10 (unreleased)
 for a replica's own blobs, which carry the sealed snapshots that snapshot
-links restore from. The store side stands; since 2026-10-10 an active
-replica's DID holds blobs of its own there.
+links restore from, and since 2026-10-12 those an open vault imports, one
+replica mailing another its link. The store side stands; since 2026-10-10
+an active replica's DID holds blobs of its own there.
 Design history: `research/notes/2026-08-26-want-and-blob-road.md`.
 
 ## 1. What it is for
@@ -17,8 +18,8 @@ Putting a **blob** — bytes the store cannot read — where whoever is given
 its URL can `GET` it later, so that what does not fit in a DIDComm message
 still travels while neither side needs the other awake: today a replica's
 sealed vault snapshot, which a snapshot link restores from on a new
-device; earlier, an `object-share/1.0` package of the version-2 agent.
-The store is the mediator: an
+device or another replica imports; earlier, an `object-share/1.0` package
+of the version-2 agent. The store is the mediator: an
 agent holding a mediation with it may put blobs; anyone with the URL may
 get them. The bytes are ciphertext under a key the store never sees; it
 holds them for a while, unlisted, and forgets them — the envelope queue's
