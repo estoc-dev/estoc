@@ -36,7 +36,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-/** Which replica a runtime is shows in no snapshot of its vault; the mediator's store sees the replicas each account enrolls. */
+/** The replicas each account enrolled, as the mediator's own store added them, apart from what any daemon lists. */
 class Enrolling extends SqliteStore {
   readonly enrolled = new Map<string, Set<string>>();
 
@@ -207,6 +207,65 @@ test(
     const late = daemonAt(at, await folder());
     await late.daemon.boot();
     await expect(late.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES)).rejects.toThrow("no snapshot is at that link any more: it was revoked, or the mediator has let it go");
+  },
+  120_000
+);
+
+test(
+  "a new device of one person, restored from the link her first device put at the mediator for a replica to enroll from, is sent her history through the mediator: it reads what was written to her before, the mail it let go of before it held the history among it, and from then on reads what is written to her as the first does; history sent again brings nothing, and once the link is revoked nothing is at its address",
+  async () => {
+    const at = await mediator();
+    const alice = await person(at, "Alice");
+    const [hers] = at.enrolled.keys();
+    const bob = await person(at, "Bob");
+    await until("alice's line is live", () => live(alice));
+    const { invitation } = await alice.daemon.createInvitation();
+    const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
+    await until("alice holds bob's Ping", () => holdsPing(alice));
+    await until("bob's Ping is acknowledged", () => bob.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
+
+    const { link } = await alice.daemon.publishSnapshotLink("enrollment");
+    const elsewhere = daemonAt(at, await folder());
+    await elsewhere.daemon.boot();
+    await elsewhere.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES);
+    await until("the mediator holds the new device as her replica", () => at.enrolled.get(hers)?.size === 2);
+    await until("the new device's line is live", () => live(elsewhere));
+    expect(elsewhere.snapshot().anchor).toBe(alice.snapshot().anchor);
+    expect(elsewhere.snapshot().conversations).toEqual([]);
+    expect(holdsPing(elsewhere)).toBe(false);
+
+    await alice.daemon.refreshReplicas();
+    const listed = alice.snapshot().mediations.find((mediation) => mediation.selected)?.replicas?.replicas ?? [];
+    expect(listed.map(({ self, state }) => ({ self, state }))).toEqual([
+      { self: true, state: "active" },
+      { self: false, state: "active" },
+    ]);
+    expect(new Set(listed.map(({ did }) => did))).toEqual(at.enrolled.get(hers));
+    const [first, added] = [listed.find((replica) => replica.self)!, listed.find((replica) => !replica.self)!];
+
+    expect(await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content: "in between" } })).toMatchObject({ outcome: "submitted" });
+    await until("alice reads it", () => reads(alice, "in between"));
+    await until("the new device let it go", () => elsewhere.lines()?.discarded.length === 1);
+    expect(elsewhere.lines()?.discarded).toEqual([{ source: expect.anything() as unknown, reason: expect.stringMatching(/^local recipient material is unavailable for .*; the delivery was discarded$/) as string }]);
+    expect(reads(elsewhere, "in between")).toBe(false);
+
+    expect(await alice.daemon.sync()).toEqual({ told: [added.replicaId] });
+    await until("the new device imported the history", () => elsewhere.snapshot().historyReceived?.status === "imported");
+    const imported = elsewhere.snapshot().historyReceived!;
+    expect(imported).toMatchObject({ from: first.replicaId, status: "imported", merged: { renewed: false } });
+    expect(holdsPing(elsewhere)).toBe(true);
+    expect(reads(elsewhere, "in between")).toBe(true);
+    expect(elsewhere.snapshot().conversations.map(({ petname }) => petname)).toEqual(alice.snapshot().conversations.map(({ petname }) => petname));
+
+    expect(await alice.daemon.sync()).toEqual({ told: [added.replicaId] });
+    await until("the new device imported the history again", () => elsewhere.snapshot().historyReceived?.at !== imported.at && elsewhere.snapshot().historyReceived?.status === "imported");
+    expect(elsewhere.snapshot().historyReceived).toMatchObject({ from: first.replicaId, status: "imported", merged: { added: 0, objects: 0 } });
+
+    expect(await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content: "to both" } })).toMatchObject({ outcome: "submitted" });
+    await until("alice reads it where she was and on the new device", () => reads(alice, "to both") && reads(elsewhere, "to both"));
+
+    await alice.daemon.revokeSnapshotLink(link.hash);
+    expect((await at.fetch(link.url)).status).toBe(404);
   },
   120_000
 );

@@ -27,16 +27,18 @@ protocol's wire contract, and
 with its account-signed grant. A full replica has its own DID and event author;
 the vault seed and communication DIDs are shared. The mediator delivers mail to
 the replicas enrolled when it accepts that mail, so a new replica obtains
-earlier history through portable restore, from a backup file or a snapshot
-link, or import.
+earlier history through portable restore or import, from a backup file or a
+snapshot link; another replica of the seed can mail it such a link through the
+mediator, and it imports the link as it arrives.
 
-The client only adds: it enrolls its own replica and adds the communication
-recipients it holds. What remains outside the current profile:
+The client enrolls its own replica, adds the communication recipients it holds
+and lists the replicas the account holds. What remains outside the current
+profile:
 
 <a id="replica-administration"></a>
 
-- **Replica administration.** The mediator can list and remove replicas and
-  recipients and delete the account; the client uses none of these. Retiring a
+- **Replica administration.** The mediator can also remove replicas and
+  recipients and delete the account; the client does none of these. Retiring a
   replica is a human-initiated maintenance step. Its design must define how the
   affected operations are quiesced, how membership changes are serialized and
   how in-flight work is resolved or excluded before the change takes effect; a
@@ -54,12 +56,17 @@ recipients it holds. What remains outside the current profile:
 
 ### Deferred: vault synchronization
 
-History synchronization between replicas remains deferred; a new device
-takes the vault's history once, by restoring from a snapshot link. An existing
-replica seals its portable SQLite snapshot under a random key and puts it at its
-mediator as a [blob](../../blob-store.md) of its own; the link carries the
-blob's URL, name and key, not the passphrase. What one replica commits after
-that reaches no other.
+Continuous history synchronization between replicas remains deferred. History
+moves between replicas as whole snapshots: a replica seals its portable SQLite
+snapshot under a random key and puts it at its mediator as a
+[blob](../../blob-store.md) of its own; the link carries the blob's URL, name
+and key, not the passphrase. A new device restores from a link that carries
+only the events a replica enrolls from, registers, and takes the history by
+importing a link of the whole vault, which another replica mails it through the
+mediator when asked to by hand. An import is a merge: it brings what the
+importing replica lacks, the mail it discarded before it held the vault's DIDs
+among it, and the same history imported again brings nothing. What one replica
+commits after a snapshot reaches another with the next snapshot sent to it.
 
 <a id="application-concurrency-adoption"></a>
 
@@ -97,5 +104,5 @@ The current rules are:
   responder registration promises neither automatic takeover nor exactly-once
   business execution.
 
-Replica administration, membership across mediators and history synchronization
-remain deferred as described above.
+Replica administration, membership across mediators and continuous history
+synchronization remain deferred as described above.
