@@ -7,7 +7,6 @@ import QrReader from "./QrReader.vue";
 import { canScanQr } from "./scanner.js";
 import { mergedNote } from "./util.js";
 
-/** A link another device of this vault made, merged in: one imported again brings nothing. */
 const open = ref(false);
 const scanning = ref(false);
 const text = ref("");

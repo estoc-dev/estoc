@@ -4,11 +4,6 @@ import { computed, ref } from "vue";
 import { dismissPendingSnapshotLink, heldNow, importFromLink, state } from "../core/store.js";
 import { mergedNote } from "./util.js";
 
-/**
- * A snapshot link the page was opened with, where a vault is held
- * already: imported into the open vault once the person asks, and a
- * locked one is unlocked first.
- */
 const importing = ref(false);
 const outcome = ref<{ text: string; failed: boolean } | null>(null);
 
