@@ -11,7 +11,7 @@
  * presents.
  */
 
-import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, InvalidSnapshot, ReadOnlyVault } from "../errors.js";
+import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, InvalidSnapshot, ReadOnlyVault, UnsupportedOperation } from "../errors.js";
 import type { Cid, Event, EventCid } from "../event.js";
 import { rawCidOf, sortCids } from "../objects.js";
 import { MemoryVault, heldRootsOf, type Held, type Retained, type RetainedRoots, type Vault, type VaultObjects, type VaultRuntime } from "../vault.js";
@@ -204,21 +204,27 @@ function prospectiveObjects(target: VaultObjects, source: VaultObjects, streamed
 }
 
 /**
- * The caller's fold over the prospective union. A stream of the
- * target's is verified as it is consumed, so damage nobody knew of
- * shows after `open` has answered, too late for the source's bytes to
- * stand in: a fold that met it, whether it threw or took the object
- * for unreadable, is dropped and run again from the start, where the
- * damage is known and the source answers instead. Each further run is
- * owed to an object found damaged since the last that the source has,
- * and no object is owed two; a fold that fails for any other reason
- * fails the import as it did.
+ * The caller's fold over the prospective union, read only: a commit
+ * through it is refused. A stream of the target's is verified as it
+ * is consumed, so damage nobody knew of shows after `open` has
+ * answered, too late for the source's bytes to stand in: a fold that
+ * met it, whether it threw or took the object for unreadable, is
+ * dropped and run again from the start, where the damage is known and
+ * the source answers instead. Each further run is owed to an object
+ * found damaged since the last that the source has, and no object is
+ * owed two; a fold that fails for any other reason fails the import as
+ * it did.
  */
 async function unionRetention(retainedRoots: RetainedRoots, union: Vault, held: Held, offered: Set<Cid>, sourceObjects: VaultObjects): Promise<Retained[]> {
   const answered = new Set<Cid>();
   for (;;) {
     const streamed = new Set<Cid>();
-    const folded = await checkedRetention(retainedRoots, { ...union, objects: prospectiveObjects(held.objects, sourceObjects, streamed) }).then(
+    const folded = await checkedRetention(retainedRoots, {
+      metadata: union.metadata,
+      events: union.events,
+      objects: prospectiveObjects(held.objects, sourceObjects, streamed),
+      commit: () => Promise.reject(new UnsupportedOperation("a commit to the union an import folds")),
+    }).then(
       (retained) => ({ retained }),
       (failure: unknown) => ({ failure })
     );

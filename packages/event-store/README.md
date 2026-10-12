@@ -517,7 +517,7 @@ against what the target holds, by CID — a duplicate or new — and a new
 event under the target's own author is `ForkedAuthor`, the whole import refused with
 nothing written, the recovery being an identity reset; the fold runs
 on the target as it is and on the prospective union, held as a vault
-in memory; every root a new event retains in the union, and every
+in memory that refuses a commit; every root a new event retains in the union, and every
 root the union holds that the target did not, must have bytes in the
 source or bytes the target holds sound as far as it knows — nothing
 is rehashed — else `IncompleteImport` names each and nothing is
