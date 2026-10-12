@@ -8,7 +8,7 @@
  */
 
 import type * as read from "@estoc/agent-core";
-import type { Channel, StoredAttachment, VaultFold } from "@estoc/vault";
+import type { Channel, MediationId, StoredAttachment, VaultFold } from "@estoc/vault";
 import type {
   AttachmentDescriptor,
   BodyRecord,
@@ -21,6 +21,7 @@ import type {
   Diagnostic,
   DisplayTime,
   EventCid,
+  HistoryReceived,
   InvitationRecord,
   LocalDidRecord,
   MediationRecord,
@@ -28,6 +29,7 @@ import type {
   MessageRecord,
   ObservationRecord,
   PendingWork,
+  ReplicaListing,
   Snapshot,
   UnplacedRecord,
 } from "@estoc/daemon-api/contract";
@@ -41,11 +43,12 @@ export interface ReadVault {
   restoreUnexplained: boolean;
   mediations: MediationRecord[];
   dids: LocalDidRecord[];
+  historyReceived: HistoryReceived | null;
 }
 
 const apiId = <Id extends string>(id: string): Id => id as Id;
 
-export function mediationRecords(mediations: VaultFold["mediations"]): MediationRecord[] {
+export function mediationRecords(mediations: VaultFold["mediations"], listings: ReadonlyMap<MediationId, ReplicaListing> = new Map()): MediationRecord[] {
   return [...mediations.mediations.values()].map((mediation) => ({
     mediationId: apiId(mediation.mediationId),
     mediatorDid: mediation.mediatorDid,
@@ -53,6 +56,7 @@ export function mediationRecords(mediations: VaultFold["mediations"]): Mediation
     usable: mediations.usable(mediation.mediationId),
     retired: mediation.retired,
     diagnostics: [...mediation.faults],
+    replicas: listings.get(mediation.mediationId) ?? null,
   }));
 }
 
@@ -341,6 +345,7 @@ export async function project(reader: read.Recorder, vault: ReadVault): Promise<
     label: vault.label,
     restoreUnexplained: vault.restoreUnexplained,
     mediations: [...vault.mediations].sort(byId(({ mediationId }) => mediationId)),
+    historyReceived: vault.historyReceived,
     dids: [...vault.dids].sort(byId(({ didId }) => didId)),
     contacts: contacts.sort(byId(({ contactId }) => contactId)),
     channels: channels.all().map(channelRecord).sort(byId(({ channelId }) => channelId)),

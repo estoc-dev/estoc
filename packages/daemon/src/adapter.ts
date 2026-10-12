@@ -9,10 +9,10 @@
  */
 
 import { NoTarget, Unusable, type Content, type Invitation as DomainInvitation } from "@estoc/agent-core";
-import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, DisplayTime, Limits, Lines, MessageId, Snapshot, SnapshotLink, SnapshotLinkRecord } from "@estoc/daemon-api/contract";
+import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, DisplayTime, Limits, Lines, MessageId, ReplicaId as ApiReplicaId, Snapshot, SnapshotLink, SnapshotLinkRecord } from "@estoc/daemon-api/contract";
 import { Refusal, type MethodHandlers, type Session, type Transport } from "@estoc/daemon-api/wire";
 import { DamagedHistory } from "@estoc/event-store";
-import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference } from "@estoc/vault";
+import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference, type ReplicaId } from "@estoc/vault";
 
 import type { CompletionWord, DispatchWord, Outcome, SendResult } from "./api.js";
 import { InvalidChannelId, channelIdOf, channelOf } from "./channels.js";
@@ -190,6 +190,14 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       return null;
     }),
     importFromLink: guarded(({ link }) => core.importFromLink(domainLinkOf(link), limits.maxBackupBytes)),
+    refreshReplicas: guarded(async () => {
+      await core.refreshReplicas();
+      return null;
+    }),
+    sync: guarded(async ({ replicaId }) => {
+      const { told } = await core.sync(replicaId === undefined ? undefined : spelled<ReplicaId>(replicaId));
+      return { told: told.map((id) => spelled<ApiReplicaId>(id)) };
+    }),
 
     setMediator: guarded(async ({ mediatorDid }) => ({ mediationId: spelled(await core.setMediator(didOf(mediatorDid))) })),
     createInvitation: guarded(async ({ goal }) => {

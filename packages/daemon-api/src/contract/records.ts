@@ -8,6 +8,7 @@
 
 import type { ChannelId, ContactId, ConversationId, DidId, DisplayTime, EventCid, ExecutionId, MediationId, MessageId } from "./ids.js";
 import type { DisclosureAs } from "./protocol.js";
+import type { HistoryReceived, ReplicaListing } from "./replicas.js";
 import type { JsonObject } from "./values.js";
 
 export interface Snapshot {
@@ -22,6 +23,8 @@ export interface Snapshot {
    */
   restoreUnexplained: boolean;
   mediations: MediationRecord[];
+  /** null while no other replica has sent this one history */
+  historyReceived: HistoryReceived | null;
   dids: LocalDidRecord[];
   contacts: ContactRecord[];
   channels: ChannelRecord[];
@@ -41,6 +44,8 @@ export interface MediationRecord {
   /** why it was retired; null while it stands */
   retired: string | null;
   diagnostics: string[];
+  /** null while its mediator has listed none to this daemon */
+  replicas: ReplicaListing | null;
 }
 
 export interface LocalDidRecord {

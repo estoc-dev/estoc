@@ -1,6 +1,7 @@
 export * from "./values.js";
 export * from "./records.js";
 export * from "./snapshot-links.js";
+export * from "./replicas.js";
 export * from "./lines.js";
 export * from "./state.js";
 export * from "./errors.js";

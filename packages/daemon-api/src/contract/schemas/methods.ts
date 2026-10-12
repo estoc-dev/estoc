@@ -1,13 +1,14 @@
 import { z } from "zod";
 
 import type { DaemonErrorCode } from "../errors.js";
-import { OUTCOMES, type Baseline, type CancelOutcome, type CompletionOutcome, type ContactReached, type DispatchOutcome, type MergeResult, type MethodInput, type MethodName, type MethodResult, type Outcome, type OutcomeTag, type RotateResult, type SelectOutcome, type SendResult, type SendTarget } from "../methods.js";
+import { OUTCOMES, type Baseline, type CancelOutcome, type CompletionOutcome, type ContactReached, type DispatchOutcome, type MethodInput, type MethodName, type MethodResult, type Outcome, type OutcomeTag, type RotateResult, type SelectOutcome, type SendResult, type SendTarget } from "../methods.js";
 import { OOB_INVITATION, PLAIN_TYP, TRACE_LEVELS, type Invitation } from "../protocol.js";
 import { linesState } from "./lines.js";
 import { messageContent } from "./records.js";
+import { mergeResult } from "./replicas.js";
 import { publishedSnapshotLink, snapshotLink, snapshotLinkRecord, snapshotSelection } from "./snapshot-links.js";
 import { revisionMarker, state } from "./state.js";
-import { bytes, channelId, contactId, didId, eventCid, executionId, hold, mediationId, messageId } from "./values.js";
+import { bytes, channelId, contactId, didId, eventCid, executionId, hold, mediationId, messageId, replicaId } from "./values.js";
 
 /** The codes every method may return before or instead of running, a request over the advertised bounds among them: they are not repeated per method. */
 export const COMMON_ERROR_CODES = ["NotAttached", "NoSuchMethod", "InvalidArgument", "ResourceLimit", "OperationFailed"] as const satisfies readonly DaemonErrorCode[];
@@ -59,14 +60,6 @@ export const invitation: z.ZodType<Invitation> = z.object({
 
 export const baseline: z.ZodType<Baseline> = z.object({ state, lines: linesState });
 
-export const mergeResult: z.ZodType<MergeResult> = z.object({
-  added: z.int().nonnegative(),
-  duplicates: z.int().nonnegative(),
-  objects: z.int().nonnegative(),
-  repaired: z.int().nonnegative(),
-  renewed: z.boolean(),
-});
-
 const traceLevel = z.enum(TRACE_LEVELS);
 const level = z.object({ level: traceLevel });
 
@@ -92,6 +85,8 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   snapshotLinks: { input: empty, result: z.object({ links: z.array(snapshotLinkRecord) }), errors: lifecycle, bytes: noBytes },
   restoreFromLink: { input: z.object({ link: snapshotLink, passphrase }), result: nothing, errors: lifecycle, bytes: noBytes },
   importFromLink: { input: z.object({ link: snapshotLink }), result: mergeResult, errors: lifecycle, bytes: noBytes },
+  refreshReplicas: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
+  sync: { input: z.object({ replicaId: replicaId.optional() }), result: z.object({ told: z.array(replicaId) }), errors: lifecycle, bytes: noBytes },
 
   setMediator: { input: z.object({ mediatorDid: z.string() }), result: z.object({ mediationId }), errors: lifecycle, bytes: noBytes },
   createInvitation: { input: z.object({ goal: z.string().optional() }), result: z.object({ didId, invitation }), errors: lifecycle, bytes: noBytes },

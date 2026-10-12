@@ -73,22 +73,30 @@ your data never touches the place the app was served from.
   *Import a backup* into a live vault *merges*: events the vault lacks are
   added, nothing already here is touched, so backups from two devices fold
   together. A message a backup holds unsent is not sent on its own.
-- **A new device from a link.** *Add a device*, on the You screen, makes
-  a link the new device joins with: the vault's name, its mediators and
+- **A new device from a link.** *Add a device*, under *Your devices* on
+  the You screen, makes a link the new device joins with: the vault's name, its mediators and
   its devices, sealed under a key of its own and put at the mediator, shown
   as a QR code and as text. A fresh install opened at the link, or given
   it pasted or scanned under *Restore*, restores it under the vault's
   passphrase and registers at the mediator as one more device: it receives
-  from then on, with no conversations yet. The history goes over as a copy
-  of the whole vault, *Back up to a link* on the same sheet: opened on a
-  device that holds the vault, or pasted or scanned under *Import from a
-  link*, it is merged in as a backup is, and merging it again brings
-  nothing; opened on a fresh install, it restores the vault as it was
-  then. Whoever holds a copy's link reads the messages until the mediator
-  lets it go or it is revoked; the passphrase still seals the seed. The
-  links made are listed, each saying what it carries, with when they
-  expire, to show again or revoke. A vault over what one blob at the
-  mediator holds goes by backup file instead.
+  from then on, with no conversations yet. *Your devices* lists the
+  vault's devices as the mediator holds them, asked again each time the
+  list comes into view and when the sheet closes, one it removed greyed
+  out, and the last list while the mediator is out of reach; one that
+  joined since and was sent nothing yet is
+  marked new, with *Send history* on its row, and *Sync now* sends to
+  every other. Either puts a copy of the whole vault at the mediator and
+  mails its link to the device, which takes in what it lacks as the link
+  arrives, mail it could not open before among it, and says so under its
+  own *Your devices*; sending again brings nothing new. The same copy goes
+  by hand as *Back up to a link* on the same sheet: opened on a device
+  that holds the vault, or pasted or scanned under *Import from a link*,
+  it is merged in as a backup is; opened on a fresh install, it restores
+  the vault as it was then. Whoever holds a copy's link reads the
+  messages until the mediator lets it go or it is revoked; the passphrase
+  still seals the seed. The links made are listed, each saying what it
+  carries, with when they expire, to show again or revoke. A vault over
+  what one blob at the mediator holds goes by backup file instead.
 - **Offline.** Installed, Estoc opens with no network at all: the app
   shell and the WASM are cached by a service worker, the vault is on disk.
   Reading history needs nothing. Writing needs nothing either: a message

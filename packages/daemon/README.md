@@ -148,8 +148,9 @@ restored from it is an ordinary replica: it registers at the preferred
 arrangement, picks up and stays live. Mail it receives before it holds
 the vault's DIDs is discarded there, and recorded by the replicas that
 received it too; the history, that mail among it, comes by importing a
-snapshot of `all`. A restore does the same whatever the selection, and
-a link does not say which it is.
+snapshot of `all`, which another replica sends it (see below). A
+restore does the same whatever the selection, and a link does not say
+which it is.
 
 What is put is kept in the runtime's local state, the key among it, and
 not in the vault: pending before the put, with where it goes and
@@ -191,6 +192,45 @@ open again by then. Past those checks a merge fails as `mergeBackup`
 does, with what it may have done said as its effect. Each record a
 daemon keeps says what its snapshot carries, so the list can show it;
 a record kept without it is none this daemon wrote, and is forgotten.
+
+## Replicas and the history between them
+
+Which replicas the vault has is the mediator's word: the daemon asks it
+(`replica-list`, each grant checked under the seed) once the preferred
+arrangement is connected or set, on `reconnect()`, before it sends
+history, and on `refreshReplicas()`. The last answer is kept in the
+runtime's local state and shown on the arrangement's record, `self` on
+the runtime's own and `removed` on one the mediator holds no more, so
+that it is shown while the mediator is out of reach; the vault never
+holds it. A time the mediator gives whose year runs past four digits,
+as no view spells one, is shown as none.
+
+`sync(replicaId?)` publishes a snapshot of `all` as
+`publishSnapshotLink` does and mails its link through the mediator to
+`replicaId`, or to every other replica the mediator holds when it is
+left out (`replica-channel`, sealed between the two replica DIDs). It is
+refused before anything is put when the mediator holds no such replica.
+It answers the replicas the mediator took the mail for, and keeps what
+came of each, sent or why not, for the records; nothing is sent again
+on its own, and the link stays listed and revocable as any other.
+
+A runtime takes such a link only from another replica of the seed at
+the same arrangement, and only at an https URL that mediator serves,
+and imports it as the link arrives, asking nobody: the sender holds the
+seed, and a snapshot of another vault is refused as a pasted one is.
+The import runs in the background, so the delivery that brought the
+link waits for none of it: the read takes no turn of the files, at most
+what a blob at the mediator holds, and the merge, as `importFromLink`
+does it, waits for the work under way over the agent it replaces. A
+second one of the same history brings nothing. How the last one
+received went, importing, what it brought or why it failed, is kept in
+the local state with the replica it came from and shown as
+`historyReceived`. One received earlier that ends later still merges
+what it brings, and is logged rather than shown over it. An import the
+vault was locked under is shown as failed once it is unlocked, and one
+a daemon stopped in the middle of as failed when the vault next opens.
+A link lost on the way, or one whose import fails, is sent again by
+hand.
 
 ## The trace
 

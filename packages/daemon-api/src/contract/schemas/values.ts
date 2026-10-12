@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ChannelId, ContactId, ConversationId, DidId, DisplayTime, Epoch, EventCid, ExecutionId, Hold, MediationId, MessageId, Revision } from "../ids.js";
+import type { ChannelId, ContactId, ConversationId, DidId, DisplayTime, Epoch, EventCid, ExecutionId, Hold, MediationId, MessageId, ReplicaId, Revision } from "../ids.js";
 import type { ApiObject, ApiValue, JsonObject, JsonValue } from "../values.js";
 
 /** A finite number; negative zero reads as zero, since the two transports carry it as one value. */
@@ -44,6 +44,7 @@ export const contactId = id<ContactId>();
 export const messageId = id<MessageId>();
 export const didId = id<DidId>();
 export const mediationId = id<MediationId>();
+export const replicaId = id<ReplicaId>();
 export const executionId = id<ExecutionId>();
 export const eventCid = id<EventCid>();
 export const conversationId = id<ConversationId>();

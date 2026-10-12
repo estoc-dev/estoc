@@ -1,4 +1,4 @@
-import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
+import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId, ReplicaId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, Selected, TraceLevel } from "@estoc/agent-core";
 import type { Hold, SnapshotSelection } from "@estoc/daemon-api/contract";
 
@@ -116,6 +116,18 @@ export interface Daemon {
    * where the vault is let go of while it is read.
    */
   importFromLink(link: SnapshotLink, maxBytes: number): Promise<Merged>;
+  /** The replicas of the preferred arrangement asked of its mediator again, and kept for the records to show. */
+  refreshReplicas(): Promise<void>;
+  /**
+   * The whole vault's snapshot published as `publishSnapshotLink`
+   * publishes one, and its link mailed to `replicaId`, or to every other
+   * replica the mediator holds when it is left out, as the mediator
+   * lists them now; each imports it as the link arrives. Refused before
+   * anything is put when the mediator holds no such replica. `told` is
+   * those the mediator took the mail for; what came of each is kept for
+   * the records to show.
+   */
+  sync(replicaId?: ReplicaId): Promise<{ told: ReplicaId[] }>;
 
   /** An arrangement with `mediatorDid` selected: the one that stands with that mediator, or one created and enrolled in. */
   setMediator(mediatorDid: string): Promise<MediationId>;

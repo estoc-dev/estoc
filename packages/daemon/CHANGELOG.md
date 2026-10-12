@@ -49,6 +49,22 @@
   again by then. A link's snapshot over the bound
   is refused as `over the ... bytes this daemon reads from a link`.
 
+- **History between replicas**: the daemon asks the mediator which
+  replicas the vault has once the preferred arrangement is connected or
+  set, on `reconnect`, before `sync` and on `refreshReplicas`, and shows
+  the last answer on the arrangement's record, kept in the local state
+  while the mediator is out of reach; a time it gives whose year runs
+  past four digits is shown as none. `sync(replicaId?)` publishes a
+  snapshot of the whole vault and mails its link to that replica, or to
+  every other one the mediator holds, answering those the mediator took
+  it for and keeping what came of each. A link another replica of the
+  seed sends this one is imported as it arrives, at most what a blob at
+  the mediator holds, and how the last one received went is shown as
+  `historyReceived`: one received earlier that ends later is merged and
+  logged, not shown over it, an import a lock cut short is shown as
+  failed once the vault is unlocked, and one a stopped daemon left under
+  way as failed once it opens again.
+
 - A response of a status with no body (a 204, say) reaches the agent as
   the host answered it, even when the host hands it over with an empty
   body, as a browser does: wrapping that body in a new response threw, so

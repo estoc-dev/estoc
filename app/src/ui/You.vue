@@ -5,7 +5,7 @@ import { chooseLook, look, type Look } from "../core/look.js";
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
-import AddDevice from "./AddDevice.vue";
+import Devices from "./Devices.vue";
 import Icon from "./Icon.vue";
 import ImportLink from "./ImportLink.vue";
 import MediatorForm from "./MediatorForm.vue";
@@ -118,8 +118,6 @@ async function importBackup(event: Event) {
   }
 }
 
-const addingDevice = ref(false);
-
 const TRACE_NOTES: Record<TraceLevel, string> = {
   off: "nothing observed is kept",
   normal: "envelopes and frames, for a month",
@@ -213,6 +211,8 @@ function forget() {
         <p class="note">A link is for whoever you hand it to, your DID for anyone who finds it: each one is answered from an address minted for them alone.</p>
       </div>
 
+      <Devices v-if="mediation !== null" />
+
       <div class="section">
         <div class="eyebrow">Your vault</div>
         <div class="group">
@@ -239,13 +239,6 @@ function forget() {
           </label>
           <p v-if="importNote" class="note" style="padding: 0 16px 12px" data-import-note>{{ importNote }}</p>
           <ImportLink />
-          <button class="row" type="button" :disabled="mediation === null" data-add-device @click="addingDevice = true">
-            <span class="row-main">
-              <span>Add a device</span>
-              <span class="row-sub">{{ mediation === null ? "once a mediator is chosen" : "links that set it up and bring your history over" }}</span>
-            </span>
-            <Icon name="chevron" class="chevron" :size="20" />
-          </button>
           <button v-if="state.install" class="row" type="button" data-install @click="state.install?.()">
             <span class="row-main">Install as an app</span>
             <Icon name="chevron" class="chevron" :size="20" />
@@ -295,8 +288,6 @@ function forget() {
         </div>
         <p class="note">Gone from this device for good. A backup is the only way back.</p>
       </div>
-
-      <AddDevice v-if="addingDevice" @close="addingDevice = false" />
 
       <p class="footer-note">Estoc {{ version }}<template v-if="state.offlineReady"> · ready to work offline</template></p>
     </div>

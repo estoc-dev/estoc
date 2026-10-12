@@ -1,6 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
 import { AnchorMismatch, DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, exportVault, importVault, openPortable, restoreVault, type SqliteDriver, type SqliteVault } from "@estoc/event-store";
-import type { Hold, Lines, Phase, Snapshot, SnapshotSelection } from "@estoc/daemon-api/contract";
+import type { Hold, Lines, Phase, ReplicaListing, Snapshot, SnapshotSelection } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
   ENROLLMENT_EVENT_TYPES,
@@ -17,6 +17,7 @@ import {
   type Did,
   type DidId,
   type MediationId,
+  type ReplicaId,
   type VaultDraft,
   type VaultFold,
 } from "@estoc/vault";
@@ -50,10 +51,12 @@ import {
   type Called,
   type EffectOutcome,
   type InspectedRuntime,
+  type ListedReplica,
   type LockedVault,
   type Membership,
   type VaultSession,
   type RouteSpec,
+  type SnapshotLinkReceived,
 } from "@estoc/agent-core";
 
 import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
@@ -62,7 +65,8 @@ import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
-import { SnapshotLinks, type Put, type SnapshotLink } from "./snapshot-links.js";
+import { Receipts, ReplicaRecords, type Ended, type Receipt } from "./replicas.js";
+import { SnapshotLinks, type PublishedSnapshot, type Put, type SnapshotLink } from "./snapshot-links.js";
 
 /** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
 export interface DaemonCore extends Daemon {
@@ -252,6 +256,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   let current: Phase = "booting";
   /** the vault file's name for as long as it stands, whatever phase it stands in */
   let held: Hold | null = null;
+  const receipts = new Receipts();
 
   let closed: Promise<void> | null = null;
   const closing = () => closed !== null;
@@ -357,12 +362,19 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     const { runtime } = session;
     const fold = await vault.fold();
     const records = await recorder(fold, objectReader(vault.held.objects, MAX_CONTENT_BYTES), { author: runtime.author, local: new LocalRecords(runtime.local.options, runtime.author) });
+    const replicas = new ReplicaRecords(runtime.local.options);
+    const listings = new Map<MediationId, ReplicaListing>();
+    for (const mediationId of fold.mediations.mediations.keys()) {
+      const listing = await replicas.listing(mediationId, runtime.author);
+      if (listing !== null) listings.set(mediationId, listing);
+    }
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
       restoreUnexplained: !(await explained(runtime)),
-      mediations: mediationRecords(fold.mediations),
+      mediations: mediationRecords(fold.mediations, listings),
       dids: localDidRecords(fold.dids),
+      historyReceived: await replicas.received(),
     });
   }
 
@@ -427,6 +439,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           },
           log: whileAttached(log),
           onLines: tellLines,
+          onSnapshotLink: whileAttached((received: SnapshotLinkReceived) => historyFrom(session, received)),
         }
       );
       tellLines(agent.lines());
@@ -461,13 +474,29 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     );
   }
 
-  /** The agent's lines connected, in the background: a mediator out of reach keeps no screen waiting. */
+  /** The agent's lines connected; once the preferred arrangement is, its mediator is asked in the background which replicas it holds. */
+  async function connected(running: Open, agent: Agent): Promise<void> {
+    const connections = await agent.connect();
+    const { preferred } = (await running.session.fold()).mediations;
+    if (connections.some(({ mediationId, unreachable }) => mediationId === preferred && unreachable === null)) listInBackground(running);
+  }
+
+  /** `connected`, in the background: a mediator out of reach keeps no screen waiting. */
   function connect(running: Open): void {
     const { attached } = running;
-    during(attached, async (agent) => {
-      await agent.connect();
-    }).catch((err) => {
+    during(attached, (agent) => connected(running, agent)).catch((err) => {
       if (!attached.ended) log(`the agent did not come up: ${failure(err)}`);
+    });
+  }
+
+  /** The replicas of the preferred arrangement asked of its mediator in the background, where the runtime's replica is enrolled there. */
+  function listInBackground(running: Open): void {
+    const { attached } = running;
+    during(attached, async (agent) => {
+      const { preferred } = (await running.session.fold()).mediations;
+      if (preferred !== null) await listed(running, agent, await (await agent.arrangement(preferred)).membership());
+    }).catch((err) => {
+      if (!attached.ended) log(`the replicas could not be listed: ${failure(err)}`);
     });
   }
 
@@ -491,6 +520,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     try {
       if (closing()) throw new Error(CLOSED);
       if (held === null) throw new Error("no vault file is held");
+      await receipts.keep(held, session.runtime.local.options).catch((err: unknown) => log(`what came of the history received was not kept: ${failure(err)}`));
       const trace = await AgentTrace.open(session.runtime.local);
       running = { session, seedKey, trace, attached: attach(session, trace), publishing: publisher.open(held, sourceOf({ session })) };
     } catch (err) {
@@ -817,6 +847,99 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }
     });
 
+  /** The most a snapshot put as a blob at `membership`'s mediator comes to before it is sealed. */
+  async function blobBound({ blobs }: Membership): Promise<number> {
+    const limits = await blobs.limits();
+    if (limits === null) throw new Unmet("the mediator keeps no blobs");
+    return limits.maxBytes - SEAL_OVERHEAD;
+  }
+
+  /**
+   * The running vault's snapshot of `selection` sealed under a key of its
+   * own and put as the blob of `membership`'s replica, kept in the local
+   * state before the put so that one whose upload fails is still listed,
+   * and revocable.
+   */
+  async function publish(running: Open, membership: Membership, selection: SnapshotSelection): Promise<PublishedSnapshot> {
+    const { attached, session } = running;
+    const { runtime } = session;
+    const { blobs, mediationId } = membership;
+    const maxBytes = await during(attached, () => blobBound(membership));
+    // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
+    const snapshot = await exclusively(() => {
+      if (open !== running) throw new WrongPhase("the vault was let go of while its snapshot was asked for");
+      return exported(running, selection, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
+    });
+    const sealed = await sealBlob(snapshot);
+    return during(attached, () =>
+      session.turn(SNAPSHOT_PUTS, async () => {
+        const links = new SnapshotLinks(runtime.local.options, runtime.author);
+        const placedAt = Date.now();
+        await links.prune(placedAt);
+        const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, selection, placedAt };
+        await links.keep(asked);
+        let placement: Awaited<ReturnType<typeof blobs.put>>;
+        try {
+          placement = await blobs.put(sealed.hash, sealed.bytes.length);
+        } catch (err) {
+          if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
+          await links.forget(sealed.hash);
+          throw new Unmet(`the mediator refused the snapshot: ${err.message}`);
+        }
+        const placed = { ...asked, stage: "placed" as const, url: placement.url, retainUntil: placement.retainUntil };
+        await links.keep(placed);
+        await blobs.upload(placement, sealed.bytes);
+        const uploaded = { ...placed, stage: "uploaded" as const };
+        await links.keep(uploaded);
+        return links.published(uploaded);
+      })
+    );
+  }
+
+  /** The replicas of `membership`'s arrangement as its mediator lists them now, kept for the snapshot to show. */
+  async function listed(running: Open, agent: Agent, membership: Membership): Promise<ListedReplica[]> {
+    const replicas = await (await agent.arrangement(membership.mediationId)).listReplicas();
+    await new ReplicaRecords(running.session.runtime.local.options).keepListing(membership.mediationId, Date.now(), replicas);
+    changed();
+    return replicas;
+  }
+
+  /** What the receipts leave unwritten, written into the vault open now. */
+  const keepReceipts = (): Promise<void> =>
+    exclusively(async () => {
+      if (open === null || held === null) return;
+      await receipts.keep(held, open.session.runtime.local.options);
+      changed();
+    }).catch((err: unknown) => {
+      if (!closing()) log(`what came of the history received was not kept: ${failure(err)}`);
+    });
+
+  /** A snapshot link another replica sent over the agent `session` runs under, imported in the background: the delivery that brought it waits for none of the import. */
+  function historyFrom(session: VaultSession, received: SnapshotLinkReceived): void {
+    const running = open;
+    if (running === null || running.session !== session || held === null) return;
+    void importHistory(running, received, receipts.begin(held, received.replicaId));
+  }
+
+  /**
+   * History another replica sent, merged into the vault it was sent to
+   * as a link pasted here would be, read at most as far as a blob at the
+   * mediator holds. The read takes no turn of the files; the merge waits
+   * for the work under way over the agent it replaces.
+   */
+  async function importHistory(running: Open, { mediationId, replicaId: from, link }: SnapshotLinkReceived, receipt: Receipt): Promise<void> {
+    void keepReceipts();
+    let ended: Ended;
+    try {
+      const maxBytes = await during(running.attached, async (agent) => blobBound(await (await agent.arrangement(mediationId)).membership()));
+      ended = { status: "imported", merged: await mergeSnapshot(running, await snapshotAt(link, maxBytes)) };
+    } catch (err) {
+      ended = { status: "failed", because: failure(err) };
+    }
+    if (!receipt.end(ended)) log(`the history replica ${from} sent before the one shown ${ended.status === "imported" ? `was imported too, adding ${ended.merged.added} events` : `was not imported: ${ended.because}`}`);
+    await keepReceipts();
+  }
+
   host.onOnline?.(() => {
     const running = open;
     if (running === null) return;
@@ -978,43 +1101,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
     async publishSnapshotLink(selection) {
       const running = vault();
-      const { attached, session } = running;
-      const { runtime } = session;
-      const { blobs, mediationId, maxBytes } = await during(attached, async (agent) => {
-        const { blobs, mediationId } = await membershipOf(running, agent);
-        const limits = await blobs.limits();
-        if (limits === null) throw new Unmet("the mediator keeps no blobs");
-        return { blobs, mediationId, maxBytes: limits.maxBytes - SEAL_OVERHEAD };
-      });
-      // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
-      const snapshot = await exclusively(() => {
-        if (open !== running) throw new WrongPhase("the vault was let go of while its snapshot was asked for");
-        return exported(running, selection, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
-      });
-      const sealed = await sealBlob(snapshot);
-      return during(attached, () =>
-        session.turn(SNAPSHOT_PUTS, async () => {
-          const links = new SnapshotLinks(runtime.local.options, runtime.author);
-          const placedAt = Date.now();
-          await links.prune(placedAt);
-          const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, selection, placedAt };
-          await links.keep(asked);
-          let placement: Awaited<ReturnType<typeof blobs.put>>;
-          try {
-            placement = await blobs.put(sealed.hash, sealed.bytes.length);
-          } catch (err) {
-            if (!(err instanceof MediatorRefused) || err.code === null || !PUT_REFUSALS.has(err.code)) throw err;
-            await links.forget(sealed.hash);
-            throw new Unmet(`the mediator refused the snapshot: ${err.message}`);
-          }
-          const placed = { ...asked, stage: "placed" as const, url: placement.url, retainUntil: placement.retainUntil };
-          await links.keep(placed);
-          await blobs.upload(placement, sealed.bytes);
-          const uploaded = { ...placed, stage: "uploaded" as const };
-          await links.keep(uploaded);
-          return links.published(uploaded);
-        })
-      );
+      return publish(running, await during(running.attached, (agent) => membershipOf(running, agent)), selection);
     },
 
     revokeSnapshotLink(hash) {
@@ -1042,10 +1129,45 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
     mergeBackup: async (bytes) => mergeSnapshot(vault(), bytes),
 
+    refreshReplicas: () =>
+      act(async (agent, running) => {
+        await listed(running, agent, await membershipOf(running, agent));
+      }),
+
+    async sync(replicaId) {
+      const running = vault();
+      const { attached, session } = running;
+      const { membership, to } = await during(attached, async (agent) => {
+        const membership = await membershipOf(running, agent);
+        const others = (await listed(running, agent, membership)).filter((replica) => !replica.self && replica.state === "active" && (replicaId === undefined || replica.replicaId === replicaId));
+        if (others.length === 0) throw new Unmet(replicaId === undefined ? "the mediator holds no other replica of this vault" : `the mediator holds no other replica ${replicaId} of this vault`);
+        return { membership, to: others };
+      });
+      const { link } = await publish(running, membership, "all");
+      const told = await during(attached, async () => {
+        const kept = new ReplicaRecords(session.runtime.local.options);
+        const told: ReplicaId[] = [];
+        for (const replica of to) {
+          try {
+            await membership.sendSnapshotLink(replica, link);
+            await kept.keepSent(replica.replicaId, { at: Date.now(), outcome: "sent" });
+            told.push(replica.replicaId);
+          } catch (err) {
+            await kept.keepSent(replica.replicaId, { at: Date.now(), outcome: "failed", because: failure(err) });
+          }
+        }
+        changed();
+        return told;
+      });
+      if (open === running) await settle();
+      return { told };
+    },
+
     setMediator: (mediatorDid) =>
-      act((agent, { session }) =>
+      act((agent, running) => {
+        const { session } = running;
         // Two calls at once would each enroll in and select the arrangement: the later one looks only once the earlier is done.
-        session.turn("set-mediator", async () => {
+        return session.turn("set-mediator", async () => {
           const mediationId = mediationIdOf(mediatorDid as Did);
           const fold = await session.fold();
           const own = fold.replicas.replicas.get(session.runtime.author);
@@ -1055,9 +1177,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           await session.createMediation(mediatorDid as Did);
           await agent.enroll(mediationId);
           await session.selectMediation(mediationId);
+          listInBackground(running);
           return mediationId;
-        })
-      ),
+        });
+      }),
 
     createInvitation: (goal) =>
       act(async (agent, running) => {
@@ -1176,9 +1299,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     refresh: () => publisher.refresh(),
 
     async reconnect() {
-      await during(vault().attached, async (agent) => {
-        await agent.connect();
-      });
+      const running = vault();
+      await during(running.attached, (agent) => connected(running, agent));
     },
 
     traceLevel: async () => vault().trace.level,
