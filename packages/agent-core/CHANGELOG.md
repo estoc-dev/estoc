@@ -2,14 +2,16 @@
 
 ## Unreleased
 
-- **This runtime's replica, bound** (breaking): `Agent.membership()`
-  hands the host this runtime's replica at its arrangement as a
+- **This runtime's replica, bound** (breaking): `Arrangement.membership()`
+  hands the host this runtime's replica at that arrangement as a
   `Membership`, with `replicaId`, `mediationId`, `blobs` (blob-store/1.0
   spoken as the replica) and `sendSnapshotLink(to, link)`, bound once to
   this runtime, its keys and the agent's line to the arrangement's
-  mediator. A runtime has one replica, bound to one arrangement for good,
-  so the call takes no arrangement. Taking it reads the vault and the
-  local confirmations alone, and needs the replica enrolled:
+  mediator. A runtime has one replica, bound to one arrangement for good:
+  at an arrangement the replica is no member of, the call is refused
+  with `EntityConflict` and the replica stays where it is. Taking it
+  reads the vault and the local confirmations alone, and needs the
+  replica enrolled:
   `UnknownEntity` until this runtime has a replica, `Unusable` while a
   step of enrolling it is wanting, which the host does through
   `Agent.enroll`. Every operation that reaches the mediator passes the

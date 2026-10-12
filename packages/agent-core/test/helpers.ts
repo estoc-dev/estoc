@@ -136,9 +136,9 @@ export async function party(mediator: FakeMediator, fill = 1, over: Partial<Link
   return { ...bound, fold, mediator, created, ring, linkOptions, log, offline, account: accountOver(bound) };
 }
 
-/** The party's account bound over another link, or with other confirmations, than its own. */
+/** The party's account bound over another link, or with other confirmations, than its own; no agent holds it, so it hands out no membership. */
 export function accountOver(p: Pick<Party, "runtime" | "keys" | "mediationId" | "trace" | "confirmations" | "link">, { link = p.link, confirmations = p.confirmations }: { link?: MediatorLink; confirmations?: Confirmations } = {}): Account {
-  return new Account(p.runtime, p.keys, p.mediationId, confirmations, p.trace, async () => link);
+  return new Account(p.runtime, p.keys, p.mediationId, confirmations, p.trace, async () => link, () => Promise.reject(new Error("no agent binds this runtime's replica")));
 }
 
 /** A link speaking as the runtime's replica DID with that DID's keys alone, under both its spellings: what picks the replica's mail up. */

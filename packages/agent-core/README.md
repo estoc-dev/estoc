@@ -36,9 +36,10 @@ one of the vault's DIDs or writing the vault, reaches a host only through
 an object and the entry points that hand it out. The parts those objects
 are assembled from stay inside the package. The index exports:
 
-- The objects and how a host gets them: `Agent` (and the `Arrangement` and
-  `Membership` it hands out), `AgentTrace`, `LocalRecords`, `createVault`,
-  `openVault`, `inspectRuntime`, `inspectSnapshot`.
+- The objects and how a host gets them: `Agent` (and the `Arrangement` it
+  hands out, and the `Membership` an arrangement hands out), `AgentTrace`,
+  `LocalRecords`, `createVault`, `openVault`, `inspectRuntime`,
+  `inspectSnapshot`.
 - The errors, so that a host can catch what those objects throw.
 - The wire vocabulary of `protocol/`, whole: the type URIs, reading and
   writing bodies, `unpack`, `parseInvitation`, `secretsResolverFor`. These
@@ -74,7 +75,7 @@ peer.
 | Question | Module | Entry points |
 | --- | --- | --- |
 | How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `inspectRuntime`, `inspectSnapshot` |
-| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `membership`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
+| What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
 | What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
 | What authorizes a transport call? | `action.ts` | `LiveAction.manual`, `LiveInput`, `Responding` |
 | How does a procedure write the vault, and talk to a mediator? | `procedure.ts` | `decide`, `serially` |

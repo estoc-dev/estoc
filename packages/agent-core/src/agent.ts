@@ -64,7 +64,7 @@ import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./did
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
 import { callEffects, decideEffects, messageOf, type Called, type EffectOptions, type Reacted } from "./effects.js";
-import { LinkClosed } from "./errors.js";
+import { EntityConflict, LinkClosed } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { Keyring } from "./keyring.js";
@@ -72,7 +72,7 @@ import { Lifetime, type Fetch, type Timer, type Timers } from "./lifetime.js";
 import { MediatorLink, type LinkOptions } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { createdOf } from "./mediation.js";
-import { Member, bindingOf, enrolledReplica, type LinkAs, type Membership } from "./membership.js";
+import { Member, bindingOf, type LinkAs } from "./membership.js";
 import type { Delivered, Drained, Fate, Handle, Pickup } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
 import { STATUS } from "./protocol/mediation.js";
@@ -347,22 +347,6 @@ export class Agent {
     return disclose(route?.kind === "mediated" ? this.account(route.mediationId) : null, this.runtime, this.keys, didId, disclosure);
   }
 
-  /**
-   * This runtime's replica as a member of its arrangement, bound to this
-   * runtime and reaching the arrangement's mediator over this agent's
-   * line: what `connect` picks up as too. Handed out while the replica
-   * is enrolled, and each operation on it is let through while it still
-   * is: `UnknownEntity` until this runtime has a replica, `Unusable`
-   * while a step of enrolling it is wanting, which `enroll` does.
-   * Nothing is asked of the mediator, nor is its DID resolved, until an
-   * operation has to reach it, and none is begun once the agent is
-   * closed.
-   */
-  async membership(): Promise<Membership> {
-    this.refuseClosed();
-    return this.member();
-  }
-
   connections(): Connection[] {
     return [...this.attempts.values()].map((connection) => this.shown(connection));
   }
@@ -620,7 +604,7 @@ export class Agent {
   private account(mediationId: MediationId): Account {
     const existing = this.accounts.get(mediationId);
     if (existing !== undefined) return existing;
-    const account = new Account(this.runtime, this.keys, mediationId, this.confirmations, this.options.trace, async () => (await this.lineOf(mediationId)).link);
+    const account = new Account(this.runtime, this.keys, mediationId, this.confirmations, this.options.trace, async () => (await this.lineOf(mediationId)).link, () => this.memberAt(mediationId));
     this.accounts.set(mediationId, account);
     return account;
   }
@@ -651,21 +635,18 @@ export class Agent {
     return line;
   }
 
-  /** This runtime's replica, found enrolled now, bound once to the arrangement its creation names: its account is the one this agent holds there, and its link is made over that arrangement's line. */
+  /** This runtime's replica, bound once to the arrangement its creation names: its account is the one this agent holds there, and its link is made over that arrangement's line. Whether it is enrolled is for its gate to find, request by request. */
   private async member(): Promise<Member> {
-    const fold = await scanVault(this.runtime.vault, this.keys);
-    const binding = bindingOf(fold, this.runtime.author);
+    const binding = bindingOf(await scanVault(this.runtime.vault, this.keys), this.runtime.author);
     const { mediationId } = binding;
-    const account = this.account(mediationId);
-    await enrolledReplica(fold, account, this.runtime.author);
-    this.bound ??= new Member(this.runtime, this.keys, binding, account, this.lifetime, async () => (await this.lineOf(mediationId)).linkAs, this.handleOf(mediationId), this.options);
+    this.bound ??= new Member(this.runtime, this.keys, binding, this.account(mediationId), this.lifetime, async () => (await this.lineOf(mediationId)).linkAs, this.handleOf(mediationId), this.options);
     return this.bound;
   }
 
-  /** This runtime's replica as a member of `mediationId`, for what the agent does as it, whose every request passes the member's gate; throws when it is bound to another arrangement. */
+  /** This runtime's replica as a member of `mediationId`: `UnknownEntity` until the runtime has one, `EntityConflict` when it is a member of another arrangement. */
   private async memberAt(mediationId: MediationId): Promise<Member> {
     const member = this.bound ?? (await this.member());
-    if (member.mediationId !== mediationId) throw new Error(`this runtime's replica is not a member of ${mediationId}`);
+    if (member.mediationId !== mediationId) throw new EntityConflict("replica", member.replicaId, `a member of the arrangement with ${member.mediatorDid}`);
     return member;
   }
 

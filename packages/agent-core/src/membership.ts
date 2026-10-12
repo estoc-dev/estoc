@@ -6,8 +6,8 @@
  * store spoken to through it. Every request the replica makes goes
  * through it, so that no caller pairs a link with a replica DID. A
  * runtime has one replica, bound to one arrangement for good, so an
- * agent binds one membership and keeps it; a host is handed it as a
- * `Membership` and cannot make one.
+ * agent binds one membership and keeps it; a host is handed it by that
+ * arrangement as a `Membership` and cannot make one.
  *
  * The binding never changes; whether the replica may act on it is
  * decided request by request. Every request that reaches the mediator
@@ -166,8 +166,8 @@ export class Member implements Membership, BoundReplica {
     this.linked?.close();
   }
 
-  /** The gate every request passes: the agent that bound the replica still open, and the replica found enrolled over the fold as it stands, which is returned for what the request derives from it. */
-  private async admitted(): Promise<VaultFold> {
+  /** The gate every request passes, and taking the membership too: the agent that bound the replica still open, and the replica found enrolled over the fold as it stands, which is returned for what the request derives from it. */
+  async admitted(): Promise<VaultFold> {
     if (this.holder.closed) throw new LinkClosed();
     const fold = await scanVault(this.runtime.vault, this.keys);
     await enrolledReplica(fold, this.account, this.replicaId);

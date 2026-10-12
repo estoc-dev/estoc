@@ -29,7 +29,7 @@ async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; 
   }) as typeof fetch;
   const agent = await Agent.open(p, { didcomm, fetch: counting, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
-  return { ...p, agent, store: (await agent.membership()).blobs, sent };
+  return { ...p, agent, store: (await (await agent.arrangement(p.mediationId)).membership()).blobs, sent };
 }
 
 const filled = (length: number): Uint8Array => new Uint8Array(length).map((_, i) => (i * 31 + 7) & 0xff);

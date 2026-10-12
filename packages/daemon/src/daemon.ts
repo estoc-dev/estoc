@@ -32,6 +32,7 @@ import {
   BlobTooLarge,
   BlobTransferFailed,
   BlobUnopened,
+  EntityConflict,
   LocalRecords,
   MAX_CONTENT_BYTES,
   MediatorRefused,
@@ -602,23 +603,25 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   const preferredRoute = async (running: Open): Promise<RouteSpec> => ({ kind: "mediated", mediationId: await preferredMediation(running) });
 
   /**
-   * The runtime's replica at its arrangement, enrolled there. A runtime
-   * restored, or past an identity reset, holds the vault's arrangement
-   * and no replica of its own until a connection enrolls it; one whose
-   * adding the mediator never confirmed to it is a member in the vault
-   * alone. Either is enrolled first, at its replica's arrangement, or
-   * with no replica at the preferred one. A vault that never had a
-   * mediator set has no preferred arrangement to enroll in.
+   * The runtime's replica at the preferred arrangement, enrolled there
+   * first when it is not. A runtime restored, or past an identity reset,
+   * holds the vault's arrangement and no replica of its own until a
+   * connection enrolls it; one whose adding the mediator never confirmed
+   * to it is a member in the vault alone. A replica of another
+   * arrangement is not moved: the call is refused. A vault that never
+   * had a mediator set has no preferred arrangement.
    */
   async function membershipOf(running: Open, agent: Agent): Promise<Membership> {
+    const mediationId = await preferredMediation(running);
+    const arrangement = await agent.arrangement(mediationId);
     try {
-      return await agent.membership();
+      return await arrangement.membership();
     } catch (err) {
+      if (err instanceof EntityConflict) throw new Unmet(err.message);
       if (!(err instanceof UnknownEntity || err instanceof Unusable)) throw err;
     }
-    const own = (await scanVault(running.runtime.vault, running.keys, SCAN)).replicas.replicas.get(running.runtime.author);
-    await agent.enroll(own?.mediationId ?? (await preferredMediation(running)));
-    return agent.membership();
+    await agent.enroll(mediationId);
+    return arrangement.membership();
   }
 
   /** `presented` as a peer's DID: canonical, and none of this vault's own. */
@@ -957,7 +960,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
             const kept = put.stage === "asked" ? "" : `, which keeps it until ${new Date(put.retainUntil).toISOString()}`;
             throw new Unmet(`snapshot ${hash} was put under a replica ID this runtime has given up since, and only that replica may delete it at the mediator${kept}`);
           }
-          await (await agent.membership()).blobs.delete(hash);
+          await (await (await agent.arrangement(put.owner.mediationId)).membership()).blobs.delete(hash);
           await links.forget(hash);
         })
       );
