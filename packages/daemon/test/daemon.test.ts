@@ -10,7 +10,7 @@ import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
 import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type EventReference, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
 
-import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_ADD, STATUS_REQUEST, decide } from "@estoc/agent-core";
+import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_ADD, STATUS_REQUEST, openRestoredVault, type VaultSession } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
 import type { Hold, Lines, Phase, Snapshot, State } from "@estoc/daemon-api/contract";
 import { indexSnapshot } from "@estoc/daemon-api/views";
@@ -882,7 +882,7 @@ describe("a backup merged that retires the only mediator", () => {
     const root = await folder();
     await writeFile(path.join(root, "backup.sqlite"), backup);
     const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
-    let runtime: SqliteVault;
+    let vault: VaultSession;
     let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
     try {
       const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
@@ -892,16 +892,15 @@ describe("a backup merged that retires the only mediator", () => {
           return Keys.anchorOf(seedKey);
         },
       });
-      runtime = new SqliteVault(restored.runtime);
+      vault = await openRestoredVault(restored.runtime, seedKey);
     } finally {
       source.close();
     }
     try {
-      const keys = await Keys.open(seedKey, runtime.metadata.anchor);
-      await decide(runtime, keys, () => [vaultDraft("mediation.retired", { mediationId, because: "no longer used" })]);
-      await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "retired.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+      await vault.decide(() => [vaultDraft("mediation.retired", { mediationId, because: "no longer used" })]);
+      await exportVault(vault.runtime, (mode) => openNodeSqlite(path.join(root, "retired.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
     } finally {
-      await runtime.close();
+      await vault.runtime.close();
     }
     return new Uint8Array(await readFile(path.join(root, "retired.sqlite")));
   }

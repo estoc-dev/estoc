@@ -7,43 +7,25 @@
  * through one dispatcher; each still decides under the lock over the
  * fold it reads there, whatever record prompted it. The handlers given
  * here reach the read, the vault's own procedures and the completion
- * of a response. The dispatcher scans for itself, as it was built: its
- * caller gives it the same handlers' effect types.
+ * of a response.
  */
 
-import type { Event, VaultRuntime } from "@estoc/event-store";
-import {
-  blockChannels,
-  deleteContact,
-  eraseMessage,
-  objectReader,
-  scanVault,
-  type Channel,
-  type Committed,
-  type ContactId,
-  type DeleteContactOptions,
-  type EventReference,
-  type ExecutionId,
-  type Keys,
-  type MessageId,
-  type ScanOptions,
-} from "@estoc/vault";
+import type { Event } from "@estoc/event-store";
+import { blockChannels, deleteContact, eraseMessage, objectReader, type Channel, type Committed, type ContactId, type DeleteContactOptions, type EventReference, type ExecutionId, type MessageId } from "@estoc/vault";
 
 import type { LiveAction } from "./action.js";
 import type { Cancelled, Dispatched, Selected } from "./dispatch.js";
 import type { Dispatcher } from "./dispatcher.js";
 import { completeResponse, type EffectOptions, type EffectOutcome } from "./effects.js";
-import { effectTypesOf, handlersOf } from "./handlers/index.js";
 import { MAX_CONTENT_BYTES } from "./prepare.js";
 import { recorder, type ManualEntry, type Recorder, type ViewOptions } from "./records.js";
 import { completeNotification, rotate, type Rotated, type RotationTarget } from "./rotate.js";
-
-const scanOptionsOf = (options: ViewOptions): ScanOptions => ({ effectTypes: effectTypesOf(handlersOf(options.handlers)) });
+import type { Session } from "./session.js";
 
 /** The records of the vault as it is now, the rotations it lists being those this runtime's replica could make. A body larger than a message may be is shown as missing. */
-export async function readRecords(runtime: VaultRuntime, keys: Keys, options: ViewOptions = {}): Promise<Recorder> {
-  const fold = await scanVault(runtime.vault, keys, scanOptionsOf(options));
-  return recorder(fold, objectReader(runtime.vault.objects, MAX_CONTENT_BYTES), { ...options, author: runtime.author });
+export async function readRecords(session: Session, options: ViewOptions = {}): Promise<Recorder> {
+  const { runtime } = session;
+  return recorder(await session.fold(), objectReader(runtime.vault.objects, MAX_CONTENT_BYTES), { ...options, author: runtime.author });
 }
 
 export type ManualOptions = Pick<EffectOptions, "handlers" | "acknowledge" | "now" | "trace">;
@@ -61,19 +43,19 @@ export interface Manual extends Record<ManualEntry, unknown> {
   rotate(target: Omit<RotationTarget, "sourceEventCid">): Promise<Rotated>;
 }
 
-export function manualProcedures(runtime: VaultRuntime, keys: Keys, dispatcher: Dispatcher, options: ManualOptions = {}): Manual {
-  const scan = scanOptionsOf(options);
+export function manualProcedures(session: Session, dispatcher: Dispatcher, options: ManualOptions = {}): Manual {
+  const { runtime, keys, scanOptions } = session;
   const dispatch = (action: LiveAction): Promise<Dispatched> => dispatcher.run(action);
   const { now, trace } = options;
   return {
-    eraseMessage: (messageId, because) => eraseMessage(runtime, keys, messageId, because, scan),
-    deleteContact: (contactId, deletion) => deleteContact(runtime, keys, contactId, deletion, scan),
-    blockChannels: (channels, includeSuccessors) => blockChannels(runtime, keys, channels, includeSuccessors, scan),
+    eraseMessage: (messageId, because) => eraseMessage(runtime, keys, messageId, because, scanOptions),
+    deleteContact: (contactId, deletion) => deleteContact(runtime, keys, contactId, deletion, scanOptions),
+    blockChannels: (channels, includeSuccessors) => blockChannels(runtime, keys, channels, includeSuccessors, scanOptions),
     cancel: (messageId) => dispatcher.cancel(messageId),
     retry: (messageId) => dispatcher.retry(messageId),
     selectPreparation: (messageId, preparationEventCid) => dispatcher.select(messageId, preparationEventCid),
-    completeResponse: (executionId, effectType) => completeResponse(runtime, keys, executionId, effectType, { ...options, dispatch }),
-    completeNotification: (rotationEventCid) => completeNotification(runtime, keys, rotationEventCid, { now, trace, dispatch }),
-    rotate: ({ localDidId, peerDid }) => rotate(runtime, keys, { localDidId, peerDid, sourceEventCid: null }, { now, trace, dispatch }),
+    completeResponse: (executionId, effectType) => completeResponse(session, executionId, effectType, { ...options, dispatch }),
+    completeNotification: (rotationEventCid) => completeNotification(session, rotationEventCid, { now, trace, dispatch }),
+    rotate: ({ localDidId, peerDid }) => rotate(session, { localDidId, peerDid, sourceEventCid: null }, { now, trace, dispatch }),
   };
 }

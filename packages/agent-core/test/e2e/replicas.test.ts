@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, test } from "vitest";
 import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, canonicalDid, signReplicaGrant, vaultDraft, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, LocalRecords, createMediation, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
+import { createMediation } from "../../src/mediation.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
@@ -353,7 +354,7 @@ describe("a replica whose grants disagree on its arrangement", () => {
     const elsewhere = await newMediator(201, "https://elsewhere.example/");
     const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
     const bob = await run(mediator, 2, BOB, { privateAddresses: false });
-    const other = await createMediation(alice.runtime, alice.keys, elsewhere.did as Did);
+    const other = await createMediation(alice.session, elsewhere.did as Did);
     const grant = await signReplicaGrant(alice.keys, other.data, alice.runtime.author);
     await alice.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: alice.runtime.author, mediationId: other.data.mediationId, grant })]);
     expect((await foldOf(alice)).replicas.replicas.get(alice.runtime.author)).toMatchObject({ status: "conflict", mediationId: null });

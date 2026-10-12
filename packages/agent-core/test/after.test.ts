@@ -6,7 +6,8 @@ import { AUTHENTICATION_METHOD, didKeyName, inboundMessageId, scanVault, signFro
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import type { IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, createDid, type Content, type Source } from "../src/index.js";
+import { AgentTrace, type Content, type Source } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { acknowledgementDrafts, recordAcks } from "../src/acknowledgements.js";
 import { Keyring } from "../src/keyring.js";
 import { prepare } from "../src/prepare.js";
@@ -39,9 +40,9 @@ async function closeAll(...parties: Fresh[]): Promise<void> {
 /** A receiver over the vault's own receipt; `seen` keeps what the gate handed it. */
 async function receiving(holder: Fresh): Promise<{ receiver: Receiver; seen: Authenticated[] }> {
   const seen: Authenticated[] = [];
-  const record = receiptOf(holder.runtime, holder.keys);
+  const record = receiptOf(holder.session);
   const ring = await Keyring.load(holder.keys, await scanVault(holder.runtime.vault, holder.keys));
-  const receiver = new Receiver(holder.runtime, holder.keys, ring, {
+  const receiver = new Receiver(holder.session, ring, {
     didcomm,
     receipt: (authenticated) => {
       seen.push(authenticated);
@@ -54,7 +55,7 @@ async function receiving(holder: Fresh): Promise<{ receiver: Receiver; seen: Aut
 async function receivedThen(receiver: Receiver, alice: DirectParty, peer: DirectParty, extra: Partial<IMessage>, trace?: AgentTrace) {
   const received = await receiver.receive({ packed: await sealed(await peerSealer(peer), alice.longFormDid, extra), source: DIRECT });
   if (received.outcome !== "received") throw new Error(`not received: ${JSON.stringify(received)}`);
-  return { cid: received.cid, after: await afterReceipt(alice.runtime, alice.keys, received.cid, { trace }) };
+  return { cid: received.cid, after: await afterReceipt(alice.session, received.cid, { trace }) };
 }
 
 const foldOf = (holder: Fresh): Promise<VaultFold> => scanVault(holder.runtime.vault, holder.keys);
@@ -67,17 +68,17 @@ describe("after the receipt", () => {
   test("a peer's ack names an outbound: once the outbound has its preparation, the witness is recorded as one acknowledgement by the preparation's own pass, the same ack delivered again is not recorded twice, another ack from the peer is, and an unrelated peer naming the ID earns nothing", async () => {
     const { alice, bob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
-    await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     const { receiver, seen } = await receiving(alice);
     const wire = crypto.randomUUID() as WireMessageId;
 
     const early = await receivedThen(receiver, alice, bob, { id: wire, ack: [MESSAGE] });
     expect(early.after).toMatchObject({ proof: { status: "not-present" }, disposition: { status: "admitted", admissions: [{ event: { data: { sourceEventCid: early.cid } }, status: { status: "effective" } }] }, admitted: [], acknowledged: [] });
-    expect((await prepare(alice.runtime, alice.keys, MESSAGE, { didcomm })).outcome).toBe("prepared");
+    expect((await prepare(alice.session, MESSAGE, { didcomm })).outcome).toBe("prepared");
     expect((await eventsOf(alice, "delivery.acknowledged")).map(({ data }) => data)).toEqual([
       { messageId: MESSAGE, localKeyName: didKeyName(DID, "key-agreement"), peerPublicKey: seen[0]!.sender!.peerPublicKey, ackMessageId: inboundMessageId(bob.did, alice.did, wire), ackWireMessageId: wire },
     ]);
-    expect([acknowledgementDrafts(await foldOf(alice)), await recordAcks(alice.runtime, alice.keys)]).toEqual([[], []]);
+    expect([acknowledgementDrafts(await foldOf(alice)), await recordAcks(alice.session)]).toEqual([[], []]);
     const outbound = (await foldOf(alice)).outbound.outbounds.get(MESSAGE)!;
     expect([outbound.acknowledged, outbound.acknowledgements.map(({ status }) => status), outbound.outcome, outbound.work.kind]).toEqual([true, [{ status: "complete" }], { status: "prepared" }, "dispatch"]);
 
@@ -94,7 +95,7 @@ describe("after the receipt", () => {
   test("an invitation is taken by no one: receipts under its ID from one peer and then another are each admitted, and it stays available to the next", async () => {
     const { alice, bob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
-    const { disclosed, invitation } = await disclose(null, alice.runtime, alice.keys, DID, { as: "oob" });
+    const { disclosed, invitation } = await disclose(null, alice.session, DID, { as: "oob" });
     const { receiver } = await receiving(alice);
 
     const plain = await receivedThen(receiver, alice, bob, {});
@@ -120,30 +121,30 @@ describe("after the receipt", () => {
     expect(crashed).toMatchObject({ outcome: "deferred", reason: expect.stringMatching(/^the receipt failed: the disk is full for now/) });
     const [orphan] = await eventsOf(alice, "message.in");
     expect([orphan!.type, await eventsOf(alice, "message.admitted")]).toEqual(["message.in", []]);
-    const recovered = await recordOwed(alice.runtime, alice.keys);
+    const recovered = await recordOwed(alice.session);
     expect([recovered.admitted.map(({ data }) => data.sourceEventCid), recovered.acknowledged]).toEqual([[orphan!.cid], []]);
-    expect(await recordOwed(alice.runtime, alice.keys)).toEqual({ admitted: [], acknowledged: [] });
+    expect(await recordOwed(alice.session)).toEqual({ admitted: [], acknowledged: [] });
 
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const shortIssuer = await new SignJWT({ iss: prior.did, sub: bob.longFormDid, iat: IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));
     receiver.close();
     const seen: Authenticated[] = [];
-    const observer = new Receiver(alice.runtime, alice.keys, await Keyring.load(alice.keys, await foldOf(alice)), { didcomm, receipt: async (a) => (seen.push(a), { outcome: "terminal", reason: "kept for the test" }) });
+    const observer = new Receiver(alice.session, await Keyring.load(alice.keys, await foldOf(alice)), { didcomm, receipt: async (a) => (seen.push(a), { outcome: "terminal", reason: "kept for the test" }) });
     await observer.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid), source: DIRECT });
     observer.close();
     const [plain] = seen;
-    const carried = await recordReceipt(alice.runtime, alice.keys, { ...plain!, plaintext: { ...plain!.plaintext, from_prior: shortIssuer } as IMessage, fromPrior: shortIssuer });
+    const carried = await recordReceipt(alice.session, { ...plain!, plaintext: { ...plain!.plaintext, from_prior: shortIssuer } as IMessage, fromPrior: shortIssuer });
     const cid = (carried as Extract<ReceiptOutcome, { outcome: "received" }>).cid;
-    const waiting = await afterReceipt(alice.runtime, alice.keys, cid, { trace });
+    const waiting = await afterReceipt(alice.session, cid, { trace });
     expect([waiting.proof, waiting.disposition, waiting.admitted]).toEqual([{ status: "pending-proof" }, { status: "pending-admission", because: "the source's proof is not yet verified" }, []]);
     expect((await trace.read({ type: "diag.admission" })).map((entry) => entry.data)).toEqual([{ cid, status: "pending-admission", because: "the source's proof is not yet verified" }]);
 
     const { receiver: again } = await receiving(alice);
     const fromOld = await again.receive({ packed: await sealed(await peerSealer(bob, prior.longFormDid), alice.longFormDid), source: DIRECT });
     if (fromOld.outcome !== "received") throw new Error("not received");
-    const after = await afterReceipt(alice.runtime, alice.keys, fromOld.cid);
+    const after = await afterReceipt(alice.session, fromOld.cid);
     expect([after.disposition, after.admitted]).toEqual([{ status: "ignored-superseded" }, []]);
     const fold = await foldOf(alice);
     expect([fold.continuity.status(cid), fold.dispositions.disposition(cid).status]).toEqual([{ status: "verified" }, "admitted"]);
@@ -154,16 +155,16 @@ describe("after the receipt", () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const { receiver, seen } = await receiving(alice);
     const verified = await receivedThen(receiver, alice, bob, { from_prior: proof }, trace);
     expect(verified.after.proof).toEqual({ status: "verified" });
 
     const last = seen.at(-1) as Authenticated;
-    const bogus = await recordReceipt(alice.runtime, alice.keys, { ...last, plaintext: { ...last.plaintext, from_prior: "not-a-jwt" } as IMessage, fromPrior: "not-a-jwt" });
+    const bogus = await recordReceipt(alice.session, { ...last, plaintext: { ...last.plaintext, from_prior: "not-a-jwt" } as IMessage, fromPrior: "not-a-jwt" });
     const cid = (bogus as Extract<ReceiptOutcome, { outcome: "received" }>).cid;
-    const after = await afterReceipt(alice.runtime, alice.keys, cid, { trace });
+    const after = await afterReceipt(alice.session, cid, { trace });
     expect(after.proof).toMatchObject({ status: "invalid" });
     expect((await trace.read({ type: "diag.proof" })).map((entry) => entry.data)).toEqual([{ cid, ...after.proof }]);
     await closeAll(alice, bob);

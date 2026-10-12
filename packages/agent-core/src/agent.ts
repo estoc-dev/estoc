@@ -1,7 +1,8 @@
 /**
  * The agent is a vault running: one receiver, one dispatcher and a
  * line to each mediator the vault must keep receiving on, over a
- * runtime the host opened and still owns. Opening one recovers and
+ * vault the host opened and still owns, bound with the keys and the
+ * fold options every read of it goes by. Opening one recovers and
  * sends nothing. The fold it reads has already judged every proof and
  * listed every piece of unfinished work; the open records what the
  * vault owes on its own over what a crash may have left behind — an
@@ -54,8 +55,7 @@
  */
 
 import type { DIDDoc } from "@estoc/did-peer";
-import type { VaultRuntime } from "@estoc/event-store";
-import { requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId } from "@estoc/vault";
+import { BUILT_IN_EFFECTS, requiredReceivingSet, type DidId, type MediationId } from "@estoc/vault";
 
 import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
@@ -86,10 +86,11 @@ import { Receiver, type Discarded, type Received, type ReceiverOptions, type Wai
 import type { PendingWork, Recorder } from "./records.js";
 import { knownLongForms, resolve } from "./resolver.js";
 import { send, type Content, type SendOptions, type Sent, type Target } from "./send.js";
+import { Session, type VaultSession } from "./session.js";
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
 
-export interface AgentOptions extends Omit<DispatcherOptions, "accounts" | "effectTypes" | "trace" | "local">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
+export interface AgentOptions extends Omit<DispatcherOptions, "accounts" | "trace" | "local">, Pick<EffectOptions, "handlers" | "acknowledge">, Pick<ReceiverOptions, "admit" | "maxWaiting" | "maxHeldBytes"> {
   /** the socket live delivery comes down; the global one when left out */
   WebSocket?: typeof WebSocket;
   /** what every wait of the agent is kept by, for an outbound held up or a connection to try again; the global timers when left out */
@@ -214,8 +215,7 @@ export class Agent {
   readonly manual: Manual;
 
   private constructor(
-    private readonly runtime: VaultRuntime,
-    private readonly keys: Keys,
+    private readonly session: Session,
     private readonly options: GatedOptions,
     private readonly lifetime: Lifetime,
     private readonly ring: Keyring,
@@ -228,21 +228,32 @@ export class Agent {
     /** what the open recorded of what the vault owed */
     readonly recovered: Owed
   ) {
-    this.manual = manualProcedures(runtime, keys, dispatcher, options);
+    this.manual = manualProcedures(session, dispatcher, options);
   }
 
-  /** The agent over an open runtime, with networking off; throws `ReceiverInUse` while another agent of the runtime is open. */
-  static async open(vault: { runtime: VaultRuntime; keys: Keys }, agentOptions: AgentOptions): Promise<Agent> {
-    const { runtime, keys } = vault;
+  /**
+   * The agent over an open vault, with networking off; throws
+   * `ReceiverInUse` while another agent of the runtime is open. The
+   * vault must be one this package opened, and the handlers' effect
+   * types must be among those it was opened with or the built-in ones:
+   * the vault has one reading, and an intent the fold would not count
+   * as this runtime's work is no operation the agent could run.
+   */
+  static async open(vault: VaultSession, agentOptions: AgentOptions): Promise<Agent> {
+    if (!(vault instanceof Session)) throw new TypeError("the vault is not one this package opened");
+    const session = vault;
+    const undeclared = effectTypesOf(handlersOf(agentOptions.handlers)).filter((effectType) => !BUILT_IN_EFFECTS.has(effectType) && !session.effectTypes.has(effectType));
+    if (undeclared.length > 0) throw new TypeError(`the handlers declare effect types the vault was not opened with: ${undeclared.join(", ")}`);
+    const { runtime } = session;
     const lifetime = new Lifetime(agentOptions.timers);
     const options: GatedOptions = { ...agentOptions, fetch: lifetime.fetch(agentOptions.fetch) };
     const confirmations = options.localOptions ?? transientOptions();
     const local = new LocalRecords(confirmations, runtime.author);
-    const recovered = await recordOwed(runtime, keys);
-    await recordAcceptancesOwed(runtime, keys, local);
-    const ring = await Keyring.load(keys, await scanVault(runtime.vault, keys));
+    const recovered = await recordOwed(session);
+    await recordAcceptancesOwed(session, local);
+    const ring = await Keyring.load(session.keys, await session.fold());
     const lines = new Map<MediationId, Line>();
-    const dispatcher = new Dispatcher(runtime, keys, { ...agentOptions, local, effectTypes: effectTypesOf(handlersOf(options.handlers)), accounts: (mediationId): Account => agent.account(mediationId) });
+    const dispatcher = new Dispatcher(session, { ...agentOptions, local, accounts: (mediationId): Account => agent.account(mediationId) });
     const { didcomm, admit, maxWaiting, maxHeldBytes, trace, log, onSnapshotLink } = options;
     const { fetch, WebSocket, timeoutMs } = agentOptions;
     const linkOf: LinkOf = (line) => {
@@ -255,10 +266,10 @@ export class Agent {
       if (line === undefined) throw new Error(`no line to the mediator of ${mediationId}`);
       return line.link.http();
     };
-    const receiver = new Receiver(runtime, keys, ring, {
+    const receiver = new Receiver(session, ring, {
       didcomm,
-      receipt: receiptOf(runtime, keys),
-      replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
+      receipt: receiptOf(session),
+      replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(session.keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
         await (await agent.memberAt(mediationId)).acknowledge([deliveryId]);
       },
@@ -269,13 +280,13 @@ export class Agent {
       log,
       changed: () => linesChanged(),
     });
-    const agent = new Agent(runtime, keys, options, lifetime, ring, dispatcher, receiver, lines, linkOf, confirmations, local, recovered);
+    const agent = new Agent(session, options, lifetime, ring, dispatcher, receiver, lines, linkOf, confirmations, local, recovered);
     linesChanged = () => agent.linesChanged();
     return agent;
   }
 
   /** An agent that fails to connect at all is closed before the failure is thrown: nobody else could close it, and the runtime could have no other. */
-  static async start(vault: { runtime: VaultRuntime; keys: Keys }, options: AgentOptions): Promise<Agent> {
+  static async start(vault: VaultSession, options: AgentOptions): Promise<Agent> {
     const agent = await Agent.open(vault, options);
     try {
       await agent.connect();
@@ -297,7 +308,7 @@ export class Agent {
    * failure after this is waited out from the first wait again.
    */
   async connect(): Promise<Connection[]> {
-    const fold = await scanVault(this.runtime.vault, this.keys);
+    const fold = await this.session.fold();
     const required = [...requiredReceivingSet(fold.mediations, fold.dids)].sort();
     return Promise.all(
       required.map((mediationId) => {
@@ -316,7 +327,7 @@ export class Agent {
    */
   async arrangement(mediationId: MediationId): Promise<Arrangement> {
     this.refuseClosed();
-    createdOf(await scanVault(this.runtime.vault, this.keys), mediationId);
+    createdOf(await this.session.fold(), mediationId);
     return this.account(mediationId);
   }
 
@@ -340,9 +351,9 @@ export class Agent {
 
   /** `disclose` with the account of the arrangement that routes the DID. */
   async disclose(didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
-    const fold = await scanVault(this.runtime.vault, this.keys);
+    const fold = await this.session.fold();
     const route = routeOf(didOf(fold, didId));
-    return disclose(route?.kind === "mediated" ? this.account(route.mediationId) : null, this.runtime, this.keys, didId, disclosure);
+    return disclose(route?.kind === "mediated" ? this.account(route.mediationId) : null, this.session, didId, disclosure);
   }
 
   connections(): Connection[] {
@@ -352,7 +363,7 @@ export class Agent {
   /** The intent committed, then its one transport call under the action the send minted. */
   async send(target: Target, content: Content, options: SendOptions = {}): Promise<Submitted> {
     this.refuseClosed();
-    const sent = await send(this.runtime, this.keys, target, content, { now: this.options.now, ...options });
+    const sent = await send(this.session, target, content, { now: this.options.now, ...options });
     return { ...sent, dispatched: await this.call(sent.action) };
   }
 
@@ -370,7 +381,7 @@ export class Agent {
    * is retried, and followed like any other.
    */
   async localStateChanged(): Promise<Inbound[]> {
-    await recordOwed(this.runtime, this.keys);
+    await recordOwed(this.session);
     const inbounds: Inbound[] = [];
     for (const received of await this.receiver.localStateChanged()) inbounds.push(await this.follow(received));
     return inbounds;
@@ -385,7 +396,7 @@ export class Agent {
   }
 
   records(): Promise<Recorder> {
-    return readRecords(this.runtime, this.keys, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses, local: this.local });
+    return readRecords(this.session, { handlers: this.options.handlers, privateAddresses: this.options.privateAddresses, local: this.local });
   }
 
   /** The work an open leaves to the user. */
@@ -571,7 +582,7 @@ export class Agent {
     if (!this.keepsLive()) return;
     const stands = (): boolean => this.retries.get(mediationId) === retry;
     try {
-      const fold = await scanVault(this.runtime.vault, this.keys);
+      const fold = await this.session.fold();
       if (!stands()) return;
       if (!requiredReceivingSet(fold.mediations, fold.dids).has(mediationId)) return;
     } catch (err) {
@@ -598,7 +609,7 @@ export class Agent {
   private account(mediationId: MediationId): Account {
     const existing = this.accounts.get(mediationId);
     if (existing !== undefined) return existing;
-    const account = new Account(this.runtime, this.keys, mediationId, this.confirmations, this.options.trace, async () => (await this.lineOf(mediationId)).link, () => this.memberAt(mediationId));
+    const account = new Account(this.session, mediationId, this.confirmations, this.options.trace, async () => (await this.lineOf(mediationId)).link, () => this.memberAt(mediationId));
     this.accounts.set(mediationId, account);
     return account;
   }
@@ -608,7 +619,7 @@ export class Agent {
     const existing = this.wires.get(mediationId);
     if (existing !== undefined) return existing;
     if (this.lifetime.closed) throw new LinkClosed();
-    const fold = await scanVault(this.runtime.vault, this.keys);
+    const fold = await this.session.fold();
     const mediation = createdOf(fold, mediationId);
     await this.ring.reload(fold);
     // The mediator may answer under its short form: the long form it was arranged under is in the fold, and an arrangement's creation never changes.
@@ -631,9 +642,9 @@ export class Agent {
 
   /** This runtime's replica, bound once to the arrangement its creation names: its account is the one this agent holds there, and its link is made over that arrangement's line. Whether it is enrolled is for its gate to find, request by request. */
   private async member(): Promise<Member> {
-    const binding = bindingOf(await scanVault(this.runtime.vault, this.keys), this.runtime.author);
+    const binding = bindingOf(await this.session.fold(), this.session.runtime.author);
     const { mediationId } = binding;
-    this.bound ??= new Member(this.runtime, this.keys, binding, this.account(mediationId), this.lifetime, async () => (await this.lineOf(mediationId)).linkAs, this.handleOf(mediationId), this.options);
+    this.bound ??= new Member(this.session, binding, this.account(mediationId), this.lifetime, async () => (await this.lineOf(mediationId)).linkAs, this.handleOf(mediationId), this.options);
     return this.bound;
   }
 
@@ -666,17 +677,17 @@ export class Agent {
     const inbound: Inbound = { received, after: null, responder: null, reacted: null, address: null };
     if (received.outcome !== "received") return async () => this.tell(inbound);
     const { trace, now } = this.options;
-    inbound.after = await this.step("what the vault owes", () => afterReceipt(this.runtime, this.keys, received.cid, { trace }));
+    inbound.after = await this.step("what the vault owes", () => afterReceipt(this.session, received.cid, { trace }));
     const { live } = received;
     if (live === null) return async () => this.tell(inbound);
-    const address = (this.options.privateAddresses ?? true) ? await this.step("the private address", () => decidePrivateAddress(this.runtime, this.keys, live, { now, trace })) : null;
+    const address = (this.options.privateAddresses ?? true) ? await this.step("the private address", () => decidePrivateAddress(this.session, live, { now, trace })) : null;
     return async () => this.tell(await this.answer(inbound, live, address));
   }
 
   /** The live input answered, when this runtime is found to answer it and is still open: the rotation's notification, then the automatic effects, each decided and called, and neither begun once the agent closed. */
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
-    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", member: this.bound, local: this.local }))) ?? { responder: null, answering: null };
+    const found: Found = (await this.step("who answers", () => findResponder(this.session, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", member: this.bound, local: this.local }))) ?? { responder: null, answering: null };
     inbound.responder = found.responder;
     const unanswered = (because: string): Inbound => {
       if (address !== null) inbound.address = unannounced(address, because);
@@ -686,9 +697,9 @@ export class Agent {
     if (this.lifetime.closed) return unanswered("the agent closed before the input was answered");
     const { answering } = found;
     const dispatch = (action: LiveAction): Promise<Dispatched> => this.dispatcher.run(action);
-    if (address !== null) inbound.address = await this.step("the notification of the private address", () => notifyPrivateAddress(this.runtime, this.keys, address, answering, { now, dispatch, trace }));
+    if (address !== null) inbound.address = await this.step("the notification of the private address", () => notifyPrivateAddress(this.session, address, answering, { now, dispatch, trace }));
     if (this.lifetime.closed) return inbound;
-    const effects = await this.step("the automatic effects", () => decideEffects(this.runtime, this.keys, answering, { handlers, acknowledge, now, trace }));
+    const effects = await this.step("the automatic effects", () => decideEffects(this.session, answering, { handlers, acknowledge, now, trace }));
     if (effects !== null) inbound.reacted = await this.step("the calls of the automatic effects", () => callEffects(effects, { dispatch, trace }));
     return inbound;
   }

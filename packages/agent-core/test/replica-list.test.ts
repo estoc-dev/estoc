@@ -42,8 +42,8 @@ const roster = (mediator: FakeMediator): Did[] => [...mediator.replicas.keys()] 
 describe("the replicas an account added", () => {
   it("are listed to each replica of the seed alike, each told which one is its own", async () => {
     const mediator = await newMediator();
-    const open = async (fresh: Pick<Party, "runtime" | "keys">): Promise<Agent> => {
-      const agent = await Agent.open(fresh, { didcomm, fetch: mediator.fetch, WebSocket: mediator.WebSocket, trace: await AgentTrace.open(fresh.runtime.local), localOptions: fresh.runtime.local.options, liveDelivery: false });
+    const open = async (fresh: Pick<Party, "session" | "runtime">): Promise<Agent> => {
+      const agent = await Agent.open(fresh.session, { didcomm, fetch: mediator.fetch, WebSocket: mediator.WebSocket, trace: await AgentTrace.open(fresh.runtime.local), localOptions: fresh.runtime.local.options, liveDelivery: false });
       closing.unshift(agent);
       return agent;
     };

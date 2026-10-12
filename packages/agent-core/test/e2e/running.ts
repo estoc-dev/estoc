@@ -4,15 +4,17 @@ import path from "node:path";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { SqliteVault, exportVault, importVault, openPortable, parseStrict, restoreVault, type Imported } from "@estoc/event-store";
-import { Keys, scanVault, vaultHeldRoots, vaultRetention, type Channel, type Did, type DidId, type VaultFold } from "@estoc/vault";
+import { exportVault, importVault, openPortable, parseStrict, restoreVault, type Imported } from "@estoc/event-store";
+import { Keys, vaultHeldRoots, type Channel, type Did, type DidId, type VaultFold } from "@estoc/vault";
+import type { SqliteVault } from "@estoc/event-store";
 
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../../src/protocol/didcomm.js";
 import { MESSAGES_RECEIVED } from "../../src/protocol/mediation.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { Agent, AgentTrace, openVault, type AgentOptions, type Inbound, type OpenedVault, type OpenVaultOptions } from "../../src/index.js";
+import { Agent, AgentTrace, effectTypesOf, openRestoredVault, openVault, type AgentOptions, type Inbound, type OpenVaultOptions, type VaultSession } from "../../src/index.js";
+import type { Session } from "../../src/session.js";
 import { MEDIATOR_HTTP, type FakeMediator } from "../fake-mediator.js";
-import { afterNextCommit, didcomm, mediatedParty, until as untilWithin, type MediatedParty } from "../helpers.js";
+import { afterNextCommit, didcomm, mediatedParty, opened, scanOf, until as untilWithin, type MediatedParty } from "../helpers.js";
 
 /**
  * Where the process of a running party dies: `prepared` once its next
@@ -28,8 +30,9 @@ export type Death = "prepared" | "unsent" | "unrecorded" | "unacknowledged";
 /** A party whose vault is a file, run by an agent over a transport the test can refuse or cut. */
 export interface Running {
   party: MediatedParty;
-  /** the runtime and keys of the process now running: other ones after a restart */
-  runtime: OpenedVault["runtime"];
+  /** the vault as the process now running opened it, with its runtime and keys in hand: another session after a restart */
+  session: Session;
+  runtime: SqliteVault;
   keys: Keys;
   agent: Agent;
   /** every delivery the agents of this party were told of, across restarts */
@@ -63,7 +66,7 @@ export const until = (what: string, condition: () => boolean): Promise<void> => 
 /** The timeout of a scenario of many round trips, each one a second or two of folding where nothing else runs. */
 export const LONG = 300_000;
 
-export const foldOf = ({ runtime, keys }: Pick<Running, "runtime" | "keys">): Promise<VaultFold> => scanVault(runtime.vault, keys);
+export const foldOf = ({ session }: Pick<Running, "session">): Promise<VaultFold> => session.fold();
 
 export const channelOf = (local: Did, peer: Did): Channel => ({ localDid: local, peerDid: peer });
 
@@ -126,7 +129,7 @@ function transportOf(mediator: FakeMediator, self: () => Started, life: Life): t
   };
 }
 
-async function agentOver(mediator: FakeMediator, self: () => Started, life: Life, vault: Pick<OpenedVault, "runtime" | "keys">, trace: AgentTrace, options: Partial<AgentOptions>): Promise<Agent> {
+async function agentOver(mediator: FakeMediator, self: () => Started, life: Life, vault: VaultSession, trace: AgentTrace, options: Partial<AgentOptions>): Promise<Agent> {
   return Agent.start(vault, {
     didcomm,
     fetch: transportOf(mediator, self, life),
@@ -145,14 +148,14 @@ async function freshFile(name: string): Promise<string> {
   return path.join(directory, name);
 }
 
-/** A party of `mediator` with one communication DID, its vault in a file of its own, and its agent started. */
+/** A party of `mediator` with one communication DID, its vault in a file of its own, opened with the effect types its handlers declare, and its agent started. */
 export async function run(mediator: FakeMediator, fill: number, didId: DidId, options: Partial<AgentOptions> = {}): Promise<Running> {
   const file = await freshFile("vault.sqlite");
-  const party = await mediatedParty(mediator, fill, didId, openNodeSqlite(file, { mode: "create" }));
+  const party = await mediatedParty(mediator, fill, didId, openNodeSqlite(file, { mode: "create" }), { effectTypes: effectTypesOf(options.handlers ?? []) });
   const life: Life = { death: null, ended: null };
-  const self: Started = { party, runtime: party.runtime, keys: party.keys, agent: undefined as unknown as Agent, inbounds: [], log: [], calls: 0, refuseNext: { armed: false }, refuseForward: { armed: false }, dead: false, file, options, life };
+  const self: Started = { party, session: party.session, runtime: party.runtime, keys: party.keys, agent: undefined as unknown as Agent, inbounds: [], log: [], calls: 0, refuseNext: { armed: false }, refuseForward: { armed: false }, dead: false, file, options, life };
   started.push(self);
-  self.agent = await agentOver(mediator, () => self, life, party, party.trace, options);
+  self.agent = await agentOver(mediator, () => self, life, party.session, party.trace, options);
   return self;
 }
 
@@ -160,13 +163,12 @@ export async function run(mediator: FakeMediator, fill: number, didId: DidId, op
 export async function restart(running: Running, options: Partial<AgentOptions> = {}, open: Pick<OpenVaultOptions, "resetIdentity"> = {}): Promise<void> {
   const self = running as Started;
   await end(self);
-  const vault = await openVault(openNodeSqlite(self.file, { mode: "readwrite" }), self.party.seedKey, open);
+  const vault = opened(await openVault(openNodeSqlite(self.file, { mode: "readwrite" }), self.party.seedKey, { ...scanOf(self), ...open }));
   const life: Life = { death: null, ended: null };
-  self.runtime = vault.runtime;
-  self.keys = vault.keys;
+  Object.assign(self, vault);
   self.life = life;
   self.dead = false;
-  self.agent = await agentOver(self.party.mediator, () => self, life, vault, await AgentTrace.open(vault.runtime.local), { ...self.options, ...options });
+  self.agent = await agentOver(self.party.mediator, () => self, life, vault.session, await AgentTrace.open(vault.runtime.local), { ...self.options, ...options });
 }
 
 export async function stop(running: Running): Promise<void> {
@@ -176,7 +178,7 @@ export async function stop(running: Running): Promise<void> {
 /** The party's vault as it stands, exported to a snapshot file. */
 export async function snapshotOf(running: Running): Promise<string> {
   const file = await freshFile("snapshot.sqlite");
-  await exportVault(running.runtime, (mode) => openNodeSqlite(file, { mode }), { heldRoots: vaultHeldRoots(running.keys) });
+  await exportVault(running.runtime, (mode) => openNodeSqlite(file, { mode }), { heldRoots: running.session.heldRoots() });
   return file;
 }
 
@@ -190,25 +192,24 @@ export async function restoredFrom(running: Running, snapshot: string, options: 
   const { party } = running;
   const file = await freshFile("vault.sqlite");
   const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
-  let runtime: SqliteVault;
+  let vault: Pick<Running, "session" | "runtime" | "keys">;
   try {
     const restored = await restoreVault(source, (mode) => openNodeSqlite(file, { mode }), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(party.seedKey) });
-    runtime = new SqliteVault(restored.runtime);
+    vault = opened(await openRestoredVault(restored.runtime, party.seedKey, scanOf(running)));
   } finally {
     source.close();
   }
-  const keys = await Keys.open(party.seedKey, runtime.metadata.anchor);
   const life: Life = { death: null, ended: null };
-  const self: Started = { party, runtime, keys, agent: undefined as unknown as Agent, inbounds: [], log: [], calls: 0, refuseNext: { armed: false }, refuseForward: { armed: false }, dead: false, file, options, life };
+  const self: Started = { party, ...vault, agent: undefined as unknown as Agent, inbounds: [], log: [], calls: 0, refuseNext: { armed: false }, refuseForward: { armed: false }, dead: false, file, options, life };
   started.push(self);
-  self.agent = await agentOver(party.mediator, () => self, life, { runtime, keys }, await AgentTrace.open(runtime.local), options);
+  self.agent = await agentOver(party.mediator, () => self, life, vault.session, await AgentTrace.open(vault.runtime.local), options);
   return self;
 }
 
 export async function imported(running: Running, snapshot: string): Promise<Imported> {
   const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
   try {
-    return await importVault(running.runtime, source, { retainedRoots: vaultRetention(running.keys) });
+    return await importVault(running.runtime, source, { retainedRoots: running.session.retainedRoots() });
   } finally {
     source.close();
   }

@@ -1,6 +1,6 @@
 /**
  * An arrangement's account at its mediator, bound to this runtime: the
- * runtime and its keys, the arrangement, what the mediator confirmed to
+ * vault session, the arrangement, what the mediator confirmed to
  * this runtime, and the link that speaks as the account. Every request
  * the account makes goes through it, so that none of these is paired by
  * a caller who could pair them wrong. Nothing in the vault tells two
@@ -21,16 +21,16 @@
  * it did.
  */
 
-import { isJsonObject, type JsonObject, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
-import type { Did, Keys, Mediation, MediationId } from "@estoc/vault";
+import { isJsonObject, type JsonObject, type LocalOptions } from "@estoc/event-store";
+import type { Did, Mediation, MediationId } from "@estoc/vault";
 
 import type { MediatorLink } from "./link.js";
 import { toward } from "./mediation.js";
 import type { Member, Membership } from "./membership.js";
-import { serially } from "./procedure.js";
 import { enroll, type Enrolled } from "./replica-enrollment.js";
 import { listReplicas, type ListedReplica } from "./replica-list.js";
 import { addRecipients, type RecipientsAdded } from "./replica-recipients.js";
+import type { Session } from "./session.js";
 import { note, type AgentTrace, type TraceData } from "./trace.js";
 
 /** What a host does with the account of one of its arrangements. */
@@ -78,8 +78,7 @@ export class Account implements Arrangement {
   private linked: MediatorLink | null = null;
 
   constructor(
-    readonly runtime: VaultRuntime,
-    readonly keys: Keys,
+    readonly session: Session,
     readonly mediationId: MediationId,
     private readonly confirmations: Confirmations,
     private readonly trace: AgentTrace,
@@ -115,7 +114,7 @@ export class Account implements Arrangement {
    * and asks through `turn` what would otherwise take a turn of its own.
    */
   turn<T>(work: (turn: AccountTurn) => Promise<T>): Promise<T> {
-    return serially(this.runtime, this.mediationId, () => work({ addRecipients: () => addRecipients(this) }));
+    return this.session.turn(this.mediationId, () => work({ addRecipients: () => addRecipients(this) }));
   }
 
   /** The link that speaks as the account to `mediation`'s mediator: made on first need, and refused then when it is not the arrangement's own. */

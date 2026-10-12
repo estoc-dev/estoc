@@ -3,20 +3,8 @@ import { describe, expect, it, test } from "vitest";
 import type { VaultRuntime } from "@estoc/event-store";
 import { canonicalDid, readReplicaGrant, scanVault, signReplicaGrant, vaultDraft, type Did, type MediationId, type VaultFold } from "@estoc/vault";
 
-import {
-  ACCOUNT_REGISTER,
-  Agent,
-  EntityConflict,
-  LinkClosed,
-  MediatorRefused,
-  REPLICA_ADD,
-  STATUS_REQUEST,
-  Unusable,
-  WrongMediator,
-  createMediation,
-  selectMediation,
-  type LocalStore,
-} from "../src/index.js";
+import { ACCOUNT_REGISTER, Agent, EntityConflict, LinkClosed, MediatorRefused, REPLICA_ADD, STATUS_REQUEST, Unusable, WrongMediator, type LocalStore } from "../src/index.js";
+import { createMediation, selectMediation } from "../src/mediation.js";
 import { Keyring } from "../src/keyring.js";
 import { MediatorLink } from "../src/link.js";
 import { transientOptions } from "../src/local-records.js";
@@ -40,10 +28,10 @@ describe("creating a replica", () => {
   it("records the grant of the runtime's own replica ID before any request, and says the same again", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const created = await createReplica(p.runtime, p.keys, p.mediationId);
+    const created = await createReplica(p.session, p.mediationId);
     expect(created.data.replicaId).toBe(p.runtime.author);
     expect(readReplicaGrant(created.data.grant)).toMatchObject({ account: canonicalDid(p.created.data.me.did), mediationId: p.mediationId, mediator: mediator.did, replicaId: p.runtime.author });
-    expect((await createReplica(p.runtime, p.keys, p.mediationId)).cid).toBe(created.cid);
+    expect((await createReplica(p.session, p.mediationId)).cid).toBe(created.cid);
     expect((await fold(p)).replicas.replicas.get(p.runtime.author)?.status).toBe("member");
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();
@@ -52,20 +40,20 @@ describe("creating a replica", () => {
   it("refuses a second arrangement for the same replica ID", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    await createReplica(p.runtime, p.keys, p.mediationId);
-    const second = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
-    await expect(createReplica(p.runtime, p.keys, second.data.mediationId)).rejects.toBeInstanceOf(EntityConflict);
+    await createReplica(p.session, p.mediationId);
+    const second = await createMediation(p.session, (await newMediator(201, "http://other-mediator/")).did as Did);
+    await expect(createReplica(p.session, second.data.mediationId)).rejects.toBeInstanceOf(EntityConflict);
     await p.runtime.close();
   });
 
   it("refuses the arrangement whose recorded grant makes the runtime no member, and enrolling asks the mediator nothing", async () => {
     const mediator = await newMediator();
     const p = await account(mediator);
-    const elsewhere = canonicalDid((await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did)).data.me.did) as Did;
+    const elsewhere = canonicalDid((await createMediation(p.session, (await newMediator(201, "http://other-mediator/")).did as Did)).data.me.did) as Did;
     const grant = await signReplicaGrant(p.keys, { mediationId: p.mediationId, mediatorDid: elsewhere, me: p.created.data.me }, p.runtime.author);
-    await decide(p.runtime, p.keys, () => [vaultDraft("replica.created", { replicaId: p.runtime.author, mediationId: p.mediationId, grant })]);
+    await decide(p.session, () => [vaultDraft("replica.created", { replicaId: p.runtime.author, mediationId: p.mediationId, grant })]);
     expect((await fold(p)).replicas.replicas.get(p.runtime.author)?.status).toBe("conflict");
-    await expect(createReplica(p.runtime, p.keys, p.mediationId)).rejects.toBeInstanceOf(Unusable);
+    await expect(createReplica(p.session, p.mediationId)).rejects.toBeInstanceOf(Unusable);
     await expect(accountOver(p, { confirmations: transientOptions() }).enroll()).rejects.toBeInstanceOf(Unusable);
     expect(mediator.seenTypes).toEqual([]);
     await p.runtime.close();
@@ -131,7 +119,7 @@ describe("enrolling", () => {
     const flaky = accountOver(p, { confirmations: failing });
     await expect(flaky.enroll()).rejects.toThrow("the disk is full");
     expect((await flaky.enroll()).steps).toEqual(["replica-added"]);
-    await selectMediation(p.runtime, p.keys, p.mediationId);
+    await selectMediation(p.session, p.mediationId);
     await p.runtime.local.clearCaches();
     expect((await p.account.enroll()).steps).toEqual([]);
     expect(sent(mediator, ACCOUNT_REGISTER)).toBe(1);
@@ -181,7 +169,7 @@ describe("enrolling", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     await expect(accountOver({ ...p, mediationId: "019b0000-0000-5000-8000-000000000000" as MediationId }).enroll()).rejects.toThrow(/no mediation/);
-    const other = await createMediation(p.runtime, p.keys, (await newMediator(201, "http://other-mediator/")).did as Did);
+    const other = await createMediation(p.session, (await newMediator(201, "http://other-mediator/")).did as Did);
     await expect(accountOver({ ...p, mediationId: other.data.mediationId }).enroll()).rejects.toBeInstanceOf(WrongMediator);
     expect((await fold(p)).replicas.replicas.size).toBe(0);
     expect(mediator.seenTypes).toEqual([]);
@@ -194,18 +182,18 @@ describe("an arrangement", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, liveDelivery: false };
-    const agent = await Agent.open(p, options);
+    const agent = await Agent.open(p.session, options);
     expect((await agent.enroll(p.mediationId)).steps).toEqual(["account-registered", "replica-created", "replica-added"]);
-    await selectMediation(p.runtime, p.keys, p.mediationId);
+    await selectMediation(p.session, p.mediationId);
     const [connection] = await agent.connect();
     expect(connection).toMatchObject({ mediationId: p.mediationId, unreachable: null, recipients: { wanted: [], added: [], refused: [] }, drained: { acked: 0, ended: "empty" }, live: false });
     expect(connection?.enrolled?.steps).toEqual([]);
     agent.close();
 
-    const later = await Agent.start(p, options);
+    const later = await Agent.start(p.session, options);
     expect(later.connections()[0]?.enrolled?.steps).toEqual([]);
     later.close();
-    const forgetful = await Agent.start(p, { ...options, localOptions: undefined });
+    const forgetful = await Agent.start(p.session, { ...options, localOptions: undefined });
     expect(forgetful.connections()[0]?.enrolled?.steps).toEqual(["replica-added"]);
     forgetful.close();
     expect(mediator.seenTypes.filter((type) => type !== STATUS_REQUEST)).toEqual([ACCOUNT_REGISTER, REPLICA_ADD, REPLICA_ADD]);
@@ -226,7 +214,7 @@ describe("an arrangement", () => {
       await released;
       return response;
     };
-    const agent = await Agent.open(p, { didcomm, fetch: held, WebSocket: mediator.WebSocket, trace: p.trace });
+    const agent = await Agent.open(p.session, { didcomm, fetch: held, WebSocket: mediator.WebSocket, trace: p.trace });
     const enrolling = agent.enroll(p.mediationId);
     await answeredOnce;
     agent.close();
@@ -242,10 +230,10 @@ describe("an arrangement", () => {
     const mediator = await newMediator();
     const p = await account(mediator);
     const options = { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace };
-    const first = await Agent.open(p, options);
+    const first = await Agent.open(p.session, options);
     await first.enroll(p.mediationId);
     first.close();
-    await selectMediation(p.runtime, p.keys, p.mediationId);
+    await selectMediation(p.session, p.mediationId);
 
     let asked = (): void => undefined;
     const askedOnce = new Promise<void>((resolve) => (asked = resolve));
@@ -260,7 +248,7 @@ describe("an arrangement", () => {
       set: async () => {},
       delete: async () => {},
     };
-    const agent = await Agent.open(p, { ...options, localOptions: slow });
+    const agent = await Agent.open(p.session, { ...options, localOptions: slow });
     const connecting = agent.connect();
     await askedOnce;
     agent.close();

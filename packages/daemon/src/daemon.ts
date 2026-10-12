@@ -1,5 +1,5 @@
 import { v7 as uuidv7 } from "uuid";
-import { DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, SqliteVault, exportVault, importVault, openPortable, restoreVault, type Held, type SqliteDriver } from "@estoc/event-store";
+import { DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, exportVault, importVault, openPortable, restoreVault, type SqliteDriver, type SqliteVault } from "@estoc/event-store";
 import type { Hold, Lines, Phase, Snapshot } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
@@ -9,10 +9,8 @@ import {
   mediationIdOf,
   objectReader,
   sameDid,
-  scanVault,
   vaultDraft,
   vaultHeldRoots,
-  vaultRetention,
   type Channel,
   type ContactId,
   type Did,
@@ -27,7 +25,6 @@ import {
   BLOB_QUOTA,
   BLOB_REFUSED,
   BLOB_TOO_LARGE,
-  BUILT_IN_HANDLERS,
   BlobMismatch,
   BlobTooLarge,
   BlobTransferFailed,
@@ -39,25 +36,22 @@ import {
   SEAL_OVERHEAD,
   UnknownEntity,
   Unusable,
-  createDid,
-  createMediation,
   createVault,
-  decide,
-  effectTypesOf,
   inspectRuntime,
   isTraceLevel,
   openBlob,
+  openRestoredVault,
   openVault,
   readBlob,
   recorder,
   sealBlob,
-  selectMediation,
-  serially,
   type AgentLines,
   type Called,
   type EffectOutcome,
   type InspectedRuntime,
+  type LockedVault,
   type Membership,
+  type VaultSession,
   type RouteSpec,
 } from "@estoc/agent-core";
 
@@ -121,8 +115,6 @@ const SNAPSHOT_PUTS = "snapshot-puts";
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
-const SCAN = { effectTypes: effectTypesOf(BUILT_IN_HANDLERS) };
-
 /**
  * One agent as the daemon holds it. Closing an agent does not end a
  * flow of its own already under way, and such a flow goes on from what
@@ -143,9 +135,8 @@ interface Attached {
 }
 
 interface Open {
-  runtime: SqliteVault;
+  session: VaultSession;
   seedKey: SeedKey;
-  keys: Keys;
   trace: AgentTrace;
   attached: Attached;
   publishing: Publishing;
@@ -360,9 +351,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     );
 
   /** The records as of one cut: the fold, the content and the local options read under the writer lock, with nothing committed between them. */
-  async function recordsOf(vault: Held, { runtime, keys }: Pick<Open, "runtime" | "keys">): Promise<Snapshot> {
-    const fold = await scanVault(vault, keys, SCAN);
-    const records = await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES), { author: runtime.author, local: new LocalRecords(runtime.local.options, runtime.author) });
+  async function recordsOf(vault: LockedVault, { session }: Pick<Open, "session">): Promise<Snapshot> {
+    const { runtime } = session;
+    const fold = await vault.fold();
+    const records = await recorder(fold, objectReader(vault.held.objects, MAX_CONTENT_BYTES), { author: runtime.author, local: new LocalRecords(runtime.local.options, runtime.author) });
     return project(records, {
       anchor: runtime.metadata.anchor,
       label: fold.label ?? "",
@@ -378,13 +370,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
    * looked for afterwards and thrown, and records short of it are shown
    * to nobody.
    */
-  function sourceOf(running: Pick<Open, "runtime" | "keys">): Source<Snapshot> {
+  function sourceOf(running: Pick<Open, "session">): Source<Snapshot> {
     return {
       capture: (cut) =>
-        running.runtime.locked(async (vault) => {
+        running.session.locked(async (vault) => {
           cut();
           const read = await recordsOf(vault, running);
-          const damage = damageOf(running.runtime);
+          const damage = damageOf(running.session.runtime);
           if (damage !== null) throw damage;
           return read;
         }),
@@ -394,8 +386,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   const explained = async (runtime: SqliteVault): Promise<boolean> => (await runtime.local.options.get(RESTORE_EXPLAINED)) === true;
 
   /** A send of the user's and every manual dispatch wait for the restore to be explained; nothing the vault does on its own does. */
-  async function refuseUnexplained({ runtime }: Open): Promise<void> {
-    if (!(await explained(runtime))) throw new RestoreUnexplained();
+  async function refuseUnexplained({ session }: Open): Promise<void> {
+    if (!(await explained(session.runtime))) throw new RestoreUnexplained();
   }
 
   /** Every change so far published before a call answers; a read that fails, or an epoch that ends, is the publisher's to tell of. */
@@ -403,7 +395,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
   const hostFetch = host.agentOptions?.fetch ?? globalThis.fetch;
 
-  function attach(runtime: SqliteVault, keys: Keys, trace: AgentTrace): Attached {
+  function attach(session: VaultSession, trace: AgentTrace): Attached {
+    const { runtime } = session;
     const attached = { ended: false, work: new Set<Promise<void>>() };
     const whileAttached =
       <A extends unknown[]>(say: (...args: A) => void) =>
@@ -414,7 +407,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     // The agent's lines take the place of whatever agent's were shown before, empty or not: it says them again only once they change.
     const opening = async (): Promise<Agent> => {
       const agent = await Agent.open(
-        { runtime, keys },
+        session,
         {
           ...host.agentOptions,
           fetch: async (input, init) => {
@@ -496,15 +489,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   }
 
   /** The agent over an open runtime, and the vault shown once its first read is published; one whose first read meets damage is let go of and said to be damaged instead. */
-  async function start(runtime: SqliteVault, keys: Keys, seedKey: SeedKey): Promise<void> {
+  async function start(session: VaultSession, seedKey: SeedKey): Promise<void> {
     let running: Open;
     try {
       if (closing()) throw new Error(CLOSED);
       if (held === null) throw new Error("no vault file is held");
-      const trace = await AgentTrace.open(runtime.local);
-      running = { runtime, seedKey, keys, trace, attached: attach(runtime, keys, trace), publishing: publisher.open(held, sourceOf({ runtime, keys })) };
+      const trace = await AgentTrace.open(session.runtime.local);
+      running = { session, seedKey, trace, attached: attach(session, trace), publishing: publisher.open(held, sourceOf({ session })) };
     } catch (err) {
-      await runtime.close();
+      await session.runtime.close();
       throw err;
     }
     open = running;
@@ -526,23 +519,22 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     if (running === null) return;
     running.publishing.close();
     await detach(running.attached);
-    await running.runtime.close();
+    await running.session.runtime.close();
   }
 
-  /** The vault's runtime opened under its seed, with no agent over it yet; one whose history is damaged is closed again and the damage thrown. */
-  async function unlocked(seedKey: SeedKey, options: { resetIdentity?: boolean } = {}): Promise<Pick<Open, "runtime" | "keys">> {
-    const opened = await openVault(await takeVault("readwrite"), seedKey, { ...SCAN, changed, ...options });
-    const damage = damageOf(opened.runtime);
+  /** The vault opened under its seed, with no agent over it yet; one whose history is damaged is closed again and the damage thrown. */
+  async function unlocked(seedKey: SeedKey, options: { resetIdentity?: boolean } = {}): Promise<VaultSession> {
+    const session = await openVault(await takeVault("readwrite"), seedKey, { changed, ...options });
+    const damage = damageOf(session.runtime);
     if (damage !== null) {
-      await opened.runtime.close();
+      await session.runtime.close();
       throw damage;
     }
-    return opened;
+    return session;
   }
 
   async function run(seedKey: SeedKey): Promise<void> {
-    const { runtime, keys } = await unlocked(seedKey);
-    await start(runtime, keys, seedKey);
+    await start(await unlocked(seedKey), seedKey);
   }
 
   const unopened = (err: unknown) => phase(err instanceof DamagedHistory ? "damaged" : "unreadable", failure(err));
@@ -550,7 +542,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   /** The vault owned and looked at without its seed, for `unlock`; one that does not open is let go of, its bytes left alone. */
   async function look(): Promise<void> {
     try {
-      const looked = await inspectRuntime(await takeVault("readwrite"), SCAN);
+      const looked = await inspectRuntime(await takeVault("readwrite"));
       const damage = damageOf(looked.runtime);
       if (damage !== null) {
         await looked.runtime.close();
@@ -585,7 +577,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     });
   }
 
-  const commit = ({ runtime, keys }: Open, choose: (fold: VaultFold) => VaultDraft[]) => decide(runtime, keys, choose);
+  const commit = ({ session }: Open, choose: (fold: VaultFold) => VaultDraft[]) => session.decide(choose);
 
   const handingOut = new WeakMap<Open, Promise<{ didId: DidId; did: Did }>>();
 
@@ -594,8 +586,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     if (contact === undefined || contact.origin === null || contact.deleted) throw new Unmet(`no contact ${contactId}`);
   }
 
-  async function preferredMediation({ runtime, keys }: Open): Promise<MediationId> {
-    const preferred = (await scanVault(runtime.vault, keys, SCAN)).mediations.preferred;
+  async function preferredMediation({ session }: Open): Promise<MediationId> {
+    const preferred = (await session.fold()).mediations.preferred;
     if (preferred === null) throw new Unmet("no mediator is set");
     return preferred;
   }
@@ -632,7 +624,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     } catch (err) {
       throw new InvalidArgument(failure(err));
     }
-    const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+    const fold = await running.session.fold();
     if ([...fold.dids.entities.values()].some((entity) => entity.created !== null && sameDid(entity.created.did, peerDid))) throw new InvalidArgument("that is an address of your own");
     return peerDid;
   }
@@ -640,7 +632,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   async function reach(agent: Agent, running: Open, recipientDid: string, pthid: string | null, petname: string): Promise<SendResult & { contactId: ContactId }> {
     await refuseUnexplained(running);
     const peerDid = await peerDidOf(running, recipientDid);
-    const { minted } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+    const { minted } = await running.session.createDid(await preferredRoute(running));
     const channel: Channel = { localDid: minted.did, peerDid };
     const contactId = uuidv7() as ContactId;
     await commit(running, () => [vaultDraft("contact.created", { contactId, because: "user" }), vaultDraft("contact.petname", { contactId, name: petname }), vaultDraft("contact.channelsSet", { contactId, channels: [channel] })]);
@@ -671,11 +663,11 @@ export function createDaemon(host: DaemonHost): DaemonCore {
    * file, come to more than `maxBytes`: `bound` is whose bound that is,
    * for the refusal to say. Runs in the files' turn.
    */
-  async function exported({ runtime, keys }: Open, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
+  async function exported({ session }: Open, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
     const store = files();
     await store.remove(EXPORT_FILE);
     try {
-      await exportVault(runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: vaultHeldRoots(keys, SCAN), maxBytes }).catch((err: unknown) => {
+      await exportVault(session.runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: session.heldRoots(), maxBytes }).catch((err: unknown) => {
         if (err instanceof SnapshotTooLarge) throw new TooLarge(`the ${what}'s events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} ${bound}`);
         throw err;
       });
@@ -692,14 +684,14 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   const restore = (bytes: Uint8Array, passphrase: string): Promise<void> =>
     exclusively(async () => {
       const store = await refuseOccupied();
-      const unlocked: { seedKey: SeedKey | null } = { seedKey: null };
       let made = false;
-      let runtime: SqliteVault;
-      let keys: Keys;
+      let session: VaultSession;
+      let seedKey: SeedKey;
       try {
-        runtime = await withSnapshot(RESTORE_SOURCE, bytes, async (driver) => {
+        ({ session, seedKey } = await withSnapshot(RESTORE_SOURCE, bytes, async (driver) => {
           const source = openPortable(driver);
           try {
+            let unlocked: SeedKey | null = null;
             const restored = await restoreVault(
               source,
               async (mode) => {
@@ -709,22 +701,26 @@ export function createDaemon(host: DaemonHost): DaemonCore {
                 return destination;
               },
               {
-                heldRoots: vaultHeldRoots(null, SCAN),
+                heldRoots: vaultHeldRoots(null),
                 anchor: async (wrapped) => {
                   try {
-                    unlocked.seedKey = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
+                    unlocked = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
                   } catch {
                     throw new Unmet("that passphrase does not open this backup");
                   }
-                  return Keys.anchorOf(unlocked.seedKey);
+                  return Keys.anchorOf(unlocked);
                 },
               }
             );
-            return new SqliteVault(restored.runtime, { changed });
+            if (unlocked === null) {
+              restored.runtime.close();
+              throw new Error("the restore did not ask for the passphrase");
+            }
+            return { session: await openRestoredVault(restored.runtime, unlocked, { changed }), seedKey: unlocked };
           } finally {
             source.close();
           }
-        });
+        }));
       } catch (err) {
         // A destination the restore made and failed on is closed and unready: it opens as nothing, and the next try starts from no file.
         if (made) {
@@ -733,18 +729,8 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         }
         throw err;
       }
-      const { seedKey } = unlocked;
-      try {
-        if (seedKey === null) throw new Error("the restore did not ask for the passphrase");
-        keys = await Keys.open(seedKey, runtime.metadata.anchor);
-      } catch (err) {
-        await runtime.close();
-        held = null;
-        await store.remove(VAULT_FILE);
-        throw err;
-      }
       await host.cacheSeedKey(seedKey);
-      await start(runtime, keys, seedKey);
+      await start(session, seedKey);
     });
 
   host.onOnline?.(() => {
@@ -817,7 +803,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         held = uuidv7() as Hold;
         let created: Awaited<ReturnType<typeof createVault>>;
         try {
-          created = await createVault(driver, { seedKey, wrapped: { version: 3, seedJwe: doc.seedJwe }, label: name, ...SCAN, changed });
+          created = await createVault(driver, { seedKey, wrapped: { version: 3, seedJwe: doc.seedJwe }, label: name, changed });
           await created.runtime.local.options.set(RESTORE_EXPLAINED, true);
         } catch (err) {
           // The file is this call's own to remove only past the open that made it, and only once its connection is closed.
@@ -827,7 +813,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           throw err;
         }
         await host.cacheSeedKey(seedKey);
-        await start(created.runtime, created.keys, seedKey);
+        await start(created, seedKey);
       }),
 
     restoreIdentity: restore,
@@ -847,7 +833,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     },
 
     async explainedRestore() {
-      const { runtime } = vault();
+      const { runtime } = vault().session;
       // Written under the writer lock, as every change a snapshot is read from is, so no cut reads the option before the event it stands beside.
       await runtime.locked(() => runtime.local.options.set(RESTORE_EXPLAINED, true));
       changed();
@@ -904,14 +890,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       exclusively(async () => {
         const running = vault();
         const bytes = await exported(running, "backup", maxBytes, "this daemon delivers");
-        const label = (await scanVault(running.runtime.vault, running.keys, SCAN)).label ?? "";
+        const label = (await running.session.fold()).label ?? "";
         const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
         return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
       }),
 
     async publishSnapshotLink() {
       const running = vault();
-      const { attached, runtime } = running;
+      const { attached, session } = running;
+      const { runtime } = session;
       const { blobs, mediationId, maxBytes } = await during(attached, async (agent) => {
         const { blobs, mediationId } = await membershipOf(running, agent);
         const limits = await blobs.limits();
@@ -925,7 +912,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       });
       const sealed = await sealBlob(snapshot);
       return during(attached, () =>
-        serially(runtime, SNAPSHOT_PUTS, async () => {
+        session.turn(SNAPSHOT_PUTS, async () => {
           const links = new SnapshotLinks(runtime.local.options, runtime.author);
           const placedAt = Date.now();
           await links.prune(placedAt);
@@ -950,9 +937,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     },
 
     revokeSnapshotLink(hash) {
-      const { attached, runtime } = vault();
+      const { attached, session } = vault();
+      const { runtime } = session;
       return during(attached, (agent) =>
-        serially(runtime, SNAPSHOT_PUTS, async () => {
+        session.turn(SNAPSHOT_PUTS, async () => {
           const links = new SnapshotLinks(runtime.local.options, runtime.author);
           const put = await links.get(hash);
           if (put === null) throw new Unmet(`no snapshot ${hash} was put from here`);
@@ -967,31 +955,31 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     },
 
     async snapshotLinks() {
-      const { runtime } = vault();
+      const { runtime } = vault().session;
       return new SnapshotLinks(runtime.local.options, runtime.author).list(Date.now());
     },
 
     mergeBackup: (bytes) =>
       exclusively(async () => {
-        const merge = ({ runtime, keys }: Pick<Open, "runtime" | "keys">) =>
+        const merge = (session: VaultSession) =>
           withSnapshot(MERGE_SOURCE, bytes, async (driver) => {
             const source = openPortable(driver);
             try {
-              return await importVault(runtime, source, { retainedRoots: vaultRetention(keys, SCAN) });
+              return await importVault(session.runtime, source, { retainedRoots: session.retainedRoots() });
             } finally {
               source.close();
             }
           });
         const counted = ({ added, duplicates, objects, repaired }: Awaited<ReturnType<typeof merge>>, renewed: boolean) => ({ added, duplicates, objects, repaired, renewed });
         const running = vault();
-        const imported = await merge(running).catch((err: unknown) => {
+        const imported = await merge(running.session).catch((err: unknown) => {
           if (err instanceof ForkedAuthor) return null;
           throw err;
         });
         if (imported !== null) {
           // The agent read its keys and its lines before the merge: another over the merged vault takes its place.
           await detach(running.attached);
-          running.attached = attach(running.runtime, running.keys, running.trace);
+          running.attached = attach(running.session, running.trace);
           await settle();
           connect(running);
           return counted(imported, false);
@@ -999,7 +987,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         // The backup went on from a copy of this very runtime, or this one from a copy of the backup's: both wrote under one replica ID. Nothing was merged. This runtime takes a fresh one, its history as it is, and the backup's events then come in under the ID they were written with.
         const { seedKey } = running;
         await stop();
-        let renewed: Pick<Open, "runtime" | "keys">;
+        let renewed: VaultSession;
         try {
           renewed = await unlocked(seedKey, { resetIdentity: true });
         } catch (failed) {
@@ -1010,7 +998,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         try {
           return counted(await merge(renewed), true);
         } finally {
-          await start(renewed.runtime, renewed.keys, seedKey).catch(async (failed: unknown) => {
+          await start(renewed, seedKey).catch(async (failed: unknown) => {
             await look();
             throw failed;
           });
@@ -1018,25 +1006,25 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }),
 
     setMediator: (mediatorDid) =>
-      act((agent, { runtime, keys }) =>
+      act((agent, { session }) =>
         // Two calls at once would each enroll in and select the arrangement: the later one looks only once the earlier is done.
-        serially(runtime, "set-mediator", async () => {
+        session.turn("set-mediator", async () => {
           const mediationId = mediationIdOf(mediatorDid as Did);
-          const fold = await scanVault(runtime.vault, keys, SCAN);
-          const own = fold.replicas.replicas.get(runtime.author);
+          const fold = await session.fold();
+          const own = fold.replicas.replicas.get(session.runtime.author);
           if (own !== undefined && own.mediationId !== null && own.mediationId !== mediationId) {
             throw new Unmet(`this runtime is a replica of the arrangement with ${fold.mediations.mediations.get(own.mediationId)?.mediatorDid ?? "another mediator"}; moving it to another mediator is not provided`);
           }
-          await createMediation(runtime, keys, mediatorDid as Did);
+          await session.createMediation(mediatorDid as Did);
           await agent.enroll(mediationId);
-          await selectMediation(runtime, keys, mediationId);
+          await session.selectMediation(mediationId);
           return mediationId;
         })
       ),
 
     createInvitation: (goal) =>
       act(async (agent, running) => {
-        const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+        const { created } = await running.session.createDid(await preferredRoute(running));
         const { invitation } = await agent.disclose(created.data.didId, { as: "oob", goal: goal ?? null });
         if (invitation === null) throw new Error("the disclosure made no invitation");
         return { didId: created.data.didId, invitation };
@@ -1052,10 +1040,10 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         const pending = handingOut.get(running);
         if (pending !== undefined) return pending;
         const minting = (async () => {
-          const fold = await scanVault(running.runtime.vault, running.keys, SCAN);
+          const fold = await running.session.fold();
           const handedOut = [...fold.dids.entities.values()].find((entity) => entity.live && entity.disclosures.some(({ data }) => data.as === "direct"));
           if (handedOut?.created) return { didId: handedOut.didId, did: handedOut.created.longFormDid };
-          const { created } = await createDid(running.runtime, running.keys, await preferredRoute(running));
+          const { created } = await running.session.createDid(await preferredRoute(running));
           const { longFormDid } = await agent.disclose(created.data.didId, { as: "direct" });
           return { didId: created.data.didId, did: longFormDid };
         })().finally(() => handingOut.delete(running));
@@ -1149,13 +1137,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     rotateChannel: (channel) =>
       act(async (agent, running) => {
         await refuseUnexplained(running);
-        const entities = [...(await scanVault(running.runtime.vault, running.keys, SCAN)).dids.entities.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
+        const entities = [...(await running.session.fold()).dids.entities.values()].filter((entity) => entity.created !== null && sameDid(entity.created.did, channel.localDid));
         const live = entities.filter((entity) => entity.live);
         const candidates = live.length > 0 ? live : entities;
         if (candidates.length === 0) throw new Unmet(`no DID of this vault is ${channel.localDid}`);
         if (candidates.length > 1) throw new Unmet(`${candidates.length} DIDs of this vault are ${channel.localDid}: which of them to rotate is not decidable`);
         const rotated = await agent.manual.rotate({ localDidId: candidates[0]!.didId, peerDid: channel.peerDid });
-        const successor = (await scanVault(running.runtime.vault, running.keys, SCAN)).dids.entities.get(rotated.successor)?.created?.did;
+        const successor = (await running.session.fold()).dids.entities.get(rotated.successor)?.created?.did;
         if (successor === undefined) throw new Error(`the successor ${rotated.successor} has no DID`);
         return { successor: { localDid: successor, peerDid: rotated.channel.peerDid }, ...effectOutcomeOf(rotated.notification) };
       }),

@@ -4,12 +4,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { AnchorMismatch, NotAVault, ReadOnlyVault, SnapshotTooLarge, exportVault, type OpenMode } from "@estoc/event-store";
-import { createSeedKeystore } from "@estoc/keystore";
+import { AnchorMismatch, NotAVault, ReadOnlyVault, SnapshotTooLarge, exportVault, openPortable, restoreVault, type OpenMode } from "@estoc/event-store";
+import { createSeedKeystore, type SeedKey } from "@estoc/keystore";
 import { Keys, vaultDraft, vaultHeldRoots } from "@estoc/vault";
 
-import { createVault, inspectRuntime, inspectSnapshot, openVault } from "../src/index.js";
-import { PASSPHRASE, freshVault, memoryDriver, seedOf, ticking } from "./helpers.js";
+import { createVault, inspectRuntime, inspectSnapshot, openRestoredVault, openVault } from "../src/index.js";
+import { PASSPHRASE, freshVault, memoryDriver, opened, seedOf, ticking } from "./helpers.js";
 
 let dir: string;
 let n = 0;
@@ -31,19 +31,20 @@ describe("the vault opened with the seed", () => {
     const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
     const made = await createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", now: ticking() });
     expect(made.runtime.metadata.anchor).toBe(await Keys.anchorOf(seedKey));
-    expect(made.fold.label).toBe("Alice");
-    expect(made.fold.authors.map((author) => author.author)).toEqual([made.runtime.author]);
+    const fold = await made.fold();
+    expect(fold.label).toBe("Alice");
+    expect(fold.authors.map((author) => author.author)).toEqual([made.runtime.author]);
     await made.runtime.close();
 
     const bySeed = await openVault(open(file, "readwrite"), seedKey);
     expect(bySeed.runtime.metadata.anchor).toBe(made.runtime.metadata.anchor);
     expect(bySeed.runtime.author).toBe(made.runtime.author);
-    expect(bySeed.fold.label).toBe("Alice");
-    expect(bySeed.keys.locked).toBe(false);
+    expect((await bySeed.fold()).label).toBe("Alice");
+    expect(opened(bySeed).keys.locked).toBe(false);
     await bySeed.runtime.close();
 
     const byPassphrase = await openVault(open(file, "readwrite"), { passphrase: PASSPHRASE });
-    expect(byPassphrase.fold.label).toBe("Alice");
+    expect((await byPassphrase.fold()).label).toBe("Alice");
     await byPassphrase.runtime.close();
   });
 
@@ -56,8 +57,49 @@ describe("the vault opened with the seed", () => {
     await expect(openVault(open(file, "readwrite"), { passphrase: "wrong" })).rejects.toThrow();
     // the file is not held by the refused opens: it opens again
     const again = await openVault(open(file, "readwrite"), made.seedKey);
-    expect(again.fold.label).toBe("Alice");
+    expect((await again.fold()).label).toBe("Alice");
     await again.runtime.close();
+  });
+});
+
+describe("an open that fails once the database is in hand", () => {
+  const lookupFailed = () => ({
+    effectTypes: (function* () {
+      yield "https://example.org/custom";
+      throw new Error("effect-type lookup failed");
+    })(),
+  });
+  const reopens = async (file: string, seedKey: SeedKey) => (await openVault(open(file, "readwrite"), seedKey)).runtime.close();
+
+  it("closes the file when the effect types fail as they are read, on create, open and restore alike", async () => {
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const file = fresh();
+    await expect(createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", ...lookupFailed() })).rejects.toThrow("effect-type lookup failed");
+    await reopens(file, seedKey);
+    await expect(openVault(open(file, "readwrite"), seedKey, lookupFailed())).rejects.toThrow("effect-type lookup failed");
+    await reopens(file, seedKey);
+
+    const source = await openVault(open(file, "readwrite"), seedKey);
+    const snapshot = fresh();
+    await exportVault(source.runtime, (mode) => open(snapshot, mode), { heldRoots: source.heldRoots() });
+    await source.runtime.close();
+    const portable = openPortable(open(snapshot, "readonly"));
+    const restoredFile = fresh();
+    const { runtime: restored } = await restoreVault(portable, (mode) => open(restoredFile, mode), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(seedKey) });
+    portable.close();
+    await expect(openRestoredVault(restored, seedKey, lookupFailed())).rejects.toThrow("effect-type lookup failed");
+    await reopens(restoredFile, seedKey);
+  });
+
+  it("closes the file when the storage options are refused, on create, open and inspection alike", async () => {
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const file = fresh();
+    await expect(createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
+    await expect(openVault(open(file, "readwrite"), seedKey, { maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
+    await expect(inspectRuntime(open(file, "readwrite"), { maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
   });
 });
 
@@ -78,9 +120,9 @@ describe("the runtime inspected without the seed", () => {
     await expect(Keys.unlock(inspected.wrapped, "wrong", inspected.runtime.metadata.anchor)).rejects.toThrow();
     await inspected.runtime.close();
 
-    const opened = await openVault(open(file, "readwrite"), made.seedKey);
-    expect(opened.fold.label).toBe("Alice");
-    await opened.runtime.close();
+    const reopened = await openVault(open(file, "readwrite"), made.seedKey);
+    expect((await reopened.fold()).label).toBe("Alice");
+    await reopened.runtime.close();
   });
 });
 
@@ -118,7 +160,7 @@ describe("a snapshot inspected", () => {
 describe("in memory", () => {
   it("makes and folds a vault on a private in-memory database", async () => {
     const made = await freshVault(3, "Carol", memoryDriver());
-    expect(made.fold.label).toBe("Carol");
+    expect((await made.session.fold()).label).toBe("Carol");
     await made.runtime.close();
   });
 });

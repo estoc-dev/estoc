@@ -28,7 +28,8 @@ import {
 } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, createDid, type Content } from "../src/index.js";
+import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable, type Content } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { retireDid, routeOf } from "../src/dids.js";
 import { automaticDraft, send } from "../src/send.js";
 import { directParty, merged, received, type DirectParty } from "./helpers.js";
@@ -65,7 +66,7 @@ async function contact(party: DirectParty, contactId: ContactId, channels: Chann
 async function rotated(alice: DirectParty, peer: DirectParty): Promise<{ next: Did; longFormDid: Did }> {
   await received(alice, peer, `confirm-${ALICE}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } });
   const route = routeOf((await fold(alice)).dids.entities.get(ALICE)!)!;
-  const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
+  const { minted } = await createDid(alice.session, route, ALICE_NEXT);
   const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, 1_757_700_000);
   await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
   return { next: minted.did, longFormDid: minted.longFormDid };
@@ -95,7 +96,7 @@ describe("send to a channel", () => {
       pleaseAck: [""],
       headers: { lang: "en" },
     };
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.longFormDid, peerDid: bob.longFormDid } }, content, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.longFormDid, peerDid: bob.longFormDid } }, content, { messageId: MESSAGE });
     expect(sent).toMatchObject({ messageId: MESSAGE, channel: toBob, senderDidId: ALICE, existed: false });
     const { data } = sent.intent;
     expect(data).toMatchObject({ messageId: MESSAGE, senderDidId: ALICE, recipientDid: bob.longFormDid, msgType: BASIC_MESSAGE, thid: "thread-1", pthid: null, createdTime: 1_000, expiresTime: 2_000, pleaseAck: [""], ack: [], headers: { lang: "en" } });
@@ -120,9 +121,9 @@ describe("send to a channel", () => {
     expect(intentOfOutbound(data)).toMatchObject({ cid: data.intentCid, value: { document: data.bodyCid, thid: "thread-1" } });
     expect(readPlaintext({ typ: PLAINTEXT_TYP, id: MESSAGE, type: BASIC_MESSAGE, from: alice.longFormDid, to: [bob.longFormDid], thid: "thread-1", created_time: 1_000, expires_time: 2_000, please_ack: [""], lang: "en", body: document.body, attachments: content.attachments!.map((a) => ({ ...a })) }).intent.cid).toBe(data.intentCid);
 
-    const short = await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    const short = await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
     expect(short.intent.data.recipientDid).toBe(bob.longFormDid);
-    const plain = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    const plain = await send(alice.session, { channel: toBob }, HELLO);
     expect(plain.intent.data.recipientDid).toBe(bob.did);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(3);
     await closeAll(alice, bob, carol);
@@ -130,8 +131,8 @@ describe("send to a channel", () => {
 
   test("two sends of one content are two message IDs under one intent CID", async () => {
     const { alice, bob, carol, toBob } = await parties();
-    const first = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
-    const second = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO);
+    const first = await send(alice.session, { channel: toBob }, HELLO);
+    const second = await send(alice.session, { channel: toBob }, HELLO);
     expect(first.messageId).not.toBe(second.messageId);
     expect(second.intent.cid).not.toBe(first.intent.cid);
     expect(second.intent.data.intentCid).toBe(first.intent.data.intentCid);
@@ -141,17 +142,17 @@ describe("send to a channel", () => {
 
   test("the same message ID with the same target and content is returned, not repeated; another intent or target under it is refused", async () => {
     const { alice, bob, carol, toBob, toCarol } = await parties();
-    const sent = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE });
-    const again = await send(alice.runtime, alice.keys, { channel: { localDid: alice.longFormDid, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: toBob }, HELLO, { messageId: MESSAGE });
+    const again = await send(alice.session, { channel: { localDid: alice.longFormDid, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     expect(again.existed).toBe(true);
     expect(again.intent.cid).toBe(sent.intent.cid);
-    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, body: { content: "other" } }, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
-    await expect(send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
-    await expect(send(alice.runtime, alice.keys, { channel: toCarol }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
+    await expect(send(alice.session, { channel: toBob }, { ...HELLO, body: { content: "other" } }, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
+    await expect(send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
+    await expect(send(alice.session, { channel: toCarol }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
     await contact(alice, CONTACT, [toCarol]);
-    await expect(send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
+    await expect(send(alice.session, { contactId: CONTACT }, HELLO, { messageId: MESSAGE })).rejects.toBeInstanceOf(EntityConflict);
     await contact(alice, OTHER, [toBob]);
-    expect((await send(alice.runtime, alice.keys, { contactId: OTHER }, HELLO, { messageId: MESSAGE })).existed).toBe(true);
+    expect((await send(alice.session, { contactId: OTHER }, HELLO, { messageId: MESSAGE })).existed).toBe(true);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(1);
     await closeAll(alice, bob, carol);
   });
@@ -160,17 +161,17 @@ describe("send to a channel", () => {
     const { alice, bob, carol, toBob } = await parties();
     const content: Content = { ...HELLO, pleaseAck: [""] };
     for (const offset of [-1000, 1000]) {
-      const sent = await send(alice.runtime, alice.keys, { channel: toBob }, content);
+      const sent = await send(alice.session, { channel: toBob }, content);
       const { messageId } = sent;
       const spelled = { thid: messageId.toUpperCase(), pleaseAck: [messageId.toUpperCase()] };
       await merged(alice.runtime, "message.out", { ...sent.intent.data, ...spelled }, new Date(Date.parse(sent.intent.at) + offset).toISOString());
       const outbound = (await fold(alice)).outbound.outbounds.get(messageId)!;
       expect([outbound.intent.status, outbound.intents.length, outbound.intents[0]!.cid === sent.intent.cid]).toEqual(["consistent", 2, offset > 0]);
       for (const again of [content, { ...content, ...spelled }]) {
-        const repeated = await send(alice.runtime, alice.keys, { channel: toBob }, again, { messageId });
+        const repeated = await send(alice.session, { channel: toBob }, again, { messageId });
         expect([repeated.existed, repeated.intent.cid]).toEqual([true, outbound.intents[0]!.cid]);
       }
-      await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...content, pleaseAck: null }, { messageId })).rejects.toBeInstanceOf(EntityConflict);
+      await expect(send(alice.session, { channel: toBob }, { ...content, pleaseAck: null }, { messageId })).rejects.toBeInstanceOf(EntityConflict);
     }
     expect((await fold(alice)).set.of("message.out")).toHaveLength(4);
     await closeAll(alice, bob, carol);
@@ -178,47 +179,47 @@ describe("send to a channel", () => {
 
   test("a user's message is created at the time its content gives, else at the clock's second when it is first sent; a send repeated under its ID with that time, none or null is the same message whatever the clock says now, another time is another intent, and an expiry not after the creation is refused", async () => {
     const { alice, bob, carol, toBob } = await parties();
-    const sent = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_999 });
+    const sent = await send(alice.session, { channel: toBob }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_999 });
     expect(sent.intent.data.createdTime).toBe(1_788_442_800);
     const later = { messageId: MESSAGE, now: () => 1_788_449_999_000 };
     for (const createdTime of [undefined, null, 1_788_442_800]) {
-      const again = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime }, later);
+      const again = await send(alice.session, { channel: toBob }, { ...HELLO, createdTime }, later);
       expect([again.existed, again.intent.cid]).toEqual([true, sent.intent.cid]);
     }
-    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_788_442_801 }, later)).rejects.toBeInstanceOf(EntityConflict);
+    await expect(send(alice.session, { channel: toBob }, { ...HELLO, createdTime: 1_788_442_801 }, later)).rejects.toBeInstanceOf(EntityConflict);
 
-    const given = await send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, createdTime: 1_000 }, { now: later.now });
+    const given = await send(alice.session, { channel: toBob }, { ...HELLO, createdTime: 1_000 }, { now: later.now });
     expect(given.intent.data.createdTime).toBe(1_000);
-    await expect(send(alice.runtime, alice.keys, { channel: toBob }, { ...HELLO, expiresTime: 1_788_442_800 }, { now: () => 1_788_442_800_500 })).rejects.toThrow(/expires_time must be later than created_time/);
+    await expect(send(alice.session, { channel: toBob }, { ...HELLO, expiresTime: 1_788_442_800 }, { now: () => 1_788_442_800_500 })).rejects.toThrow(/expires_time must be later than created_time/);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
     await closeAll(alice, bob, carol);
   });
 
   it("refuses a channel whose local DID is not ours or not live, a denied pair, a recipient that is another DID, and a pair of one DID", async () => {
     const { alice, bob, carol, toBob } = await parties();
-    await expect(send(alice.runtime, alice.keys, { channel: channelOf(bob.did, alice.did) }, HELLO)).rejects.toBeInstanceOf(Unusable);
-    await expect(send(alice.runtime, alice.keys, { channel: toBob, recipientDid: carol.longFormDid }, HELLO)).rejects.toBeInstanceOf(Unusable);
-    await expect(send(alice.runtime, alice.keys, { channel: toBob, recipientDid: "not a did" }, HELLO)).rejects.toBeInstanceOf(InvalidDidDocument);
-    await expect(send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: alice.did } }, HELLO)).rejects.toBeInstanceOf(InvalidIdentifier);
+    await expect(send(alice.session, { channel: channelOf(bob.did, alice.did) }, HELLO)).rejects.toBeInstanceOf(Unusable);
+    await expect(send(alice.session, { channel: toBob, recipientDid: carol.longFormDid }, HELLO)).rejects.toBeInstanceOf(Unusable);
+    await expect(send(alice.session, { channel: toBob, recipientDid: "not a did" }, HELLO)).rejects.toBeInstanceOf(InvalidDidDocument);
+    await expect(send(alice.session, { channel: { localDid: alice.did, peerDid: alice.did } }, HELLO)).rejects.toBeInstanceOf(InvalidIdentifier);
     await alice.runtime.vault.commit([], [vaultDraft("channel.blocked", { localDid: alice.did, peerDid: carol.did, includeSuccessors: false })]);
-    await expect(send(alice.runtime, alice.keys, { channel: channelOf(alice.did, carol.did) }, HELLO)).rejects.toThrow(/denied/);
-    await retireDid(alice.runtime, alice.keys, ALICE, "user");
-    await expect(send(alice.runtime, alice.keys, { channel: toBob }, HELLO)).rejects.toThrow(/retired/);
+    await expect(send(alice.session, { channel: channelOf(alice.did, carol.did) }, HELLO)).rejects.toThrow(/denied/);
+    await retireDid(alice.session, ALICE, "user");
+    await expect(send(alice.session, { channel: toBob }, HELLO)).rejects.toThrow(/retired/);
     expect((await fold(alice)).set.of("message.out")).toEqual([]);
     await closeAll(alice, bob, carol);
   });
 
   test("a channel a decision replaced the local DID in takes no send, the successor takes it, and the intent already fixed to the old channel stays where it was, carried no further", async () => {
     const { alice, bob, carol, toBob } = await parties();
-    const before = await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE });
+    const before = await send(alice.session, { channel: toBob }, HELLO, { messageId: MESSAGE });
     const { next } = await rotated(alice, bob);
     const f = await fold(alice);
     expect(f.continuity.head(toBob)).toEqual(channelOf(next, bob.did));
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ channel: toBob, work: { kind: "none", because: `the local DID is replaced here by ${next}` } });
-    await expect(send(alice.runtime, alice.keys, { channel: toBob }, HELLO)).rejects.toThrow(`the local DID is replaced here by ${next}`);
-    const successor = await send(alice.runtime, alice.keys, { channel: channelOf(next, bob.did) }, HELLO);
+    await expect(send(alice.session, { channel: toBob }, HELLO)).rejects.toThrow(`the local DID is replaced here by ${next}`);
+    const successor = await send(alice.session, { channel: channelOf(next, bob.did) }, HELLO);
     expect(successor).toMatchObject({ senderDidId: ALICE_NEXT, channel: channelOf(next, bob.did) });
-    expect((await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE })).intent.cid).toBe(before.intent.cid);
+    expect((await send(alice.session, { channel: toBob }, HELLO, { messageId: MESSAGE })).intent.cid).toBe(before.intent.cid);
     expect((await fold(alice)).set.of("message.out")).toHaveLength(2);
     await closeAll(alice, bob, carol);
   });
@@ -228,21 +229,21 @@ describe("send to a contact", () => {
   it("goes to the one head the selected channels lead to, follows a verified replacement, and leaves several heads to the caller unless the preference picks one", async () => {
     const { alice, bob, carol, toBob, toCarol } = await parties();
     await contact(alice, CONTACT, [toBob]);
-    const sent = await send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO);
+    const sent = await send(alice.session, { contactId: CONTACT }, HELLO);
     expect(sent.channel).toEqual(toBob);
     const { next } = await rotated(alice, bob);
-    expect((await send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).channel).toEqual(channelOf(next, bob.did));
+    expect((await send(alice.session, { contactId: CONTACT }, HELLO)).channel).toEqual(channelOf(next, bob.did));
 
     await alice.runtime.vault.commit([], [vaultDraft("contact.channelsSet", { contactId: CONTACT, channels: [toBob, toCarol] })]);
-    const ambiguous = await send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO).catch((err: unknown) => err);
+    const ambiguous = await send(alice.session, { contactId: CONTACT }, HELLO).catch((err: unknown) => err);
     expect(ambiguous).toBeInstanceOf(AmbiguousTarget);
     expect((ambiguous as AmbiguousTarget).channels).toEqual([channelOf(next, bob.did), toCarol].sort(compareChannels));
     expect((ambiguous as AmbiguousTarget).preferenceMatchesNone).toBe(false);
 
     await alice.runtime.vault.commit([], [vaultDraft("contact.useDid", { contactId: CONTACT, didId: ALICE_NEXT, because: "test" })]);
-    expect((await send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).channel).toEqual(channelOf(next, bob.did));
+    expect((await send(alice.session, { contactId: CONTACT }, HELLO)).channel).toEqual(channelOf(next, bob.did));
     await alice.runtime.vault.commit([], [vaultDraft("contact.channelsSet", { contactId: CONTACT, channels: [toCarol] })]);
-    const none = await send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO).catch((err: unknown) => err);
+    const none = await send(alice.session, { contactId: CONTACT }, HELLO).catch((err: unknown) => err);
     expect(none).toBeInstanceOf(AmbiguousTarget);
     expect((none as AmbiguousTarget)).toMatchObject({ channels: [toCarol], preferenceMatchesNone: true });
     await closeAll(alice, bob, carol);
@@ -250,13 +251,13 @@ describe("send to a contact", () => {
 
   it("refuses a contact that is unknown, deleted, selects nothing, or whose heads all take no send", async () => {
     const { alice, bob, carol, toBob } = await parties();
-    await expect(send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(UnknownEntity);
+    await expect(send(alice.session, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(UnknownEntity);
     await contact(alice, CONTACT, []);
-    await expect(send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(NoTarget);
+    await expect(send(alice.session, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(NoTarget);
     await alice.runtime.vault.commit([], [vaultDraft("contact.channelsSet", { contactId: CONTACT, channels: [toBob] }), vaultDraft("channel.blocked", { localDid: alice.did, peerDid: bob.did, includeSuccessors: true })]);
-    await expect(send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(NoTarget);
+    await expect(send(alice.session, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(NoTarget);
     await alice.runtime.vault.commit([], [vaultDraft("contact.deleted", { contactId: CONTACT })]);
-    await expect(send(alice.runtime, alice.keys, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(Unusable);
+    await expect(send(alice.session, { contactId: CONTACT }, HELLO)).rejects.toBeInstanceOf(Unusable);
     expect((await fold(alice)).set.of("message.out")).toEqual([]);
     await closeAll(alice, bob, carol);
   });
@@ -289,7 +290,7 @@ describe("automatic effects", () => {
     expect(outbound.channel).toEqual(toBob);
     expect(outbound.work).toEqual({ kind: "prepare" });
     expect(unfinishedWork(f).responses).toEqual([]);
-    await retireDid(alice.runtime, alice.keys, ALICE, "user");
+    await retireDid(alice.session, ALICE, "user");
     f = await fold(alice);
     const again = automaticDraft(f, { ...effect, execution: f.inbound.ofSource(sourceEventCid)!, source: f.channels.sources.get(sourceEventCid)! }, { type: EMPTY_MESSAGE_TYPE, body: { other: true }, ack: ["wire-1"] });
     expect(again).toMatchObject({ messageId: drafted.messageId, result: { status: "produced", outbound: { messageId: drafted.messageId } }, draft: null, objects: null });
@@ -299,7 +300,7 @@ describe("automatic effects", () => {
   it("refuses a response channel whose local DID cannot send", async () => {
     const { alice, bob, carol, toBob } = await parties();
     const sourceEventCid = await received(alice, bob, "wire-2", { type: BASIC_MESSAGE, body: { content: "hi" }, please_ack: [""] });
-    await retireDid(alice.runtime, alice.keys, ALICE, "user");
+    await retireDid(alice.session, ALICE, "user");
     const f = await fold(alice);
     const execution = f.inbound.ofSource(sourceEventCid)!;
     expect(responseChannel(f, execution).status).toBe("none");

@@ -4,7 +4,9 @@ import { resolveDIDCommDoc } from "@estoc/did-peer";
 import { AUTHENTICATION_METHOD, canonicalDid, scanVault, type Did, type DidId, type MintedDid, type Replica } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, createDid, selectMediation, type AgentOptions, type Inbound } from "../src/index.js";
+import { Agent, DELIVERY_REQUEST, MESSAGES_RECEIVED, STATUS_REQUEST, type AgentOptions, type Inbound } from "../src/index.js";
+import { createDid } from "../src/dids.js";
+import { selectMediation } from "../src/mediation.js";
 import { LiveInput } from "../src/action.js";
 import { classifyRecipients } from "../src/receive/gate.js";
 import type { FakeMediator } from "./fake-mediator.js";
@@ -33,11 +35,11 @@ afterEach(async () => {
 async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}): Promise<Enrolled> {
   const p = await party(mediator, 1);
   const inbounds: Inbound[] = [];
-  const agent = await Agent.open(p, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false, onInbound: (inbound) => inbounds.push(inbound), ...over });
+  const agent = await Agent.open(p.session, { didcomm, fetch: p.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false, onInbound: (inbound) => inbounds.push(inbound), ...over });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
   const { replica } = await agent.enroll(p.mediationId);
-  await selectMediation(p.runtime, p.keys, p.mediationId);
-  const address = (await createDid(p.runtime, p.keys, mediatedRoute(p.mediationId))).minted;
+  await selectMediation(p.session, p.mediationId);
+  const address = (await createDid(p.session, mediatedRoute(p.mediationId))).minted;
   await agent.connect();
   return { ...p, agent, inbounds, replica: replica as Enrolled["replica"], address };
 }
@@ -45,7 +47,7 @@ async function enrolled(mediator: FakeMediator, over: Partial<AgentOptions> = {}
 /** A peer's agent, to send from. */
 async function peer(mediator: FakeMediator): Promise<{ bob: MediatedParty; agent: Agent }> {
   const bob = await mediatedParty(mediator, 2, BOB);
-  const agent = await Agent.start(bob, { didcomm, fetch: bob.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: bob.trace, privateAddresses: false, liveDelivery: false });
+  const agent = await Agent.start(bob.session, { didcomm, fetch: bob.linkOptions.fetch as typeof fetch, WebSocket: mediator.WebSocket, trace: bob.trace, privateAddresses: false, liveDelivery: false });
   closing.push({ close: () => agent.close(), runtime: bob.runtime });
   return { bob, agent };
 }

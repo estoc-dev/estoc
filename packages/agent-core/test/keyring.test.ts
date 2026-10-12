@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { longToShort } from "@estoc/did-peer";
 import { mintDid, scanVault, vaultDraft, type Did, type DidId } from "@estoc/vault";
 
-import { createDid } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { retireDid } from "../src/dids.js";
 import { Keyring } from "../src/keyring.js";
 import { freshVault, newMediator, party, reloaded } from "./helpers.js";
@@ -18,7 +18,7 @@ describe("the keyring", () => {
     expect(p.ring.mediationKeys(p.mediationId)?.authentication.name).toBe(p.created.data.me.keyName);
     expect(p.ring.secrets().map((secret) => secret.id).sort()).toEqual([`${me}#key-1`, `${me}#key-2`, `${longToShort(me)}#key-1`, `${longToShort(me)}#key-2`].sort());
 
-    const { minted } = await createDid(p.runtime, p.keys, DIRECT);
+    const { minted } = await createDid(p.session, DIRECT);
     expect(p.ring.didKeys(minted.didId)).toBeNull();
     await reloaded(p);
     const keys = p.ring.didKeys(minted.didId);
@@ -35,7 +35,7 @@ describe("the keyring", () => {
   it("leaves out an entity whose keys the seed does not derive", async () => {
     const alice = await freshVault(1);
     const bob = await freshVault(2);
-    const { minted } = await createDid(bob.runtime, bob.keys, DIRECT);
+    const { minted } = await createDid(bob.session, DIRECT);
     // Bob's record in Alice's vault: a document the seed of this vault does not derive
     await alice.runtime.vault.commit([], [vaultDraft("did.created", { didId: minted.didId as DidId, did: minted.did, longFormDid: minted.longFormDid, generation: { kind: "entry", profile: "v1" } })]);
     const fold = await scanVault(alice.runtime.vault, alice.keys);
@@ -49,13 +49,13 @@ describe("the keyring", () => {
 
   it("keeps a retired entity's keys, and drops an entity that fell into conflict, fresh or reloaded alike", async () => {
     const p = await freshVault();
-    const retiring = await createDid(p.runtime, p.keys, DIRECT);
-    const claimed = await createDid(p.runtime, p.keys, DIRECT);
-    const rewritten = await createDid(p.runtime, p.keys, DIRECT);
+    const retiring = await createDid(p.session, DIRECT);
+    const claimed = await createDid(p.session, DIRECT);
+    const rewritten = await createDid(p.session, DIRECT);
     const ring = await Keyring.load(p.keys, await scanVault(p.runtime.vault, p.keys));
     expect(ring.secrets()).toHaveLength(12);
 
-    await retireDid(p.runtime, p.keys, retiring.minted.didId, "user");
+    await retireDid(p.session, retiring.minted.didId, "user");
     // another entity claiming the same spelling, and the same entity created again with another document
     await p.runtime.vault.commit([], [vaultDraft("did.created", { ...claimed.created.data, didId: "019b0000-0000-7000-8000-000000000bad" as DidId })]);
     const elsewhere = await mintDid(p.keys, rewritten.minted.didId, { kind: "direct", endpoint: "https://elsewhere.example/" });

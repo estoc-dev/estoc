@@ -16,8 +16,9 @@
  * fold read under the lock.
  */
 
-import type { VaultRuntime } from "@estoc/event-store";
-import { readVaultEvent, scanVault, type Keys, type VaultDraft, type VaultEvent, type VaultFold } from "@estoc/vault";
+import { readVaultEvent, type VaultDraft, type VaultEvent, type VaultFold } from "@estoc/vault";
+
+import type { Session } from "./session.js";
 
 const queues = new WeakMap<object, Map<string, Promise<unknown>>>();
 
@@ -57,11 +58,11 @@ export interface Decided {
 }
 
 /** One locked step: scan, decide, commit. `decide` returns the drafts to commit, or none when the fold already says what it would say. */
-export async function decide(runtime: VaultRuntime, keys: Keys, choose: (fold: VaultFold) => VaultDraft[] | Promise<VaultDraft[]>): Promise<Decided> {
-  return runtime.locked(async (held) => {
-    const fold = await scanVault(held, keys);
+export async function decide(session: Session, choose: (fold: VaultFold) => VaultDraft[] | Promise<VaultDraft[]>): Promise<Decided> {
+  return session.locked(async (locked) => {
+    const fold = await locked.fold();
     const drafts = await choose(fold);
-    const events = drafts.length === 0 ? [] : (await held.commit([], drafts)).map(readVaultEvent);
+    const events = drafts.length === 0 ? [] : (await locked.held.commit([], drafts)).map(readVaultEvent);
     return { fold, events };
   });
 }

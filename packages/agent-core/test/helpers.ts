@@ -5,7 +5,7 @@ import { vi } from "vitest";
 
 import { resolveDIDCommDoc, type DIDDoc, type Secret } from "@estoc/did-peer";
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { eventCidOf, type AuthorId, type Cid, type Event, type EventEnvelope, type Held, type JsonObject, type SqliteDriver, type VaultRuntime } from "@estoc/event-store";
+import { eventCidOf, type AuthorId, type Cid, type Event, type EventEnvelope, type Held, type JsonObject, type SqliteDriver, type SqliteVault, type VaultRuntime } from "@estoc/event-store";
 import { createSeedKeystore, deriveIdentity, importSeed, type SeedKey, type SeedKeystoreDocument } from "@estoc/keystore";
 import {
   AUTHENTICATION_METHOD,
@@ -19,6 +19,7 @@ import {
   type Did,
   type DidId,
   type EventReference,
+  type Keys,
   type MediationId,
   type MintedDid,
   type PublicKey,
@@ -32,17 +33,10 @@ import {
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type DIDResolver, type IMessage } from "../src/protocol/didcomm.js";
 import { FORWARD } from "../src/protocol/spec.js";
-import {
-  AgentTrace,
-  createDid,
-  createMediation,
-  createVault,
-  type OpenedVault,
-  type RecipientsAdded,
-  type Timers,
-  type RouteSpec,
-} from "../src/index.js";
-import { routeOf } from "../src/dids.js";
+import { AgentTrace, createVault, type CreateVaultOptions, type RecipientsAdded, type Timers, type RouteSpec, type VaultSession } from "../src/index.js";
+import { createDid, routeOf } from "../src/dids.js";
+import { createMediation } from "../src/mediation.js";
+import { Session } from "../src/session.js";
 import { authorizedKeys, commitResolution, pinnedResolver } from "../src/evidence.js";
 import { MediatorLink, type LinkOptions } from "../src/link.js";
 import { receiptOf } from "../src/receive/receipt.js";
@@ -67,28 +61,40 @@ export function ticking(start = "2026-09-14T00:00:00.000Z"): () => number {
   return () => (t += 1000);
 }
 
-export interface Fresh extends OpenedVault {
+/** A vault as a test holds it: the session the entry bound, with its runtime and keys in hand for what a test reads or commits on its own. */
+export interface Fresh {
+  session: Session;
+  runtime: SqliteVault;
+  keys: Keys;
   seedKey: SeedKey;
   keystore: SeedKeystoreDocument;
 }
 
-/** A vault created in `driver` (a private in-memory one by default) under the seed `fill` fills. */
-export async function freshVault(fill = 1, label = `party ${fill}`, driver = memoryDriver()): Promise<Fresh> {
+/** What `createVault` bound, with its parts in hand: the entry hands out the session as its interface, and a test takes the class behind it. */
+export function opened(session: VaultSession): Pick<Fresh, "session" | "runtime" | "keys"> {
+  if (!(session instanceof Session)) throw new Error("the entry did not bind a session");
+  return { session, runtime: session.runtime, keys: session.keys };
+}
+
+/** A vault created in `driver` (a private in-memory one by default) under the seed `fill` fills, every fold of it read under `scan`. */
+export async function freshVault(fill = 1, label = `party ${fill}`, driver = memoryDriver(), scan: Pick<CreateVaultOptions, "effectTypes" | "maxObjectBytes"> = {}): Promise<Fresh> {
   const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(fill) });
-  const opened = await createVault(driver, { seedKey, wrapped: doc, label, now: ticking() });
-  return { ...opened, seedKey, keystore: doc };
+  return { ...opened(await createVault(driver, { seedKey, wrapped: doc, label, now: ticking(), ...scan })), seedKey, keystore: doc };
 }
 
 export async function newMediator(fill = 200, http = MEDIATOR_HTTP): Promise<FakeMediator> {
   return new FakeMediator(await deriveIdentity(await importSeed(seedOf(fill)), "anchor"), http);
 }
 
-/** Another runtime over the seed `fill` fills, holding the events of `of` that `keep` lets through as a merge would bring them: a second replica of that vault, enrolled nowhere. */
-export async function copyOf(fill: number, of: Pick<Fresh, "runtime" | "keys">, keep: (event: Event) => boolean = () => true): Promise<Fresh> {
+/** The fold options a vault was opened with, for another vault over the same seed to read as it does. */
+export const scanOf = (of: Pick<Fresh, "session">): Pick<CreateVaultOptions, "effectTypes" | "maxObjectBytes"> => ({ ...of.session.scanOptions });
+
+/** Another runtime over the seed `fill` fills, holding the events of `of` that `keep` lets through as a merge would bring them: a second replica of that vault, enrolled nowhere, reading as `of` does. */
+export async function copyOf(fill: number, of: Pick<Fresh, "session" | "runtime" | "keys">, keep: (event: Event) => boolean = () => true): Promise<Fresh> {
   const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(fill) });
-  const opened = await createVault(memoryDriver(), { seedKey, wrapped: doc, label: `copy of party ${fill}`, now: ticking("2026-09-15T00:00:00.000Z") });
-  await opened.runtime.ingest([...(await scanVault(of.runtime.vault, of.keys)).set.all()].filter(keep));
-  return { ...opened, seedKey, keystore: doc };
+  const copy = opened(await createVault(memoryDriver(), { seedKey, wrapped: doc, label: `copy of party ${fill}`, now: ticking("2026-09-15T00:00:00.000Z"), ...scanOf(of) }));
+  await copy.runtime.ingest([...(await scanVault(of.runtime.vault, of.keys)).set.all()].filter(keep));
+  return { ...copy, seedKey, keystore: doc };
 }
 
 export interface Party extends Fresh {
@@ -109,10 +115,10 @@ export interface Party extends Fresh {
   offline: { reason: string | null };
 }
 
-/** A vault with a mediation created toward `mediator` (not yet enrolled in), its ring loaded, and a link over it. */
-export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver()): Promise<Party> {
-  const fresh = await freshVault(fill, `party ${fill}`, driver);
-  const created = await createMediation(fresh.runtime, fresh.keys, mediator.did as Did);
+/** A vault with a mediation created toward `mediator` (not yet enrolled in), its ring loaded, and a link over it; every fold of it read under `scan`. */
+export async function party(mediator: FakeMediator, fill = 1, over: Partial<LinkOptions> = {}, driver = memoryDriver(), scan: Pick<CreateVaultOptions, "effectTypes" | "maxObjectBytes"> = {}): Promise<Party> {
+  const fresh = await freshVault(fill, `party ${fill}`, driver, scan);
+  const created = await createMediation(fresh.session, mediator.did as Did);
   const fold = await scanVault(fresh.runtime.vault, fresh.keys);
   const ring = await Keyring.load(fresh.keys, fold);
   const trace = await AgentTrace.open(fresh.runtime.local);
@@ -133,12 +139,12 @@ export async function party(mediator: FakeMediator, fill = 1, over: Partial<Link
   };
   const link = new MediatorLink(linkOptions);
   const bound = { ...fresh, mediationId: created.data.mediationId, trace, confirmations: fresh.runtime.local.options, link };
-  return { ...bound, fold, mediator, created, ring, linkOptions, log, offline, account: accountOver(bound) };
+  return { ...bound, mediator, created, ring, linkOptions, log, offline, account: accountOver(bound) };
 }
 
 /** The party's account bound over another link, or with other confirmations, than its own; no agent holds it, so it hands out no membership. */
-export function accountOver(p: Pick<Party, "runtime" | "keys" | "mediationId" | "trace" | "confirmations" | "link">, { link = p.link, confirmations = p.confirmations }: { link?: MediatorLink; confirmations?: Confirmations } = {}): Account {
-  return new Account(p.runtime, p.keys, p.mediationId, confirmations, p.trace, async () => link, () => Promise.reject(new Error("no agent binds this runtime's replica")));
+export function accountOver(p: Pick<Party, "session" | "mediationId" | "trace" | "confirmations" | "link">, { link = p.link, confirmations = p.confirmations }: { link?: MediatorLink; confirmations?: Confirmations } = {}): Account {
+  return new Account(p.session, p.mediationId, confirmations, p.trace, async () => link, () => Promise.reject(new Error("no agent binds this runtime's replica")));
 }
 
 /** A link speaking as the runtime's replica DID with that DID's keys alone, under both its spellings: what picks the replica's mail up. */
@@ -218,10 +224,10 @@ export interface DirectParty extends Fresh {
   longFormDid: Did;
 }
 
-/** A vault created in `driver` with one communication DID, `didId`, on a direct route to `endpoint`. */
-export async function directParty(fill: number, endpoint: string, didId: DidId, driver = memoryDriver()): Promise<DirectParty> {
-  const fresh = await freshVault(fill, `party ${fill}`, driver);
-  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint }, didId);
+/** A vault created in `driver` with one communication DID, `didId`, on a direct route to `endpoint`, every fold of it read under `scan`. */
+export async function directParty(fill: number, endpoint: string, didId: DidId, driver = memoryDriver(), scan: Pick<CreateVaultOptions, "effectTypes" | "maxObjectBytes"> = {}): Promise<DirectParty> {
+  const fresh = await freshVault(fill, `party ${fill}`, driver, scan);
+  const { minted } = await createDid(fresh.session, { kind: "direct", endpoint }, didId);
   return { ...fresh, didId, did: minted.did, longFormDid: minted.longFormDid };
 }
 
@@ -313,7 +319,7 @@ export async function merged<T extends VaultEventType>(runtime: VaultRuntime, ty
 export const after = (at: string, seconds: number): string => new Date(Date.parse(at) + seconds * 1000).toISOString();
 
 /** Someone with one communication DID, whichever route it is on. */
-export type Addressed = Pick<DirectParty, "runtime" | "keys" | "didId" | "did" | "longFormDid">;
+export type Addressed = Pick<DirectParty, "session" | "runtime" | "keys" | "didId" | "did" | "longFormDid">;
 
 export const mediatedRoute = (mediationId: MediationId): RouteSpec => ({ kind: "mediated", mediationId });
 
@@ -322,7 +328,7 @@ const PROOF_IAT = 1_757_700_000;
 /** A proof that `peer`'s DID succeeds `priorDidId`, a DID the peer creates for it on the same route and signs with: the issuer's document is the peer's to hand out, and nobody else holds it. */
 export async function proofOfSuccession(peer: Addressed, priorDidId: DidId): Promise<{ prior: MintedDid; proof: string }> {
   const route = routeOf((await scanVault(peer.runtime.vault, peer.keys)).dids.entities.get(peer.didId)!)!;
-  const { minted: prior } = await createDid(peer.runtime, peer.keys, route, priorDidId);
+  const { minted: prior } = await createDid(peer.session, route, priorDidId);
   const signing = await peer.keys.signing(didKeyName(priorDidId, "authentication"));
   const proof = await new SignJWT({ iss: prior.did, sub: peer.longFormDid, iat: PROOF_IAT }).setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: `${prior.did}${AUTHENTICATION_METHOD}` }).sign(await importJWK(signing.privateJwk(), "EdDSA"));
   return { prior, proof };
@@ -342,7 +348,7 @@ export async function carrierWaitingForIssuer(holder: Addressed, peer: Addressed
 
 /** The peer's message received at the holder's long form through a receiver of the holder's, as a direct delivery: the observation committed and the receipt's own admission pass run. */
 export async function delivered(holder: Addressed, peer: Addressed, plaintext: Partial<IMessage> = {}): Promise<EventReference<"message.in">> {
-  const receiver = new Receiver(holder.runtime, holder.keys, await Keyring.load(holder.keys, await scanVault(holder.runtime.vault, holder.keys)), { didcomm, receipt: receiptOf(holder.runtime, holder.keys) });
+  const receiver = new Receiver(holder.session, await Keyring.load(holder.keys, await scanVault(holder.runtime.vault, holder.keys)), { didcomm, receipt: receiptOf(holder.session) });
   try {
     const carried = await receiver.receive({ packed: await sealed(await peerSealer(peer), holder.longFormDid, plaintext), source: { kind: "direct" } });
     if (carried.outcome !== "received") throw new Error(`not received: ${JSON.stringify(carried)}`);
@@ -373,11 +379,11 @@ export interface MediatedParty extends Party {
 }
 
 /** A party enrolled in its arrangement, with one communication DID, `didId`, routed through the mediator: the DID's document sends to the mediator, and the mediator does not hold it yet. */
-export async function mediatedParty(mediator: FakeMediator, fill: number, didId: DidId, driver = memoryDriver()): Promise<MediatedParty> {
-  const p = await party(mediator, fill, {}, driver);
+export async function mediatedParty(mediator: FakeMediator, fill: number, didId: DidId, driver = memoryDriver(), scan: Pick<CreateVaultOptions, "effectTypes" | "maxObjectBytes"> = {}): Promise<MediatedParty> {
+  const p = await party(mediator, fill, {}, driver, scan);
   const { replica } = await p.account.enroll();
   const route = mediatedRoute(p.mediationId);
-  const { minted } = await createDid(p.runtime, p.keys, route, didId);
+  const { minted } = await createDid(p.session, route, didId);
   return { ...p, didId, did: minted.did, longFormDid: minted.longFormDid, accountDid: canonicalDid(p.created.data.me.did), replica: replica as MediatedParty["replica"], inbox: await replicaLink(p, replica) };
 }
 

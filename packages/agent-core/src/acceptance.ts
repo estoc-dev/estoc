@@ -12,9 +12,10 @@
  */
 
 import type { VaultRuntime } from "@estoc/event-store";
-import { VaultEventSet, readVaultEvent, scanVault, vaultDraft, type EventReference, type Keys, type MessageId, type VaultEvent } from "@estoc/vault";
+import { VaultEventSet, readVaultEvent, vaultDraft, type EventReference, type MessageId, type VaultEvent } from "@estoc/vault";
 
 import type { LocalRecords } from "./local-records.js";
+import type { Session } from "./session.js";
 import { note, type AgentTrace } from "./trace.js";
 
 /** `delivery.submitted` for the preparation whose envelope the wire accepted, owed until it is committed; one already recording it is returned instead of being repeated. */
@@ -34,12 +35,12 @@ export async function recordOwedAcceptance(runtime: VaultRuntime, local: LocalRe
 }
 
 /** Every acceptance owed for a message prepared here and not submitted, recorded, as an open does; nothing is called. */
-export async function recordAcceptancesOwed(runtime: VaultRuntime, keys: Keys, local: LocalRecords): Promise<VaultEvent<"delivery.submitted">[]> {
-  const fold = await scanVault(runtime.vault, keys);
+export async function recordAcceptancesOwed(session: Session, local: LocalRecords): Promise<VaultEvent<"delivery.submitted">[]> {
+  const fold = await session.fold();
   const recorded: VaultEvent<"delivery.submitted">[] = [];
   for (const outbound of fold.outbound.outbounds.values()) {
     if (outbound.submitted || outbound.preparations.length === 0) continue;
-    const event = await recordOwedAcceptance(runtime, local, outbound.messageId);
+    const event = await recordOwedAcceptance(session.runtime, local, outbound.messageId);
     if (event !== null) recorded.push(event);
   }
   return recorded;

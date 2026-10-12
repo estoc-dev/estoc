@@ -38,7 +38,7 @@
  * with a manual action.
  */
 
-import { parseStrict, type Held, type JsonObject, type VaultRuntime } from "@estoc/event-store";
+import { parseStrict, type Held, type JsonObject } from "@estoc/event-store";
 import {
   EMPTY_MESSAGE_TYPE,
   PURE_ACK_EFFECT,
@@ -49,13 +49,11 @@ import {
   requestsAck,
   automaticIntent,
   responseChannel,
-  scanVault,
   vaultDraft,
   type AutomaticIntent,
   type EventReference,
   type Execution,
   type ExecutionId,
-  type Keys,
   type MessageId,
   type Source,
   type VaultEvent,
@@ -65,9 +63,10 @@ import {
 import { LiveAction, initialAction, type LiveInput, type Responding } from "./action.js";
 import type { Dispatched } from "./dispatch.js";
 import { UnknownEntity } from "./errors.js";
-import { effectTypesOf, handlerFor, handlersOf, type Handler, type Input, type Response } from "./handlers/index.js";
+import { handlerFor, handlersOf, type Handler, type Input, type Response } from "./handlers/index.js";
 import { MAX_CONTENT_BYTES } from "./prepare.js";
 import { automaticDraft, type EffectContent, type RecordedResult } from "./send.js";
+import type { Session } from "./session.js";
 import { note, type AgentTrace } from "./trace.js";
 
 export interface EffectOptions {
@@ -79,13 +78,7 @@ export interface EffectOptions {
   now?: () => number;
   /** an operation that threw, in deciding, recording or calling, goes to the `diag` stream */
   trace?: AgentTrace;
-  /**
-   * The one transport call of an intent under its action: the
-   * dispatcher's, so that a prerequisite is waited out for as long as
-   * the action lives. It is told the same handlers' effect types
-   * (`effectTypesOf`), so that the fold it reads counts their intents
-   * as this runtime's work.
-   */
+  /** The one transport call of an intent under its action: the dispatcher's, so that a prerequisite is waited out for as long as the action lives. */
   dispatch: (action: LiveAction) => Promise<Dispatched>;
 }
 
@@ -124,20 +117,20 @@ export interface DecidedEffects extends Pick<Reacted, "cid" | "executionId" | "b
  * intent committed on its own and then dispatched, in order, under the
  * initial action the input mints for it.
  */
-export async function reactTo(runtime: VaultRuntime, keys: Keys, answering: Responding, options: EffectOptions): Promise<Reacted> {
-  return callEffects(await decideEffects(runtime, keys, answering, options), options);
+export async function reactTo(session: Session, answering: Responding, options: EffectOptions): Promise<Reacted> {
+  return callEffects(await decideEffects(session, answering, options), options);
 }
 
 /** The decisions of `reactTo` alone, under the lock: what a caller records before it makes the calls. */
-export async function decideEffects(runtime: VaultRuntime, keys: Keys, answering: Responding, options: Omit<EffectOptions, "dispatch">): Promise<DecidedEffects> {
+export async function decideEffects(session: Session, answering: Responding, options: Omit<EffectOptions, "dispatch">): Promise<DecidedEffects> {
   const { cid } = answering;
-  return runtime.locked(async (held) => {
-    const fold = await scan(held, keys, options);
+  return session.locked(async (locked) => {
+    const fold = await locked.fold();
     const execution = fold.inbound.ofSource(cid);
     if (execution === null) return { cid, executionId: null, because: "the observation is anonymous or in no input here", drafted: [] };
     const standing = notWitnessing(fold, execution, cid);
     if (standing !== null) return { cid, executionId: execution.id, because: standing, drafted: [] };
-    const settled = await settle(held, fold, execution, options);
+    const settled = await settle(locked.held, fold, execution, options);
     return { cid, executionId: execution.id, because: settled.because, drafted: settled.drafted.map((draft) => (draft.outcome === "created" ? { ...draft, action: initialAction(draft.messageId) } : draft)) };
   });
 }
@@ -192,12 +185,12 @@ function notWitnessing(fold: VaultFold, execution: Execution, cid: EventReferenc
  * the intent, new or already recorded, is dispatched under a manual
  * action, which `created` and `existing` carry.
  */
-export async function completeResponse(runtime: VaultRuntime, keys: Keys, executionId: ExecutionId, effectType: string, options: EffectOptions): Promise<EffectOutcome> {
-  const decided = await runtime.locked(async (held): Promise<Drafted> => {
-    const fold = await scan(held, keys, options);
+export async function completeResponse(session: Session, executionId: ExecutionId, effectType: string, options: EffectOptions): Promise<EffectOutcome> {
+  const decided = await session.locked(async (locked): Promise<Drafted> => {
+    const fold = await locked.fold();
     const execution = fold.inbound.executions.get(executionId);
     if (execution === undefined) throw new UnknownEntity("input", executionId);
-    const settled = await settle(held, fold, execution, options, effectType);
+    const settled = await settle(locked.held, fold, execution, options, effectType);
     if (settled.because !== null) return { effectType, outcome: "none", because: settled.because };
     const draft = settled.drafted.find((draft) => draft.effectType === effectType);
     if (draft === undefined) return { effectType, outcome: "none", because: "no operation here gives the input this output" };
@@ -205,10 +198,6 @@ export async function completeResponse(runtime: VaultRuntime, keys: Keys, execut
     return { ...draft, action: LiveAction.manual(draft.messageId) };
   });
   return dispatched(decided, executionId, options);
-}
-
-function scan(held: Held, keys: Keys, options: Pick<EffectOptions, "handlers">): Promise<VaultFold> {
-  return scanVault(held, keys, { effectTypes: effectTypesOf(handlersOf(options.handlers)) });
 }
 
 /** An outcome before its dispatch: the action is minted by whoever decided the intent. */

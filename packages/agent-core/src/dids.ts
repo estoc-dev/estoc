@@ -13,20 +13,18 @@
 import { v7 as uuidv7 } from "uuid";
 
 import { decodeLongForm, isShortForm } from "@estoc/did-peer";
-import type { JsonObject, VaultRuntime } from "@estoc/event-store";
+import type { JsonObject } from "@estoc/event-store";
 import {
   GENERATION_PROFILE,
   canonicalDid,
   mediationIdOf,
   mintDid,
-  scanVault,
   serviceTargetOf,
   vaultDraft,
   type Did,
   type DidGeneration,
   type DidId,
   type DisclosureAs,
-  type Keys,
   type LocalDidEntity,
   type MediationId,
   type MintedDid,
@@ -45,6 +43,7 @@ import { mediationOf } from "./mediation.js";
 import { decide } from "./procedure.js";
 import { holds } from "./replica-recipients.js";
 import { knownLongForms } from "./resolver.js";
+import type { Session } from "./session.js";
 
 /** The route a DID is minted for: a mediation arrangement by its ID, or a direct HTTPS or WSS endpoint. */
 export type RouteSpec = { kind: "mediated"; mediationId: MediationId } | { kind: "direct"; endpoint: string };
@@ -146,16 +145,16 @@ const ENTRY: DidGeneration = { kind: "entry", profile: GENERATION_PROFILE };
  * it is an entry, and writes nothing. A successor is not made here: the
  * rotation makes it, from the recipe the fold names.
  */
-export async function createDid(runtime: VaultRuntime, keys: Keys, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
+export async function createDid(session: Session, route: RouteSpec, didId = uuidv7() as DidId): Promise<CreatedDid> {
   let minted!: MintedDid;
-  const { fold, events } = await decide(runtime, keys, async (fold) => {
+  const { fold, events } = await decide(session, async (fold) => {
     const existing = fold.dids.entities.get(didId);
     if (existing !== undefined) {
       minted = recordedDid(existing, route);
       if (existing.created!.generation.kind !== "entry") throw new EntityConflict("DID", didId, `a ${existing.created!.generation.kind}, not an entry`);
       return [];
     }
-    minted = await mintDid(keys, didId, routeTargetOf(fold, route));
+    minted = await mintDid(session.keys, didId, routeTargetOf(fold, route));
     return [vaultDraft("did.created", { didId, did: minted.did, longFormDid: minted.longFormDid, generation: ENTRY })];
   });
   const created = events[0] as VaultEvent<"did.created"> | undefined;
@@ -210,8 +209,8 @@ function requireEntry(fold: VaultFold, entity: LocalDidEntity): void {
  * republished: its disclosure is returned and nothing written, so that
  * a retry after a lost result cannot record the one invitation twice.
  */
-export async function disclose(account: Account | null, runtime: VaultRuntime, keys: Keys, didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
-  const fold = await scanVault(runtime.vault, keys);
+export async function disclose(account: Account | null, session: Session, didId: DidId, disclosure: Disclosure): Promise<Disclosed> {
+  const fold = await session.fold();
   const entity = didOf(fold, didId);
   requireLive(entity);
   requireEntry(fold, entity);
@@ -221,7 +220,7 @@ export async function disclose(account: Account | null, runtime: VaultRuntime, k
   const oobId = disclosure.as === "oob" ? (disclosure.oobId ?? uuidv7()) : null;
   const data: VaultData["did.disclosed"] = { didId, as: disclosure.as, oobId, goal };
   const commit = async (): Promise<VaultEvent<"did.disclosed">> => {
-    const { fold, events } = await decide(runtime, keys, (fold) => {
+    const { fold, events } = await decide(session, (fold) => {
       requireLive(didOf(fold, didId));
       return oobId !== null && invitationDisclosureOf(fold, oobId, data) !== null ? [] : [vaultDraft("did.disclosed", data)];
     });
@@ -232,7 +231,7 @@ export async function disclose(account: Account | null, runtime: VaultRuntime, k
     const { mediationId } = route;
     if (account?.mediationId !== mediationId) throw new WrongMediator(mediationOf(fold, mediationId).mediatorDid ?? "unknown", account === null ? "no link" : `the mediator of ${account.mediationId}`);
     disclosed = await account.turn(async (turn) => {
-      const current = await scanVault(runtime.vault, keys);
+      const current = await session.fold();
       requireLive(didOf(current, didId));
       if (!holds(await turn.addRecipients(), created.did)) throw new Unregistered(created.did);
       return commit();
@@ -255,7 +254,7 @@ function invitationDisclosureOf(fold: VaultFold, oobId: string, data: VaultData[
 }
 
 /** `did.retired` for an entity, `because`: terminal for new sending and disclosure. Already retired, the first retirement is returned and nothing written. */
-export async function retireDid(runtime: VaultRuntime, keys: Keys, didId: DidId, because: string): Promise<VaultEvent<"did.retired">> {
-  const { fold, events } = await decide(runtime, keys, (fold) => (didOf(fold, didId).retired === null ? [vaultDraft("did.retired", { didId, because })] : []));
+export async function retireDid(session: Session, didId: DidId, because: string): Promise<VaultEvent<"did.retired">> {
+  const { fold, events } = await decide(session, (fold) => (didOf(fold, didId).retired === null ? [vaultDraft("did.retired", { didId, because })] : []));
   return (events[0] as VaultEvent<"did.retired"> | undefined) ?? (fold.set.of("did.retired").find((event) => event.data.didId === didId) as VaultEvent<"did.retired">);
 }

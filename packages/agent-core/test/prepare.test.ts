@@ -26,23 +26,15 @@ import {
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { Keyring, secretOf } from "../src/keyring.js";
 import { secretsResolverFor } from "../src/protocol/didcomm.js";
-import {
-  AgentTrace,
-  LocalRecords,
-  UnknownEntity,
-  createDid,
-  createVault,
-  unpack,
-  type Content,
-  type Unpacked,
-} from "../src/index.js";
+import { AgentTrace, LocalRecords, UnknownEntity, createVault, unpack, type Content, type Unpacked } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { routeOf } from "../src/dids.js";
 import { selectPreparation } from "../src/dispatch.js";
 import { pinnedResolver } from "../src/evidence.js";
 import { transientOptions } from "../src/local-records.js";
 import { prepare, prepareAll, type PrepareOptions, type Prepared } from "../src/prepare.js";
 import { send } from "../src/send.js";
-import { after, carrierWaitingForIssuer, didcomm, directParty, memoryDriver, merged, received, refuseCommits, ticking, type DirectParty } from "./helpers.js";
+import { after, carrierWaitingForIssuer, didcomm, directParty, memoryDriver, merged, opened as boundVault, received, refuseCommits, ticking, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000b" as DidId;
 const ALICE_NEXT = "019b0000-0000-7000-8000-00000000000c" as DidId;
@@ -98,7 +90,7 @@ async function opened(alice: DirectParty, bob: DirectParty, packed: string): Pro
 async function rotated(alice: DirectParty, peer: DirectParty, from: { didId: DidId; did: Did; longFormDid: Did } = alice): Promise<{ next: Did; longFormDid: Did; fromPrior: string; decision: EventCid }> {
   await received(alice, peer, `confirm-${from.didId}`, { type: BASIC_MESSAGE, body: { content: "I know this address" } }, from);
   const route = routeOf((await fold(alice)).dids.entities.get(from.didId)!)!;
-  const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
+  const { minted } = await createDid(alice.session, route, ALICE_NEXT);
   const fromPrior = await signFromPrior(alice.keys, { didId: from.didId, longFormDid: from.longFormDid }, minted.longFormDid, IAT);
   const [decision] = await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: from.didId, peerDid: peer.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior })]);
   return { next: minted.did, longFormDid: minted.longFormDid, fromPrior, decision: decision!.cid };
@@ -146,8 +138,8 @@ describe("prepare", () => {
       pleaseAck: [""],
       headers: { lang: "en" },
     };
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content, { messageId: MESSAGE });
-    const result = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace, now: () => 1_999_999 })));
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, content, { messageId: MESSAGE });
+    const result = prepared(await prepare(alice.session, MESSAGE, options({ trace, now: () => 1_999_999 })));
     const { data } = result.prepared;
     expect(data).toMatchObject({ messageId: MESSAGE, senderDidId: ALICE, localKeyName: didKeyName(ALICE, "key-agreement"), recipientDid: bob.did, peerResolutionEventCid: result.resolved.cid, fromPrior: null, intentCid: sent.intent.data.intentCid });
     expect(sent.intent.data.recipientDid).toBe(bob.longFormDid);
@@ -181,9 +173,9 @@ describe("prepare", () => {
     expect(outbound.work).toEqual({ kind: "dispatch", candidates: outbound.preparations });
     expect((await trace.read({ stream: "envelope" })).map((entry) => [entry.type, entry.data.messageId, entry.data.preparationEventCid])).toEqual([["envelope.seal", MESSAGE, result.prepared.cid]]);
 
-    const again = await prepare(alice.runtime, alice.keys, MESSAGE, options({ now: () => 1_999_999 }));
+    const again = await prepare(alice.session, MESSAGE, options({ now: () => 1_999_999 }));
     expect(again).toMatchObject({ outcome: "reused", messageId: MESSAGE, preparation: { event: { cid: result.prepared.cid } } });
-    expect(await prepareAll(alice.runtime, alice.keys, options())).toEqual([]);
+    expect(await prepareAll(alice.session, options())).toEqual([]);
     f = await fold(alice);
     expect(f.set.of("message.prepared")).toHaveLength(1);
     expect(f.set.of("peer.resolved")).toHaveLength(1);
@@ -192,8 +184,8 @@ describe("prepare", () => {
 
   it("seals a user's message with the creation time its send fixed, whatever the clock says at the preparation", async () => {
     const { alice, bob } = await parties();
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_000 });
-    const result = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ now: () => 1_788_449_999_000 })));
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE, now: () => 1_788_442_800_000 });
+    const result = prepared(await prepare(alice.session, MESSAGE, options({ now: () => 1_788_449_999_000 })));
     const { plaintext } = await opened(alice, bob, (await envelopeOf(alice, result)).packed);
     expect([sent.intent.data.createdTime, plaintext.created_time]).toEqual([1_788_442_800, 1_788_442_800]);
     await closeAll(alice, bob);
@@ -201,52 +193,52 @@ describe("prepare", () => {
 
   it("selects the preparation it makes, and keeps it selected when a merge brings another; a runtime that selected none picks none of several on its own, and carries the one the user chooses", async () => {
     const { alice, bob } = await parties();
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     const notPrepared = sent.intent.cid as EventReference<"message.prepared">;
     const local = new LocalRecords(transientOptions(), alice.runtime.author);
-    const made = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local })));
+    const made = prepared(await prepare(alice.session, MESSAGE, options({ local })));
     expect(await local.selected(MESSAGE)).toBe(made.prepared.cid);
     const elsewhere = (await merged(alice.runtime, "message.prepared", made.prepared.data, after(made.prepared.at, 1))).cid as EventReference<"message.prepared">;
     const outbound = (await fold(alice)).outbound.outbounds.get(MESSAGE)!;
     expect(outbound.work).toMatchObject({ kind: "dispatch", candidates: [{ event: { cid: made.prepared.cid } }, { event: { cid: elsewhere } }] });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made.prepared.cid } } });
+    expect(await prepare(alice.session, MESSAGE, options({ local }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made.prepared.cid } } });
 
     const unselected = options({ local: new LocalRecords(transientOptions(), alice.runtime.author) });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" });
-    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, notPrepared, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: `the preparation ${notPrepared} is no valid preparation of the message` });
-    expect(await selectPreparation(alice.runtime, alice.keys, MESSAGE, elsewhere, unselected)).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, unselected)).toMatchObject({ outcome: "reused", preparation: { event: { cid: elsewhere } } });
+    expect(await prepare(alice.session, MESSAGE, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" });
+    expect(await selectPreparation(alice.session, MESSAGE, notPrepared, unselected)).toEqual({ outcome: "none", messageId: MESSAGE, because: `the preparation ${notPrepared} is no valid preparation of the message` });
+    expect(await selectPreparation(alice.session, MESSAGE, elsewhere, unselected)).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
+    expect(await prepare(alice.session, MESSAGE, unselected)).toMatchObject({ outcome: "reused", preparation: { event: { cid: elsewhere } } });
     expect((await fold(alice)).set.of("message.prepared")).toHaveLength(2);
     await closeAll(alice, bob);
   });
 
   it("leaves a preparation the local options would not select uncarried, and the next step selects it as the one valid preparation; a selection that cannot be carried is replaced by nothing", async () => {
     const { alice, bob } = await parties();
-    const sent = await send(alice.runtime, alice.keys, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
     const disk = transientOptions();
     const local = new LocalRecords({ ...disk, set: async () => Promise.reject(new Error("the disk is full for now")) }, alice.runtime.author);
     const trace = await AgentTrace.open(alice.runtime.local);
-    const refused = await prepare(alice.runtime, alice.keys, MESSAGE, options({ local, trace }));
+    const refused = await prepare(alice.session, MESSAGE, options({ local, trace }));
     const [made] = (await fold(alice)).set.of("message.prepared");
     expect(refused).toEqual({ outcome: "none", messageId: MESSAGE, because: `the preparation ${made!.cid} could not be selected: the disk is full for now` });
     expect((await trace.read({ stream: "diag" })).map((entry) => entry.data)).toContainEqual(expect.objectContaining({ messageId: MESSAGE, preparationEventCid: made!.cid }));
 
     const kept = new LocalRecords(disk, alice.runtime.author);
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local: kept }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made!.cid } } });
+    expect(await prepare(alice.session, MESSAGE, options({ local: kept }))).toMatchObject({ outcome: "reused", preparation: { event: { cid: made!.cid } } });
     expect(await kept.selected(MESSAGE)).toBe(made!.cid);
     expect((await fold(alice)).set.of("message.prepared")).toHaveLength(1);
 
     const notPrepared = sent.intent.cid as EventReference<"message.prepared">;
     await kept.select(MESSAGE, notPrepared);
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ local: kept }))).toEqual({ outcome: "none", messageId: MESSAGE, because: `the selected preparation ${notPrepared} is not here` });
+    expect(await prepare(alice.session, MESSAGE, options({ local: kept }))).toEqual({ outcome: "none", messageId: MESSAGE, because: `the selected preparation ${notPrepared} is not here` });
     expect((await fold(alice)).set.of("message.prepared")).toHaveLength(1);
     await closeAll(alice, bob);
   });
 
   it("resolves the recipient locally only: a short form waits for its long form, which is not a key change; the same evidence serves every preparation at that key", async () => {
     const { alice, bob, toBob } = await parties();
-    await send(alice.runtime, alice.keys, { channel: toBob }, HELLO, { messageId: MESSAGE });
-    const waiting = await prepare(alice.runtime, alice.keys, MESSAGE, options());
+    await send(alice.session, { channel: toBob }, HELLO, { messageId: MESSAGE });
+    const waiting = await prepare(alice.session, MESSAGE, options());
     expect(waiting).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((waiting as { because: string }).because).toMatch(/no long form of/);
     let f = await fold(alice);
@@ -254,8 +246,8 @@ describe("prepare", () => {
     expect(f.set.of("peer.resolved")).toEqual([]);
     expect(f.outbound.outbounds.get(MESSAGE)!.work).toEqual({ kind: "prepare" });
 
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
-    const results = await prepareAll(alice.runtime, alice.keys, options());
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    const results = await prepareAll(alice.session, options());
     expect(results.map((r) => [r.messageId, r.outcome])).toEqual([
       [MESSAGE, "prepared"],
       [SECOND, "prepared"],
@@ -269,8 +261,8 @@ describe("prepare", () => {
     const { plaintext } = await opened(alice, bob, (await envelopeOf(alice, first!)).packed);
     expect(plaintext).toMatchObject({ from: alice.longFormDid, to: [bob.did] });
 
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
-    const third = prepared(await prepare(alice.runtime, alice.keys, THIRD, options()));
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
+    const third = prepared(await prepare(alice.session, THIRD, options()));
     expect(third.resolved.cid).toBe(second!.resolved.cid);
     f = await fold(alice);
     expect(f.set.of("peer.resolved")).toHaveLength(2);
@@ -280,15 +272,15 @@ describe("prepare", () => {
 
   it("names the sender by its long form until the peer has written to that address, and by its short form after", async () => {
     const { alice, bob, toBob } = await parties();
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const before = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const before = prepared(await prepare(alice.session, MESSAGE, options()));
     expect((await opened(alice, bob, (await envelopeOf(alice, before)).packed)).plaintext.from).toBe(alice.longFormDid);
 
     await received(alice, bob, "wire-1", { type: BASIC_MESSAGE, body: { content: "hi" } });
     expect((await fold(alice)).continuity.confirmedBy(alice.did, bob.did)).not.toBeNull();
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toMatchObject({ outcome: "reused" });
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
-    const after = prepared(await prepare(alice.runtime, alice.keys, SECOND, options()));
+    expect(await prepare(alice.session, MESSAGE, options())).toMatchObject({ outcome: "reused" });
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    const after = prepared(await prepare(alice.session, SECOND, options()));
     const { plaintext, sender } = await opened(alice, bob, (await envelopeOf(alice, after)).packed);
     expect(plaintext.from).toBe(alice.did);
     expect(sender).toEqual({ did: alice.did, kid: `${alice.did}#key-2` });
@@ -302,14 +294,14 @@ describe("prepare", () => {
     const entities = (await fold(alice)).dids.entities;
     expect([entities.get(ALICE_LEGACY)?.live, entities.get(ALICE_LEGACY_ONLY)?.live]).toEqual([true, true]);
 
-    await send(alice.runtime, alice.keys, { channel: { localDid: sealing.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
-    const made = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    await send(alice.session, { channel: { localDid: sealing.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    const made = prepared(await prepare(alice.session, MESSAGE, options()));
     const { plaintext, sender } = await opened(alice, bob, (await envelopeOf(alice, made)).packed);
     expect(plaintext.from).toBe(sealing.longFormDid);
     expect(sender).toEqual({ did: sealing.longFormDid, kid: `${sealing.longFormDid}#agreement` });
 
-    await send(alice.runtime, alice.keys, { channel: { localDid: unsealing.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
-    expect(await prepare(alice.runtime, alice.keys, SECOND, options())).toEqual({ outcome: "none", messageId: SECOND, because: `${unsealing.did} authorizes no key-agreement method didcomm seals from with the key the seed derives` });
+    await send(alice.session, { channel: { localDid: unsealing.did, peerDid: bob.longFormDid } }, HELLO, { messageId: SECOND });
+    expect(await prepare(alice.session, SECOND, options())).toEqual({ outcome: "none", messageId: SECOND, because: `${unsealing.did} authorizes no key-agreement method didcomm seals from with the key the seed derives` });
     expect((await fold(alice)).set.of("message.prepared")).toHaveLength(1);
     await closeAll(alice, bob);
   });
@@ -318,8 +310,8 @@ describe("prepare", () => {
     const { alice, bob, toBob } = await parties();
     const { next, longFormDid, fromPrior } = await rotated(alice, bob);
     const toBobNext = channelOf(next, bob.did);
-    await send(alice.runtime, alice.keys, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const proven = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    await send(alice.session, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const proven = prepared(await prepare(alice.session, MESSAGE, options()));
     expect(proven.prepared.data).toMatchObject({ senderDidId: ALICE_NEXT, localKeyName: didKeyName(ALICE_NEXT, "key-agreement"), fromPrior });
     const first = await opened(alice, bob, (await envelopeOf(alice, proven)).packed);
     expect(first.plaintext).toMatchObject({ from: longFormDid, from_prior: fromPrior });
@@ -329,15 +321,15 @@ describe("prepare", () => {
 
     await received(alice, bob, "wire-2", { type: BASIC_MESSAGE, body: { content: "got your new address" } }, { didId: ALICE_NEXT, did: next });
     expect((await fold(alice)).continuity.confirmedBy(next, bob.did)).not.toBeNull();
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toMatchObject({ outcome: "reused", preparation: { event: { cid: proven.prepared.cid } } });
-    await send(alice.runtime, alice.keys, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
-    const confirmed = prepared(await prepare(alice.runtime, alice.keys, SECOND, options()));
+    expect(await prepare(alice.session, MESSAGE, options())).toMatchObject({ outcome: "reused", preparation: { event: { cid: proven.prepared.cid } } });
+    await send(alice.session, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    const confirmed = prepared(await prepare(alice.session, SECOND, options()));
     expect(confirmed.prepared.data.fromPrior).toBeNull();
     const second = await opened(alice, bob, (await envelopeOf(alice, confirmed)).packed);
     expect(second.plaintext.from).toBe(next);
     expect(second.plaintext).not.toHaveProperty("from_prior");
 
-    await expect(send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD })).rejects.toThrow(`the local DID is replaced here by ${next}`);
+    await expect(send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD })).rejects.toThrow(`the local DID is replaced here by ${next}`);
     await closeAll(alice, bob);
   });
 
@@ -346,8 +338,8 @@ describe("prepare", () => {
     const predecessor = await writtenElsewhere(alice, ALICE_LEGACY, { authentication: ["#signing"] });
     const { next, longFormDid, fromPrior } = await rotated(alice, bob, predecessor);
     expect(decodeProtectedHeader(fromPrior).kid).toBe(`${predecessor.longFormDid}#signing`);
-    await send(alice.runtime, alice.keys, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const proven = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    await send(alice.session, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const proven = prepared(await prepare(alice.session, MESSAGE, options()));
     expect(proven.prepared.data.fromPrior).toBe(fromPrior);
     const { plaintext } = await opened(alice, bob, (await envelopeOf(alice, proven)).packed);
     expect(plaintext).toMatchObject({ from: longFormDid, from_prior: fromPrior });
@@ -357,19 +349,19 @@ describe("prepare", () => {
   test("a message queued or prepared from an address a decision then replaced is carried no further: the queued one gets no preparation, the prepared one's preparation stands uncalled, and the same address still writes to an unrelated peer", async () => {
     const { alice, bob, toBob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
-    const held = prepared(await prepare(alice.runtime, alice.keys, SECOND, options()));
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, HELLO, { messageId: THIRD });
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    const held = prepared(await prepare(alice.session, SECOND, options()));
+    await send(alice.session, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, HELLO, { messageId: THIRD });
     const { next } = await rotated(alice, bob);
     const because = `the local DID is replaced here by ${next}`;
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because });
-    expect(await prepare(alice.runtime, alice.keys, SECOND, options())).toEqual({ outcome: "none", messageId: SECOND, because });
+    expect(await prepare(alice.session, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because });
+    expect(await prepare(alice.session, SECOND, options())).toEqual({ outcome: "none", messageId: SECOND, because });
     const f = await fold(alice);
     expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ preparations: [], outcome: { status: "queued" }, work: { kind: "none", because } });
     expect(f.outbound.outbounds.get(SECOND)).toMatchObject({ preparations: [{ event: { cid: held.prepared.cid } }], outcome: { status: "prepared" }, work: { kind: "none", because } });
     expect(f.set.of("message.prepared")).toHaveLength(1);
-    expect((await prepare(alice.runtime, alice.keys, THIRD, options())).outcome).toBe("prepared");
+    expect((await prepare(alice.session, THIRD, options())).outcome).toBe("prepared");
     await closeAll(alice, bob, carol);
   });
 
@@ -382,7 +374,7 @@ describe("prepare", () => {
     const recordedAt = events.find((event) => event.cid === decision)!.at;
     const other = await merged(alice.runtime, "did.rotationSelected", { fromDidId: ALICE, peerDid: bob.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior: await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, longFormDid, IAT + 1) }, after(recordedAt, 1));
     const partial = [...events.filter((event) => event.cid !== creation.cid), other];
-    const copy = await createVault(memoryDriver(), { seedKey: alice.seedKey, wrapped: alice.keystore, label: "partial history", now: ticking() });
+    const copy = boundVault(await createVault(memoryDriver(), { seedKey: alice.seedKey, wrapped: alice.keystore, label: "partial history", now: ticking() }));
     const ingested = await copy.runtime.locked((held) =>
       held.ingest(partial, async (stage) => {
         for (const root of new Set(partial.flatMap((event) => event.roots))) await stage.putObject(root, (await alice.runtime.vault.objects.read(root, 1 << 20)) as Uint8Array);
@@ -393,8 +385,8 @@ describe("prepare", () => {
     let f = await fold(later);
     for (const cid of [decision, other.cid]) expect(f.channels.decisions.get(cid)).toMatchObject({ channel: null, status: { status: "pending" } });
 
-    await send(later.runtime, later.keys, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const waiting = await prepare(later.runtime, later.keys, MESSAGE, options());
+    await send(later.session, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const waiting = await prepare(later.session, MESSAGE, options());
     expect(waiting).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((waiting as { because: string }).because).toMatch(/pending: the predecessor entity has no consistent creation here/);
     expect((await fold(later)).set.of("message.prepared")).toEqual([]);
@@ -403,11 +395,11 @@ describe("prepare", () => {
     f = await fold(later);
     for (const cid of [decision, other.cid]) expect(f.continuity.status(cid)).toEqual({ status: "verified" });
     expect(f.continuity.conflicts).toEqual([]);
-    const proven = prepared(await prepare(later.runtime, later.keys, MESSAGE, options()));
+    const proven = prepared(await prepare(later.session, MESSAGE, options()));
     expect(proven.prepared.data).toMatchObject({ senderDidId: ALICE_NEXT, fromPrior });
     const { plaintext } = await opened(later, bob, (await envelopeOf(later, proven)).packed);
     expect(plaintext).toMatchObject({ from: longFormDid, from_prior: fromPrior });
-    expect(await prepare(later.runtime, later.keys, MESSAGE, options())).toMatchObject({ outcome: "reused" });
+    expect(await prepare(later.session, MESSAGE, options())).toMatchObject({ outcome: "reused" });
     expect((await fold(later)).set.of("message.prepared")).toHaveLength(1);
     await copy.runtime.close();
     await closeAll(alice, bob);
@@ -421,11 +413,11 @@ describe("prepare", () => {
     const signingOnly = { ...decodeLongForm(bob.longFormDid), keyAgreement: ["#key-1"] };
     const signingOnlyDid = encodeLongForm(signingOnly) as Did;
     const signingOnlyShort = longToShort(signingOnlyDid) as Did;
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, mixedShort), recipientDid: mixedDid }, HELLO, { messageId: MESSAGE });
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, signingOnlyShort), recipientDid: signingOnlyDid }, HELLO, { messageId: SECOND });
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
+    await send(alice.session, { channel: channelOf(alice.did, mixedShort), recipientDid: mixedDid }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: channelOf(alice.did, signingOnlyShort), recipientDid: signingOnlyDid }, HELLO, { messageId: SECOND });
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
 
-    const results = await prepareAll(alice.runtime, alice.keys, options());
+    const results = await prepareAll(alice.session, options());
     expect(results.map((r) => [r.messageId, r.outcome])).toEqual([
       [MESSAGE, "prepared"],
       [SECOND, "none"],
@@ -449,8 +441,8 @@ describe("prepare", () => {
     const agreement = { id: "#agreement", type: "JsonWebKey2020", publicKeyJwk: { kty: "OKP", crv: "X25519", x: base64url.encode(keyAgreement.publicKeyBytes()), alg: "ECDH-ES+A256KW" } };
     const did = encodeLongForm({ ...document, verificationMethod: [...(document["verificationMethod"] as JsonObject[]), agreement], keyAgreement: ["#agreement", KEY_AGREEMENT_METHOD] }) as Did;
     const short = longToShort(did) as Did;
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, short), recipientDid: did }, HELLO, { messageId: MESSAGE });
-    const { packed } = await envelopeOf(alice, await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    await send(alice.session, { channel: channelOf(alice.did, short), recipientDid: did }, HELLO, { messageId: MESSAGE });
+    const { packed } = await envelopeOf(alice, await prepare(alice.session, MESSAGE, options()));
     const kid = `${short}#agreement`;
     expect(((parseStrict(packed) as JsonObject).recipients as { header: { kid: string } }[]).map((r) => r.header.kid)).toEqual([kid]);
     const { plaintext } = await unpack(didcomm, packed, pinnedResolver(await fold(alice)), secretsResolverFor([secretOf(kid, keyAgreement)]));
@@ -461,12 +453,12 @@ describe("prepare", () => {
   test("a rotation to the sender that is still waiting for its evidence stops the preparation rather than sending it proof-free", async () => {
     const { alice, bob } = await parties();
     const route = routeOf((await fold(alice)).dids.entities.get(ALICE)!)!;
-    const { minted } = await createDid(alice.runtime, alice.keys, route, ALICE_NEXT);
+    const { minted } = await createDid(alice.session, route, ALICE_NEXT);
     const fromPrior = await signFromPrior(alice.keys, { didId: ALICE, longFormDid: alice.longFormDid }, minted.longFormDid, IAT);
     const missing = rawCidOfBytes(new Uint8Array(32).fill(0xee)) as unknown as EventReference<"message.in">;
     await alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: bob.did, toDidId: ALICE_NEXT, sourceEventCid: missing, fromPrior })]);
-    await send(alice.runtime, alice.keys, { channel: channelOf(minted.did, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const result = await prepare(alice.runtime, alice.keys, MESSAGE, options());
+    await send(alice.session, { channel: channelOf(minted.did, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const result = await prepare(alice.session, MESSAGE, options());
     expect(result).toMatchObject({ outcome: "pending", messageId: MESSAGE });
     expect((result as { because: string }).because).toMatch(/pending: the source it names is not here/);
     expect((await fold(alice)).set.of("message.prepared")).toEqual([]);
@@ -482,23 +474,23 @@ describe("prepare", () => {
     const missing = rawCidOfBytes(new Uint8Array(32).fill(0xee)) as unknown as EventReference<"message.in">;
     const waiting = await merged(alice.runtime, "did.rotationSelected", { ...record, sourceEventCid: missing, fromPrior: await proofAt(IAT + 1) }, after(recordedAt, 1));
     const toBobNext = channelOf(next, bob.did);
-    await send(alice.runtime, alice.keys, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
     let f = await fold(alice);
     expect(f.channels.decisions.get(waiting.cid)!.status).toMatchObject({ status: "pending" });
-    const first = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options()));
+    const first = prepared(await prepare(alice.session, MESSAGE, options()));
     expect(first.prepared.data.fromPrior).toBe(fromPrior);
 
     const later = await merged(alice.runtime, "did.rotationSelected", { ...record, sourceEventCid: null, fromPrior: await proofAt(IAT + 2) }, after(recordedAt, 2));
-    await send(alice.runtime, alice.keys, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
-    expect(prepared(await prepare(alice.runtime, alice.keys, SECOND, options())).prepared.data.fromPrior).toBe(fromPrior);
+    await send(alice.session, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: SECOND });
+    expect(prepared(await prepare(alice.session, SECOND, options())).prepared.data.fromPrior).toBe(fromPrior);
 
     const earlier = await merged(alice.runtime, "did.rotationSelected", { ...record, sourceEventCid: null, fromPrior: await proofAt(IAT - 1) }, after(recordedAt, -1));
     f = await fold(alice);
     expect(f.continuity.conflicts).toEqual([]);
     for (const cid of [decision, later.cid, earlier.cid]) expect(f.continuity.status(cid)).toEqual({ status: "verified" });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toMatchObject({ outcome: "reused", preparation: { event: { cid: first.prepared.cid, data: { fromPrior } } } });
-    await send(alice.runtime, alice.keys, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
-    const third = prepared(await prepare(alice.runtime, alice.keys, THIRD, options()));
+    expect(await prepare(alice.session, MESSAGE, options())).toMatchObject({ outcome: "reused", preparation: { event: { cid: first.prepared.cid, data: { fromPrior } } } });
+    await send(alice.session, { channel: toBobNext, recipientDid: bob.longFormDid }, HELLO, { messageId: THIRD });
+    const third = prepared(await prepare(alice.session, THIRD, options()));
     expect(third.prepared.data.fromPrior).toBe(earlier.data.fromPrior);
     expect((await opened(alice, bob, (await envelopeOf(alice, third)).packed)).plaintext).toMatchObject({ from: longFormDid, from_prior: earlier.data.fromPrior });
     await closeAll(alice, bob);
@@ -508,20 +500,20 @@ describe("prepare", () => {
     const { alice, bob } = await parties();
     const { next, fromPrior, decision } = await rotated(alice, bob);
     const recordedAt = (await fold(alice)).channels.decisions.get(decision)!.event.at;
-    await send(alice.runtime, alice.keys, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: channelOf(next, bob.did), recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
     const unplaced = await merged(alice.runtime, "did.rotationSelected", { fromDidId: UNKNOWN, peerDid: bob.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior }, after(recordedAt, 1));
     expect((await fold(alice)).channels.decisions.get(unplaced.cid)).toMatchObject({ channel: null, status: { status: "pending" } });
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 rotations here are not one intent" });
+    expect(await prepare(alice.session, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 rotations here are not one intent" });
     await closeAll(alice, bob);
 
     const known = await parties();
     const second = await rotated(known.alice, known.bob);
     const route = routeOf((await fold(known.alice)).dids.entities.get(ALICE)!)!;
-    const { minted: other } = await createDid(known.alice.runtime, known.alice.keys, route, ALICE_OTHER);
+    const { minted: other } = await createDid(known.alice.session, route, ALICE_OTHER);
     const fromOther = await signFromPrior(known.alice.keys, { didId: ALICE_OTHER, longFormDid: other.longFormDid }, second.longFormDid, IAT);
     await known.alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE_OTHER, peerDid: known.bob.did, toDidId: ALICE_NEXT, sourceEventCid: null, fromPrior: fromOther })]);
-    await send(known.alice.runtime, known.alice.keys, { channel: channelOf(second.next, known.bob.did), recipientDid: known.bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const twoPredecessors = await prepare(known.alice.runtime, known.alice.keys, MESSAGE, options());
+    await send(known.alice.session, { channel: channelOf(second.next, known.bob.did), recipientDid: known.bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const twoPredecessors = await prepare(known.alice.session, MESSAGE, options());
     expect(twoPredecessors).toMatchObject({ outcome: "none", messageId: MESSAGE });
     expect((twoPredecessors as { because: string }).because).toBe("2 rotations here are not one intent");
     expect((await fold(known.alice)).set.of("message.prepared")).toEqual([]);
@@ -532,8 +524,8 @@ describe("prepare", () => {
     const third = await rotated(contradicted.alice, contradicted.bob);
     const fromCarol = await received(contradicted.alice, carol, "from-carol", { type: BASIC_MESSAGE, body: { content: "hi" } });
     await contradicted.alice.runtime.vault.commit([], [vaultDraft("did.rotationSelected", { fromDidId: ALICE, peerDid: contradicted.bob.did, toDidId: ALICE_NEXT, sourceEventCid: fromCarol, fromPrior: third.fromPrior })]);
-    await send(contradicted.alice.runtime, contradicted.alice.keys, { channel: channelOf(third.next, contradicted.bob.did), recipientDid: contradicted.bob.longFormDid }, HELLO, { messageId: MESSAGE });
-    const result = await prepare(contradicted.alice.runtime, contradicted.alice.keys, MESSAGE, options());
+    await send(contradicted.alice.session, { channel: channelOf(third.next, contradicted.bob.did), recipientDid: contradicted.bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    const result = await prepare(contradicted.alice.session, MESSAGE, options());
     expect(result).toMatchObject({ outcome: "none", messageId: MESSAGE });
     expect((result as { because: string }).because).toMatch(/is in conflict: the source is not from the peer the decision rotates away from/);
     expect((await fold(contradicted.alice)).set.of("message.prepared")).toEqual([]);
@@ -546,9 +538,9 @@ describe("prepare", () => {
     const carried = { cid };
     expect((await fold(alice)).dispositions.disposition(carried.cid)).toEqual({ status: "pending-admission", because: "the source's proof is not yet verified" });
 
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid }, HELLO, { messageId: MESSAGE });
+    await send(alice.session, { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid }, HELLO, { messageId: MESSAGE });
     const trace = await AgentTrace.open(alice.runtime.local);
-    const result = prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace })));
+    const result = prepared(await prepare(alice.session, MESSAGE, options({ trace })));
     const after = await fold(alice);
     expect([after.continuity.status(carried.cid), after.dispositions.disposition(carried.cid).status, after.set.of("message.admitted").map(({ data }) => data.sourceEventCid)]).toEqual([{ status: "verified" }, "admitted", [carried.cid]]);
     expect([after.outbound.outbounds.get(MESSAGE)!.preparations[0]!.event.cid, after.set.of("message.out").length, await trace.read({ type: "diag.admission" })]).toEqual([result.prepared.cid, 1, []]);
@@ -559,21 +551,21 @@ describe("prepare", () => {
     for (const refused of ["message.prepared", "message.admitted"] as const) {
       const { alice, bob } = await parties();
       const { cid, prior } = await carrierWaitingForIssuer(alice, bob, BOB_PRIOR);
-      await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid }, HELLO, { messageId: MESSAGE });
+      await send(alice.session, { channel: channelOf(alice.did, prior.did), recipientDid: prior.longFormDid }, HELLO, { messageId: MESSAGE });
       const trace = await AgentTrace.open(alice.runtime.local);
       refuseCommits(alice.runtime, refused, 1);
-      if (refused === "message.prepared") await expect(prepare(alice.runtime, alice.keys, MESSAGE, options({ trace }))).rejects.toThrow("the disk is full for now");
-      else prepared(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace })));
+      if (refused === "message.prepared") await expect(prepare(alice.session, MESSAGE, options({ trace }))).rejects.toThrow("the disk is full for now");
+      else prepared(await prepare(alice.session, MESSAGE, options({ trace })));
       let f = await fold(alice);
       expect([f.continuity.status(cid), f.dispositions.disposition(cid), f.set.of("peer.resolved").filter(({ data }) => data.did === prior.did).length, f.set.of("message.prepared").length]).toEqual([{ status: "verified" }, { status: "pending-admission", because: "the observation is not yet reconciled" }, 1, refused === "message.prepared" ? 0 : 1]);
       expect((await trace.read({ type: "diag.admission" })).map((entry) => entry.data)).toEqual(refused === "message.prepared" ? [] : [{ messageId: MESSAGE, reason: "the pass the preparation runs stopped: the disk is full for now" }]);
       const replaced = { outcome: "none", messageId: MESSAGE, because: "the peer has replaced its DID" };
       expect(f.outbound.outbounds.get(MESSAGE)!.work).toEqual({ kind: "none", because: replaced.because });
 
-      expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace }))).toEqual(replaced);
+      expect(await prepare(alice.session, MESSAGE, options({ trace }))).toEqual(replaced);
       f = await fold(alice);
       expect([f.dispositions.disposition(cid).status, f.set.of("message.admitted").map(({ data }) => data.sourceEventCid), f.set.of("message.prepared").length, f.set.of("message.out").length]).toEqual(["admitted", [cid], refused === "message.prepared" ? 0 : 1, 1]);
-      expect(await prepare(alice.runtime, alice.keys, MESSAGE, options({ trace }))).toEqual(replaced);
+      expect(await prepare(alice.session, MESSAGE, options({ trace }))).toEqual(replaced);
       expect((await fold(alice)).set.of("message.admitted")).toHaveLength(1);
       await closeAll(alice, bob);
     }
@@ -582,20 +574,20 @@ describe("prepare", () => {
   it("prepares nothing the fold asks no preparation for, and terminates an intent whose expiry has passed", async () => {
     const { alice, bob, toBob } = await parties();
     const carol = await directParty(3, "https://carol.example/didcomm", CAROL);
-    await expect(prepare(alice.runtime, alice.keys, MESSAGE, options())).rejects.toBeInstanceOf(UnknownEntity);
-    await send(alice.runtime, alice.keys, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
+    await expect(prepare(alice.session, MESSAGE, options())).rejects.toBeInstanceOf(UnknownEntity);
+    await send(alice.session, { channel: toBob, recipientDid: bob.longFormDid }, HELLO, { messageId: MESSAGE });
     await alice.runtime.vault.commit([], [vaultDraft("channel.blocked", { localDid: alice.did, peerDid: bob.did, includeSuccessors: false })]);
-    expect(await prepare(alice.runtime, alice.keys, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because: "the channel is denied" });
+    expect(await prepare(alice.session, MESSAGE, options())).toEqual({ outcome: "none", messageId: MESSAGE, because: "the channel is denied" });
 
     const timed: Content = { ...HELLO, createdTime: 1_000, expiresTime: 2_000 };
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, timed, { messageId: SECOND });
-    expect(await prepare(alice.runtime, alice.keys, SECOND, options({ now: () => 1_999_999 }))).toMatchObject({ outcome: "prepared" });
-    await send(alice.runtime, alice.keys, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, timed, { messageId: THIRD });
-    const expired = await prepare(alice.runtime, alice.keys, THIRD, options({ now: () => 2_000_000 }));
+    await send(alice.session, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, timed, { messageId: SECOND });
+    expect(await prepare(alice.session, SECOND, options({ now: () => 1_999_999 }))).toMatchObject({ outcome: "prepared" });
+    await send(alice.session, { channel: channelOf(alice.did, carol.did), recipientDid: carol.longFormDid }, timed, { messageId: THIRD });
+    const expired = await prepare(alice.session, THIRD, options({ now: () => 2_000_000 }));
     expect(expired).toMatchObject({ outcome: "expired", messageId: THIRD, failed: { data: { messageId: THIRD, code: "expired" } } });
     const f = await fold(alice);
     expect(f.outbound.outbounds.get(THIRD)!.outcome).toEqual({ status: "terminal", code: "expired" });
-    expect(await prepare(alice.runtime, alice.keys, THIRD, options({ now: () => 2_000_000 }))).toEqual({ outcome: "none", messageId: THIRD, because: "terminated: expired" });
+    expect(await prepare(alice.session, THIRD, options({ now: () => 2_000_000 }))).toEqual({ outcome: "none", messageId: THIRD, because: "terminated: expired" });
     expect(f.set.of("message.prepared")).toHaveLength(1);
     await closeAll(alice, bob, carol);
   });

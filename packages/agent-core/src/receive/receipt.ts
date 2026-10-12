@@ -33,23 +33,19 @@
  * call.
  */
 
-import type { Held, VaultRuntime } from "@estoc/event-store";
 import {
   InvalidPayload,
   InvalidPlaintext,
-  admitReceipts,
   anonymousMessageId,
   inboundMessageId,
   rawCidOfBytes,
   readPlaintext,
   readVaultEvent,
-  scanVault,
   vaultDraft,
   type AnonymousPeer,
   type Cid,
   type DeliveryId,
   type EventReference,
-  type Keys,
   type MessageIn,
   type ReadPlaintext,
   type ResolvedPeer,
@@ -60,11 +56,12 @@ import {
 import { liveInput } from "../action.js";
 import { commitResolution } from "../evidence.js";
 import { MAX_CONTENT_BYTES } from "../prepare.js";
+import type { Locked, Session } from "../session.js";
 import type { AuthenticatedSender } from "./gate.js";
 import { recipientWatch, type Authenticated, type Receipt, type ReceiptOutcome } from "./receiver.js";
 
-export function receiptOf(runtime: VaultRuntime, keys: Keys): Receipt {
-  return (authenticated) => recordReceipt(runtime, keys, authenticated);
+export function receiptOf(session: Session): Receipt {
+  return (authenticated) => recordReceipt(session, authenticated);
 }
 
 type Observed = Omit<MessageIn, keyof ResolvedPeer>;
@@ -79,7 +76,7 @@ const terminal = (reason: string): ReceiptOutcome => ({ outcome: "terminal", rea
  * something recoverable of this runtime's. A record the vault refuses
  * for any other reason throws, and the delivery comes again.
  */
-export async function recordReceipt(runtime: VaultRuntime, keys: Keys, authenticated: Authenticated): Promise<ReceiptOutcome> {
+export async function recordReceipt(session: Session, authenticated: Authenticated): Promise<ReceiptOutcome> {
   const read = readOrRefuse(authenticated);
   if ("outcome" in read) return read;
   const observed = observationOf(authenticated, read);
@@ -87,7 +84,7 @@ export async function recordReceipt(runtime: VaultRuntime, keys: Keys, authentic
   if (refused !== null) return terminal(refused);
   const { stored } = read;
   const objects: Objects = [{ cid: stored.bodyCid, source: stored.bytes }, ...stored.payloads.map(({ cid, bytes }) => ({ cid, source: bytes }))];
-  return runtime.locked((held) => settle(held, keys, authenticated, observed, objects));
+  return session.locked((locked) => settle(locked, authenticated, observed, objects));
 }
 
 /**
@@ -161,8 +158,9 @@ function unrecordable(observed: Observed, sender: AuthenticatedSender | null): s
   }
 }
 
-async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticated, observed: Observed, objects: Objects): Promise<ReceiptOutcome> {
-  const fold = await scanVault(held, keys);
+async function settle(locked: Locked, { recipient, sender }: Authenticated, observed: Observed, objects: Objects): Promise<ReceiptOutcome> {
+  const { held } = locked;
+  const fold = await locked.fold();
   switch (fold.dids.receipt(recipient.didId)) {
     case "terminal":
       return terminal(`${recipient.did} may no longer receive`);
@@ -173,7 +171,7 @@ async function settle(held: Held, keys: Keys, { recipient, sender }: Authenticat
   const peer = sender === null ? ANONYMOUS : resolvedPeer(sender, (await commitResolution(held, { resolution: sender.resolution, localKeyName: recipient.localKeyName, peerPublicKey: sender.peerPublicKey })).cid as EventReference<"peer.resolved">);
   const [event] = (await held.commit(objects, [vaultDraft("message.in", { ...observed, ...peer })])).map(readVaultEvent);
   const cid = (event as VaultEvent<"message.in">).cid as EventReference<"message.in">;
-  const { fold: admitted } = await admitReceipts(held, await scanVault(held, keys));
+  const { fold: admitted } = await locked.admitReceipts(await locked.fold());
   const live = first && admitted.inbound.ofSource(cid)?.firstWitness?.source.event.cid === cid ? liveInput(cid) : null;
   return { outcome: "received", cid, first, live };
 }

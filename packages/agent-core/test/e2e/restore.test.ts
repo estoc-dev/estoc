@@ -5,7 +5,7 @@ import { canonicalDid, type Did, type DidId, type MessageId, type VaultFold } fr
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
 import type { IMessage } from "../../src/protocol/didcomm.js";
 import { FORWARD } from "../../src/protocol/spec.js";
-import { createDid } from "../../src/index.js";
+import { createDid } from "../../src/dids.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator, mediatedRoute } from "../helpers.js";
 import { LONG, channelOf, foldOf, imported, restoredFrom, run, snapshotOf, stop, stopAll, until, type Running } from "./running.js";
@@ -89,7 +89,7 @@ describe("a vault restored from a snapshot", () => {
     await until("bob has the answer", () => bob.inbounds.length === 1);
     const snapshot = await snapshotOf(alice);
 
-    const later = await createDid(alice.runtime, alice.keys, mediatedRoute(alice.party.mediationId), ALICE_LATER);
+    const later = await createDid(alice.session, mediatedRoute(alice.party.mediationId), ALICE_LATER);
     const { invitation } = await alice.agent.disclose(ALICE_LATER, { as: "oob" });
     const rotated = await bob.agent.manual.rotate({ localDidId: BOB, peerDid: a0 });
     const b1 = didOf(await foldOf(bob), rotated.successor);

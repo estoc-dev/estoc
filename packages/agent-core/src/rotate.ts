@@ -41,7 +41,7 @@
 
 import { v7 as uuidv7 } from "uuid";
 
-import { eventCidOf, type Event, type EventEnvelope, type Held, type VaultRuntime } from "@estoc/event-store";
+import { eventCidOf, type Event, type EventEnvelope, type Held } from "@estoc/event-store";
 import {
   EMPTY_MESSAGE_TYPE,
   ROTATION_NOTIFICATION_EFFECT,
@@ -51,16 +51,12 @@ import {
   channelKey,
   channelOf,
   channelPolicy,
-  checkVault,
   decisionFor,
-  foldVault,
   kindOf,
   notificationChannel,
-  objectReader,
   readVaultEvent,
   replyThread,
   sameChannel,
-  scanVault,
   signFromPrior,
   successorRecipe,
   vaultDraft,
@@ -71,7 +67,6 @@ import {
   type EventCid,
   type EventReference,
   type ExecutionId,
-  type Keys,
   type MessageId,
   type VaultDraft,
   type VaultEvent,
@@ -84,6 +79,7 @@ import type { Dispatched } from "./dispatch.js";
 import { dispatched, refused, resultOutcome, type Drafted, type EffectOutcome } from "./effects.js";
 import { NotificationConflict, UnknownEntity, Unusable } from "./errors.js";
 import { automaticDraft, manualNotificationDraft, type EffectContent } from "./send.js";
+import type { Locked, Session } from "./session.js";
 import { materializeSuccessor } from "./successor.js";
 import type { AgentTrace } from "./trace.js";
 
@@ -117,8 +113,8 @@ export interface Rotated {
 }
 
 /** A decision already recorded is returned with the state of its notification, nothing written or called. */
-export async function rotate(runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: RotateOptions): Promise<Rotated> {
-  return callRotation(await decideRotation(runtime, keys, target, options), options);
+export async function rotate(session: Session, target: RotationTarget, options: RotateOptions): Promise<Rotated> {
+  return callRotation(await decideRotation(session, target, options), options);
 }
 
 /** A rotation's decision as the lock recorded or found it, its notification not yet made. */
@@ -136,17 +132,17 @@ export interface RotationDecided extends RotationSelected {
 }
 
 /** The decision of `rotate` alone, under the lock: what a caller records before it makes the call. */
-export async function decideRotation(runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
-  return runtime.locked(async (held) => {
-    const { fold, selected } = await select(held, runtime, keys, target, options);
+export async function decideRotation(session: Session, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
+  return session.locked(async (locked) => {
+    const { fold, selected } = await select(locked, target, options);
     if (selected.existed) return { ...selected, drafted: recorded(fold, selected.decision.cid), executionId: null };
-    return { ...selected, ...(await notification(held, keys, selected.decision, options)) };
+    return { ...selected, ...(await notification(locked, selected.decision, options)) };
   });
 }
 
 /** The decision alone, under the lock, its notification left to `notifyRotation`: what a live input selects before who answers it is known. */
-export async function selectRotation(runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationSelected> {
-  return runtime.locked(async (held) => (await select(held, runtime, keys, target, options)).selected);
+export async function selectRotation(session: Session, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<RotationSelected> {
+  return session.locked(async (locked) => (await select(locked, target, options)).selected);
 }
 
 /**
@@ -154,21 +150,22 @@ export async function selectRotation(runtime: VaultRuntime, keys: Keys, target: 
  * the lock by the runtime answering that input: the decision must name
  * the input as its source.
  */
-export async function notifyRotation(runtime: VaultRuntime, keys: Keys, selected: RotationSelected, answering: Responding, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
+export async function notifyRotation(session: Session, selected: RotationSelected, answering: Responding, options: Omit<RotateOptions, "dispatch">): Promise<RotationDecided> {
   if (selected.decision.data.sourceEventCid !== answering.cid) throw new Unusable("rotation", selected.decision.cid, ["the input answered is not the one that selected the rotation"]);
-  return runtime.locked(async (held) => ({ ...selected, ...(await notification(held, keys, selected.decision, options)) }));
+  return session.locked(async (locked) => ({ ...selected, ...(await notification(locked, selected.decision, options)) }));
 }
 
 /** The decision's notification, settled over the fold read now, a new intent with the initial action minted for it. */
-async function notification(held: Held, keys: Keys, decision: VaultEvent<"did.rotationSelected">, options: Omit<RotateOptions, "dispatch">): Promise<Pick<RotationDecided, "drafted" | "executionId">> {
-  const fold = await scanVault(held, keys);
-  const settled = await settleNotification(held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
+async function notification(locked: Locked, decision: VaultEvent<"did.rotationSelected">, options: Omit<RotateOptions, "dispatch">): Promise<Pick<RotationDecided, "drafted" | "executionId">> {
+  const fold = await locked.fold();
+  const settled = await settleNotification(locked.held, fold, decision.cid as EventReference<"did.rotationSelected">, options.trace ?? null);
   return { drafted: settled.drafted.outcome === "created" ? { ...settled.drafted, action: initialAction(settled.drafted.messageId) } : settled.drafted, executionId: settled.executionId };
 }
 
 /** The decision under the lock held: the one recorded for the pair already, or made and committed now with its successor. */
-async function select(held: Held, runtime: VaultRuntime, keys: Keys, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<{ fold: VaultFold; selected: RotationSelected }> {
-  const fold = await scanVault(held, keys);
+async function select(locked: Locked, target: RotationTarget, options: Omit<RotateOptions, "dispatch">): Promise<{ fold: VaultFold; selected: RotationSelected }> {
+  const { held, keys } = locked;
+  const fold = await locked.fold();
   const predecessor = didOf(fold, target.localDidId);
   if (predecessor.created === null || predecessor.conflict) throw new Unusable("DID", predecessor.didId, predecessor.faults);
   const peerDid = canonicalDidOf(target.peerDid) as Did;
@@ -186,11 +183,11 @@ async function select(held: Held, runtime: VaultRuntime, keys: Keys, target: Rot
   const chosen = successorRecipe(fold, channel);
   if (chosen.status !== "ready") throw new Unusable("channel", key, [`the successor is not decided, ${chosen.status}: ${chosen.because}`]);
 
-  const { drafts, successor } = await materializeSuccessor(fold, keys, runtime.author, predecessor, chosen.recipe);
+  const { drafts, successor } = await materializeSuccessor(fold, keys, locked.author, predecessor, chosen.recipe);
   const iat = Math.floor((options.now ?? Date.now)() / 1000);
   const fromPrior = await signFromPrior(keys, { didId: predecessor.didId, longFormDid: predecessor.created.longFormDid }, successor.longFormDid, iat);
   drafts.push(vaultDraft("did.rotationSelected", { fromDidId: predecessor.didId, peerDid: channel.peerDid, toDidId: successor.didId, sourceEventCid, fromPrior }));
-  const refusal = await rotationRefusal(held, runtime, keys, fold, drafts);
+  const refusal = await rotationRefusal(locked, fold, drafts);
   if (refusal !== null) throw new Unusable("DID", successor.didId, [refusal]);
   const events = (await held.commit([], drafts)).map(readVaultEvent);
   const decision = events[events.length - 1] as VaultEvent<"did.rotationSelected">;
@@ -210,10 +207,10 @@ export async function callRotation(decided: RotationDecided, options: Pick<Rotat
  * called again. Either goes under a manual action. Several intents
  * naming the decision are its conflict, which no completion resolves.
  */
-export async function completeNotification(runtime: VaultRuntime, keys: Keys, rotationEventCid: EventReference<"did.rotationSelected">, options: RotateOptions): Promise<EffectOutcome> {
-  const decided = await runtime.locked(async (held) => {
-    const fold = await scanVault(held, keys);
-    const settled = await settleNotification(held, fold, rotationEventCid, options.trace ?? null);
+export async function completeNotification(session: Session, rotationEventCid: EventReference<"did.rotationSelected">, options: RotateOptions): Promise<EffectOutcome> {
+  const decided = await session.locked(async (locked) => {
+    const fold = await locked.fold();
+    const settled = await settleNotification(locked.held, fold, rotationEventCid, options.trace ?? null);
     const { drafted } = settled;
     return { ...settled, drafted: drafted.outcome === "created" || drafted.outcome === "existing" ? { ...drafted, action: LiveAction.manual(drafted.messageId) } : drafted };
   });
@@ -242,16 +239,16 @@ function assertSelectingSource(fold: VaultFold, channel: Channel, sourceEventCid
  * decision last, are committed with the evidence here, or null: a
  * join it implies may confirm a decision still waiting, and a channel
  * no conflict reached before may be reached now. The candidates exist
- * only in this set; nothing is appended here.
+ * only in this set; nothing is appended here, and the set is read as
+ * every fold of this vault is.
  */
-async function rotationRefusal(held: Held, runtime: VaultRuntime, keys: Keys, fold: VaultFold, drafts: readonly VaultDraft[]): Promise<string | null> {
+async function rotationRefusal(locked: Locked, fold: VaultFold, drafts: readonly VaultDraft[]): Promise<string | null> {
   const at = new Date().toISOString();
   const candidates: Event[] = drafts.map((draft) => {
-    const envelope: EventEnvelope = { at, author: runtime.author, type: draft.type, roots: draft.roots ?? [], data: draft.data };
+    const envelope: EventEnvelope = { at, author: locked.author, type: draft.type, roots: draft.roots ?? [], data: draft.data };
     return { ...envelope, cid: eventCidOf(envelope) };
   });
-  const set = VaultEventSet.of([...fold.set.all(), ...candidates]);
-  const next = foldVault(set, await checkVault(set, keys, objectReader(held.objects)));
+  const next = await locked.foldOf(VaultEventSet.of([...fold.set.all(), ...candidates]));
   const decisionId = candidates[candidates.length - 1]!.cid;
   const decision = next.channels.decisions.get(decisionId)!;
   if (decision.status.status === "invalid" || decision.status.status === "conflict") return `the decision would be ${decision.status.status}: ${decision.status.because}`;

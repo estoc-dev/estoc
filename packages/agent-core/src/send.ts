@@ -20,7 +20,7 @@
 
 import { v7 as uuidv7 } from "uuid";
 
-import type { CommitObject, Held, JsonObject, VaultRuntime } from "@estoc/event-store";
+import type { CommitObject, Held, JsonObject } from "@estoc/event-store";
 import {
   automaticIntent,
   canonicalDidOf,
@@ -30,7 +30,6 @@ import {
   readVaultEvent,
   sameChannel,
   sameIntent,
-  scanVault,
   senderGate,
   storeMessage,
   vaultDraft,
@@ -47,7 +46,6 @@ import {
   type EpochSeconds,
   type EventReference,
   type Execution,
-  type Keys,
   type LocalDidEntity,
   type LocalSend,
   type MessageId,
@@ -62,6 +60,7 @@ import {
 import { LiveAction, initialAction } from "./action.js";
 import { AmbiguousTarget, EntityConflict, NoTarget, UnknownEntity, Unusable } from "./errors.js";
 import { objectsHeld } from "./evidence.js";
+import type { Session } from "./session.js";
 
 /** The content of a message to send: the application body and attachments in wire form, and the control headers the intent freezes. */
 export interface Content {
@@ -117,10 +116,11 @@ type IntentFields = Omit<MessageOut, "senderDidId" | "recipientDid" | keyof Loca
  * return what was committed, going in again only when an object of it
  * is missing; another intent or target under the same ID is refused.
  */
-export async function send(runtime: VaultRuntime, keys: Keys, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
+export async function send(session: Session, target: Target, content: Content, options: SendOptions = {}): Promise<Sent> {
   const messageId = options.messageId ?? (uuidv7() as MessageId);
-  return runtime.locked(async (held) => {
-    const fold = await scanVault(held, keys);
+  return session.locked(async (locked) => {
+    const { held } = locked;
+    const fold = await locked.fold();
     const existing = fold.outbound.outbounds.get(messageId);
     if (existing !== undefined) return { ...(await repeat(held, fold, existing, target, messageId, content)), action: LiveAction.manual(messageId) };
     const { sender, channel, recipientDid } = select(fold, target);

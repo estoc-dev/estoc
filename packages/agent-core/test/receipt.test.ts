@@ -6,7 +6,8 @@ import { InvalidDidDocument, anonymousMessageId, canonicalDidOf, didKeyName, inb
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, packEncrypted, secretsResolverFor, type IMessage } from "../src/protocol/didcomm.js";
-import { AgentTrace, MAX_CONTENT_BYTES, createDid, type Source } from "../src/index.js";
+import { AgentTrace, MAX_CONTENT_BYTES, type Source } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { LiveInput } from "../src/action.js";
 import { routeOf } from "../src/dids.js";
 import { Keyring } from "../src/keyring.js";
@@ -39,9 +40,9 @@ async function closeAll(...parties: Fresh[]): Promise<void> {
 /** A receiver over the vault's own receipt, every delivery it hands the receipt kept in `seen`. */
 async function receiving(holder: Fresh, options: Partial<ReceiverOptions> = {}): Promise<{ receiver: Receiver; seen: Authenticated[] }> {
   const seen: Authenticated[] = [];
-  const record = receiptOf(holder.runtime, holder.keys);
+  const record = receiptOf(holder.session);
   const ring = await Keyring.load(holder.keys, await scanVault(holder.runtime.vault, holder.keys));
-  const receiver = new Receiver(holder.runtime, holder.keys, ring, {
+  const receiver = new Receiver(holder.session, ring, {
     didcomm,
     receipt: (authenticated) => {
       seen.push(authenticated);
@@ -56,7 +57,7 @@ async function receiving(holder: Fresh, options: Partial<ReceiverOptions> = {}):
 async function authenticated(alice: DirectParty, bob: DirectParty, extra: Partial<IMessage> = {}): Promise<Authenticated> {
   const seen: Authenticated[] = [];
   const ring = await Keyring.load(alice.keys, await scanVault(alice.runtime.vault, alice.keys));
-  const receiver = new Receiver(alice.runtime, alice.keys, ring, {
+  const receiver = new Receiver(alice.session, ring, {
     didcomm,
     receipt: async (a) => {
       seen.push(a);
@@ -205,7 +206,7 @@ describe("the receipt", () => {
 
     const anonymous = seen[0] as Authenticated;
     const withProof = { ...anonymous, plaintext: { ...anonymous.plaintext, from_prior: "not-a-proof" } as IMessage, fromPrior: "not-a-proof" };
-    expect(await recordReceipt(alice.runtime, alice.keys, withProof)).toEqual({ outcome: "terminal", reason: "the envelope is anonymous, but its plaintext carries a from_prior" });
+    expect(await recordReceipt(alice.session, withProof)).toEqual({ outcome: "terminal", reason: "the envelope is anonymous, but its plaintext carries a from_prior" });
     expect(await eventsOf(alice, "message.in")).toHaveLength(1);
     await closeAll(alice, bob);
   });
@@ -214,12 +215,12 @@ describe("the receipt", () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     expect((await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT })).outcome).toBe("received");
     receiver.close();
     const plain = await authenticated(alice, bob);
-    const bogus = await recordReceipt(alice.runtime, alice.keys, { ...plain, plaintext: { ...plain.plaintext, from_prior: "not-a-jwt" } as IMessage, fromPrior: "not-a-jwt" });
+    const bogus = await recordReceipt(alice.session, { ...plain, plaintext: { ...plain.plaintext, from_prior: "not-a-jwt" } as IMessage, fromPrior: "not-a-jwt" });
     expect(bogus.outcome).toBe("received");
 
     const [verified, unreadable] = await eventsOf(alice, "message.in");
@@ -235,7 +236,7 @@ describe("the receipt", () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const signing = await bob.keys.signing(didKeyName(BOB_PRIOR, "authentication"));
     const service = (serviceEndpoint: string) => ({ id: "#same", type: "DIDCommMessaging", serviceEndpoint });
     const twoServices = encodeLongForm({ ...prior.inputDocument, service: [service("https://one.example"), service("https://two.example")] });
@@ -270,7 +271,7 @@ describe("the receipt", () => {
     const { alice, bob } = await parties();
     const { receiver } = await receiving(alice);
     const route = routeOf((await foldOf(bob)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, IAT);
     const carried = await receiver.receive({ packed: await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof }), source: DIRECT });
     const fromOld = await receiver.receive({ packed: await sealed(await peerSealer(bob, prior.longFormDid), alice.longFormDid), source: DIRECT });
@@ -283,7 +284,7 @@ describe("the receipt", () => {
 
     const one = await authenticated(alice, bob);
     const other = await authenticated(alice, bob);
-    const outcomes = await Promise.all([one, other].map((a) => recordReceipt(alice.runtime, alice.keys, a)));
+    const outcomes = await Promise.all([one, other].map((a) => recordReceipt(alice.session, a)));
     expect(outcomes.map(({ outcome }) => outcome)).toEqual(["received", "received"]);
     const inOrder = (await foldOf(alice)).set;
     const sequence = [...inOrder.all()]
@@ -298,7 +299,7 @@ describe("the receipt", () => {
     const { alice, bob } = await parties();
     const plain = await authenticated(alice, bob);
     const withPlaintext = (patch: Record<string, unknown>): Authenticated => ({ ...plain, plaintext: { ...plain.plaintext, ...patch } as IMessage });
-    const record = (a: Authenticated) => recordReceipt(alice.runtime, alice.keys, a);
+    const record = (a: Authenticated) => recordReceipt(alice.session, a);
 
     expect(await record(withPlaintext({ return_route: "all" }))).toEqual({ outcome: "terminal", reason: "the plaintext does not read: return_route is not allowed in a vault plaintext" });
     expect(await record(withPlaintext({ body: "text" }))).toEqual({ outcome: "terminal", reason: "the plaintext does not read: body must be a JSON object" });
@@ -316,17 +317,17 @@ describe("the receipt", () => {
     const plain = await authenticated(alice, bob);
     const copy = await freshVault(1, "copy");
     await copy.runtime.ingest(await rawEventsOf(alice, "did.created"));
-    const deferred = await recordReceipt(copy.runtime, copy.keys, plain);
+    const deferred = await recordReceipt(copy.session, plain);
     expect(deferred).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: no mediation arrangement routes through ${alice.mediator.did}` });
     const watch = (deferred as { watch: (fold: VaultFold) => string }).watch;
     const before = watch(await foldOf(copy));
     await copy.runtime.ingest(await rawEventsOf(alice, "mediation.created", "mediation.granted"));
     expect(watch(await foldOf(copy))).not.toBe(before);
-    expect((await recordReceipt(copy.runtime, copy.keys, plain)).outcome).toBe("received");
+    expect((await recordReceipt(copy.session, plain)).outcome).toBe("received");
     expect(await eventsOf(copy, "message.in")).toHaveLength(1);
 
     await alice.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: alice.mediationId, because: "gone" })]);
-    expect(await recordReceipt(alice.runtime, alice.keys, plain)).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: mediation ${alice.mediationId} is retired` });
+    expect(await recordReceipt(alice.session, plain)).toMatchObject({ outcome: "deferred", reason: `${alice.did} may not receive yet: mediation ${alice.mediationId} is retired` });
     expect(await eventsOf(alice, "message.in")).toEqual([]);
     await closeAll(alice, bob, copy);
   });
@@ -337,7 +338,7 @@ describe("the receipt", () => {
     await reloaded(p);
     await holdAddresses(p);
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
-    const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt: receiptOf(p.runtime, p.keys) });
+    const receiver = new Receiver(p.session, p.ring, { didcomm, receipt: receiptOf(p.session) });
     const drain = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
     const account = p.replica.did;
     mediator.queues.set(account, [{ id: "q1", packed: await sealed(await peerSealer(bob), p.longFormDid) }]);

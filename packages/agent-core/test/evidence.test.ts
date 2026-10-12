@@ -5,7 +5,8 @@ import { longToShort, resolveDIDCommDoc, toDIDCommDIDDoc } from "@estoc/did-peer
 import { MemoryVault } from "@estoc/event-store";
 import { didKeyName, objectReader, peerResolution, scanVault, type Did, type DidId, type PublicKey } from "@estoc/vault";
 
-import { UnauthorizedKey, createDid, secretsResolverFor } from "../src/index.js";
+import { UnauthorizedKey, secretsResolverFor } from "../src/index.js";
+import { createDid } from "../src/dids.js";
 import { authorizedKeys, commitResolution, didcommDocumentOf, pinnedResolver, readResolution } from "../src/evidence.js";
 import { Keyring } from "../src/keyring.js";
 import { knownLongForms, resolve, type Resolution } from "../src/resolver.js";
@@ -30,7 +31,7 @@ function keyAgreementKey(resolution: Resolution): PublicKey {
 /** Alice: a vault with one communication DID on a direct route, and her keys in hand. */
 async function alice(): Promise<Fresh & { did: Did; longFormDid: Did; ring: Keyring }> {
   const fresh = await freshVault();
-  const { minted } = await createDid(fresh.runtime, fresh.keys, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
+  const { minted } = await createDid(fresh.session, { kind: "direct", endpoint: "https://alice.example/didcomm" }, DID);
   const ring = await Keyring.load(fresh.keys, await scanVault(fresh.runtime.vault, fresh.keys));
   return { ...fresh, did: minted.did, longFormDid: minted.longFormDid, ring };
 }

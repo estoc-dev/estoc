@@ -8,14 +8,9 @@ import { liveInput } from "../src/action.js";
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
 import { PLAIN_TYP, type IMessage, type Unpacked } from "../src/protocol/didcomm.js";
 import { MESSAGES_RECEIVED } from "../src/protocol/mediation.js";
-import {
-  AgentTrace,
-  ReceiverClosed,
-  ReceiverInUse,
-  createDid,
-  createMediation,
-  type Source,
-} from "../src/index.js";
+import { AgentTrace, ReceiverClosed, ReceiverInUse, type Source } from "../src/index.js";
+import { createDid } from "../src/dids.js";
+import { createMediation } from "../src/mediation.js";
 import { authorizedKeys, commitResolution } from "../src/evidence.js";
 import { Keyring } from "../src/keyring.js";
 import { Pickup } from "../src/pickup.js";
@@ -71,7 +66,7 @@ function recording(answer: () => ReceiptOutcome = () => ({ outcome: "received", 
 
 async function receiverOver(holder: Fresh, options: Omit<ReceiverOptions, "didcomm">): Promise<Receiver> {
   const ring = await Keyring.load(holder.keys, await scanVault(holder.runtime.vault, holder.keys));
-  return new Receiver(holder.runtime, holder.keys, ring, { didcomm, ...options });
+  return new Receiver(holder.session, ring, { didcomm, ...options });
 }
 
 function acknowledging(): { acknowledge: NonNullable<ReceiverOptions["acknowledge"]>; acknowledged: Source[] } {
@@ -161,7 +156,7 @@ describe("the gate before the vault", () => {
     expect(await trace.read({ type: "envelope.open" })).toHaveLength(1);
 
     const route = routeOf((await scanVault(bob.runtime.vault, bob.keys)).dids.entities.get(BOB)!)!;
-    const { minted: prior } = await createDid(bob.runtime, bob.keys, route, BOB_PRIOR);
+    const { minted: prior } = await createDid(bob.session, route, BOB_PRIOR);
     const proof = await signFromPrior(bob.keys, { didId: BOB_PRIOR, longFormDid: prior.longFormDid }, bob.longFormDid, 1_757_700_000);
     const withProof = await sealed(await peerSealer(bob), alice.longFormDid, { from_prior: proof });
     expect((await receiver.receive({ packed: withProof, source: DIRECT })).outcome).toBe("received");
@@ -238,7 +233,7 @@ describe("the gate before the vault", () => {
 
   test("a retired DID still receives while its arrangement stands and waits once the mediation retired; a sender that is the recipient itself is terminal; the host's limits refuse a delivery before the receipt sees it", async () => {
     const { alice, bob } = await mediatedParties();
-    await retireDid(alice.runtime, alice.keys, DID, "rotated");
+    await retireDid(alice.session, DID, "rotated");
     const { receipt, seen } = recording();
     const refusals: string[] = [];
     const receiver = await receiverOver(alice, {
@@ -394,9 +389,9 @@ describe("the gate before the vault", () => {
   test("only a change of what a delivery waits for retries it: a receipt's deferral watches something of the fold and a change elsewhere leaves the delivery unopened; a receipt that throws keeps nothing, and the delivery is taken when it comes again", async () => {
     const { alice, bob } = await parties();
     const mediator = await newMediator();
-    const { mediationId } = (await createMediation(alice.runtime, alice.keys, mediator.did as Did)).data;
+    const { mediationId } = (await createMediation(alice.session, mediator.did as Did)).data;
     await alice.runtime.vault.commit([], [vaultDraft("mediation.granted", { mediationId, routingDid: mediator.did as Did })]);
-    const other = await createDid(alice.runtime, alice.keys, mediatedRoute(mediationId), OTHER);
+    const other = await createDid(alice.session, mediatedRoute(mediationId), OTHER);
     const copy = await copyOf(alice, "did.created");
     const calls: DidId[] = [];
     let failing = false;
@@ -423,7 +418,7 @@ describe("the gate before the vault", () => {
     expect((await receiver.localStateChanged()).map(({ key, outcome }) => [key, outcome])).toEqual([[deliveryKey(toOther), "received"]]);
     expect([calls, await opened()]).toEqual([[DID, OTHER], 2]);
 
-    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct" });
+    await disclose(null, alice.session, DID, { as: "direct" });
     await copy.runtime.ingest(await eventsOf(alice.runtime, "did.disclosed"));
     failing = true;
     expect(await receiver.localStateChanged()).toMatchObject([{ key: deliveryKey(toAlice), outcome: "deferred", reason: "the receipt failed: the disk is full; the delivery is left where it came from" }]);
@@ -472,14 +467,14 @@ describe("the gate before the vault", () => {
 
     const first = receiver.receive(delivery);
     await entered;
-    await createDid(copy.runtime, copy.keys, { kind: "direct", endpoint: OTHER_ENDPOINT });
+    await createDid(copy.session, { kind: "direct", endpoint: OTHER_ENDPOINT });
     expect(await receiver.localStateChanged()).toEqual([]);
     decide();
     expect(await first).toMatchObject({ outcome: "deferred" });
     expect([calls, await opened(), receiver.waiting().length]).toEqual([1, 1, 1]);
     expect(await receiver.localStateChanged()).toEqual([]);
 
-    await disclose(null, alice.runtime, alice.keys, DID, { as: "direct" });
+    await disclose(null, alice.session, DID, { as: "direct" });
     await copy.runtime.ingest(await eventsOf(alice.runtime, "did.disclosed"));
     expect((await receiver.localStateChanged()).map(({ outcome }) => outcome)).toEqual(["deferred"]);
     expect([calls, await opened()]).toEqual([2, 2]);
@@ -560,14 +555,14 @@ describe("the gate before the vault", () => {
     const delivery: Delivery = { packed: await sealed(await peerSealer(bob), alice.longFormDid), source: PICKUP };
 
     expect(await receiver.receive(delivery)).toMatchObject({ outcome: "deferred", reason: "the receipt waits for the recipient's disclosure" });
-    await createDid(copy.runtime, copy.keys, { kind: "direct", endpoint: OTHER_ENDPOINT });
+    await createDid(copy.session, { kind: "direct", endpoint: OTHER_ENDPOINT });
     failOnce();
     expect(await receiver.localStateChanged()).toMatchObject([{ outcome: "deferred", reason: "the vault is not read to tell what changed; the delivery is left where it came from" }]);
     expect([receiver.waiting(), calls, await opened()]).toEqual([[], 1, 1]);
 
     const second = receiver.receive(delivery);
     await entered;
-    await createDid(copy.runtime, copy.keys, { kind: "direct", endpoint: CAROL_ENDPOINT });
+    await createDid(copy.session, { kind: "direct", endpoint: CAROL_ENDPOINT });
     expect(await receiver.localStateChanged()).toEqual([]);
     failOnce();
     decide();
@@ -683,7 +678,7 @@ describe("the receiver's lifecycle", () => {
       return { outcome: "received", cid: RECORDED, first: true, live: LIVE };
     };
     const receiver = await receiverOver(alice, { receipt });
-    expect(() => new Receiver(alice.runtime, alice.keys, null as unknown as Keyring, { didcomm, receipt })).toThrow(ReceiverInUse);
+    expect(() => new Receiver(alice.session, null as unknown as Keyring, { didcomm, receipt })).toThrow(ReceiverInUse);
     const sealer = await peerSealer(bob);
     const delivery: Delivery = { packed: await sealed(sealer, alice.longFormDid), source: PICKUP };
     const first = receiver.receive(delivery);
@@ -731,7 +726,7 @@ describe("the gate over pickup", () => {
     const { mediator, p, longFormDid, account } = await mediated();
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const { receipt, seen } = recording();
-    const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt });
+    const receiver = new Receiver(p.session, p.ring, { didcomm, receipt });
     const pickup = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
     const sealer = await peerSealer(bob);
     const packed = await sealed(sealer, longFormDid);
@@ -760,7 +755,7 @@ describe("the gate over pickup", () => {
     const bob = await directParty(2, BOB_ENDPOINT, BOB);
     const { receipt, seen } = recording();
     const trace = await AgentTrace.open(p.runtime.local);
-    const receiver = new Receiver(p.runtime, p.keys, p.ring, { didcomm, receipt, trace });
+    const receiver = new Receiver(p.session, p.ring, { didcomm, receipt, trace });
     const pickup = new Pickup(p.inbox, receiver.pickupHandle(p.mediationId));
     const packed = await sealed(await peerSealer(bob), longFormDid);
     const roundTrip = p.inbox.roundTrip.bind(p.inbox);
