@@ -9,7 +9,7 @@ const ok = (name: MethodName, side: "input" | "result", value: unknown) => metho
 
 describe("the method table", () => {
   it("names each public operation once, and nothing else is a method", () => {
-    expect(METHOD_NAMES).toHaveLength(36);
+    expect(METHOD_NAMES).toHaveLength(37);
     expect(new Set(METHOD_NAMES).size).toBe(METHOD_NAMES.length);
     expect(isMethodName("send")).toBe(true);
     expect(isMethodName("boot")).toBe(false);
@@ -38,7 +38,7 @@ describe("the method table", () => {
     for (const name of METHOD_NAMES) expect([...COMMON_ERROR_CODES, ...methods[name].errors]).toContain("ResourceLimit");
   });
 
-  it.each(["attach", "refresh", "lock", "exportBackup", "explainedRestore", "publishSnapshotLink", "snapshotLinks", "publicDid", "reconnect", "traceLevel"] as const)("%s takes an empty input", (name) => {
+  it.each(["attach", "refresh", "lock", "exportBackup", "explainedRestore", "snapshotLinks", "publicDid", "reconnect", "traceLevel"] as const)("%s takes an empty input", (name) => {
     expect(ok(name, "input", {})).toBe(true);
     expect(ok(name, "input", null)).toBe(false);
     expect(ok(name, "input", [])).toBe(false);
@@ -221,25 +221,41 @@ describe("snapshot links", () => {
   const placedAt = "2026-10-10T12:00:00.000Z";
   const retainUntil = "2026-11-09T12:00:00.000Z";
 
-  it("restore from the link with the passphrase: an HTTP URL, a name, and a key of 32 bytes", () => {
+  it("restore from the link with the passphrase, and import from it alone: an HTTP URL, a name, and a key of 32 bytes", () => {
     expect(ok("restoreFromLink", "input", { link, passphrase: "pw" })).toBe(true);
     expect(ok("restoreFromLink", "input", { link })).toBe(false);
+    expect(ok("importFromLink", "input", { link })).toBe(true);
+    expect(ok("importFromLink", "input", {})).toBe(false);
     for (const bad of [{ url: "ftp://mediator.example/b/1" }, { url: "/b/1" }, { hash: "" }, { key: "A".repeat(43) + "=" }, { key: "A".repeat(42) }, { key: "A".repeat(42) + "B" }, { key: "+".repeat(43) }]) {
       expect(ok("restoreFromLink", "input", { link: { ...link, ...bad }, passphrase: "pw" })).toBe(false);
+      expect(ok("importFromLink", "input", { link: { ...link, ...bad } })).toBe(false);
     }
   });
 
-  it("are listed pending with no link, answered or not, and published with the link, when the mediator lets it go and whether the daemon can still revoke it", () => {
+  it("answer an import with what the merge brought, counted", () => {
+    expect(ok("importFromLink", "result", { added: 3, duplicates: 7, objects: 1, repaired: 0, renewed: false })).toBe(true);
+    expect(ok("importFromLink", "result", null)).toBe(false);
+  });
+
+  it("are published of the events a new replica enrolls from, or of the whole vault", () => {
+    expect(ok("publishSnapshotLink", "input", { selection: "enrollment" })).toBe(true);
+    expect(ok("publishSnapshotLink", "input", { selection: "all" })).toBe(true);
+    expect(ok("publishSnapshotLink", "input", {})).toBe(false);
+    expect(ok("publishSnapshotLink", "input", { selection: "history" })).toBe(false);
+  });
+
+  it("are listed pending with no link, answered or not, and published with the link, what each carries, when the mediator lets it go and whether the daemon can still revoke it", () => {
     const records = [
-      { status: "pending", hash: "b1", placedAt, retainUntil: null },
-      { status: "pending", hash: "b2", placedAt, retainUntil },
-      { status: "published", hash: link.hash, placedAt, retainUntil, revocable: true, link },
-      { status: "published", hash: "b3", placedAt, retainUntil, revocable: false, link: { ...link, hash: "b3" } },
+      { status: "pending", hash: "b1", selection: "enrollment", placedAt, retainUntil: null },
+      { status: "pending", hash: "b2", selection: "all", placedAt, retainUntil },
+      { status: "published", hash: link.hash, selection: "enrollment", placedAt, retainUntil, revocable: true, link },
+      { status: "published", hash: "b3", selection: "all", placedAt, retainUntil, revocable: false, link: { ...link, hash: "b3" } },
     ];
     expect(ok("snapshotLinks", "result", { links: records })).toBe(true);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil: null, revocable: true, link }] })).toBe(false);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil, link }] })).toBe(false);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, placedAt, retainUntil }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, selection: "all", placedAt, retainUntil: null, revocable: true, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, selection: "all", placedAt, retainUntil, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil, revocable: true, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, selection: "all", placedAt, retainUntil }] })).toBe(false);
     expect(ok("publishSnapshotLink", "result", records[2])).toBe(true);
     expect(ok("publishSnapshotLink", "result", records[1])).toBe(false);
     expect(ok("publishSnapshotLink", "result", { ...records[2], placedAt: "2026-10-10" })).toBe(false);

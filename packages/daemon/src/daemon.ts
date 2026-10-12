@@ -1,8 +1,9 @@
 import { v7 as uuidv7 } from "uuid";
-import { DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, exportVault, importVault, openPortable, restoreVault, type SqliteDriver, type SqliteVault } from "@estoc/event-store";
-import type { Hold, Lines, Phase, Snapshot } from "@estoc/daemon-api/contract";
+import { AnchorMismatch, DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, exportVault, importVault, openPortable, restoreVault, type SqliteDriver, type SqliteVault } from "@estoc/event-store";
+import type { Hold, Lines, Phase, Snapshot, SnapshotSelection } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
+  ENROLLMENT_EVENT_TYPES,
   Keys,
   PING_TYPE,
   canonicalDidOf,
@@ -61,7 +62,7 @@ import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
 import { localDidRecords, mediationRecords, project } from "./projection.js";
 import { Publisher, type NonOpenValue, type Publishing, type Source } from "./publisher.js";
-import { SnapshotLinks, type Put } from "./snapshot-links.js";
+import { SnapshotLinks, type Put, type SnapshotLink } from "./snapshot-links.js";
 
 /** The daemon as its host holds it: the domain's interface, and the publisher a view's session attaches to. */
 export interface DaemonCore extends Daemon {
@@ -112,6 +113,8 @@ const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
 const PUT_REFUSALS = new Set([BLOB_TOO_LARGE, BLOB_QUOTA, BLOB_REFUSED]);
 /** The queue a runtime's snapshot puts and revocations wait their turns in: a revocation comes after a put under way has settled, so nothing that put writes lands after it. */
 const SNAPSHOT_PUTS = "snapshot-puts";
+/** The event types a snapshot of each selection carries, every one where none are named. */
+const SELECTED_TYPES: Record<SnapshotSelection, ReadonlySet<string> | undefined> = { enrollment: ENROLLMENT_EVENT_TYPES, all: undefined };
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
@@ -226,7 +229,7 @@ function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
 
 /** Why a link's snapshot did not come to plaintext of at most `maxBytes`, refused: nothing is written before it does. */
 function unread(err: unknown, maxBytes: number): Refused {
-  if (err instanceof BlobTooLarge) return new TooLarge(`the snapshot is over the ${maxBytes} bytes this daemon restores`);
+  if (err instanceof BlobTooLarge) return new TooLarge(`the snapshot is over the ${maxBytes} bytes this daemon reads from a link`);
   if (err instanceof BlobTransferFailed) return new Unmet(err.status === 404 ? "no snapshot is at that link any more: it was revoked, or the mediator has let it go" : `the snapshot could not be read: its store answered ${err.status}`);
   if (err instanceof BlobMismatch) return new Unmet("the bytes at that link are not the snapshot it names");
   if (err instanceof BlobUnopened) return new Unmet("the link's key does not open the snapshot");
@@ -667,16 +670,17 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   }
 
   /**
-   * The running vault's portable snapshot, read off the file it is
-   * exported to and refused whole when its events and objects, or that
-   * file, come to more than `maxBytes`: `bound` is whose bound that is,
-   * for the refusal to say. Runs in the files' turn.
+   * The running vault's portable snapshot of `selection`, read off the
+   * file it is exported to and refused whole when its events and
+   * objects, or that file, come to more than `maxBytes`: `bound` is
+   * whose bound that is, for the refusal to say. Runs in the files'
+   * turn.
    */
-  async function exported({ session }: Open, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
+  async function exported({ session }: Open, selection: SnapshotSelection, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
     const store = files();
     await store.remove(EXPORT_FILE);
     try {
-      await exportVault(session.runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: session.heldRoots(), maxBytes }).catch((err: unknown) => {
+      await exportVault(session.runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: session.heldRoots(), types: SELECTED_TYPES[selection], maxBytes }).catch((err: unknown) => {
         if (err instanceof SnapshotTooLarge) throw new TooLarge(`the ${what}'s events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} ${bound}`);
         throw err;
       });
@@ -686,6 +690,22 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       return bytes;
     } finally {
       await store.remove(EXPORT_FILE);
+    }
+  }
+
+  /**
+   * The snapshot a link names, read and opened: at most `maxBytes` of
+   * plaintext and the sealing beside it, within ten minutes, and
+   * checked against its name first. The link's URL is the word of
+   * whoever handed it over: no redirect is followed, so the host's
+   * fetch checks the one address it reaches.
+   */
+  async function snapshotAt(link: SnapshotLink, maxBytes: number): Promise<Uint8Array> {
+    try {
+      const sealed = await readBlob(link.url, { maxBytes: maxBytes + SEAL_OVERHEAD, timeoutMs: SNAPSHOT_READ_TIMEOUT_MS, fetch: (input, init) => hostFetch(input, { ...init, redirect: "error" }) });
+      return await openBlob(sealed, link);
+    } catch (err) {
+      throw unread(err, maxBytes);
     }
   }
 
@@ -740,6 +760,56 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       }
       await host.cacheSeedKey(seedKey);
       await start(session, seedKey);
+    });
+
+  /** A portable snapshot's bytes merged into the open vault; the agent goes on over the merged vault. */
+  const mergeSnapshot = (bytes: Uint8Array) =>
+    exclusively(async () => {
+      const merge = (session: VaultSession) =>
+        withSnapshot(MERGE_SOURCE, bytes, async (driver) => {
+          const source = openPortable(driver);
+          try {
+            return await importVault(session.runtime, source, { retainedRoots: session.retainedRoots() });
+          } catch (err) {
+            if (err instanceof AnchorMismatch) throw new Unmet("that snapshot is of another vault, and is not merged into this one");
+            throw err;
+          } finally {
+            source.close();
+          }
+        });
+      const counted = ({ added, duplicates, objects, repaired }: Awaited<ReturnType<typeof merge>>, renewed: boolean) => ({ added, duplicates, objects, repaired, renewed });
+      const running = vault();
+      const imported = await merge(running.session).catch((err: unknown) => {
+        if (err instanceof ForkedAuthor) return null;
+        throw err;
+      });
+      if (imported !== null) {
+        // The agent read its keys and its lines before the merge: another over the merged vault takes its place.
+        await detach(running.attached);
+        running.attached = attach(running.session, running.trace);
+        await settle();
+        connect(running);
+        return counted(imported, false);
+      }
+      // The snapshot went on from a copy of this very runtime, or this one from a copy of the snapshot's: both wrote under one replica ID. Nothing was merged. This runtime takes a fresh one, its history as it is, and the snapshot's events then come in under the ID they were written with.
+      const { seedKey } = running;
+      await stop();
+      let renewed: VaultSession;
+      try {
+        renewed = await unlocked(seedKey, { resetIdentity: true });
+      } catch (failed) {
+        await look();
+        throw failed;
+      }
+      // No agent runs until the merge is over: one over the history as it stood would receive against keys the snapshot is still bringing, and acknowledge as discarded what was for them.
+      try {
+        return counted(await merge(renewed), true);
+      } finally {
+        await start(renewed, seedKey).catch(async (failed: unknown) => {
+          await look();
+          throw failed;
+        });
+      }
     });
 
   host.onOnline?.(() => {
@@ -830,15 +900,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     async restoreFromLink(link, passphrase, maxBytes) {
       // Nothing is read for a daemon that could not restore it; the restore looks again once the snapshot is in.
       await exclusively(refuseOccupied);
-      let snapshot: Uint8Array;
-      try {
-        // The link's URL is the word of whoever handed it over: no redirect is followed, so the host's fetch checks the one address it reaches.
-        const sealed = await readBlob(link.url, { maxBytes: maxBytes + SEAL_OVERHEAD, timeoutMs: SNAPSHOT_READ_TIMEOUT_MS, fetch: (input, init) => hostFetch(input, { ...init, redirect: "error" }) });
-        snapshot = await openBlob(sealed, link);
-      } catch (err) {
-        throw unread(err, maxBytes);
-      }
-      await restore(snapshot, passphrase);
+      await restore(await snapshotAt(link, maxBytes), passphrase);
+    },
+
+    async importFromLink(link, maxBytes) {
+      // Nothing is read for a daemon with no vault open to merge it into; the merge looks again once the snapshot is in.
+      vault();
+      return mergeSnapshot(await snapshotAt(link, maxBytes));
     },
 
     async explainedRestore() {
@@ -898,13 +966,13 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     exportBackup: (maxBytes) =>
       exclusively(async () => {
         const running = vault();
-        const bytes = await exported(running, "backup", maxBytes, "this daemon delivers");
+        const bytes = await exported(running, "all", "backup", maxBytes, "this daemon delivers");
         const label = (await running.session.fold()).label ?? "";
         const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
         return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
       }),
 
-    async publishSnapshotLink() {
+    async publishSnapshotLink(selection) {
       const running = vault();
       const { attached, session } = running;
       const { runtime } = session;
@@ -917,7 +985,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
       const snapshot = await exclusively(() => {
         if (open !== running) throw new WrongPhase("the vault was let go of while its snapshot was asked for");
-        return exported(running, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
+        return exported(running, selection, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
       });
       const sealed = await sealBlob(snapshot);
       return during(attached, () =>
@@ -925,7 +993,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
           const links = new SnapshotLinks(runtime.local.options, runtime.author);
           const placedAt = Date.now();
           await links.prune(placedAt);
-          const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, placedAt };
+          const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, selection, placedAt };
           await links.keep(asked);
           let placement: Awaited<ReturnType<typeof blobs.put>>;
           try {
@@ -968,51 +1036,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
       return new SnapshotLinks(runtime.local.options, runtime.author).list(Date.now());
     },
 
-    mergeBackup: (bytes) =>
-      exclusively(async () => {
-        const merge = (session: VaultSession) =>
-          withSnapshot(MERGE_SOURCE, bytes, async (driver) => {
-            const source = openPortable(driver);
-            try {
-              return await importVault(session.runtime, source, { retainedRoots: session.retainedRoots() });
-            } finally {
-              source.close();
-            }
-          });
-        const counted = ({ added, duplicates, objects, repaired }: Awaited<ReturnType<typeof merge>>, renewed: boolean) => ({ added, duplicates, objects, repaired, renewed });
-        const running = vault();
-        const imported = await merge(running.session).catch((err: unknown) => {
-          if (err instanceof ForkedAuthor) return null;
-          throw err;
-        });
-        if (imported !== null) {
-          // The agent read its keys and its lines before the merge: another over the merged vault takes its place.
-          await detach(running.attached);
-          running.attached = attach(running.session, running.trace);
-          await settle();
-          connect(running);
-          return counted(imported, false);
-        }
-        // The backup went on from a copy of this very runtime, or this one from a copy of the backup's: both wrote under one replica ID. Nothing was merged. This runtime takes a fresh one, its history as it is, and the backup's events then come in under the ID they were written with.
-        const { seedKey } = running;
-        await stop();
-        let renewed: VaultSession;
-        try {
-          renewed = await unlocked(seedKey, { resetIdentity: true });
-        } catch (failed) {
-          await look();
-          throw failed;
-        }
-        // No agent runs until the merge is over: one over the history as it stood would receive against keys the backup is still bringing, and acknowledge as discarded what was for them.
-        try {
-          return counted(await merge(renewed), true);
-        } finally {
-          await start(renewed, seedKey).catch(async (failed: unknown) => {
-            await look();
-            throw failed;
-          });
-        }
-      }),
+    mergeBackup: mergeSnapshot,
 
     setMediator: (mediatorDid) =>
       act((agent, { session }) =>

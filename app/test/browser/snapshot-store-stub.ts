@@ -1,22 +1,31 @@
 import { reactive } from "vue";
 
 import type { OpenedSnapshotLink } from "../../src/core/store.js";
-import type { SnapshotLink, SnapshotLinkRecord } from "../../src/core/types.js";
+import type { MergeResult, Phase, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "../../src/core/types.js";
 
 /**
- * Stands in for the app's store where a vault is restored from a link and
- * where links are made: a daemon of the test's, which holds the links it
- * is given and writes down what it is asked. A publish here leaves its
- * pending link behind and fails, as an upload cut short does.
+ * Stands in for the app's store where a vault is restored from a link,
+ * where links are made and where they are imported: a daemon of the
+ * test's, which holds the links it is given and writes down what it is
+ * asked. A publish here leaves its pending link behind and fails, as an
+ * upload cut short does; an import answers `merged`, or fails with
+ * `unmerged` while that is set.
  */
 export const daemon = {
   calls: [] as { name: string; args: unknown[] }[],
   links: [] as SnapshotLinkRecord[],
   /** why the list cannot be read, while it cannot */
   unlistable: null as string | null,
+  merged: { added: 3, duplicates: 7, objects: 0, repaired: 0, renewed: false } as MergeResult,
+  /** why an import fails, while it does */
+  unmerged: null as string | null,
 };
 
-export const state = reactive({ pendingSnapshotLink: null as OpenedSnapshotLink | null, away: null as string | null });
+export const state = reactive({ pendingSnapshotLink: null as OpenedSnapshotLink | null, away: null as string | null, vault: { phase: "onboarding" as Phase } });
+
+export function dismissPendingSnapshotLink(): void {
+  state.pendingSnapshotLink = null;
+}
 
 export const heldNow = () => () => true;
 
@@ -36,10 +45,16 @@ export async function snapshotLinks(): Promise<SnapshotLinkRecord[]> {
   return [...daemon.links];
 }
 
-export async function publishSnapshotLink(): Promise<never> {
-  daemon.calls.push({ name: "publishSnapshotLink", args: [] });
-  daemon.links.unshift({ status: "pending", hash: "bciqcutshort", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z" } as SnapshotLinkRecord);
+export async function publishSnapshotLink(selection: SnapshotSelection): Promise<never> {
+  daemon.calls.push({ name: "publishSnapshotLink", args: [selection] });
+  daemon.links.unshift({ status: "pending", hash: `bciqcutshort${daemon.links.length}`, selection, placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z" } as SnapshotLinkRecord);
   throw new Error("the upload was cut short");
+}
+
+export async function importFromLink(input: string): Promise<MergeResult> {
+  daemon.calls.push({ name: "importFromLink", args: [input] });
+  if (daemon.unmerged !== null) throw new Error(daemon.unmerged);
+  return daemon.merged;
 }
 
 export async function revokeSnapshotLink(hash: string): Promise<void> {

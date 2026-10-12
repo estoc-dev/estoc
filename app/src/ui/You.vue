@@ -7,12 +7,13 @@ import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
 import AddDevice from "./AddDevice.vue";
 import Icon from "./Icon.vue";
+import ImportLink from "./ImportLink.vue";
 import MediatorForm from "./MediatorForm.vue";
 import { useStatus } from "./status.js";
 import Topbar from "./Topbar.vue";
 import type { TraceLevel } from "../core/types.js";
 import { useUnconfirmed } from "./unconfirmed.js";
-import { bytesOf, initialOfName, shortDid, whenOf } from "./util.js";
+import { bytesOf, initialOfName, mergedNote, shortDid, whenOf } from "./util.js";
 
 const version = __APP_VERSION__;
 const snapshot = computed(() => openIndex()?.snapshot ?? null);
@@ -108,12 +109,7 @@ async function importBackup(event: Event) {
   try {
     const backup = await bytesOf(file);
     if (!held()) return;
-    const merged = await mergeBackup(backup);
-    importNote.value =
-      merged.added === 0 && merged.objects === 0
-        ? "Nothing new in that backup."
-        : `Merged ${merged.added} new event${merged.added === 1 ? "" : "s"} and ${merged.objects} object${merged.objects === 1 ? "" : "s"}.`;
-    if (merged.renewed) importNote.value += " That backup and this vault were copies of one another that both went on being written; this one now writes under a fresh ID of its own, its history unchanged.";
+    importNote.value = mergedNote(await mergeBackup(backup), "that backup");
   } catch (err) {
     importNote.value = reasonOf(err);
   } finally {
@@ -242,10 +238,11 @@ function forget() {
             <input ref="importInput" type="file" accept=".sqlite,application/vnd.sqlite3" :disabled="importing" data-import @change="importBackup" />
           </label>
           <p v-if="importNote" class="note" style="padding: 0 16px 12px" data-import-note>{{ importNote }}</p>
+          <ImportLink />
           <button class="row" type="button" :disabled="mediation === null" data-add-device @click="addingDevice = true">
             <span class="row-main">
               <span>Add a device</span>
-              <span class="row-sub">{{ mediation === null ? "once a mediator is chosen" : "a link that restores this vault there" }}</span>
+              <span class="row-sub">{{ mediation === null ? "once a mediator is chosen" : "links that set it up and bring your history over" }}</span>
             </span>
             <Icon name="chevron" class="chevron" :size="20" />
           </button>

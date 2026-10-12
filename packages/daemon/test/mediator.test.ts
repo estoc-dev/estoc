@@ -190,7 +190,7 @@ test(
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
     await until("alice holds bob's Ping", () => holdsPing(alice));
 
-    const { link } = await alice.daemon.publishSnapshotLink();
+    const { link } = await alice.daemon.publishSnapshotLink("all");
     const elsewhere = daemonAt(at, await folder());
     await elsewhere.daemon.boot();
     await elsewhere.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES);

@@ -9,7 +9,7 @@ import type { ChannelId, ContactId, DidId, EventCid, ExecutionId, Hold, Mediatio
 import type { LinesState } from "./lines.js";
 import type { Invitation, TraceLevel } from "./protocol.js";
 import type { MessageContent } from "./records.js";
-import type { PublishedSnapshotLink, SnapshotLink, SnapshotLinkRecord } from "./snapshot-links.js";
+import type { PublishedSnapshotLink, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "./snapshot-links.js";
 import type { RevisionMarker, State } from "./state.js";
 
 /** The input of a method that takes no arguments. */
@@ -116,7 +116,7 @@ export interface MergeResult {
   duplicates: number;
   objects: number;
   repaired: number;
-  /** the backup and this vault had both written under one replica ID, and this one took a fresh ID before the merge */
+  /** the snapshot and this vault had both written under one replica ID, and this one took a fresh ID before the merge */
   renewed: boolean;
 }
 
@@ -137,14 +137,16 @@ export interface Methods {
   exportBackup: Method<Empty, { name: string; bytes: Uint8Array }>;
   mergeBackup: Method<{ backup: Uint8Array }, MergeResult>;
   explainedRestore: Method<Empty, null>;
-  /** The vault's snapshot sealed and put at the selected mediator as this replica's blob, and the link that restores it; one over what a blob there holds once sealed is refused whole, under the common `ResourceLimit`. */
-  publishSnapshotLink: Method<Empty, PublishedSnapshotLink>;
+  /** The vault's snapshot of `selection` sealed and put at the selected mediator as this replica's blob, and the link that restores or imports it; one over what a blob there holds once sealed is refused whole, under the common `ResourceLimit`. */
+  publishSnapshotLink: Method<{ selection: SnapshotSelection }, PublishedSnapshotLink>;
   /** The blob a snapshot of this daemon's was put as, pending or published, deleted at the mediator and its record forgotten: its link reads nothing from then on. A publish of it still under way is waited for first; one that is not `revocable` is refused, and stays listed. */
   revokeSnapshotLink: Method<{ hash: string }, null>;
   /** The snapshots this daemon put that the mediator keeps or may keep, by when they were put: published ones until they expire, pending ones until they are revoked or expire. */
   snapshotLinks: Method<Empty, { links: SnapshotLinkRecord[] }>;
   /** A vault restored from a link as `restoreIdentity` restores one from a backup: the sealed snapshot read, checked against its name and opened first. One over `maxBackupBytes` is refused under the common `ResourceLimit` once the read runs past it, and nothing is written. */
   restoreFromLink: Method<{ link: SnapshotLink; passphrase: string }, null>;
+  /** A link's snapshot merged into the open vault as `mergeBackup` merges a backup, read as `restoreFromLink` reads it: nothing is read where no vault is open, and nothing is written when the read, the opening or the merge fails. A merge of it again brings nothing. */
+  importFromLink: Method<{ link: SnapshotLink }, MergeResult>;
 
   /** The arrangement with that mediator, made and enrolled in when none stands, and selected for new DIDs. */
   setMediator: Method<{ mediatorDid: string }, { mediationId: MediationId }>;

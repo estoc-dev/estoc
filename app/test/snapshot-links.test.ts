@@ -62,7 +62,7 @@ vi.stubGlobal("history", {
 vi.stubGlobal("navigator", { storage: { getDirectory: () => Promise.resolve({}), persist: () => Promise.resolve(false) } });
 
 opened(snapshotLinkUrl("http://app.test/?lang=en", link));
-const { boot, createIdentity, publishSnapshotLink, restoreFromLink, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
+const { boot, createIdentity, importFromLink, publishSnapshotLink, restoreFromLink, snapshotLinkOf, snapshotLinks, state } = await import("../src/core/store.js");
 await boot();
 
 const heldLink = (): SnapshotLink | null => {
@@ -114,6 +114,26 @@ describe("a restore from a link", () => {
   });
 });
 
+describe("an import from a link", () => {
+  it("hands the daemon the link read from the text and answers what the merge brought", async () => {
+    const merged = { added: 3, duplicates: 7, objects: 1, repaired: 0, renewed: false };
+    fake.answers.set("importFromLink", () => Promise.resolve(merged));
+    expect(await importFromLink(`  ${snapshotLinkUrl("https://elsewhere.test/", link)}\n`)).toEqual(merged);
+    expect(fake.calls.at(-1)).toEqual({ method: "importFromLink", input: { link } });
+  });
+
+  it("asks nothing of the daemon for text that holds no link", async () => {
+    const before = fake.calls.length;
+    await expect(importFromLink("https://elsewhere.test/#other=1")).rejects.toThrow("that URL carries no snapshot link");
+    expect(fake.calls.length).toBe(before);
+  });
+
+  it("points to a backup file when the copy is over what the daemon reads from a link", async () => {
+    fake.answers.set("importFromLink", () => Promise.reject(refused("ResourceLimit", "the snapshot is over the 100 bytes this daemon reads from a link")));
+    await expect(importFromLink(snapshotLinkOf(link))).rejects.toThrow("this daemon reads from a link. Export a backup on the device that made the link");
+  });
+});
+
 describe("a link made here", () => {
   it("is handed over at this page's address, whatever its query, and reads back as the link", () => {
     const url = snapshotLinkOf(link);
@@ -121,13 +141,20 @@ describe("a link made here", () => {
     expect(parseSnapshotLink(url)).toEqual(link);
   });
 
+  it("is asked of the daemon with what it carries", async () => {
+    const published = { status: "published", hash: link.hash, selection: "enrollment", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z", revocable: true, link };
+    fake.answers.set("publishSnapshotLink", () => Promise.resolve(published));
+    expect(await publishSnapshotLink("enrollment")).toEqual(published);
+    expect(fake.calls.at(-1)).toEqual({ method: "publishSnapshotLink", input: { selection: "enrollment" } });
+  });
+
   it("points to a backup file when the vault is too large for one", async () => {
     fake.answers.set("publishSnapshotLink", () => Promise.reject(refused("ResourceLimit", "the snapshot's events and objects come to 120 bytes, over the 100 a blob at the mediator holds once sealed")));
-    await expect(publishSnapshotLink()).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
+    await expect(publishSnapshotLink("all")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
   });
 
   it("is listed newest first", async () => {
-    const made = (hash: string, placedAt: string): SnapshotLinkRecord => ({ status: "pending", hash, placedAt, retainUntil: null }) as SnapshotLinkRecord;
+    const made = (hash: string, placedAt: string): SnapshotLinkRecord => ({ status: "pending", hash, selection: "all", placedAt, retainUntil: null }) as SnapshotLinkRecord;
     fake.answers.set("snapshotLinks", () => Promise.resolve({ links: [made("older", "2026-10-01T00:00:00Z"), made("newer", "2026-10-02T00:00:00Z")] }));
     expect((await snapshotLinks()).map((record) => record.hash)).toEqual(["newer", "older"]);
   });
