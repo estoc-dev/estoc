@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, test } from "vitest";
 
-import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, canonicalDid, type Did, type DidId, type MessageId } from "@estoc/vault";
+import { PING_RESPONSE_EFFECT, PING_TYPE, PROBLEM_REPORT_TYPE, PURE_ACK_EFFECT, ROTATION_NOTIFICATION_EFFECT, canonicalDid, signReplicaGrant, vaultDraft, type Did, type DidId, type MessageId } from "@estoc/vault";
 
 import { BASIC_MESSAGE } from "../../src/protocol/basicmessage.js";
-import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, LocalRecords, type AgentOptions, type Handler } from "../../src/index.js";
+import { EXECUTION_REGISTER, EXECUTION_REGISTERED, MESSAGES_RECEIVED, LocalRecords, createMediation, type AgentOptions, type Handler } from "../../src/index.js";
 import { FORWARD } from "../../src/protocol/spec.js";
 import type { FakeMediator } from "../fake-mediator.js";
 import { newMediator } from "../helpers.js";
@@ -344,6 +344,27 @@ describe("a replica that cannot read its registration of an input", () => {
     await alice.agent.settled();
     expect(alice.inbounds[0]).toMatchObject({ responder: { status: "unknown", because: "execution-registered does not list this replica" }, reacted: null });
     expect([(await foldOf(alice)).set.of("message.out"), await leftBy(alice), (await alice.agent.pending()).missingResponses.length]).toEqual([[], [null], 2]);
+  });
+});
+
+describe("a replica whose grants disagree on its arrangement", () => {
+  test("registers for no input and answers none, asking nothing of the mediator: the input's outputs are listed for the user", { timeout: LONG }, async () => {
+    const mediator = await newMediator();
+    const elsewhere = await newMediator(201, "https://elsewhere.example/");
+    const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
+    const bob = await run(mediator, 2, BOB, { privateAddresses: false });
+    const other = await createMediation(alice.runtime, alice.keys, elsewhere.did as Did);
+    const grant = await signReplicaGrant(alice.keys, other.data, alice.runtime.author);
+    await alice.runtime.vault.commit([], [vaultDraft("replica.created", { replicaId: alice.runtime.author, mediationId: other.data.mediationId, grant })]);
+    expect((await foldOf(alice)).replicas.replicas.get(alice.runtime.author)).toMatchObject({ status: "conflict", mediationId: null });
+
+    await bob.agent.send(toAlice(alice, bob), ping, { messageId: PING });
+    await until("alice has the Ping", () => alice.inbounds.length === 1);
+    await alice.agent.settled();
+    expect(alice.inbounds[0]).toMatchObject({ responder: { status: "unknown", because: expect.stringMatching(/is not usable/) }, reacted: null });
+    expect(seen(mediator, EXECUTION_REGISTER)).toBe(0);
+    expect([(await foldOf(alice)).set.of("message.out"), await leftBy(alice)]).toEqual([[], [null]]);
+    expect(await owed(alice)).toEqual([PING_RESPONSE_EFFECT, PURE_ACK_EFFECT]);
   });
 });
 

@@ -2,11 +2,13 @@
  * blob-store/1.0, the client side. Keeping and deleting a blob go to the
  * mediator over a link, as whoever the link speaks for: the blob is that
  * DID's, counted against its quota, and ends with its standing at the
- * mediator. The bytes go over plain HTTP: uploaded where a put says,
- * over the link's own transport so that nothing goes once the link's
- * holder has closed, and read back from the blob's URL. Reading needs
- * no identity: anyone with the URL may read the blob, its bytes being
- * ciphertext under a key the store never sees.
+ * mediator. The link is asked for at each request, so that whoever
+ * hands it out decides, request by request, whether one may go. The
+ * bytes go over plain HTTP: uploaded where a put says, over the link's
+ * own transport so that nothing goes once the link's holder has closed,
+ * and read back from the blob's URL. Reading needs no identity: anyone
+ * with the URL may read the blob, its bytes being ciphertext under a key
+ * the store never sees.
  */
 
 import { BlobTooLarge, BlobTransferFailed, MediatorRefused } from "./errors.js";
@@ -43,7 +45,7 @@ export class BlobStore {
   private readonly timeoutMs: number;
 
   constructor(
-    private readonly link: MediatorLink,
+    private readonly link: () => Promise<MediatorLink>,
     options: BlobStoreOptions = {}
   ) {
     this.timeoutMs = options.timeoutMs ?? 15_000;
@@ -51,9 +53,10 @@ export class BlobStore {
 
   /** The limits the mediator publishes at its HTTP endpoint; null when it keeps no blobs. */
   async limits(): Promise<BlobLimits | null> {
+    const link = await this.link();
     const signal = AbortSignal.timeout(this.timeoutMs);
     const described = await bounded(signal, async () => {
-      const response = await this.link.request(this.link.http(), { headers: { accept: "application/json" }, signal });
+      const response = await link.request(link.http(), { headers: { accept: "application/json" }, signal });
       if (!response.ok) {
         letGo(response.body);
         throw new MediatorRefused(`the mediator answered ${response.status} to a request for its limits`);
@@ -74,7 +77,7 @@ export class BlobStore {
    * `BLOB_TOO_LARGE`, `BLOB_QUOTA` or `BLOB_REFUSED`.
    */
   async put(hash: string, size: number): Promise<BlobPlacement> {
-    const reply = await control(this.link, BLOB_PUT, { hash, size }, BLOB_PUT_RESULT);
+    const reply = await control(await this.link(), BLOB_PUT, { hash, size }, BLOB_PUT_RESULT);
     const { hash: named, url, retain_until: retainUntil, upload } = reply.body as Record<string, unknown>;
     if (named !== hash) throw new MediatorRefused("put-result names another blob than the one put");
     const placement: BlobPlacement = { hash, url: httpUrl(url, "url"), retainUntil: instant(retainUntil, "retain_until"), upload: null };
@@ -89,15 +92,16 @@ export class BlobStore {
   async upload(placement: BlobPlacement, bytes: Uint8Array): Promise<void> {
     const { upload } = placement;
     if (upload === null) return;
+    const link = await this.link();
     const signal = AbortSignal.timeout(Math.max(0, upload.expires - Date.now()));
-    const response = await bounded(signal, () => this.link.request(upload.url, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes, signal }));
+    const response = await bounded(signal, () => link.request(upload.url, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes, signal }));
     letGo(response.body);
     if (!response.ok) throw new BlobTransferFailed("upload", response.status);
   }
 
   /** The blob named `hash` deleted: its URL answers 404 from then on. One the store does not keep for the owner is no error. */
   async delete(hash: string): Promise<void> {
-    const reply = await control(this.link, BLOB_DELETE, { hash }, BLOB_DELETE_RESULT);
+    const reply = await control(await this.link(), BLOB_DELETE, { hash }, BLOB_DELETE_RESULT);
     if (reply.body["hash"] !== hash) throw new MediatorRefused("delete-result names another blob than the one deleted");
   }
 }

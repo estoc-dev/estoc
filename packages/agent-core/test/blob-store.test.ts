@@ -17,9 +17,10 @@ afterEach(async () => {
   }
 });
 
-/** A runtime with an arrangement toward `mediator`, its agent open and not connected, the blob store it speaks to as its replica, and every request the agent sent. */
+/** A runtime enrolled at `mediator`; its agent open and not connected, the blob store it speaks to as its replica, and every request the agent sent. */
 async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; store: BlobStore; sent: string[] }> {
   const p = await party(mediator, 1);
+  await p.account.enroll();
   const sent: string[] = [];
   const transport = p.linkOptions.fetch as typeof fetch;
   const counting = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -28,7 +29,7 @@ async function storing(mediator: FakeMediator): Promise<Party & { agent: Agent; 
   }) as typeof fetch;
   const agent = await Agent.open(p, { didcomm, fetch: counting, WebSocket: mediator.WebSocket, trace: p.trace, localOptions: p.runtime.local.options, privateAddresses: false, liveDelivery: false });
   closing.push({ close: () => agent.close(), runtime: p.runtime });
-  return { ...p, agent, store: await agent.blobStore(p.mediationId), sent };
+  return { ...p, agent, store: (await agent.membership()).blobs, sent };
 }
 
 const filled = (length: number): Uint8Array => new Uint8Array(length).map((_, i) => (i * 31 + 7) & 0xff);
@@ -127,7 +128,7 @@ describe("the blob store of a runtime's replica", () => {
     const alice = await storing(mediator);
     const sealed = await sealBlob(filled(100));
     const placed = await alice.store.put(sealed.hash, sealed.bytes.length);
-    const unanswered = new BlobStore(new MediatorLink({ ...alice.linkOptions, fetch: never }));
+    const unanswered = new BlobStore(async () => new MediatorLink({ ...alice.linkOptions, fetch: never }));
     await expect(unanswered.upload({ ...placed, upload: { ...placed.upload!, expires: Date.now() + 50 } }, sealed.bytes)).rejects.toMatchObject({ name: "TimeoutError" });
   });
 
@@ -137,7 +138,7 @@ describe("the blob store of a runtime's replica", () => {
     const sealed = await sealBlob(filled(100));
     const placed = await alice.store.put(sealed.hash, sealed.bytes.length);
     for (const cancel of lettingGo) {
-      const answered = (status: number) => new BlobStore(new MediatorLink({ ...alice.linkOptions, fetch: answering(status, cancel) }));
+      const answered = (status: number) => new BlobStore(async () => new MediatorLink({ ...alice.linkOptions, fetch: answering(status, cancel) }));
       await expect(answered(200).upload(placed, sealed.bytes)).resolves.toBeUndefined();
       await expect(answered(400).upload(placed, sealed.bytes)).rejects.toMatchObject({ name: "BlobTransferFailed", transfer: "upload", status: 400 });
     }

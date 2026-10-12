@@ -53,14 +53,13 @@
  * dispatching nothing.
  */
 
-import type { DIDDoc, Secret } from "@estoc/did-peer";
+import type { DIDDoc } from "@estoc/did-peer";
 import type { VaultRuntime } from "@estoc/event-store";
-import { requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId, type Replica } from "@estoc/vault";
+import { requiredReceivingSet, scanVault, type DidId, type Keys, type MediationId } from "@estoc/vault";
 
 import { recordAcceptancesOwed } from "./acceptance.js";
 import type { LiveAction, LiveInput } from "./action.js";
 import { Account, type Arrangement, type Confirmations } from "./arrangement.js";
-import { BlobStore } from "./blob-store.js";
 import { disclose, didOf, routeOf, type Disclosed, type Disclosure } from "./dids.js";
 import type { Dispatched } from "./dispatch.js";
 import { Dispatcher, type DispatcherOptions, type PendingOutbound } from "./dispatcher.js";
@@ -68,18 +67,17 @@ import { callEffects, decideEffects, messageOf, type Called, type EffectOptions,
 import { LinkClosed } from "./errors.js";
 import { didcommDocumentOf } from "./evidence.js";
 import { effectTypesOf, handlersOf } from "./handlers/index.js";
-import { Keyring, replicaSecrets } from "./keyring.js";
+import { Keyring } from "./keyring.js";
 import { Lifetime, type Fetch, type Timer, type Timers } from "./lifetime.js";
 import { MediatorLink, type LinkOptions } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { createdOf } from "./mediation.js";
-import { Pickup, type Delivered, type Drained, type Fate, type Handle } from "./pickup.js";
+import { Member, bindingOf, enrolledReplica, type LinkAs, type Membership } from "./membership.js";
+import type { Delivered, Drained, Fate, Handle, Pickup } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
-import { plainMessage } from "./protocol/didcomm.js";
 import { STATUS } from "./protocol/mediation.js";
-import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
 import type { Enrolled } from "./replica-enrollment.js";
-import { replicaReceiptOf, replicaRoute, sendOverRoute, type ReplicaAddress, type SnapshotLinkReceived } from "./replica-channel.js";
+import { replicaReceiptOf, type SnapshotLinkReceived } from "./replica-channel.js";
 import type { RecipientsAdded } from "./replica-recipients.js";
 import { afterReceipt, type AfterReceipt } from "./receive/after.js";
 import { findResponder, type Found, type Responder } from "./responder.js";
@@ -88,7 +86,6 @@ import { receiptOf } from "./receive/receipt.js";
 import { Receiver, type Discarded, type Received, type ReceiverOptions, type WaitingDelivery } from "./receive/receiver.js";
 import type { PendingWork, Recorder } from "./records.js";
 import { knownLongForms, resolve } from "./resolver.js";
-import type { BlobLink } from "./sealed-blob.js";
 import { send, type Content, type SendOptions, type Sent, type Target } from "./send.js";
 import type { AgentTrace } from "./trace.js";
 import { manualProcedures, readRecords, type Manual } from "./views.js";
@@ -194,21 +191,10 @@ export interface Submitted extends Sent {
   dispatched: Called;
 }
 
-interface Inbox {
-  link: MediatorLink;
-  pickup: Pickup;
-}
-
 interface Line {
-  /** speaks as the arrangement's own DID: its account */
+  /** speaks as the arrangement's own DID: its account, which holds no queue of its own */
   link: MediatorLink;
-  /**
-   * The replica's own queue. The account holds none: its mail is picked
-   * up as this runtime's replica, over a link of that DID, which there
-   * is none of until the vault has the replica's creation.
-   */
-  inbox: Inbox | null;
-  linkAs: (me: string, secrets: () => Secret[]) => MediatorLink;
+  linkAs: LinkAs;
 }
 
 export class Agent {
@@ -218,6 +204,8 @@ export class Agent {
   private readonly connecting = new Map<MediationId, Promise<Connection>>();
   /** by arrangement, bound on first need: the line to the mediator is made only once one of the account's operations has to reach it */
   private readonly accounts = new Map<MediationId, Account>();
+  /** this runtime's replica at its arrangement, bound on first need and kept, since a replica's binding never changes */
+  private bound: Member | null = null;
   /** the calls of the pickup deliveries taken so far, run off their turns and one delivery after another, so the host is told of them in the order the mail came */
   private calling: Promise<void> = Promise.resolve();
   /** whether the host is yet to be told of the lines as they now stand */
@@ -273,9 +261,8 @@ export class Agent {
       receipt: receiptOf(runtime, keys),
       replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
-        const inbox = lines.get(mediationId)?.inbox ?? null;
-        if (inbox === null) throw new Error(`no line to the mediator of ${mediationId}`);
-        await inbox.pickup.acknowledge([deliveryId]);
+        const pickup = await (await agent.memberAt(mediationId)).pickup();
+        await pickup.acknowledge([deliveryId]);
       },
       admit,
       maxWaiting,
@@ -361,17 +348,19 @@ export class Agent {
   }
 
   /**
-   * blob-store/1.0 at an arrangement's mediator, spoken as this
-   * runtime's replica: a blob put through it is the replica's, counted
-   * against the replica's quota and ended with the replica. This
-   * runtime is enrolled in the arrangement first when it is not known
-   * to be.
+   * This runtime's replica as a member of its arrangement, bound to this
+   * runtime and reaching the arrangement's mediator over this agent's
+   * line: what `connect` picks up as too. Handed out while the replica
+   * is enrolled, and each operation on it is let through while it still
+   * is: `UnknownEntity` until this runtime has a replica, `Unusable`
+   * while a step of enrolling it is wanting, which `enroll` does.
+   * Nothing is asked of the mediator, nor is its DID resolved, until an
+   * operation has to reach it, and none is begun once the agent is
+   * closed.
    */
-  async blobStore(mediationId: MediationId): Promise<BlobStore> {
+  async membership(): Promise<Membership> {
     this.refuseClosed();
-    const line = await this.lineOf(mediationId);
-    const inbox = line.inbox ?? (await this.pickUpAs(mediationId, line, (await this.account(mediationId).enroll()).replica));
-    return new BlobStore(inbox.link, { timeoutMs: this.options.timeoutMs });
+    return this.member();
   }
 
   connections(): Connection[] {
@@ -383,25 +372,6 @@ export class Agent {
     this.refuseClosed();
     const sent = await send(this.runtime, this.keys, target, content, { now: this.options.now, ...options });
     return { ...sent, dispatched: await this.call(sent.action) };
-  }
-
-  /**
-   * A snapshot link sent to another replica of this vault's seed, at
-   * the arrangement this runtime's replica is a member of, through that
-   * arrangement's mediator. Which replica to write to is the caller's
-   * to know — the mediator's list, the fold — and `to` is written to
-   * only when the seed bears it out as another replica there. Nothing is
-   * recorded and nothing is sent again: the link asks `to` to import
-   * what the vault already says, so a lost one costs another send.
-   * Throws what `replicaRoute` and `sendOverRoute` throw.
-   */
-  async sendSnapshotLink(to: ReplicaAddress, link: BlobLink): Promise<void> {
-    this.refuseClosed();
-    const fold = await scanVault(this.runtime.vault, this.keys);
-    const route = await replicaRoute(this.keys, fold, this.runtime.author, to);
-    const plaintext = plainMessage(SNAPSHOT_LINK, route.ends.sender.did, route.ends.recipient.did, snapshotLinkBody({ replicaId: route.from.replicaId, link }));
-    const { link: line } = await this.lineOf(route.from.mediationId);
-    await sendOverRoute(line, route, plaintext, knownLongForms(fold), this.options);
   }
 
   /** An envelope posted straight to this runtime. */
@@ -473,10 +443,8 @@ export class Agent {
    */
   close(): void {
     this.lifetime.close();
-    for (const { link, inbox } of this.wires.values()) {
-      link.close();
-      inbox?.link.close();
-    }
+    for (const { link } of this.wires.values()) link.close();
+    this.bound?.close();
     for (const mediationId of [...this.retries.keys()]) this.forgetRetry(mediationId);
     this.dispatcher.close();
     this.receiver.close();
@@ -516,7 +484,7 @@ export class Agent {
   }
 
   private shown(connection: Connection): Connection {
-    return { ...connection, live: this.wires.get(connection.mediationId)?.inbox?.link.live ?? false };
+    return { ...connection, live: this.bound !== null && this.bound.mediationId === connection.mediationId && this.bound.live };
   }
 
   private connectionOf(mediationId: MediationId): Connection {
@@ -540,13 +508,15 @@ export class Agent {
     this.linesChanged();
     this.cancelRetry(mediationId);
     try {
-      const line = await this.lineOf(mediationId);
+      // The mediator resolves before this runtime enrolls, so that a connection to a mediator not even found binds no replica to it.
+      await this.lineOf(mediationId);
       const account = this.account(mediationId);
       connection.enrolled = await account.enroll();
       connection.recipients = await account.addRecipients();
-      const inbox = await this.pickUpAs(mediationId, line, connection.enrolled.replica);
-      connection.drained = await inbox.pickup.drain();
-      if (this.keepsLive() && !inbox.link.live) this.openSocket(mediationId, inbox);
+      const member = await this.memberAt(mediationId);
+      const pickup = await member.pickup();
+      connection.drained = await pickup.drain();
+      if (this.keepsLive() && !member.live) this.openSocket(mediationId, await member.link(), pickup);
       connection.unreachable = null;
     } catch (err) {
       if (this.lifetime.closed) return this.shown(connection);
@@ -564,7 +534,7 @@ export class Agent {
    * mediator says live delivery is on. The link hands down the frames
    * of the socket it has now alone, so the status is that socket's.
    */
-  private openSocket(mediationId: MediationId, { link, pickup }: Inbox): void {
+  private openSocket(mediationId: MediationId, link: MediatorLink, pickup: Pickup): void {
     link.openSocket(
       (opened) => {
         if (opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) void this.pickUpOnceLive(mediationId, pickup);
@@ -672,30 +642,31 @@ export class Agent {
     const mediatorDoc = await resolveDid(mediation.mediatorDid);
     if (mediatorDoc === null) throw new Error(`the mediator ${mediation.mediatorDid} does not resolve`);
     const { mediatorDid } = mediation;
-    const linkAs = (me: string, secrets: () => Secret[]): MediatorLink => this.linkOf({ resolveDid, secrets, me, mediatorDid, mediatorDoc });
+    const linkAs: LinkAs = (me, secrets) => this.linkOf({ resolveDid, secrets, me, mediatorDid, mediatorDoc });
     const link = linkAs(mediation.me.did, () => this.ring.secrets());
-    const line: Line = { link, inbox: null, linkAs };
+    const line: Line = { link, linkAs };
     const raced = this.wires.get(mediationId);
     if (raced !== undefined) return raced;
     this.wires.set(mediationId, line);
     return line;
   }
 
-  /**
-   * The line's queue made the replica's own, once: a link speaking as
-   * the replica's DID with that DID's keys alone, under both its
-   * spellings, since the mediator seals what it pushes to the short
-   * form. A replica's binding never changes, so neither does the link.
-   */
-  private async pickUpAs(mediationId: MediationId, line: Line, replica: Replica): Promise<Inbox> {
-    if (line.inbox !== null) return line.inbox;
-    const { replicaId, did, longFormDid } = replica;
-    if (did === null || longFormDid === null) throw new Error(`the replica ${replicaId} has no DID to pick up as`);
-    const secrets = await replicaSecrets(this.keys, { replicaId, did, longFormDid });
-    if (line.inbox !== null) return line.inbox;
-    const link = line.linkAs(longFormDid, () => secrets);
-    line.inbox = { link, pickup: new Pickup(link, this.handleOf(mediationId), { log: this.options.log }) };
-    return line.inbox;
+  /** This runtime's replica, found enrolled now, bound once to the arrangement its creation names: its account is the one this agent holds there, and its link is made over that arrangement's line. */
+  private async member(): Promise<Member> {
+    const fold = await scanVault(this.runtime.vault, this.keys);
+    const binding = bindingOf(fold, this.runtime.author);
+    const { mediationId } = binding;
+    const account = this.account(mediationId);
+    await enrolledReplica(fold, account, this.runtime.author);
+    this.bound ??= new Member(this.runtime, this.keys, binding, account, this.lifetime, async () => (await this.lineOf(mediationId)).linkAs, this.handleOf(mediationId), this.options);
+    return this.bound;
+  }
+
+  /** This runtime's replica as a member of `mediationId`, for what the agent does as it, whose every request passes the member's gate; throws when it is bound to another arrangement. */
+  private async memberAt(mediationId: MediationId): Promise<Member> {
+    const member = this.bound ?? (await this.member());
+    if (member.mediationId !== mediationId) throw new Error(`this runtime's replica is not a member of ${mediationId}`);
+    return member;
   }
 
   /** The receiver's pickup handle: a delivery's local work done in its turn, before the mediator is told of it, and its calls run off the turn. */
@@ -729,8 +700,7 @@ export class Agent {
   /** The live input answered, when this runtime is found to answer it and is still open: the rotation's notification, then the automatic effects, each decided and called, and neither begun once the agent closed. */
   private async answer(inbound: Inbound, live: LiveInput, address: PrivateAddressDecided | null): Promise<Inbound> {
     const { handlers, acknowledge, now, trace } = this.options;
-    const inbox = (mediationId: MediationId) => this.wires.get(mediationId)?.inbox?.link ?? null;
-    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", inbox, local: this.local }))) ?? { responder: null, answering: null };
+    const found: Found = (await this.step("who answers", () => findResponder(this.runtime, this.keys, live, { handlers, acknowledge, trace, rotated: address?.outcome === "rotated", member: this.bound, local: this.local }))) ?? { responder: null, answering: null };
     inbound.responder = found.responder;
     const unanswered = (because: string): Inbound => {
       if (address !== null) inbound.address = unannounced(address, because);

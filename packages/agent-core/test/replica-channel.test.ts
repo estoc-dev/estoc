@@ -232,7 +232,7 @@ describe("the replica channel", () => {
     const events = await eventsOf(a);
 
     const link = await snapshotAt(MEDIATOR);
-    await b.agent.sendSnapshotLink(addressOf(a), link);
+    await (await b.agent.membership()).sendSnapshotLink(addressOf(a), link);
     expect(mediator.queues.get(a.replica.did)).toHaveLength(1);
     const [connection] = await a.agent.connect();
     expect(connection).toMatchObject({ unreachable: null, drained: { acked: 1, ended: "empty" } });
@@ -247,7 +247,7 @@ describe("the replica channel", () => {
     expect(await ofType(a, "envelope.open")).toHaveLength(1);
 
     const back = await snapshotAt(MEDIATOR);
-    await a.agent.sendSnapshotLink(addressOf(b), back);
+    await (await a.agent.membership()).sendSnapshotLink(addressOf(b), back);
     await b.agent.connect();
     expect(b.links).toEqual([{ mediationId: a.mediationId, replicaId: a.runtime.author, link: back }]);
     expect(mediator.queues.get(b.replica.did)).toEqual([]);
@@ -318,7 +318,8 @@ describe("the replica channel", () => {
       ["a replica's short form", { replicaId: sibling.replicaId, longFormDid: sibling.did }],
       ["this runtime's own replica", addressOf(a)],
     ];
-    for (const [what, to] of refused) await expect(a.agent.sendSnapshotLink(to, link), what).rejects.toThrow(NotAReplica);
+    const membership = await a.agent.membership();
+    for (const [what, to] of refused) await expect(membership.sendSnapshotLink(to, link), what).rejects.toThrow(NotAReplica);
     expect(queued(mediator)).toBe(before);
   });
 
@@ -336,7 +337,7 @@ describe("the replica channel", () => {
     expect(fold.replicas.replicas.get(c.runtime.author)).toMatchObject({ status: "member", mediationId: m2Id });
     const before = [queued(m1), queued(m2)];
 
-    await expect(a.agent.sendSnapshotLink(addressOf(c), await snapshotAt("https://m1.example/"))).rejects.toThrow(/not the mediator/);
+    await expect((await a.agent.membership()).sendSnapshotLink(addressOf(c), await snapshotAt("https://m1.example/"))).rejects.toThrow(/not the mediator/);
     expect([queued(m1), queued(m2)]).toEqual(before);
   });
 
@@ -351,7 +352,9 @@ describe("the replica channel", () => {
       input.keyAgreement.unshift("#legacy");
     });
     expect((await scanVault(later.runtime.vault, later.keys)).replicas.replicas.get(later.runtime.author)?.status).toBe("member");
-    await (await opened(later, mediator)).sendSnapshotLink(addressOf(a), link);
+    const laterAgent = await opened(later, mediator);
+    await laterAgent.enroll(a.mediationId);
+    await (await laterAgent.membership()).sendSnapshotLink(addressOf(a), link);
     await a.agent.connect();
     expect(a.links).toEqual([{ mediationId: a.mediationId, replicaId: later.runtime.author, link }]);
 
@@ -360,8 +363,10 @@ describe("the replica channel", () => {
       input.keyAgreement = ["#legacy"];
     });
     expect((await scanVault(none.runtime.vault, none.keys)).replicas.replicas.get(none.runtime.author)?.status).toBe("member");
+    const noneAgent = await opened(none, mediator);
+    await noneAgent.enroll(a.mediationId);
     const before = queued(mediator);
-    await expect((await opened(none, mediator)).sendSnapshotLink(addressOf(a), link)).rejects.toThrow(/no key-agreement method didcomm seals from/);
+    await expect((await noneAgent.membership()).sendSnapshotLink(addressOf(a), link)).rejects.toThrow(/no key-agreement method didcomm seals from/);
     expect(queued(mediator)).toBe(before);
   });
 
@@ -402,10 +407,11 @@ describe("the replica channel", () => {
     const link = await snapshotAt(MEDIATOR);
 
     const unenrolled = await opened(await copyOf(1, a), mediator);
-    await expect(unenrolled.sendSnapshotLink(to, link)).rejects.toThrow(UnknownEntity);
+    await expect(unenrolled.membership()).rejects.toThrow(UnknownEntity);
 
+    const membership = await a.agent.membership();
     await a.runtime.vault.commit([], [vaultDraft("mediation.retired", { mediationId: a.mediationId, because: "moved elsewhere" })]);
-    await expect(a.agent.sendSnapshotLink(to, link)).rejects.toThrow(Unusable);
+    await expect(membership.sendSnapshotLink(to, link)).rejects.toThrow(Unusable);
     expect(queued(mediator)).toBe(0);
   });
 });
