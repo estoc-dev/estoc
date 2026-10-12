@@ -21,6 +21,9 @@
   `DispatcherOptions.effectTypes` is gone and the handlers given to
   `records()` no longer shape the fold. The options are copied at open:
   a generator or a set the host changes afterwards changes nothing.
+  An open or an inspection that fails once the database is opened closes
+  it, whatever failed: the storage options refused, the effect types
+  failing as they are read, the seed, the first fold.
 - **This runtime's replica, bound** (breaking): `Arrangement.membership()`
   hands the host this runtime's replica at that arrangement as a
   `Membership`, with `replicaId`, `mediationId`, `blobs` (blob-store/1.0

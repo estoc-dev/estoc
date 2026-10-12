@@ -106,7 +106,6 @@ export class Locked implements LockedVault {
 export class Session implements VaultSession {
   /** the operations beyond the built-in ones whose intents this runtime produces, as the host declared them at open */
   readonly effectTypes: ReadonlySet<string>;
-  /** every fold of this vault is read under these */
   readonly scanOptions: Readonly<ScanOptions>;
 
   constructor(

@@ -63,8 +63,7 @@ export async function openVault(driver: SqliteDriver, unlock: Unlock, { resetIde
     },
     ...(resetIdentity === true ? { resetIdentity } : {}),
   });
-  const keys = await Keys.open(seedKey as SeedKey, db.metadata.anchor);
-  return opened(new SqliteVault(db, options), keys, options);
+  return owned(db, options, (runtime) => bound(runtime, seedKey as SeedKey, options));
 }
 
 export interface CreateVaultOptions extends VaultOptions {
@@ -79,15 +78,10 @@ export interface CreateVaultOptions extends VaultOptions {
 export async function createVault(driver: SqliteDriver, { seedKey, wrapped, label, ...options }: CreateVaultOptions): Promise<VaultSession> {
   const anchor = await Keys.anchorOf(seedKey);
   const db = createRuntime(driver, { metadata: { version: VAULT_VERSION, anchor }, wrapped });
-  const keys = await Keys.open(seedKey, anchor);
-  const runtime = new SqliteVault(db, options);
-  try {
+  return owned(db, options, async (runtime) => {
     await runtime.vault.commit([], [vaultDraft("identity.label", { name: label })]);
-  } catch (err) {
-    await runtime.close();
-    throw err;
-  }
-  return opened(runtime, keys, options);
+    return bound(runtime, seedKey, options);
+  });
 }
 
 /**
@@ -98,25 +92,29 @@ export async function createVault(driver: SqliteDriver, { seedKey, wrapped, labe
  * are made, so the comparison stands wherever the seed came from.
  */
 export async function openRestoredVault(restored: RuntimeDatabase, seedKey: SeedKey, options: VaultOptions = {}): Promise<VaultSession> {
-  const runtime = new SqliteVault(restored, options);
-  let keys: Keys;
-  try {
-    keys = await Keys.open(seedKey, runtime.metadata.anchor);
-  } catch (err) {
-    await runtime.close();
-    throw err;
-  }
-  return opened(runtime, keys, options);
+  return owned(restored, options, (runtime) => bound(runtime, seedKey, options));
 }
 
-async function opened(runtime: SqliteVault, keys: Keys, options: ScanOptions): Promise<VaultSession> {
-  const session = new Session(runtime, keys, options);
+/**
+ * What `make` makes of the runtime over `db`. The database is the
+ * runtime's from here: whatever fails before the value is handed out,
+ * the runtime's construction included, closes it.
+ */
+async function owned<T>(db: RuntimeDatabase, options: SqliteVaultOptions, make: (runtime: SqliteVault) => Promise<T>): Promise<T> {
+  let runtime: SqliteVault | undefined;
   try {
-    await session.fold();
+    runtime = new SqliteVault(db, options);
+    return await make(runtime);
   } catch (err) {
-    await runtime.close();
+    if (runtime === undefined) db.close();
+    else await runtime.close();
     throw err;
   }
+}
+
+async function bound(runtime: SqliteVault, seedKey: SeedKey, options: ScanOptions): Promise<VaultSession> {
+  const session = new Session(runtime, await Keys.open(seedKey, runtime.metadata.anchor), options);
+  await session.fold();
   return session;
 }
 
@@ -135,15 +133,7 @@ export interface InspectedRuntime {
  * on a fresh driver, once this one is closed.
  */
 export async function inspectRuntime(driver: SqliteDriver, options: VaultOptions = {}): Promise<InspectedRuntime> {
-  const db = openInspector(driver);
-  const runtime = new SqliteVault(db, options);
-  try {
-    const wrapped = await runtime.keystore.read();
-    return { runtime, wrapped, fold: await scanVault(runtime.vault, null, options) };
-  } catch (err) {
-    await runtime.close();
-    throw err;
-  }
+  return owned(openInspector(driver), options, async (runtime) => ({ runtime, wrapped: await runtime.keystore.read(), fold: await scanVault(runtime.vault, null, options) }));
 }
 
 /** A portable snapshot looked at: validated whole against its own fold's retention, then folded without key verdicts. */

@@ -4,11 +4,11 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { AnchorMismatch, NotAVault, ReadOnlyVault, SnapshotTooLarge, exportVault, type OpenMode } from "@estoc/event-store";
-import { createSeedKeystore } from "@estoc/keystore";
+import { AnchorMismatch, NotAVault, ReadOnlyVault, SnapshotTooLarge, exportVault, openPortable, restoreVault, type OpenMode } from "@estoc/event-store";
+import { createSeedKeystore, type SeedKey } from "@estoc/keystore";
 import { Keys, vaultDraft, vaultHeldRoots } from "@estoc/vault";
 
-import { createVault, inspectRuntime, inspectSnapshot, openVault } from "../src/index.js";
+import { createVault, inspectRuntime, inspectSnapshot, openRestoredVault, openVault } from "../src/index.js";
 import { PASSPHRASE, freshVault, memoryDriver, opened, seedOf, ticking } from "./helpers.js";
 
 let dir: string;
@@ -59,6 +59,47 @@ describe("the vault opened with the seed", () => {
     const again = await openVault(open(file, "readwrite"), made.seedKey);
     expect((await again.fold()).label).toBe("Alice");
     await again.runtime.close();
+  });
+});
+
+describe("an open that fails once the database is in hand", () => {
+  const lookupFailed = () => ({
+    effectTypes: (function* () {
+      yield "https://example.org/custom";
+      throw new Error("effect-type lookup failed");
+    })(),
+  });
+  const reopens = async (file: string, seedKey: SeedKey) => (await openVault(open(file, "readwrite"), seedKey)).runtime.close();
+
+  it("closes the file when the effect types fail as they are read, on create, open and restore alike", async () => {
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const file = fresh();
+    await expect(createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", ...lookupFailed() })).rejects.toThrow("effect-type lookup failed");
+    await reopens(file, seedKey);
+    await expect(openVault(open(file, "readwrite"), seedKey, lookupFailed())).rejects.toThrow("effect-type lookup failed");
+    await reopens(file, seedKey);
+
+    const source = await openVault(open(file, "readwrite"), seedKey);
+    const snapshot = fresh();
+    await exportVault(source.runtime, (mode) => open(snapshot, mode), { heldRoots: source.heldRoots() });
+    await source.runtime.close();
+    const portable = openPortable(open(snapshot, "readonly"));
+    const restoredFile = fresh();
+    const { runtime: restored } = await restoreVault(portable, (mode) => open(restoredFile, mode), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(seedKey) });
+    portable.close();
+    await expect(openRestoredVault(restored, seedKey, lookupFailed())).rejects.toThrow("effect-type lookup failed");
+    await reopens(restoredFile, seedKey);
+  });
+
+  it("closes the file when the storage options are refused, on create, open and inspection alike", async () => {
+    const { doc, seedKey } = await createSeedKeystore(PASSPHRASE, { seed: seedOf(1) });
+    const file = fresh();
+    await expect(createVault(open(file, "create"), { seedKey, wrapped: doc, label: "Alice", maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
+    await expect(openVault(open(file, "readwrite"), seedKey, { maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
+    await expect(inspectRuntime(open(file, "readwrite"), { maxObjectBytes: -1 })).rejects.toBeInstanceOf(RangeError);
+    await reopens(file, seedKey);
   });
 });
 
