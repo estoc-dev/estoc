@@ -1054,7 +1054,7 @@ describe("two daemons over a mediator", () => {
   );
 
   test(
-    "a message whose arrival is unknown waits for the person: a vault restored from it shows its one preparation with none chosen, refuses a choice of what is no preparation of it, and the retry after the choice delivers it once",
+    "messages whose arrival is unknown wait for the person: a vault restored from them shows each one preparation with none chosen, takes a choice of one and the cancellation of another before the restore is explained, refuses a choice of what is no preparation, and the retry once it is explained delivers the chosen one once and the cancelled one never",
     async () => {
       const mediator = await newMediator();
       const { alice, bob, contactId } = await acquainted(mediator);
@@ -1062,45 +1062,55 @@ describe("two daemons over a mediator", () => {
       const snapshot = bob.heard.snapshot();
       const shown = new Set(snapshot.conversations.filter((conversation) => conversation.contactId === (contactId as string)).flatMap((conversation) => conversation.channels.map((channel) => channel.channelId)));
       const alices = new Set(snapshot.channels.filter((channel) => shown.has(channel.channelId)).map((channel) => channel.peerDid));
-      let cut = false;
+      let cuts = 0;
       mediator.intercept = (message) => {
-        if (cut || message.type !== FORWARD || !alices.has((message.body as { next?: string }).next ?? "")) return undefined;
-        cut = true;
+        if (cuts === 2 || message.type !== FORWARD || !alices.has((message.body as { next?: string }).next ?? "")) return undefined;
+        cuts += 1;
         throw new Error("the line cut before the mediator answered");
       };
-      const content = { type: BASIC_MESSAGE, body: { content: "lost on the way" } };
+      const say = (content: string) => bob.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content } });
       let sent: Awaited<ReturnType<DaemonCore["send"]>>;
+      let dropped: Awaited<ReturnType<DaemonCore["send"]>>;
       try {
-        sent = await bob.daemon.send({ contactId }, content);
+        sent = await say("lost on the way");
+        dropped = await say("called off");
       } finally {
         mediator.intercept = null;
       }
-      expect(sent.outcome).toBe("uncertain");
-      const [prepared] = bob.heard.snapshot().pending.pendingOutbounds;
+      expect([sent.outcome, dropped.outcome]).toEqual(["uncertain", "uncertain"]);
+      const pendingOf = (snapshot: Snapshot, messageId: string) => snapshot.pending.pendingOutbounds.find((pending) => pending.messageId === messageId);
+      const prepared = pendingOf(bob.heard.snapshot(), sent.messageId);
       expect(prepared).toEqual({ messageId: sent.messageId, channelId: channelIdOf(sent.channel), outcome: "prepared", candidates: [expect.any(String) as string], selected: prepared!.candidates[0], because: null, entries: ["retry", "cancel"] });
+      const abandoned = pendingOf(bob.heard.snapshot(), dropped.messageId);
+      expect(abandoned).toMatchObject({ outcome: "prepared", entries: ["retry", "cancel"] });
 
       const backup = await bob.daemon.exportBackup();
       await bob.daemon.close();
       const restored = daemonOver(await folder(), mediator);
       await restored.daemon.boot();
       await restored.daemon.restoreIdentity(backup.bytes, PASSPHRASE);
-      await restored.daemon.explainedRestore();
-      await until("the restored vault's line is live", () => restored.heard.lines()?.connections[0]?.live === true);
-      expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([{ ...prepared, selected: null }]);
+      expect(restored.heard.snapshot().restoreUnexplained).toBe(true);
+      expect(pendingOf(restored.heard.snapshot(), sent.messageId)).toEqual({ ...prepared, selected: null });
+      expect(pendingOf(restored.heard.snapshot(), dropped.messageId)).toEqual({ ...abandoned, selected: null });
 
       const received = restored.heard.snapshot().observations[0]!.sourceEventCid as string as EventReference<"message.prepared">;
       expect(await restored.daemon.selectPreparation(sent.messageId, received)).toEqual({ outcome: "none", because: `the preparation ${received} is no valid preparation of the message`, messageId: sent.messageId });
       const chosen = prepared!.selected as string as EventReference<"message.prepared">;
       expect(await restored.daemon.selectPreparation(sent.messageId, chosen)).toEqual({ outcome: "selected", because: null, messageId: sent.messageId });
+      expect(await restored.daemon.cancel(dropped.messageId)).toEqual({ outcome: "cancelled", because: null, messageId: dropped.messageId });
       await restored.daemon.refresh();
       expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([prepared]);
+      await expect(restored.daemon.retry(sent.messageId)).rejects.toThrow(/sending opens once what a restore cannot bring back has been explained/);
 
+      await restored.daemon.explainedRestore();
+      await until("the restored vault's line is live", () => restored.heard.lines()?.connections[0]?.live === true);
       expect(await restored.daemon.retry(sent.messageId)).toMatchObject({ outcome: "submitted" });
-      const read = () => alice.heard.snapshot().messages.filter((message) => message.direction === "in" && message.body.state === "available" && message.body.body["content"] === "lost on the way");
-      await until("alice reads the message", () => read().length === 1);
+      const read = (content: string) => alice.heard.snapshot().messages.filter((message) => message.direction === "in" && message.body.state === "available" && message.body.body["content"] === content);
+      await until("alice reads the message", () => read("lost on the way").length === 1);
       await restored.daemon.refresh();
       expect(restored.heard.snapshot().pending.pendingOutbounds).toEqual([]);
-      expect(read()).toHaveLength(1);
+      expect(read("lost on the way")).toHaveLength(1);
+      expect(read("called off")).toEqual([]);
     },
     LONG
   );
@@ -1175,13 +1185,26 @@ describe("two daemons over a mediator", () => {
       const closed = /sending opens once what a restore cannot bring back has been explained/;
       const bobsDid = head.peerDid;
       const successor = first.heard.snapshot().dids.find((did) => did.did === head.localDid)!.didId as string as DidId;
+      const unsent = first.heard.snapshot();
       await expect(first.daemon.send({ contactId }, { type: BASIC_MESSAGE, body: { content: "too soon" } })).rejects.toThrow(closed);
       await expect(first.daemon.retry(hello.messageId)).rejects.toThrow(closed);
       await expect(first.daemon.rotate(successor, bobsDid)).rejects.toThrow(closed);
       await expect(first.daemon.completeResponse("00000000-0000-5000-8000-000000000000" as never, "pure-ack")).rejects.toThrow(closed);
       await expect(first.daemon.completeNotification("018f0000-0000-7000-8000-000000000000" as never)).rejects.toThrow(closed);
       await expect(first.daemon.acceptInvitation(invitation, "nobody")).rejects.toThrow(closed);
+      await expect(first.daemon.addContactByDid(bobsDid, "Bob again")).rejects.toThrow(closed);
+      await expect(first.daemon.addContactByDid("not a did", "nobody")).rejects.toThrow(closed);
+      await expect(first.daemon.rotateChannel(head)).rejects.toThrow(closed);
+      await expect(first.daemon.rotateChannel({ ...head, localDid: bobsDid })).rejects.toThrow(closed);
       expect(first.heard.snapshot().messages.filter((message) => message.direction === "out" && message.headers?.type === BASIC_MESSAGE)).toHaveLength(1);
+      // Only what a refused call would have made is compared: the vault goes on receiving meanwhile.
+      await first.daemon.refresh();
+      const made = (snapshot: Snapshot) => ({
+        dids: snapshot.dids.map((did) => did.didId),
+        contacts: snapshot.contacts.map((contact) => contact.contactId),
+        sent: snapshot.messages.filter((message) => message.direction === "out").map((message) => message.messageId),
+      });
+      expect(made(first.heard.snapshot())).toEqual(made(unsent));
 
       // Receiving, holding its addresses and what the vault owes on its own wait for no explanation.
       await until("the restored vault's line is live", () => first.heard.lines()?.connections[0]?.live === true);
