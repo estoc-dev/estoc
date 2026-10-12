@@ -1,16 +1,17 @@
 /**
  * The portable snapshot of a running vault, built into a fresh
  * database — so no page of it ever held what is not in it — and
- * validated as a restore would validate it. Any runtime exports this
- * way, the vault in memory too, since it reads through the interfaces
- * every runtime presents.
+ * validated as a restore would validate it: of every event, or of the
+ * events of some types with the objects they hold on their own. Any
+ * runtime exports this way, the vault in memory too, since it reads
+ * through the interfaces every runtime presents.
  */
 
 import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge } from "../errors.js";
-import { canonicalEventBytes, type Cid, type Event } from "../event.js";
+import { canonicalEventBytes, compareEvents, type Cid, type Event } from "../event.js";
 import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
 import { Packer, hashSource, sortCids } from "../objects.js";
-import type { Held, HeldRoots, Vault, VaultRuntime } from "../vault.js";
+import { MemoryVault, type Held, type HeldRoots, type Vault, type VaultRuntime } from "../vault.js";
 import type { SqliteDriver } from "./driver.js";
 import { CHUNK_BYTES } from "./objects.js";
 import { openPortable } from "./open.js";
@@ -30,9 +31,11 @@ import { APPLICATION_ID, SCHEMA_VERSION, createTables, query, run } from "./sche
 export type OpenDestination = (mode: "create" | "readonly") => Promise<SqliteDriver> | SqliteDriver;
 
 export interface ExportOptions {
-  /** The roots the vault's events hold, folded by the caller under the lock through the held view; what the snapshot carries besides the events. */
+  /** The roots the cut's events hold, folded by the caller under the lock: through the held view, or, for a selection, through a vault of the selected events alone that reads its objects through the held view. What the snapshot carries besides the events. */
   heldRoots: HeldRoots;
-  /** The most bytes of events and objects together the export will copy: the events' canonical bytes are tallied from what the store keeps beside them, before one is read, and the objects' sizes from their metadata, before a chunk is; a cut past it is `SnapshotTooLarge`, nothing read further and no destination made. Unbounded when left out. */
+  /** The event types the snapshot carries: an event of any other type is left out, and so is an object only such events hold. Every event when left out. */
+  types?: ReadonlySet<string>;
+  /** The most bytes of events and objects together the export will copy: the events' canonical bytes are tallied from what the store keeps beside them, before one is read — a selection's, which no tally gives, as they are read, before the fold runs — and the objects' sizes from their metadata, before a chunk is; a cut past it is `SnapshotTooLarge`, nothing read further and no destination made. Unbounded when left out. */
   maxBytes?: number;
 }
 
@@ -54,10 +57,11 @@ interface Cut {
 /**
  * Exports `runtime` to the destination `open` gives, and validates
  * the file it made. Under the lock: the cut is selected —
- * `SnapshotTooLarge` when the events' tally, before one is read, or
- * the events and the held objects together, before a chunk is, pass
- * `maxBytes`, `IncompleteSnapshot` when the history has damage or a
- * held root is absent or known damaged, nothing made in either case
+ * `SnapshotTooLarge` when the events' tally, before one is read, the
+ * selected events, once read, or the events and the held objects
+ * together, before a chunk is, pass `maxBytes`, `IncompleteSnapshot`
+ * when the history has damage or a held root is absent or known
+ * damaged, nothing made in either case
  * — then the destination is created, laid as a portable database with
  * `ready = 0`, filled, checked against the cut, set ready, and
  * closed. Outside the lock: the file is reopened read-only and
@@ -89,21 +93,21 @@ export async function exportVault(runtime: VaultRuntime, open: OpenDestination, 
 }
 
 async function select(runtime: VaultRuntime, held: Held, options: ExportOptions): Promise<Cut> {
-  const tallied = await held.tally();
-  if (options.maxBytes !== undefined && tallied.bytes > options.maxBytes) throw new SnapshotTooLarge(options.maxBytes, tallied.bytes);
+  const { types, maxBytes } = options;
+  if (types === undefined) {
+    const tallied = await held.tally();
+    if (maxBytes !== undefined && tallied.bytes > maxBytes) throw new SnapshotTooLarge(maxBytes, tallied.bytes);
+  }
   const problems: { where: string; error: string }[] = [];
   for (const damage of await held.events.damaged()) problems.push({ where: damage.where, error: damage.error });
   if (problems.length > 0) throw new IncompleteSnapshot(problems);
   const wrapped = await runtime.keystore.read();
-  const events: Event[] = [];
-  let eventBytes = 0;
-  for await (const event of held.events.scan()) {
-    events.push(event);
-    eventBytes += canonicalEventBytes(event).length;
-  }
+  const events = await eventsOf(held, types);
+  const eventBytes = events.reduce((n, event) => n + canonicalEventBytes(event).length, 0);
+  if (maxBytes !== undefined && eventBytes > maxBytes) throw new SnapshotTooLarge(maxBytes, eventBytes);
   const roots: Cut["roots"] = [];
   let objectBytes = 0;
-  for (const cid of sortCids(checkedCids(await options.heldRoots(held)))) {
+  for (const cid of sortCids(checkedCids(await options.heldRoots(types === undefined ? held : await selection(runtime, held, events))))) {
     let info;
     try {
       info = await held.objects.stat(cid);
@@ -120,8 +124,26 @@ async function select(runtime: VaultRuntime, held: Held, options: ExportOptions)
     objectBytes += info.size;
   }
   if (problems.length > 0) throw new IncompleteSnapshot(problems);
-  if (options.maxBytes !== undefined && eventBytes + objectBytes > options.maxBytes) throw new SnapshotTooLarge(options.maxBytes, eventBytes + objectBytes);
+  if (maxBytes !== undefined && eventBytes + objectBytes > maxBytes) throw new SnapshotTooLarge(maxBytes, eventBytes + objectBytes);
   return { wrapped, events, eventBytes, roots };
+}
+
+/** The events of the cut in canonical order: every event, or every event of the selected types. */
+async function eventsOf(held: Held, types: ReadonlySet<string> | undefined): Promise<Event[]> {
+  const events: Event[] = [];
+  if (types === undefined) {
+    for await (const event of held.events.scan()) events.push(event);
+    return events;
+  }
+  for (const type of types) for await (const event of held.events.scan({ type })) events.push(event);
+  return events.sort(compareEvents);
+}
+
+/** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as the snapshot's validation folds them from its own events. */
+async function selection(runtime: VaultRuntime, held: Held, events: Event[]): Promise<Vault> {
+  const selected = new MemoryVault({ metadata: runtime.metadata });
+  await selected.ingest(events);
+  return { ...selected.vault, objects: held.objects };
 }
 
 /** The destination as a portable database, not yet ready: the schema, the metadata, the wrapper and every event, in one transaction. */

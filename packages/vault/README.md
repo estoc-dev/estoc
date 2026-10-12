@@ -55,7 +55,7 @@ derives are pinned there too.
 | Does this channel take new work? | `channel-policy.ts` | `senderGate`, `channelPolicy` |
 | All of it, over one set | `fold/vault.ts` | `foldVault`, `checkVault`, `scanVault` |
 | How does a decision commit? | `commit.ts` | `commitDecided`, `commitAndCollect`, for the procedures below |
-| What does the event store keep? | `retention.ts` | `vaultRetention`, `vaultHeldRoots`, `collectGarbage` |
+| What does the event store keep, and what does a new replica enroll from? | `retention.ts` | `vaultRetention`, `vaultHeldRoots`, `collectGarbage`, `ENROLLMENT_EVENT_TYPES` |
 | How is a message erased, and kept erased? | `erasure.ts` | `eraseMessage`, `closeErasures` |
 | Which admissions are owed? | `admission/record.ts` | `reconcileAdmissions`, `admitReceipts` |
 | Where does a reply, or a notification, go? | `response-policy.ts` | `responseChannel`, `notificationChannel`, `automaticIntent` |

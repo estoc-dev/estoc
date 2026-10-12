@@ -244,7 +244,7 @@ export { type Erasures, type Released, type ReadState, foldErasures, erased, ret
 export { type SendGate, senderGate, channelPolicy } from "./channel-policy.js";
 export { type ViewInputs, type RemoteError, type ChannelView, type ContactChannel, type Preference, type ContactView, type Views, foldViews, messageIdsOf } from "./fold/views.js";
 export { type VaultChecks, type VaultFold, type FoldOptions, type ScanOptions, MAX_READ_BYTES, foldVault, objectReader, checkVault, foldVaultChecked, scanVault } from "./fold/vault.js";
-export { vaultRetention, vaultHeldRoots, collectGarbage } from "./retention.js";
+export { ENROLLMENT_EVENT_TYPES, vaultRetention, vaultHeldRoots, collectGarbage } from "./retention.js";
 export { type Committed } from "./commit.js";
 export { eraseDrafts, erasureClosure, eraseMessage, closeErasures } from "./erasure.js";
 export { type AutomaticIntent, type ResponseChannel, type NotificationChannel, automaticIntent, responseChannel, notificationChannel } from "./response-policy.js";
