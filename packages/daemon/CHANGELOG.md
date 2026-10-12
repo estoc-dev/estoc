@@ -14,7 +14,10 @@
   under a key of its own and puts it at the selected mediator as this
   replica's blob, answering the link (the blob's URL, its name and its
   key); a snapshot over what a blob there holds once sealed is refused
-  whole as `ResourceLimit`. What is put is kept in the runtime's local
+  whole as `ResourceLimit`. A runtime with no replica there yet, or
+  whose adding the mediator never confirmed to it, is enrolled there
+  first; one whose replica is a member of another arrangement is
+  refused, not moved. What is put is kept in the runtime's local
   state before the put, so `snapshotLinks` lists it again after a
   restart and a pending one whose upload failed can be revoked;
   `revokeSnapshotLink` deletes the blob and forgets it, after a publish

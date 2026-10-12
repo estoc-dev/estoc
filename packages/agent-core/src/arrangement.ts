@@ -15,8 +15,10 @@
  * and it is checked then, once, to speak as this account to this
  * mediator. An arrangement is bound for as long as its holder lives and
  * has no closing of its own: once the agent closes, an operation that
- * has to reach the mediator is refused with `LinkClosed`, and one whose
- * every step is confirmed already answers as it did.
+ * has to reach the mediator is refused with `LinkClosed`, and so is
+ * taking the membership, which is there only to reach it; an enrollment
+ * or a recipient-add whose every step is confirmed already answers as
+ * it did.
  */
 
 import { isJsonObject, type JsonObject, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
@@ -24,6 +26,7 @@ import type { Did, Keys, Mediation, MediationId } from "@estoc/vault";
 
 import type { MediatorLink } from "./link.js";
 import { toward } from "./mediation.js";
+import type { Member, Membership } from "./membership.js";
 import { serially } from "./procedure.js";
 import { enroll, type Enrolled } from "./replica-enrollment.js";
 import { listReplicas, type ListedReplica } from "./replica-list.js";
@@ -44,6 +47,18 @@ export interface Arrangement {
   addRecipients(): Promise<RecipientsAdded>;
   /** Every replica the account ever added, as its mediator lists them and the seed bears them out. Needs the account registered. */
   listReplicas(): Promise<ListedReplica[]>;
+  /**
+   * This runtime's replica as a member of the arrangement, bound once to
+   * this runtime and reaching the mediator over the agent's line: what
+   * the agent picks up as too. Handed out while the replica is enrolled
+   * here, and each operation on it is let through while it still is:
+   * `UnknownEntity` until this runtime has a replica, `EntityConflict`
+   * while it is a member of another arrangement, which taking it here
+   * does not change, and `Unusable` while a step of enrolling it is
+   * wanting, which `enroll` does. Asks nothing of the mediator, and
+   * once the agent is closed is `LinkClosed`, whatever the vault says.
+   */
+  membership(): Promise<Membership>;
 }
 
 /** The account's operations for a caller holding its turn: none of them waits for the turn again. */
@@ -68,7 +83,8 @@ export class Account implements Arrangement {
     readonly mediationId: MediationId,
     private readonly confirmations: Confirmations,
     private readonly trace: AgentTrace,
-    private readonly connect: () => Promise<MediatorLink>
+    private readonly connect: () => Promise<MediatorLink>,
+    private readonly member: () => Promise<Member>
   ) {}
 
   enroll(): Promise<Enrolled> {
@@ -82,6 +98,13 @@ export class Account implements Arrangement {
   /** Not a turn: a listing writes nothing, and its pages are no reason to hold up an enrollment or a disclosure. */
   listReplicas(): Promise<ListedReplica[]> {
     return listReplicas(this);
+  }
+
+  /** Not a turn: taking the replica writes nothing and asks nothing of the mediator. */
+  async membership(): Promise<Membership> {
+    const member = await this.member();
+    await member.admitted();
+    return member;
   }
 
   /**

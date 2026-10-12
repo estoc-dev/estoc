@@ -1,16 +1,17 @@
-import { cp, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { openPortable } from "@estoc/event-store";
+import { SqliteVault, exportVault, openPortable, restoreVault } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
-import type { Channel } from "@estoc/vault";
+import { unlockSeedKeystore } from "@estoc/keystore";
+import { Keys, vaultDraft, vaultHeldRoots, type Channel, type Did } from "@estoc/vault";
 
-import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName } from "@estoc/agent-core";
+import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName, createMediation, decide, selectMediation } from "@estoc/agent-core";
 import { newMediator } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
@@ -79,6 +80,57 @@ async function alice(mediator: FakeMediator, options: Parameters<typeof daemonOv
   await over.daemon.setMediator(mediator.did);
   await over.daemon.createContact("Bob", [{ localDid: shortForm("Anna"), peerDid: shortForm("Bob") } as Channel]);
   return { root, ...over };
+}
+
+/** A person's daemon copied whole and run apart from the original, each writing since under the one replica ID, and a backup of the original: merging it makes the copy take a fresh replica ID. */
+async function apart(mediator: FakeMediator, options: Parameters<typeof daemonOver>[2] = {}) {
+  const original = await alice(mediator);
+  await original.daemon.close();
+  const copy = await folder();
+  await cp(path.join(original.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
+
+  const here = daemonOver(original.root, mediator);
+  await here.daemon.boot();
+  await here.daemon.unlock(PASSPHRASE);
+  await here.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
+  const backup = await here.daemon.exportBackup();
+
+  const there = daemonOver(copy, mediator, options);
+  await there.daemon.boot();
+  await there.daemon.unlock(PASSPHRASE);
+  await there.daemon.createContact("Dave", [{ localDid: shortForm("Anna"), peerDid: shortForm("Dave") } as Channel]);
+  return { there, backup };
+}
+
+/** The daemon's backup restored elsewhere, there an arrangement with `mediatorDid` recorded registered and selected, and that replica exported: a backup that makes the arrangement preferred once merged, though the daemon's replica is no member of it. */
+async function backupPreferring(backup: Uint8Array, mediatorDid: string): Promise<Uint8Array> {
+  const root = await folder();
+  await writeFile(path.join(root, "backup.sqlite"), backup);
+  const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
+  let runtime: SqliteVault;
+  let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
+  try {
+    const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
+      heldRoots: vaultHeldRoots(null),
+      anchor: async (wrapped) => {
+        seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
+        return Keys.anchorOf(seedKey);
+      },
+    });
+    runtime = new SqliteVault(restored.runtime);
+  } finally {
+    source.close();
+  }
+  try {
+    const keys = await Keys.open(seedKey, runtime.metadata.anchor);
+    const { mediationId } = (await createMediation(runtime, keys, mediatorDid as Did)).data;
+    await decide(runtime, keys, () => [vaultDraft("mediation.granted", { mediationId, routingDid: mediatorDid as Did })]);
+    await selectMediation(runtime, keys, mediationId);
+    await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "preferring.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+  } finally {
+    await runtime.close();
+  }
+  return new Uint8Array(await readFile(path.join(root, "preferring.sqlite")));
 }
 
 async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemonOver>[2] = {}) {
@@ -279,21 +331,7 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       let failing = false;
       const flaky = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (failing && init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
-      const original = await alice(mediator);
-      await original.daemon.close();
-      const copy = await folder();
-      await cp(path.join(original.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
-
-      const here = daemonOver(original.root, mediator);
-      await here.daemon.boot();
-      await here.daemon.unlock(PASSPHRASE);
-      await here.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
-      const backup = await here.daemon.exportBackup();
-
-      const there = daemonOver(copy, mediator, { wrap: flaky });
-      await there.daemon.boot();
-      await there.daemon.unlock(PASSPHRASE);
-      await there.daemon.createContact("Dave", [{ localDid: shortForm("Anna"), peerDid: shortForm("Dave") } as Channel]);
+      const { there, backup } = await apart(mediator, { wrap: flaky });
       const before = (await there.call("publishSnapshotLink", {})) as Published;
       failing = true;
       await expect(there.call("publishSnapshotLink", {})).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
@@ -349,27 +387,53 @@ describe("a snapshot link", () => {
     "is published at once after its daemon took a fresh replica ID, the new replica added at the preferred arrangement before the put",
     async () => {
       const mediator = await newMediator();
-      const original = await alice(mediator);
-      await original.daemon.close();
-      const copy = await folder();
-      await cp(path.join(original.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
-
-      const here = daemonOver(original.root, mediator);
-      await here.daemon.boot();
-      await here.daemon.unlock(PASSPHRASE);
-      await here.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
-      const backup = await here.daemon.exportBackup();
-
-      const there = daemonOver(copy, mediator);
-      await there.daemon.boot();
-      await there.daemon.unlock(PASSPHRASE);
-      await there.daemon.createContact("Dave", [{ localDid: shortForm("Anna"), peerDid: shortForm("Dave") } as Channel]);
+      const { there, backup } = await apart(mediator);
       const asked = mediator.seenTypes.length;
       expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
       expect(await there.call("publishSnapshotLink", {})).toMatchObject({ status: "published", revocable: true });
       const since = mediator.seenTypes.slice(asked);
       expect(since).toContain(REPLICA_ADD);
       expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
+    },
+    LONG
+  );
+
+  it(
+    "is published after its daemon took a fresh replica ID whose adding the mediator refused, the replica in the vault added at the preferred arrangement again before the put",
+    async () => {
+      const mediator = await newMediator();
+      const { there, backup } = await apart(mediator);
+      let refusing = true;
+      const refused = latch();
+      mediator.intercept = (msg, from) => {
+        if (!refusing || msg.type !== REPLICA_ADD) return undefined;
+        refused.release();
+        return mediator.reply(`${REPLICA_ADD}ed`, from as string, { replica_did: shortForm("Someone"), state: "active" }, msg.id);
+      };
+      expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
+      await refused.reached;
+      refusing = false;
+      const asked = mediator.seenTypes.length;
+      expect(await there.call("publishSnapshotLink", {})).toMatchObject({ status: "published", revocable: true });
+      const since = mediator.seenTypes.slice(asked);
+      expect(since.filter((type) => type === REPLICA_ADD)).toHaveLength(1);
+      expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
+    },
+    LONG
+  );
+
+  it(
+    "is refused while the preferred arrangement is another than its replica's, which stays where it is, and nothing is asked of the preferred mediator",
+    async () => {
+      const mediator = await newMediator();
+      const elsewhere = await newMediator(201, "https://elsewhere.example/");
+      const a = await alice(mediator);
+      expect(await a.daemon.mergeBackup(await backupPreferring((await a.daemon.exportBackup()).bytes, elsewhere.did))).toMatchObject({ renewed: false });
+      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: expect.stringMatching(new RegExp(`is already recorded as something else: a member of the arrangement with ${mediator.did}$`)) as string, effect: "none", messageId: null });
+      expect(mediator.blobs.size).toBe(0);
+      expect(elsewhere.seenTypes).toEqual([]);
+      expect(a.fetched.filter((request) => request.includes(elsewhere.http))).toEqual([]);
+      expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
     },
     LONG
   );
