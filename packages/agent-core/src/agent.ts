@@ -73,9 +73,8 @@ import { MediatorLink, type LinkOptions } from "./link.js";
 import { LocalRecords, transientOptions, type LocalStore } from "./local-records.js";
 import { createdOf } from "./mediation.js";
 import { Member, bindingOf, type LinkAs } from "./membership.js";
-import type { Delivered, Drained, Fate, Handle, Pickup } from "./pickup.js";
+import type { Delivered, Drained, Fate, Handle } from "./pickup.js";
 import { decidePrivateAddress, notifyPrivateAddress, unannounced, type PrivateAddress, type PrivateAddressDecided } from "./privacy.js";
-import { STATUS } from "./protocol/mediation.js";
 import type { Enrolled } from "./replica-enrollment.js";
 import { replicaReceiptOf, type SnapshotLinkReceived } from "./replica-channel.js";
 import type { RecipientsAdded } from "./replica-recipients.js";
@@ -261,8 +260,7 @@ export class Agent {
       receipt: receiptOf(runtime, keys),
       replicaReceipt: onSnapshotLink === undefined ? undefined : replicaReceiptOf(keys, { mediatorEndpoint, onSnapshotLink }),
       acknowledge: async ({ mediationId, deliveryId }) => {
-        const pickup = await (await agent.memberAt(mediationId)).pickup();
-        await pickup.acknowledge([deliveryId]);
+        await (await agent.memberAt(mediationId)).acknowledge([deliveryId]);
       },
       admit,
       maxWaiting,
@@ -498,9 +496,8 @@ export class Agent {
       connection.enrolled = await account.enroll();
       connection.recipients = await account.addRecipients();
       const member = await this.memberAt(mediationId);
-      const pickup = await member.pickup();
-      connection.drained = await pickup.drain();
-      if (this.keepsLive() && !member.live) this.openSocket(mediationId, await member.link(), pickup);
+      connection.drained = await member.drain();
+      if (this.keepsLive() && !member.live) await this.openSocket(mediationId, member);
       connection.unreachable = null;
     } catch (err) {
       if (this.lifetime.closed) return this.shown(connection);
@@ -518,12 +515,9 @@ export class Agent {
    * mediator says live delivery is on. The link hands down the frames
    * of the socket it has now alone, so the status is that socket's.
    */
-  private openSocket(mediationId: MediationId, link: MediatorLink, pickup: Pickup): void {
-    link.openSocket(
-      (opened) => {
-        if (opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) void this.pickUpOnceLive(mediationId, pickup);
-        return pickup.onFrame(opened);
-      },
+  private openSocket(mediationId: MediationId, member: Member): Promise<void> {
+    return member.openSocket(
+      () => void this.pickUpOnceLive(mediationId, member),
       () => {
         this.linesChanged();
         this.log(`live delivery was lost for ${mediationId}`);
@@ -589,10 +583,10 @@ export class Agent {
     await this.connectTo(mediationId);
   }
 
-  private async pickUpOnceLive(mediationId: MediationId, pickup: Pickup): Promise<void> {
+  private async pickUpOnceLive(mediationId: MediationId, member: Member): Promise<void> {
     this.forgetRetry(mediationId);
     try {
-      const drained = await pickup.drain();
+      const drained = await member.drain();
       const connection = this.attempts.get(mediationId);
       if (connection !== undefined) connection.drained = drained;
       this.linesChanged();
@@ -643,8 +637,9 @@ export class Agent {
     return this.bound;
   }
 
-  /** This runtime's replica as a member of `mediationId`: `UnknownEntity` until the runtime has one, `EntityConflict` when it is a member of another arrangement. */
+  /** This runtime's replica as a member of `mediationId`: `LinkClosed` once the agent closed, whatever the vault says; else `UnknownEntity` until the runtime has one, `EntityConflict` when it is a member of another arrangement. */
   private async memberAt(mediationId: MediationId): Promise<Member> {
+    if (this.lifetime.closed) throw new LinkClosed();
     const member = this.bound ?? (await this.member());
     if (member.mediationId !== mediationId) throw new EntityConflict("replica", member.replicaId, `a member of the arrangement with ${member.mediatorDid}`);
     return member;

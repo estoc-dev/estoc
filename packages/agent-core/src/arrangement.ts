@@ -15,8 +15,10 @@
  * and it is checked then, once, to speak as this account to this
  * mediator. An arrangement is bound for as long as its holder lives and
  * has no closing of its own: once the agent closes, an operation that
- * has to reach the mediator is refused with `LinkClosed`, and one whose
- * every step is confirmed already answers as it did.
+ * has to reach the mediator is refused with `LinkClosed`, and so is
+ * taking the membership, which is there only to reach it; an enrollment
+ * or a recipient-add whose every step is confirmed already answers as
+ * it did.
  */
 
 import { isJsonObject, type JsonObject, type LocalOptions, type VaultRuntime } from "@estoc/event-store";
@@ -54,7 +56,7 @@ export interface Arrangement {
    * while it is a member of another arrangement, which taking it here
    * does not change, and `Unusable` while a step of enrolling it is
    * wanting, which `enroll` does. Asks nothing of the mediator, and
-   * `LinkClosed` once the agent is closed.
+   * once the agent is closed is `LinkClosed`, whatever the vault says.
    */
   membership(): Promise<Membership>;
 }

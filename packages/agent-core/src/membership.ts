@@ -18,10 +18,12 @@
  * and the next is judged anew: a binding handed out earlier is not
  * revoked, and nothing hangs on the agent being rebuilt. Enrolling is
  * not the gate's to do: a host enrolls through the agent and asks
- * again. The link is not made until a request passes, and a pickup
- * begun over it finishes the deliveries it took on that link, since
- * acknowledging what was taken ends a request let through rather than
- * beginning one.
+ * again. The link is not made until a request passes. Every drain of
+ * the replica's queue is a request of its own, the one that follows
+ * live delivery coming on as much as the first; telling the mediator
+ * what a drain or the socket took is not, even for a delivery left
+ * waiting and acknowledged once its wait ends, since it ends a request
+ * let through rather than beginning one.
  */
 
 import type { Secret } from "@estoc/did-peer";
@@ -34,8 +36,9 @@ import { LinkClosed, UnknownEntity, Unusable } from "./errors.js";
 import { replicaSecrets } from "./keyring.js";
 import type { Lifetime } from "./lifetime.js";
 import type { MediatorLink } from "./link.js";
-import { Pickup, type Handle } from "./pickup.js";
+import { Pickup, type Drained, type Handle } from "./pickup.js";
 import { plainMessage } from "./protocol/didcomm.js";
+import { STATUS } from "./protocol/mediation.js";
 import { SNAPSHOT_LINK, snapshotLinkBody } from "./protocol/replica-channel.js";
 import { replicaAdded } from "./replica-enrollment.js";
 import { replicaRoute, sendOverRoute, usableReplica, type BoundReplica, type ReplicaAddress, type SendOverRouteOptions } from "./replica-channel.js";
@@ -92,10 +95,10 @@ export function bindingOf(fold: VaultFold, replicaId: ReplicaId): BoundReplica {
  * The replica `replicaId` enrolled at its arrangement: a member of an
  * arrangement that is usable, and added there as the mediator confirmed
  * to this runtime through `account`. The fold does not hold that
- * confirmation; a vault alone, copied or restored, says member of a
- * replica the mediator was never told of. `UnknownEntity` while the fold
- * has no such replica, `Unusable` while a step of enrolling is wanting,
- * which its faults name.
+ * confirmation: a vault copied or restored says member of the replica
+ * whether or not its adding was ever confirmed to this runtime.
+ * `UnknownEntity` while the fold has no such replica, `Unusable` while a
+ * step of enrolling is wanting, which its faults name.
  */
 export async function enrolledReplica(fold: VaultFold, account: Account, replicaId: ReplicaId): Promise<BoundReplica> {
   const bound = usableReplica(fold, replicaId);
@@ -149,11 +152,30 @@ export class Member implements Membership, BoundReplica {
     return this.spoken();
   }
 
-  /** The replica's queue at the mediator, picked up over its link. */
-  async pickup(): Promise<Pickup> {
+  /** The replica's queue at the mediator drained over its link. */
+  async drain(): Promise<Drained> {
+    return this.pickupOver(await this.link()).drain();
+  }
+
+  /**
+   * A socket opened on the replica's link for live delivery: what the
+   * mediator pushes down it is taken like what a drain fetched, `onLive`
+   * is told once the mediator says live delivery is on, and `onLost`
+   * once the socket closed on its own.
+   */
+  async openSocket(onLive: () => void, onLost: () => void): Promise<void> {
     const link = await this.link();
-    this.picking ??= new Pickup(link, this.handle, { log: this.options.log });
-    return this.picking;
+    const pickup = this.pickupOver(link);
+    link.openSocket((opened) => {
+      if (opened.msg.type === STATUS && opened.msg.body["live_delivery"] === true) onLive();
+      return pickup.onFrame(opened);
+    }, onLost);
+  }
+
+  /** Deliveries a drain or the socket took and left waiting, told taken once their wait ended. */
+  async acknowledge(attachmentIds: readonly string[]): Promise<void> {
+    if (this.picking === null) throw new Error("nothing was picked up over the replica's link");
+    await this.picking.acknowledge(attachmentIds);
   }
 
   /** Who answers the input of an execution, as the mediator registers this replica under it. */
@@ -172,6 +194,11 @@ export class Member implements Membership, BoundReplica {
     const fold = await scanVault(this.runtime.vault, this.keys);
     await enrolledReplica(fold, this.account, this.replicaId);
     return fold;
+  }
+
+  private pickupOver(link: MediatorLink): Pickup {
+    this.picking ??= new Pickup(link, this.handle, { log: this.options.log });
+    return this.picking;
   }
 
   /**
