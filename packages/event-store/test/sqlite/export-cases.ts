@@ -478,6 +478,64 @@ export const exportCases: ExportCase[] = [
     },
   },
   {
+    name: "an export of some types carries their events alone and exactly the objects those events hold on their own, folded over them, read only, with the vault's objects to read; the file validates and restores; the bound weighs the selected events, not the history, before the fold runs",
+    run: async (h) => {
+      const c = clock();
+      const { vault } = await make(h, h.fresh(), c.now);
+      const of = (type: string, roots: Cid[], data: Record<string, unknown> = {}) => ({ ...draft(roots, data), type });
+      const committed = await vault.vault.commit(
+        [
+          { cid: HELLO_CID, source: HELLO },
+          { cid: BIG_CID, source: BIG },
+        ],
+        [of("test.kept", [HELLO_CID]), of("test.left", [HELLO_CID, BIG_CID]), of("test.also", []), of("test.left", [], { text: "x".repeat(64 * 1024) })]
+      );
+      const [kept, , also] = committed;
+      const selected = [kept, also] as Event[];
+      const types = new Set(["test.kept", "test.also"]);
+      const folds: { commit: string; events: string[]; reads: boolean }[] = [];
+      const heldRoots: HeldRoots = async (v) => {
+        const commit = await v.commit([], [of("test.kept", [])]).then(
+          () => "committed",
+          (err: Error) => err.name
+        );
+        folds.push({ commit, events: ids(await all(v.events.scan())), reads: await v.objects.has(BIG_CID) });
+        return rootsOf(v);
+      };
+      const weight = expectedValidated(selected, 1, 5);
+      const target = h.fresh();
+      assertEqual(await exportVault(vault, destination(h, target), { heldRoots, types }), weight, "what the export reports");
+      assertEqual(folds[0], { commit: "UnsupportedOperation", events: ids(selected), reads: true }, "the fold saw the selected events, and the vault's objects, and its commit was refused");
+      assertEqual(ids(await all(vault.vault.events.scan())), ids(committed as Event[]), "the vault as committed");
+      const snapshot = await opened(h, target);
+      try {
+        assertEqual((await all(snapshot.vault.events.scan())).map((e) => e.cid), ids(selected), "the selected events, in canonical order: one commit's share its time");
+        assertEqual(await all(snapshot.vault.objects.list()), [HELLO_CID], "the object a selected event holds, and not the one only a left-out event holds");
+        const restored = await restoreVault(snapshot, destination(h, h.fresh()), { heldRoots: rootsOf, anchor: ANCHOR });
+        assertEqual([restored.events, restored.objects], [2, 1], "restored");
+        restored.runtime.close();
+      } finally {
+        snapshot.close();
+      }
+      const history = (await vault.locked((held) => held.tally())).bytes;
+      const bound = weight.eventBytes + weight.objectBytes;
+      assert(history > bound, `the history weighs ${history} bytes, the selection ${bound}`);
+      assertEqual(await exportVault(vault, destination(h, h.fresh()), { heldRoots, types, maxBytes: bound }), weight, "at the bound the whole history passes");
+      folds.length = 0;
+      for (const [maxBytes, bytes, fold] of [
+        [bound - 1, bound, 1],
+        [weight.eventBytes - 1, weight.eventBytes, 0],
+      ] as const) {
+        const refused = destination(h, h.fresh());
+        const err = await assertRejects(() => exportVault(vault, refused, { heldRoots, types, maxBytes }), "SnapshotTooLarge", `under ${maxBytes} bytes`);
+        assertEqual([(err as unknown as { bytes: number }).bytes, refused.created, folds.length], [bytes, 0, fold], `under ${maxBytes} bytes: the cut weighed, no destination made, the fold run ${fold} times`);
+        folds.length = 0;
+      }
+      assertEqual(await exportVault(vault, destination(h, h.fresh()), { heldRoots, types: new Set(["test.none"]) }), expectedValidated([], 0, 0), "a type no event has: a snapshot of no event");
+      await vault.close();
+    },
+  },
+  {
     name: "an export is refused before the destination is made when the history has damage, a held root is absent or known damaged, or the cut passes the byte bound, and not for a conflict on record; a root whose bytes fail as they are copied leaves the destination unready",
     run: async (h) => {
       const c = clock();

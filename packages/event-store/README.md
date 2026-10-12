@@ -378,17 +378,25 @@ the commit's statements in turn, reopening the file after each to
 find the batch whole or not at all.
 
 The portable snapshot. `exportVault(runtime, open, { heldRoots,
-maxBytes })` builds one from any runtime — the SQLite vault, an
+types, maxBytes })` builds one from any runtime — the SQLite vault, an
 inspector's, the vault in memory — through the interfaces every
 runtime presents, into the destination `open` gives: a function of
 the platform's, `(mode) => openNodeSqlite(path, { mode })` or `(mode)
 => pool.open(name, mode)`, called once to `create` the target and
 once, after the writer has closed, to reopen the file `readonly`.
+The cut is every event, or with `types` the events of those types
+alone; either way the objects it carries are exactly those its own
+events hold, so a selection leaves out an object only other events
+hold, and the file validates as any snapshot does.
 Under the operation lock the cut is selected — first the events'
 tally, their count and canonical bytes from what the store keeps
 beside them, refused as `SnapshotTooLarge` past `maxBytes` before an
-event is read; then the wrapper, every event in canonical order, and
-`heldRoots`, the caller's fold of the roots the events hold, each
+event is read; a selection, which no tally weighs, is weighed once its
+events are read, before the fold runs; then the wrapper, every event of
+the cut in canonical order, and `heldRoots`, the caller's fold of the
+roots those events hold — through the held view, or for a selection
+through a vault in memory of the selected events alone that reads
+objects through the held view and refuses a commit — each
 root's presence and size checked, refused as `IncompleteSnapshot`
 when the history has damage or a held root is absent or known
 damaged, and as `SnapshotTooLarge` when the events' bytes and the
@@ -398,7 +406,7 @@ diagnostic, not damage: the accepted value is exported and the
 diagnostic is not. Then the destination is created, switched to a
 rollback journal with `synchronous=FULL`, laid in one transaction as
 a portable database with `ready = 0` — the five tables, the metadata,
-the wrapper's bytes, every event — and filled object by object, each
+the wrapper's bytes, every event of the cut — and filled object by object, each
 streamed through the vault's own read, hashed again, cut into the
 format's 1 MiB chunks and written 8 MiB at a time in transactions of
 its own, then checked against the cut and set ready in one
@@ -457,7 +465,8 @@ what never enters it, checked in the file's raw bytes; the refusals
 before and after the destination is made, and the conflict that is
 none; a commit, a collection pass and a rewrap waiting on the
 export's lock and landing after without touching the file; the vault
-in memory exporting into the same file; every way a snapshot that
+in memory exporting into the same file; an export of some types,
+its events, its objects, its restore and its bound; every way a snapshot that
 opens still fails validation; a file past the bound refused as it is opened; the bound
 counting the events, tallied before one is read; a chunk longer than
 its layout never loaded; and a file whose own CHECK every row
@@ -508,7 +517,7 @@ against what the target holds, by CID — a duplicate or new — and a new
 event under the target's own author is `ForkedAuthor`, the whole import refused with
 nothing written, the recovery being an identity reset; the fold runs
 on the target as it is and on the prospective union, held as a vault
-in memory; every root a new event retains in the union, and every
+in memory that refuses a commit; every root a new event retains in the union, and every
 root the union holds that the target did not, must have bytes in the
 source or bytes the target holds sound as far as it knows — nothing
 is rehashed — else `IncompleteImport` names each and nothing is

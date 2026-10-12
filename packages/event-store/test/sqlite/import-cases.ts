@@ -43,6 +43,7 @@ import {
   type RestoreOptions,
   type RetainedRoots,
   type SqliteDriver,
+  type Vault,
   type VaultObjects,
   type VaultRuntime,
 } from "../../src/index.js";
@@ -603,7 +604,7 @@ export const importCases: ImportCase[] = [
     },
   },
   {
-    name: "the union is folded over the objects the target will hold: a root released on the word of an object stays released, whether that object is the target's or comes with the source, and needs no bytes once it is collected",
+    name: "the union is folded over the objects the target will hold: a root released on the word of an object stays released, whether that object is the target's or comes with the source, and needs no bytes once it is collected; the union folded is a vault that refuses a commit",
     run: async (h) => {
       const c = clock();
       const { vault } = await make(h, h.fresh(), c.now);
@@ -614,7 +615,16 @@ export const importCases: ImportCase[] = [
       assertEqual(await importVault(vault, own.snapshot, { retainedRoots: evidenced }), { added: 0, duplicates: 2, objects: 0, repaired: 0 }, "the target's own snapshot, its witness read from the target");
       await vault.close();
       const elsewhere = new MemoryVault({ metadata: META, wrapped: WRAPPED, now: c.now });
-      assertEqual(await importVault(elsewhere, own.snapshot, { retainedRoots: evidenced }), { added: 2, duplicates: 0, objects: 1, repaired: 0 }, "into a vault with neither object, the witness read from the source");
+      const folded: Vault[] = [];
+      const recorded: RetainedRoots = (v) => {
+        folded.push(v);
+        return evidenced(v);
+      };
+      assertEqual(await importVault(elsewhere, own.snapshot, { retainedRoots: recorded }), { added: 2, duplicates: 0, objects: 1, repaired: 0 }, "into a vault with neither object, the witness read from the source");
+      const union = folded[2] as Vault;
+      assertEqual([folded.length, (await all(union.events.scan())).length], [3, 2], "folded over the snapshot, the target, then the union of the two");
+      await assertRejects(() => union.commit([], [draft([])]), "UnsupportedOperation", "a commit to the union");
+      assertEqual((await all(elsewhere.vault.events.scan())).length, 2, "the target as imported");
       assertEqual(await elsewhere.vault.objects.has(WORLD_CID), false, "the world is asked of nobody");
       assertBytes((await elsewhere.vault.objects.read(HELLO_CID, 5)) as Uint8Array, HELLO, "the witness came along");
       own.snapshot.close();
