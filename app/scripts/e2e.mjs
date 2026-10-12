@@ -417,7 +417,7 @@ try {
   await waitLive(alice);
   ok("importing her own backup merges nothing and leaves the vault as it was");
 
-  // A link for a new device: a fresh browser opened at it restores Alice's vault; revoked, it reads nothing.
+  // A link for a new device: a fresh browser opened at it joins as one more device of Alice's and takes her history once she sends it; revoked, the link reads nothing.
   await alice.click("[data-you]");
   await alice.click("[data-add-device]");
   await alice.click("[data-make-snapshot-link]");
@@ -425,9 +425,10 @@ try {
   const snapshotLink = await alice.getAttribute("[data-snapshot-url]", "title");
   if (snapshotLink === null || !snapshotLink.startsWith(`${new URL(APP_URL).origin}/#snapshot=`)) fail(`the link should open this Estoc with the snapshot in its fragment, not ${snapshotLink}`);
   await alice.click("[data-snapshot-done]");
-  await alice.waitForSelector('[data-snapshot-link="published"]', { timeout: 15000 });
+  const enrollmentLink = '[data-snapshot-link][data-snapshot-selection="enrollment"]';
+  await alice.waitForSelector(`${enrollmentLink}[data-snapshot-link="published"]`, { timeout: 15000 });
   ok("Alice made a link for a new device, shown as a QR code and listed");
-  const restoreAt = async (name, expectation) => {
+  const restoreAt = async (name) => {
     const ctx = await browser.newContext({ colorScheme });
     const page = await ctx.newPage();
     watch(page, name);
@@ -437,17 +438,33 @@ try {
     if (new URL(page.url()).hash !== "") fail("the link should be taken off the page's address");
     await page.fill("[data-backup-passphrase]", PASS.Alice);
     await page.click("[data-restore]");
-    await expectation(page);
-    await ctx.close();
+    return { ctx, page };
   };
-  await restoreAt("linked", async (page) => {
-    await page.waitForSelector("[data-restore-notice]", { timeout: 60000 });
-    await page.waitForSelector(row("Bob"), { timeout: 45000 });
-  });
-  ok("a fresh browser opened at the link restored Alice's vault from it, the passphrase typed there");
-  await alice.click("[data-revoke-snapshot-link]");
-  await alice.waitForSelector("[data-snapshot-link]", { state: "detached", timeout: 30000 });
-  await restoreAt("revoked", (page) => page.waitForSelector("text=no snapshot is at that link any more", { timeout: 30000 }));
+  const linked = await restoreAt("linked");
+  await linked.page.waitForSelector("[data-restore-notice]", { timeout: 60000 });
+  await waitLive(linked.page);
+  if ((await linked.page.locator(row("Bob")).count()) !== 0) fail("a device joined from the link should hold none of Alice's conversations yet");
+  await linked.page.click("[data-you]");
+  await linked.page.waitForSelector("[data-devices-empty]", { timeout: 30000 });
+  ok("a fresh browser opened at the link joined as one more device of Alice's, the passphrase typed there, with none of her conversations yet");
+
+  await alice.click("[data-add-device-close]");
+  await alice.waitForSelector('[data-device="active"] [data-send-history]', { timeout: 30000 });
+  await alice.click('[data-device="active"] [data-send-history]');
+  await alice.waitForSelector('[data-devices-note]:has-text("Sent the history to")', { timeout: 60000 });
+  await linked.page.waitForSelector('[data-history-received]:has-text("History from")', { timeout: 60000 });
+  await linked.page.click("[data-you-screen] [data-back]");
+  await openConversation(linked.page, "Bob");
+  await expectBubble(linked.page, "hello bob");
+  await linked.ctx.close();
+  ok("Alice sent the new device her history from Your devices, and it holds her conversation with Bob");
+
+  await alice.click("[data-add-device]");
+  await alice.click(`${enrollmentLink} [data-revoke-snapshot-link]`);
+  await alice.waitForSelector(enrollmentLink, { state: "detached", timeout: 30000 });
+  const revoked = await restoreAt("revoked");
+  await revoked.page.waitForSelector("text=no snapshot is at that link any more", { timeout: 30000 });
+  await revoked.ctx.close();
   ok("once Alice revoked the link, a restore from it reads nothing");
   await alice.click("[data-add-device-close]");
 
