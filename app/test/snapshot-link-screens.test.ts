@@ -1,8 +1,8 @@
+import type { DisplayTime } from "@estoc/daemon-api/contract";
 import { snapshotLinkUrl } from "@estoc/daemon-api/views";
 import { type Browser, chromium, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { SnapshotLinkRecord } from "../src/core/types.js";
 import type { Given, Screen } from "./browser/snapshot-page.js";
 import { browserPath, fixturePage } from "./chromium.js";
 
@@ -104,17 +104,101 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
       expect(await called()).toEqual(["snapshotLinks", "publishSnapshotLink", "snapshotLinks", "revokeSnapshotLink", "snapshotLinks"]);
     });
 
+    it("are made for a new device to join with, or as a copy of the whole vault, and each says which it is", async () => {
+      await mount("add-device");
+      await tab.click("[data-make-snapshot-link]");
+      await tab.locator('[data-snapshot-selection="enrollment"]').waitFor();
+      await tab.click("[data-make-copy-link]");
+      await tab.locator('[data-snapshot-selection="all"]').waitFor();
+      expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "publishSnapshotLink").map((call) => call.args))).toEqual([["enrollment"], ["all"]]);
+      expect(await tab.locator('[data-snapshot-selection="enrollment"] .row-main > span').first().textContent()).toBe("A link for a new device, unfinished");
+      expect(await tab.locator('[data-snapshot-selection="all"] .row-main > span').first().textContent()).toBe("A copy of this vault, unfinished");
+    });
+
     it("say when they could not be read, and are read again when asked", async () => {
       await mount("add-device", { unlistable: "the daemon is not answering" });
       expect(await tab.locator("[data-snapshot-links-unread]").textContent()).toContain("could not be read: the daemon is not answering");
 
       await tab.evaluate(() => {
         window.snapshotFixture.daemon.unlistable = null;
-        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: null } as SnapshotLinkRecord];
+        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", selection: "all", placedAt: "2026-10-10T12:00:00.000Z" as DisplayTime, retainUntil: null }];
       });
       await tab.click("[data-reload-snapshot-links]");
       await tab.locator('[data-snapshot-link="pending"]').waitFor();
       expect(await tab.locator("[data-snapshot-links-unread]").count()).toBe(0);
+    });
+  });
+
+  describe("a link imported from the vault's page", () => {
+    it("asks nothing of the daemon until a link is pasted, then imports it and says what it brought", async () => {
+      await mount("import-link", { phase: "open" });
+      await tab.click("[data-import-link-open]");
+      await tab.click("[data-import-link]");
+      expect(await tab.locator("[data-import-link-note]").textContent()).toContain("Paste the link your other device made");
+      expect(await called()).toEqual([]);
+
+      await tab.fill("[data-import-link-input]", link);
+      await tab.click("[data-import-link]");
+      await tab.locator("[data-import-link-input]").waitFor({ state: "detached" });
+      expect(await tab.locator("[data-import-link-note]").textContent()).toBe("Merged 3 new events and 0 objects.");
+      expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.map((call) => call.args))).toEqual([[link]]);
+    });
+
+    it("keeps the link in the field and says why when the import fails", async () => {
+      await mount("import-link", { phase: "open", unmerged: "that snapshot is of another vault, and is not merged into this one" });
+      await tab.click("[data-import-link-open]");
+      await tab.fill("[data-import-link-input]", link);
+      await tab.click("[data-import-link]");
+      await tab.locator("[data-import-link-note].error-text").waitFor();
+      expect(await tab.locator("[data-import-link-note]").textContent()).toContain("that snapshot is of another vault");
+      expect(await tab.locator("[data-import-link-input]").inputValue()).toBe(link);
+    });
+  });
+
+  describe("a page opened with a link where a vault is held", () => {
+    it("offers to import what it holds, and once asked imports it, says what it brought and lets the link go", async () => {
+      await mount("opened-link", { opened: { link }, phase: "open" });
+      await tab.click("[data-import-opened-link]");
+      await tab.locator("[data-opened-link-outcome]").waitFor();
+      expect(await tab.locator("[data-opened-link-outcome] span").textContent()).toBe("Merged 3 new events and 0 objects.");
+      expect(await tab.evaluate(() => [window.snapshotFixture.daemon.calls.map((call) => call.args), window.snapshotFixture.state.pendingSnapshotLink])).toEqual([[[link]], null]);
+    });
+
+    it("waits for the vault to be unlocked before it offers the import", async () => {
+      await mount("opened-link", { opened: { link }, phase: "locked" });
+      await tab.locator("[data-opened-link-locked]").waitFor();
+      expect(await tab.locator("[data-import-opened-link]").count()).toBe(0);
+      await tab.evaluate(() => (window.snapshotFixture.state.vault.phase = "open"));
+      await tab.locator("[data-import-opened-link]").waitFor();
+      expect(await called()).toEqual([]);
+    });
+
+    it("keeps a link it is opened with again during an import, and offers it once that import is told, failed or not", async () => {
+      const later = snapshotLinkUrl("http://app.test/", { url: "https://mediator.test/b/blob-2", hash: "bciqlaterhash", key: "l".repeat(43) });
+      for (const unmerged of [undefined, "no snapshot is at that link any more"]) {
+        await mount("opened-link", { opened: { link }, phase: "open", unmerged });
+        await tab.evaluate(() => window.snapshotFixture.holdImports());
+        await tab.click("[data-import-opened-link]");
+        await tab.locator("[data-opened-link-importing]").waitFor();
+        await tab.evaluate((later) => window.snapshotFixture.open({ link: later }), later);
+        await tab.evaluate(() => window.snapshotFixture.releaseImports());
+        await tab.locator("[data-opened-link-outcome]").waitFor();
+        expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toEqual({ link: later });
+
+        await tab.click("[data-opened-link-outcome] button");
+        await tab.click("[data-import-opened-link]");
+        await tab.locator("[data-opened-link-outcome]").waitFor();
+        expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.map((call) => call.args))).toEqual([[link], [later]]);
+        expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toBeNull();
+      }
+    });
+
+    it("says why the import failed, and lets the link go", async () => {
+      await mount("opened-link", { opened: { link }, phase: "open", unmerged: "that snapshot is of another vault, and is not merged into this one" });
+      await tab.click("[data-import-opened-link]");
+      await tab.locator("[data-opened-link-outcome].alarm").waitFor();
+      expect(await tab.locator("[data-opened-link-outcome] span").textContent()).toBe("That link was not imported: that snapshot is of another vault, and is not merged into this one");
+      expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toBeNull();
     });
   });
 });

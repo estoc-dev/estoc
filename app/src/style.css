@@ -1353,6 +1353,12 @@ a.row:hover {
   }
 }
 
+.update-chip .link {
+  color: inherit;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
 .update-chip.alarm {
   background: var(--alarm);
   color: var(--surface);

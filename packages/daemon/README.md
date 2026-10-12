@@ -65,9 +65,10 @@ beside the vault for that, under SQLite's own lock, so a second daemon
 on the folder says `elsewhere`, refuses what would make, open or remove
 a file, and waits. Within a daemon those calls — `createIdentity`,
 `restoreIdentity`, `unlock`, `lock`, `forgetIdentity`, `exportBackup`,
-`mergeBackup`, and the export of `publishSnapshotLink` and the restore
-of `restoreFromLink` — run one at a time in the order asked, and
-`close()` ends a wait for files held elsewhere. The vault file has a name for
+`mergeBackup`, the export of `publishSnapshotLink`, the restore of
+`restoreFromLink` and the merge of `importFromLink` — run one at a time
+in the order asked, and `close()` ends a wait for files held elsewhere.
+The vault file has a name for
 as long as it stands, the `hold` every published state carries;
 `forgetIdentity(hold)` removes the vault so named and refuses once
 another stands there, so a confirmation one view left open while a
@@ -125,18 +126,30 @@ built, or before one built within it is read.
 
 ## Snapshot links
 
-A new device can take the vault from a link instead of a file.
-`publishSnapshotLink()` exports the vault as a backup is exported,
-seals it under an AES-256-GCM key of its own and puts it at the selected
-mediator as this runtime's replica's blob: it counts against that
-replica's quota and goes when the replica is removed. A snapshot over
-what a blob there holds once sealed is refused whole as `ResourceLimit`;
-the backup file is the way to carry that one. The link is the blob's
-URL, the name of the sealed bytes and the key, and not the passphrase:
-whoever holds it reads the vault's events and objects in the clear
-until the mediator lets the blob go, and signs nothing.
-`@estoc/daemon-api/views` writes a link into a URL's fragment and reads
-it back.
+A new device can take the vault from a link instead of a file, and a
+vault open elsewhere can import one. `publishSnapshotLink(selection)`
+exports a snapshot as a backup is exported, seals it under an
+AES-256-GCM key of its own and puts it at the selected mediator as this
+runtime's replica's blob: it counts against that replica's quota and
+goes when the replica is removed. A snapshot over what a blob there
+holds once sealed is refused whole as `ResourceLimit`; the backup file
+is the way to carry that one. The link is the blob's URL, the name of
+the sealed bytes and the key, and not the passphrase: whoever holds it
+reads the snapshot's events and objects in the clear until the mediator
+lets the blob go, and signs nothing. `@estoc/daemon-api/views` writes a
+link into a URL's fragment and reads it back.
+
+The selection is what the snapshot carries. `all` is the whole vault.
+`enrollment` is the events a new replica enrolls from
+(`ENROLLMENT_EVENT_TYPES` of `@estoc/vault`): the vault's name, its
+arrangements and its replicas, which name no object when well formed;
+one malformed keeps its roots, as it would in any snapshot. A device
+restored from it is an ordinary replica: it registers at the preferred
+arrangement, picks up and stays live. Mail it receives before it holds
+the vault's DIDs is discarded there, and recorded by the replicas that
+received it too; the history, that mail among it, comes by importing a
+snapshot of `all`. A restore does the same whatever the selection, and
+a link does not say which it is.
 
 What is put is kept in the runtime's local state, the key among it, and
 not in the vault: pending before the put, with where it goes and
@@ -166,6 +179,18 @@ against the name, opens them and restores what they hold as
 `restoreIdentity` does. A link that reads nothing, bytes over the
 bound, bytes that are not the ones named, a key that does not open
 them and a wrong passphrase each refuse it with nothing written.
+
+`importFromLink(link, maxBytes)`, on a daemon with a vault open, reads
+the blob the same way and merges what it holds as `mergeBackup` does:
+the result counts what it brought, and an import of the same snapshot
+again brings nothing. A failed read and another vault's snapshot each
+leave the vault as it was, and so does a vault let go of while the
+blob is read: the merge goes into the vault open when it was asked, or
+none, though the same vault, or one restored from the same backup, is
+open again by then. Past those checks a merge fails as `mergeBackup`
+does, with what it may have done said as its effect. Each record a
+daemon keeps says what its snapshot carries, so the list can show it;
+a record kept without it is none this daemon wrote, and is forgotten.
 
 ## The trace
 

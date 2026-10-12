@@ -94,10 +94,12 @@ const timeOf = (ms: number): DisplayTime => new Date(ms).toISOString() as Displa
 
 const linkOf = ({ url, hash, key }: Link): SnapshotLink => ({ url, hash, key: keyText(key) });
 
+const domainLinkOf = ({ url, hash, key }: SnapshotLink): Link => ({ url, hash, key: keyBytes(key) });
+
 function snapshotLinkOf(put: PutSnapshot): SnapshotLinkRecord {
-  const { hash, placedAt } = put;
-  if (put.status === "pending") return { status: "pending", hash, placedAt: timeOf(placedAt), retainUntil: put.retainUntil === null ? null : timeOf(put.retainUntil) };
-  return { status: "published", hash, placedAt: timeOf(placedAt), retainUntil: timeOf(put.retainUntil), revocable: put.revocable, link: linkOf(put.link) };
+  const { hash, selection, placedAt } = put;
+  if (put.status === "pending") return { status: "pending", hash, selection, placedAt: timeOf(placedAt), retainUntil: put.retainUntil === null ? null : timeOf(put.retainUntil) };
+  return { status: "published", hash, selection, placedAt: timeOf(placedAt), retainUntil: timeOf(put.retainUntil), revocable: put.revocable, link: linkOf(put.link) };
 }
 
 /** The daemon's methods as the API's table, each answering in the API's terms; `limits` bounds the backup an export delivers. */
@@ -174,8 +176,8 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
       await core.explainedRestore();
       return null;
     }),
-    publishSnapshotLink: guarded(async () => {
-      const put = await core.publishSnapshotLink();
+    publishSnapshotLink: guarded(async ({ selection }) => {
+      const put = await core.publishSnapshotLink(selection);
       return { ...put, placedAt: timeOf(put.placedAt), retainUntil: timeOf(put.retainUntil), link: linkOf(put.link) };
     }),
     revokeSnapshotLink: guarded(async ({ hash }) => {
@@ -184,9 +186,10 @@ export function methodsOf(core: DaemonCore, limits: Pick<Limits, "maxBackupBytes
     }),
     snapshotLinks: guarded(async () => ({ links: (await core.snapshotLinks()).map(snapshotLinkOf) })),
     restoreFromLink: guarded(async ({ link, passphrase }) => {
-      await core.restoreFromLink({ url: link.url, hash: link.hash, key: keyBytes(link.key) }, passphrase, limits.maxBackupBytes);
+      await core.restoreFromLink(domainLinkOf(link), passphrase, limits.maxBackupBytes);
       return null;
     }),
+    importFromLink: guarded(({ link }) => core.importFromLink(domainLinkOf(link), limits.maxBackupBytes)),
 
     setMediator: guarded(async ({ mediatorDid }) => ({ mediationId: spelled(await core.setMediator(didOf(mediatorDid))) })),
     createInvitation: guarded(async ({ goal }) => {

@@ -1,6 +1,6 @@
 import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, Selected, TraceLevel } from "@estoc/agent-core";
-import type { Hold } from "@estoc/daemon-api/contract";
+import type { Hold, SnapshotSelection } from "@estoc/daemon-api/contract";
 
 import type { PublishedSnapshot, PutSnapshot, SnapshotLink } from "./snapshot-links.js";
 
@@ -78,17 +78,18 @@ export interface Daemon {
   forgetIdentity(hold: Hold): Promise<void>;
   /** A portable snapshot of the vault, refused whole when its events and objects, or the file they make, come to more than `maxBytes`. */
   exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
+  /** A portable snapshot's file merged into the vault open when it is asked; refused, with nothing written, when it is another vault's or that vault is let go of before its turn. */
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
   /**
-   * The vault's snapshot sealed under a key of its own and put at the
-   * selected mediator as this replica's blob, and the link that
-   * restores it; refused whole when the snapshot comes to more than a
-   * blob there holds once sealed. The export takes its turn with the
-   * calls on the daemon's files. What is put is kept in this runtime's
-   * local state before the put, so that a snapshot whose upload failed
-   * is still listed, and revocable.
+   * The vault's snapshot of `selection` sealed under a key of its own
+   * and put at the selected mediator as this replica's blob, and the
+   * link that restores or imports it; refused whole when the snapshot
+   * comes to more than a blob there holds once sealed. The export takes
+   * its turn with the calls on the daemon's files. What is put is kept
+   * in this runtime's local state before the put, so that a snapshot
+   * whose upload failed is still listed, and revocable.
    */
-  publishSnapshotLink(): Promise<PublishedSnapshot>;
+  publishSnapshotLink(selection: SnapshotSelection): Promise<PublishedSnapshot>;
   /**
    * A snapshot put from here, pending or published, deleted at the
    * mediator and forgotten once a publish of it under way has settled:
@@ -108,6 +109,13 @@ export interface Daemon {
    * opening fails.
    */
   restoreFromLink(link: SnapshotLink, passphrase: string, maxBytes: number): Promise<void>;
+  /**
+   * A link's snapshot merged into the open vault as `mergeBackup`
+   * merges one, read as `restoreFromLink` reads it. Refused before
+   * anything is read where no vault is open, and with nothing written
+   * where the vault is let go of while it is read.
+   */
+  importFromLink(link: SnapshotLink, maxBytes: number): Promise<Merged>;
 
   /** An arrangement with `mediatorDid` selected: the one that stands with that mediator, or one created and enrolled in. */
   setMediator(mediatorDid: string): Promise<MediationId>;

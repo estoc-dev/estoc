@@ -1,4 +1,4 @@
-import type { ChannelRecord, Conversation, MessageRecord, ObservationRecord, SnapshotIndex } from "../core/types.js";
+import type { ChannelRecord, Conversation, MergeResult, MessageRecord, ObservationRecord, SnapshotIndex } from "../core/types.js";
 
 /** did:peer:4 long forms run ~800 characters; show head and tail. */
 export function shortDid(did: string): string {
@@ -44,6 +44,14 @@ export function dayOf(iso: string, now: Date = new Date()): string {
 
 export async function bytesOf(file: File): Promise<Uint8Array> {
   return new Uint8Array(await file.arrayBuffer());
+}
+
+/** What a merge of `source`, a backup or a link's copy, brought into this vault, for a person. */
+export function mergedNote(merged: MergeResult, source: string): string {
+  const { added, objects } = merged;
+  const note = added === 0 && objects === 0 ? `Nothing new in ${source}.` : `Merged ${added} new event${added === 1 ? "" : "s"} and ${objects} object${objects === 1 ? "" : "s"}.`;
+  if (!merged.renewed) return note;
+  return `${note} ${source[0]!.toUpperCase()}${source.slice(1)} and this vault were copies of one another that both went on being written; this one now writes under a fresh ID of its own, its history unchanged.`;
 }
 
 /** The short form of a did:peer:4, which is how a channel names its ends; any other DID as it is. */

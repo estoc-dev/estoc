@@ -9,13 +9,14 @@ import { openNodeSqlite } from "@estoc/event-store/node";
 import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
 import { unlockSeedKeystore } from "@estoc/keystore";
-import { Keys, vaultDraft, vaultHeldRoots, type Channel, type Did } from "@estoc/vault";
+import { ENROLLMENT_EVENT_TYPES, Keys, vaultDraft, vaultHeldRoots, type Channel, type Did } from "@estoc/vault";
 
-import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName, openRestoredVault, type VaultSession } from "@estoc/agent-core";
+import { BLOB_DELETE, BLOB_PUT, REPLICA_ADD, SEAL_OVERHEAD, blobName, openBlob, openRestoredVault, type VaultSession } from "@estoc/agent-core";
 import { newMediator } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
 import { nodeHost } from "../src/node/index.js";
+import { keyBytes } from "../src/snapshot-links.js";
 
 const PASSPHRASE = "alice-passes-the-salt";
 
@@ -139,7 +140,8 @@ async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemo
   return { root, ...over };
 }
 
-type Published = { status: "published"; hash: string; placedAt: string; retainUntil: string; revocable: boolean; link: { url: string; hash: string; key: string } };
+type Link = { url: string; hash: string; key: string };
+type Published = { status: "published"; hash: string; selection: "enrollment" | "all"; placedAt: string; retainUntil: string; revocable: boolean; link: Link };
 
 function latch(): { reached: Promise<void>; release: () => void } {
   let release!: () => void;
@@ -157,18 +159,42 @@ const exists = (file: string): Promise<boolean> =>
 
 const vaultFile = (root: string) => path.join(root, ".estoc", "vault.sqlite");
 
-async function eventsOf(bytes: Uint8Array): Promise<{ anchor: string; cids: string[] }> {
+async function eventsOf(bytes: Uint8Array): Promise<{ anchor: string; cids: string[]; types: Set<string>; objects: number }> {
   const file = path.join(await folder(), "snapshot.sqlite");
   await writeFile(file, bytes);
   const source = openPortable(openNodeSqlite(file, { mode: "readonly" }));
   try {
     const cids: string[] = [];
-    for await (const event of source.vault.events.scan()) cids.push(event.cid);
-    return { anchor: source.metadata.anchor, cids: cids.sort() };
+    const types = new Set<string>();
+    for await (const event of source.vault.events.scan()) {
+      cids.push(event.cid);
+      types.add(event.type);
+    }
+    let objects = 0;
+    for await (const _ of source.vault.objects.list()) objects++;
+    return { anchor: source.metadata.anchor, cids: cids.sort(), types, objects };
   } finally {
     source.close();
   }
 }
+
+/** The snapshot a link names, as the mediator holds it, opened. */
+function linked(mediator: FakeMediator, link: Link): Promise<Uint8Array> {
+  const sealed = [...mediator.blobs.values()].find((blob) => blob.hash === link.hash)?.bytes;
+  if (sealed == null) throw new Error(`the mediator holds no bytes of ${link.hash}`);
+  return openBlob(sealed, { hash: link.hash, key: keyBytes(link.key) });
+}
+
+async function until(what: string, condition: () => boolean, ms = 30_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting until ${what}`);
+    await delay(20);
+  }
+}
+
+/** The replica DIDs the mediator added for the account a daemon's arrangement registered. */
+const replicasOf = (mediator: FakeMediator, account: string): string[] => [...mediator.replicas.values()].filter((replica) => replica.account === account).map((replica) => replica.replicaDid);
 
 const shown = (daemon: DaemonCore): Snapshot => {
   const { value } = daemon.publisher.current.state;
@@ -182,9 +208,9 @@ describe("a snapshot link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const published = (await a.call("publishSnapshotLink", {})) as Published;
+      const published = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
       const held = await eventsOf((await a.daemon.exportBackup()).bytes);
-      expect(published).toEqual({ status: "published", hash: published.link.hash, placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, revocable: true, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
+      expect(published).toEqual({ status: "published", hash: published.link.hash, selection: "all", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, revocable: true, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
       expect(Date.parse(published.retainUntil)).toBeGreaterThan(Date.parse(published.placedAt));
 
       const b = await newcomer(mediator);
@@ -204,12 +230,13 @@ describe("a snapshot link", () => {
   );
 
   it(
-    "is listed by the daemon that put it until revoked, again once that daemon is reopened, and reads nothing once revoked",
+    "is listed by the daemon that put it, with what it carries, until revoked, again once that daemon is reopened, and reads nothing once revoked",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const first = (await a.call("publishSnapshotLink", {})) as Published;
-      const second = (await a.call("publishSnapshotLink", {})) as Published;
+      const first = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
+      const second = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      expect([first.selection, second.selection]).toEqual(["enrollment", "all"]);
       expect(second.hash).not.toBe(first.hash);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [first, second] });
 
@@ -237,11 +264,11 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const failing = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
       const a = await alice(mediator, { wrap: failing });
-      await expect(a.call("publishSnapshotLink", {})).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
+      await expect(a.call("publishSnapshotLink", { selection: "all" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
       const [blob] = [...mediator.blobs.values()];
       expect(blob).toMatchObject({ bytes: null });
       const { links } = (await a.call("snapshotLinks", {})) as { links: unknown[] };
-      expect(links).toEqual([{ status: "pending", hash: blob!.hash, placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string }]);
+      expect(links).toEqual([{ status: "pending", hash: blob!.hash, selection: "all", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string }]);
 
       expect(await a.call("revokeSnapshotLink", { hash: blob!.hash })).toBeNull();
       expect(mediator.blobs.size).toBe(0);
@@ -267,7 +294,7 @@ describe("a snapshot link", () => {
         });
       };
       const a = await alice(mediator, { wrap: asABrowser });
-      await expect(a.call("publishSnapshotLink", {})).resolves.toMatchObject({ status: "published" });
+      await expect(a.call("publishSnapshotLink", { selection: "all" })).resolves.toMatchObject({ status: "published" });
     },
     LONG
   );
@@ -278,10 +305,10 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
       mediator.intercept = (msg) => (msg.type === BLOB_PUT ? null : undefined);
-      await expect(a.call("publishSnapshotLink", {})).rejects.toThrow();
+      await expect(a.call("publishSnapshotLink", { selection: "all" })).rejects.toThrow();
       mediator.intercept = null;
       const { links } = (await a.call("snapshotLinks", {})) as { links: { hash: string }[] };
-      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, placedAt: expect.any(String) as string, retainUntil: null }]);
+      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, selection: "all", placedAt: expect.any(String) as string, retainUntil: null }]);
       expect(mediator.blobs.size).toBe(0);
 
       expect(await a.call("revokeSnapshotLink", { hash: links[0]!.hash })).toBeNull();
@@ -305,10 +332,10 @@ describe("a snapshot link", () => {
         await answer.reached;
         return undefined;
       };
-      const publishing = a.call("publishSnapshotLink", {}) as Promise<Published>;
+      const publishing = a.call("publishSnapshotLink", { selection: "all" }) as Promise<Published>;
       await put.reached;
       const { links } = (await a.call("snapshotLinks", {})) as { links: { hash: string }[] };
-      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, placedAt: expect.any(String) as string, retainUntil: null }]);
+      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, selection: "all", placedAt: expect.any(String) as string, retainUntil: null }]);
       const revoking = a.call("revokeSnapshotLink", { hash: links[0]!.hash });
       const deletedEarly = await Promise.race([deleted.reached.then(() => true), delay(300).then(() => false)]);
       answer.release();
@@ -331,9 +358,9 @@ describe("a snapshot link", () => {
       let failing = false;
       const flaky = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (failing && init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
       const { there, backup } = await apart(mediator, { wrap: flaky });
-      const before = (await there.call("publishSnapshotLink", {})) as Published;
+      const before = (await there.call("publishSnapshotLink", { selection: "all" })) as Published;
       failing = true;
-      await expect(there.call("publishSnapshotLink", {})).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
+      await expect(there.call("publishSnapshotLink", { selection: "all" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
       failing = false;
       expect(((await there.call("snapshotLinks", {})) as { links: unknown[] }).links).toHaveLength(2);
 
@@ -344,7 +371,7 @@ describe("a snapshot link", () => {
       expect(await there.call("snapshotLinks", {})).toEqual(kept);
       expect((await mediator.fetch(before.link.url)).status).toBe(200);
 
-      const since = (await there.call("publishSnapshotLink", {})) as Published;
+      const since = (await there.call("publishSnapshotLink", { selection: "all" })) as Published;
       expect(since.revocable).toBe(true);
       expect(await there.call("revokeSnapshotLink", { hash: since.hash })).toBeNull();
       expect((await mediator.fetch(since.link.url)).status).toBe(404);
@@ -359,7 +386,7 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       mediator.blobLimits = { ...mediator.blobLimits!, quotaBytes: 1 };
       const a = await alice(mediator);
-      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: expect.stringMatching(/^the mediator refused the snapshot: put was refused: e\.p\.blob\.quota/) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(/^the mediator refused the snapshot: put was refused: e\.p\.blob\.quota/) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
     },
@@ -372,12 +399,12 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       mediator.blobLimits = { ...mediator.blobLimits!, maxBytes: 4096 };
       const a = await alice(mediator);
-      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "ResourceLimit", message: expect.stringMatching(new RegExp(`^the snapshot's events and objects come to \\d+ bytes, over the ${4096 - SEAL_OVERHEAD} a blob at the mediator holds once sealed$`)) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "ResourceLimit", message: expect.stringMatching(new RegExp(`^the snapshot's events and objects come to \\d+ bytes, over the ${4096 - SEAL_OVERHEAD} a blob at the mediator holds once sealed$`)) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
 
       mediator.blobLimits = null;
-      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: "the mediator keeps no blobs", effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: "the mediator keeps no blobs", effect: "none", messageId: null });
     },
     LONG
   );
@@ -389,7 +416,7 @@ describe("a snapshot link", () => {
       const { there, backup } = await apart(mediator);
       const asked = mediator.seenTypes.length;
       expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
-      expect(await there.call("publishSnapshotLink", {})).toMatchObject({ status: "published", revocable: true });
+      expect(await there.call("publishSnapshotLink", { selection: "all" })).toMatchObject({ status: "published", revocable: true });
       const since = mediator.seenTypes.slice(asked);
       expect(since).toContain(REPLICA_ADD);
       expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
@@ -413,7 +440,7 @@ describe("a snapshot link", () => {
       await refused.reached;
       refusing = false;
       const asked = mediator.seenTypes.length;
-      expect(await there.call("publishSnapshotLink", {})).toMatchObject({ status: "published", revocable: true });
+      expect(await there.call("publishSnapshotLink", { selection: "all" })).toMatchObject({ status: "published", revocable: true });
       const since = mediator.seenTypes.slice(asked);
       expect(since.filter((type) => type === REPLICA_ADD)).toHaveLength(1);
       expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
@@ -428,7 +455,7 @@ describe("a snapshot link", () => {
       const elsewhere = await newMediator(201, "https://elsewhere.example/");
       const a = await alice(mediator);
       expect(await a.daemon.mergeBackup(await backupPreferring((await a.daemon.exportBackup()).bytes, elsewhere.did))).toMatchObject({ renewed: false });
-      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: expect.stringMatching(new RegExp(`is already recorded as something else: a member of the arrangement with ${mediator.did}$`)) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(new RegExp(`is already recorded as something else: a member of the arrangement with ${mediator.did}$`)) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(elsewhere.seenTypes).toEqual([]);
       expect(a.fetched.filter((request) => request.includes(elsewhere.http))).toEqual([]);
@@ -443,7 +470,7 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const a = await newcomer(mediator);
       await a.daemon.createIdentity("Alice", PASSPHRASE);
-      expect(await a.refused("publishSnapshotLink", {})).toEqual({ code: "OperationFailed", message: "no mediator is set", effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: "no mediator is set", effect: "none", messageId: null });
       expect(a.fetched).toEqual([]);
     },
     LONG
@@ -456,11 +483,11 @@ describe("a restore from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", {})) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
       const sealed = [...mediator.blobs.values()][0]!.bytes!;
 
       const small = await newcomer(mediator, { maxBackupBytes: 1024 });
-      expect(await small.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({ code: "ResourceLimit", message: "the snapshot is over the 1024 bytes this daemon restores", effect: "none", messageId: null });
+      expect(await small.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({ code: "ResourceLimit", message: "the snapshot is over the 1024 bytes this daemon reads from a link", effect: "none", messageId: null });
 
       const b = await newcomer(mediator);
       expect(await b.refused("restoreFromLink", { link: { ...link, hash: await blobName(new Uint8Array([1])) }, passphrase: PASSPHRASE })).toEqual({ code: "OperationFailed", message: "the bytes at that link are not the snapshot it names", effect: "none", messageId: null });
@@ -482,7 +509,7 @@ describe("a restore from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", {})) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
       const reads = a.fetched.length;
       expect(await a.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({ code: "WrongPhase", message: "a vault already exists here", effect: "none", messageId: null });
       expect(a.fetched.slice(reads).filter((request) => request.includes("/b/"))).toEqual([]);
@@ -495,7 +522,7 @@ describe("a restore from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", {})) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
       const redirects: (RequestRedirect | undefined)[] = [];
       const b = await newcomer(mediator, {
         wrap: (fetch) => (input, init) => {
@@ -505,6 +532,168 @@ describe("a restore from a link", () => {
       });
       await b.call("restoreFromLink", { link, passphrase: PASSPHRASE });
       expect(redirects).toEqual(["error"]);
+    },
+    LONG
+  );
+});
+
+describe("a link of the events a new replica enrolls from", () => {
+  it(
+    "carries the vault's name, arrangements and replicas and no object, and restores a vault that enrolls at the mediator and holds no contact",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const [account] = mediator.replicaAccounts;
+      expect(replicasOf(mediator, account!)).toHaveLength(1);
+      const enrollment = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
+      expect(enrollment.selection).toBe("enrollment");
+      const carried = await eventsOf(await linked(mediator, enrollment.link));
+      const whole = await eventsOf((await a.daemon.exportBackup()).bytes);
+      expect([...carried.types].every((type) => ENROLLMENT_EVENT_TYPES.has(type as never))).toBe(true);
+      expect(carried.types).toContain("replica.created");
+      expect(carried.objects).toBe(0);
+      expect(whole.cids).toEqual(expect.arrayContaining(carried.cids));
+      expect(whole.cids.length).toBeGreaterThan(carried.cids.length);
+
+      const b = await newcomer(mediator);
+      expect(await b.call("restoreFromLink", { link: enrollment.link, passphrase: PASSPHRASE })).toBeNull();
+      expect(b.daemon.publisher.current.state.value.phase).toBe("open");
+      expect(shown(b.daemon)).toMatchObject({ anchor: shown(a.daemon).anchor, label: "Alice", restoreUnexplained: true, conversations: [] });
+      await until("the restored runtime is a replica at the mediator", () => replicasOf(mediator, account!).length === 2);
+    },
+    LONG
+  );
+});
+
+describe("an import from a link", () => {
+  it(
+    "merges the snapshot into the open vault and answers what it brought: a whole one over an enrollment restore brings the rest, and again brings nothing",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const enrollment = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
+      const b = await newcomer(mediator);
+      await b.call("restoreFromLink", { link: enrollment.link, passphrase: PASSPHRASE });
+
+      const all = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const whole = await eventsOf(await linked(mediator, all.link));
+      const carried = await eventsOf(await linked(mediator, enrollment.link));
+      const merged = await b.call("importFromLink", { link: all.link });
+      expect(merged).toEqual({ added: whole.cids.length - carried.cids.length, duplicates: carried.cids.length, objects: whole.objects, repaired: 0, renewed: false });
+      expect(shown(b.daemon).conversations.map((conversation) => conversation.petname)).toEqual(["Bob"]);
+      const held = await eventsOf((await b.daemon.exportBackup()).bytes);
+      expect(held.cids).toEqual(expect.arrayContaining(whole.cids));
+
+      expect(await b.call("importFromLink", { link: all.link })).toEqual({ added: 0, duplicates: whole.cids.length, objects: 0, repaired: 0, renewed: false });
+      expect((await eventsOf((await b.daemon.exportBackup()).bytes)).cids).toEqual(held.cids);
+    },
+    LONG
+  );
+
+  it(
+    "is refused, with nothing written, for another vault's snapshot",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const before = await eventsOf((await a.daemon.exportBackup()).bytes);
+      const other = await alice(mediator);
+      const { link } = (await other.call("publishSnapshotLink", { selection: "all" })) as Published;
+      expect(await a.refused("importFromLink", { link })).toEqual({ code: "OperationFailed", message: "that snapshot is of another vault, and is not merged into this one", effect: "none", messageId: null });
+      expect((await eventsOf((await a.daemon.exportBackup()).bytes)).cids).toEqual(before.cids);
+    },
+    LONG
+  );
+
+  it(
+    "reads the snapshot as a restore does, and writes nothing when the read fails",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const small = await alice(mediator, { maxBackupBytes: 1024 });
+      const before = await eventsOf((await small.daemon.exportBackup()).bytes);
+      expect(await small.refused("importFromLink", { link })).toEqual({ code: "ResourceLimit", message: "the snapshot is over the 1024 bytes this daemon reads from a link", effect: "none", messageId: null });
+      expect(await small.refused("importFromLink", { link: { ...link, url: `${link.url}-gone` } })).toEqual({ code: "OperationFailed", message: "no snapshot is at that link any more: it was revoked, or the mediator has let it go", effect: "none", messageId: null });
+      expect((await eventsOf((await small.daemon.exportBackup()).bytes)).cids).toEqual(before.cids);
+    },
+    LONG
+  );
+
+  it(
+    "is refused before anything is read where no vault is open",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const b = await newcomer(mediator);
+      expect(await b.refused("importFromLink", { link })).toEqual({ code: "WrongPhase", message: "no open vault", effect: "none", messageId: null });
+      expect(b.fetched).toEqual([]);
+    },
+    LONG
+  );
+
+  it(
+    "merges nothing into a vault opened while the snapshot was read, though it is the same vault or one of the same backup",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const early = await a.daemon.exportBackup();
+      await a.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
+      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const brought = new Set((await eventsOf(await linked(mediator, link))).cids);
+      for (const cid of (await eventsOf(early.bytes)).cids) brought.delete(cid);
+      expect(brought.size).toBeGreaterThan(0);
+
+      let reading: { reached: () => void; gate: Promise<void> } | null = null;
+      const b = await newcomer(mediator, {
+        wrap: (fetch) => async (input, init) => {
+          const held = reading;
+          if (held !== null && String(input) === link.url) {
+            held.reached();
+            await held.gate;
+          }
+          return fetch(input, init);
+        },
+      });
+      await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+      /** An import of the link whose read is held until `meanwhile` is done. */
+      const importAround = async (meanwhile: () => Promise<void>): Promise<ApiError> => {
+        const reached = latch();
+        const gate = latch();
+        reading = { reached: reached.release, gate: gate.reached };
+        const refusal = b.refused("importFromLink", { link });
+        await reached.reached;
+        try {
+          await meanwhile();
+        } finally {
+          reading = null;
+          gate.release();
+        }
+        return refusal;
+      };
+      const letGo = { code: "WrongPhase", message: "the vault was let go of before the snapshot could be merged into it", effect: "none", messageId: null };
+      const merged = async () => {
+        const held = (await eventsOf((await b.daemon.exportBackup()).bytes)).cids;
+        return held.filter((cid) => brought.has(cid));
+      };
+
+      expect(
+        await importAround(async () => {
+          const { hold } = b.daemon.publisher.current.state.value;
+          await b.daemon.forgetIdentity(hold!);
+          await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+        })
+      ).toEqual(letGo);
+      expect(await merged()).toEqual([]);
+
+      expect(
+        await importAround(async () => {
+          await b.daemon.lock();
+          await b.daemon.unlock(PASSPHRASE);
+        })
+      ).toEqual(letGo);
+      expect(await merged()).toEqual([]);
+      expect(shown(b.daemon).conversations.map((conversation) => conversation.petname)).toEqual(["Bob"]);
     },
     LONG
   );

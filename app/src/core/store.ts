@@ -12,7 +12,7 @@ import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
-import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, TraceLevel } from "./types.js";
+import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, SnapshotSelection, TraceLevel } from "./types.js";
 
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
 /** A `#snapshot=` this page was opened with: the link as it came, or why it is not one. */
@@ -66,10 +66,11 @@ export const state = shallowReactive({
   pendingInvitation: null as Invitation | null,
   pendingMediatorInvitation: null as string | null,
   /**
-   * What this page was opened with as `#snapshot=`, until a vault is made
-   * or restored here: the link to another device's vault, offered where
-   * a vault is restored, or why what came is not one. While this device
-   * holds a vault it is only said to be of no use here.
+   * What this page was opened with as `#snapshot=`, or why what came is
+   * not a link to another device's vault. Kept here, not in the URL, which
+   * the key leaves at once: where no vault is held it is offered to
+   * restore from, where one is, to import once the vault is open, until it
+   * is used or set aside.
    */
   pendingSnapshotLink: null as OpenedSnapshotLink | null,
   /** the invitations made since this page opened, by ID, as the links they were handed over as: the vault keeps the disclosure and not what it was said to be for */
@@ -239,8 +240,9 @@ function takePendingSnapshotLink(): void {
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
 }
 
-export function dismissPendingSnapshotLink(): void {
-  state.pendingSnapshotLink = null;
+/** `opened` set aside, if it is still the link pending: one the page was opened with since waits for its own turn. */
+export function dismissPendingSnapshotLink(opened: OpenedSnapshotLink): void {
+  if (state.pendingSnapshotLink === opened) state.pendingSnapshotLink = null;
 }
 
 /**
@@ -325,10 +327,14 @@ export function snapshotLinkOf(link: SnapshotLink): string {
   return snapshotLinkUrl(`${location.origin}${location.pathname}`, link);
 }
 
-/** This vault sealed and put at its mediator, for a new device to restore from the link. */
-export async function publishSnapshotLink(): Promise<PublishedSnapshotLink> {
-  const made = await call((daemon) => daemon.publishSnapshotLink({}), "A link cannot carry this vault: export a backup and restore the file on the new device instead.");
-  log(`put a snapshot for a new device, kept until ${made.retainUntil}`);
+/**
+ * A snapshot of this vault sealed and put at its mediator: of what a new
+ * device joins with, or of the whole vault, for a device of this vault's
+ * to import or a new one to restore from.
+ */
+export async function publishSnapshotLink(selection: SnapshotSelection): Promise<PublishedSnapshotLink> {
+  const made = await call((daemon) => daemon.publishSnapshotLink({ selection }), "A link cannot carry this vault: export a backup and take the file to the other device instead.");
+  log(`put ${selection === "all" ? "a copy of this vault" : "a link for a new device"}, kept until ${made.retainUntil}`);
   return made;
 }
 
@@ -342,10 +348,20 @@ export async function revokeSnapshotLink(hash: string): Promise<void> {
   log(`revoked the snapshot ${hash}`);
 }
 
+const brought = ({ added, objects }: MergeResult): string => `${added} new event${added === 1 ? "" : "s"}, ${objects} object${objects === 1 ? "" : "s"}`;
+
 /** Merge a backup file into the open vault; the daemon goes on over the merged vault. */
 export async function mergeBackup(backup: Uint8Array): Promise<MergeResult> {
   const merged = await call((daemon) => daemon.mergeBackup({ backup }));
-  log(`merged a backup: ${merged.added} new event${merged.added === 1 ? "" : "s"}, ${merged.objects} object${merged.objects === 1 ? "" : "s"}`);
+  log(`merged a backup: ${brought(merged)}`);
+  return merged;
+}
+
+/** Merge what a link another device of this vault made holds, read from what was pasted, scanned or opened, into the open vault. */
+export async function importFromLink(input: string): Promise<MergeResult> {
+  const link = parseSnapshotLink(input);
+  const merged = await call((daemon) => daemon.importFromLink({ link }), "Export a backup on the device that made the link, and import the file here instead.");
+  log(`imported a link: ${brought(merged)}`);
   return merged;
 }
 

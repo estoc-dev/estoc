@@ -33,6 +33,22 @@
   An export over its bound now says `the snapshot file is ... over the
   bound of ...` when the host refuses the file.
 
+- **Snapshots of a selection, and imports from a link**:
+  `publishSnapshotLink(selection)` exports `enrollment`, the events a
+  new replica enrolls from, which name no object when well formed, or
+  `all`, the whole vault, and
+  the record it keeps says which; one kept without it is forgotten as
+  no snapshot put. `importFromLink(link, maxBytes)` reads a link's
+  snapshot as `restoreFromLink` does and merges it into the open vault
+  as `mergeBackup` does. A merge of another vault's snapshot, from a
+  file or a link, is refused as `OperationFailed` with nothing written,
+  where it was a failure of the call. A merge, from a file or a link,
+  goes into the vault open when it was asked or none: one let go of
+  before the merge's turn, as while a link is read, is refused as
+  `WrongPhase` with nothing written, though the same vault is open
+  again by then. A link's snapshot over the bound
+  is refused as `over the ... bytes this daemon reads from a link`.
+
 - A response of a status with no body (a 204, say) reaches the agent as
   the host answered it, even when the host hands it over with an empty
   body, as a browser does: wrapping that body in a new response threw, so
