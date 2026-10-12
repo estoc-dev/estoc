@@ -42,7 +42,7 @@ import {
 } from "@estoc/vault";
 
 import { ENCRYPTED_MIME } from "./protocol/didcomm.js";
-import { recordAcceptance, recordOwedAcceptance } from "./acceptance.js";
+import { outboundTurn, recordAcceptance } from "./acceptance.js";
 import type { LiveAction } from "./action.js";
 import type { Account } from "./arrangement.js";
 import { routeOf } from "./dids.js";
@@ -52,7 +52,7 @@ import { refuses } from "./lifetime.js";
 import { bounded, letGo, sealData } from "./link.js";
 import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import { holds } from "./replica-recipients.js";
-import { closedBecause, expireUnderLock, expiryPhase, hasExpired, outboundWorkKey, prepareUnderLock, type PrepareOptions, type Settled } from "./prepare.js";
+import { closedBecause, expireUnderLock, expiryPhase, hasExpired, prepareUnderLock, type PrepareOptions, type Settled } from "./prepare.js";
 import { knownLongForms, type KnownLongForms, type ResolverOptions } from "./resolver.js";
 import type { Locked, Session } from "./session.js";
 import { note, noteAll, type AgentTrace } from "./trace.js";
@@ -93,15 +93,12 @@ export type Dispatched =
 
 /** The one transport call of the message under `action`, serially with every other piece of work on that message. */
 export function dispatch(session: Session, action: LiveAction, options: DispatchOptions): Promise<Dispatched> {
-  const local = localRecordsOf(session.runtime, options.local);
-  return session.turn(outboundWorkKey(action.messageId), () => attempt(session, action, options, local));
+  return outboundTurn(session, action.messageId, localRecordsOf(session.runtime, options.local), (local, owed) => attempt(session, action, options, local, owed));
 }
 
-async function attempt(session: Session, action: LiveAction, options: DispatchOptions, local: LocalRecords): Promise<Dispatched> {
+async function attempt(session: Session, action: LiveAction, options: DispatchOptions, local: LocalRecords, owed: VaultEvent<"delivery.submitted"> | null): Promise<Dispatched> {
   const { messageId } = action;
-  const { runtime } = session;
   const trace = options.trace ?? null;
-  const owed = await recordOwedAcceptance(runtime, local, messageId);
   if (owed !== null) return { outcome: "submitted", messageId, preparationEventCid: owed.data.preparationEventCid, submitted: owed };
   if (action.spent) return { outcome: "spent", messageId };
   const readied = await session.locked((locked) => ready(locked, messageId, options, local));
@@ -132,7 +129,7 @@ async function attempt(session: Session, action: LiveAction, options: DispatchOp
   }
   await noteAttempt(trace, messageId, preparationEventCid, carried, answer);
   if ("status" in answer && answer.status >= 200 && answer.status < 300) {
-    const submitted = await recordAcceptance(runtime, local, messageId, preparationEventCid, trace);
+    const submitted = await recordAcceptance(session.runtime, local, messageId, preparationEventCid, trace);
     return { outcome: "submitted", messageId, preparationEventCid, submitted };
   }
   if ("status" in answer) return { outcome: "failed", messageId, preparationEventCid, reason: `the endpoint answered ${answer.status}` };
@@ -277,9 +274,7 @@ export type Cancelled =
  * released.
  */
 export function cancel(session: Session, messageId: MessageId, options: Pick<DispatchOptions, "trace" | "local"> = {}): Promise<Cancelled> {
-  const local = localRecordsOf(session.runtime, options.local);
-  return session.turn(outboundWorkKey(messageId), async () => {
-    const owed = await recordOwedAcceptance(session.runtime, local, messageId);
+  return outboundTurn(session, messageId, localRecordsOf(session.runtime, options.local), async (_, owed) => {
     if (owed !== null) return { outcome: "none", messageId, because: "submitted" };
     const result = await session.locked(async (locked): Promise<Cancelled> => {
       const outbound = (await locked.fold()).outbound.outbounds.get(messageId);
@@ -307,10 +302,9 @@ export type Selected =
  * nothing; a manual retry carries the choice.
  */
 export function selectPreparation(session: Session, messageId: MessageId, preparationEventCid: EventReference<"message.prepared">, options: Pick<DispatchOptions, "local"> = {}): Promise<Selected> {
-  const local = localRecordsOf(session.runtime, options.local);
-  return session.turn(outboundWorkKey(messageId), async () => {
+  return outboundTurn(session, messageId, localRecordsOf(session.runtime, options.local), async (local, owed) => {
     const none = (because: string): Selected => ({ outcome: "none", messageId, because });
-    if ((await recordOwedAcceptance(session.runtime, local, messageId)) !== null) return none("submitted");
+    if (owed !== null) return none("submitted");
     const because = await session.locked(async (locked): Promise<string | null> => {
       const outbound = (await locked.fold()).outbound.outbounds.get(messageId);
       if (outbound === undefined) throw new UnknownEntity("message", messageId);

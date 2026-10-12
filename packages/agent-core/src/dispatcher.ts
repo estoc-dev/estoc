@@ -17,6 +17,7 @@ import { unfinishedWork, type EventReference, type MessageId, type Outbound } fr
 import { LiveAction, type ActionKind } from "./action.js";
 import { cancel, dispatch, selectPreparation, type Cancelled, type DispatchOptions, type Dispatched, type Selected } from "./dispatch.js";
 import { Lifetime, type Timer, type Timers } from "./lifetime.js";
+import { localRecordsOf, type LocalRecords } from "./local-records.js";
 import type { Session } from "./session.js";
 
 export interface RetryPolicy {
@@ -65,7 +66,7 @@ interface Wait extends Waiting {
 
 /** Its transport and its waits are reached through a lifetime of its own, which `close()` closes; the accounts it is given, and their links, are its holder's. */
 export class Dispatcher {
-  private readonly options: DispatcherOptions;
+  private readonly options: DispatcherOptions & { local: LocalRecords };
   private readonly policy: RetryPolicy;
   private readonly lifetime: Lifetime;
   private readonly now: () => number;
@@ -77,7 +78,7 @@ export class Dispatcher {
     options: DispatcherOptions
   ) {
     this.lifetime = new Lifetime(options.timers);
-    this.options = { ...options, fetch: this.lifetime.fetch(options.fetch) };
+    this.options = { ...options, fetch: this.lifetime.fetch(options.fetch), local: localRecordsOf(session.runtime, options.local) };
     this.policy = { ...RETRY_POLICY, ...options.retry };
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);

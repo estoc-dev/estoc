@@ -1,17 +1,19 @@
 import { describe, expect, expectTypeOf, it, test, vi } from "vitest";
 
-import { scanVault, type DidId, type MessageId } from "@estoc/vault";
+import { scanVault, type DidId, type EventReference, type MessageId } from "@estoc/vault";
 import type { VaultRuntime } from "@estoc/event-store";
 
 import { BASIC_MESSAGE } from "../src/protocol/basicmessage.js";
-import type { Content } from "../src/index.js";
+import { LocalRecords, type Content } from "../src/index.js";
 import { LiveAction } from "../src/action.js";
 import { Keyring } from "../src/keyring.js";
+import { localRecordsOf, transientOptions } from "../src/local-records.js";
+import { prepare } from "../src/prepare.js";
 import { Receiver } from "../src/receive/receiver.js";
 import { send } from "../src/send.js";
-import { dispatch } from "../src/dispatch.js";
+import { dispatch, selectPreparation } from "../src/dispatch.js";
 import { Dispatcher, type DispatcherOptions } from "../src/dispatcher.js";
-import { didcomm, directParty, handTimers, posting, until, type DirectParty } from "./helpers.js";
+import { after, didcomm, directParty, handTimers, merged, posting, until, type DirectParty } from "./helpers.js";
 
 const ALICE = "019b0000-0000-7000-8000-00000000000a" as DidId;
 const BOB = "019b0000-0000-7000-8000-0000000000b0" as DidId;
@@ -58,6 +60,15 @@ async function scene(over: Partial<DispatcherOptions> = {}, answer: () => Respon
 const toShortForm = (s: Scene, messageId: MessageId) => send(s.alice.session, { channel: { localDid: s.alice.did, peerDid: s.bob.did } }, HELLO, { messageId });
 /** A message to Bob's long form: it brings the long form into evidence for every message to Bob. */
 const toLongForm = (s: Scene, messageId: MessageId) => send(s.alice.session, { channel: { localDid: s.alice.did, peerDid: s.bob.longFormDid } }, HELLO, { messageId });
+
+/** A message to Bob's long form prepared and selected in the runtime's records in memory, and a second valid preparation of it beside that one, as another replica made it. */
+async function preparedTwice(s: Scene, messageId: MessageId) {
+  const sent = await toLongForm(s, messageId);
+  const made = await prepare(s.alice.session, messageId, { didcomm });
+  if (made.outcome !== "prepared") throw new Error(`not prepared: ${JSON.stringify(made)}`);
+  const elsewhere = await merged(s.alice.runtime, "message.prepared", made.prepared.data, after(made.prepared.at, 1));
+  return { action: sent.action, selected: made.prepared.cid as EventReference<"message.prepared">, elsewhere: elsewhere.cid as EventReference<"message.prepared"> };
+}
 
 describe("Dispatcher", () => {
   it("waits out a prerequisite for as long as the action lives, doubling the wait, and makes the call once it is there", async () => {
@@ -143,6 +154,62 @@ describe("Dispatcher", () => {
     expect(s.timers.waits.map((wait) => wait.cleared)).toEqual([true, true]);
     expect(s.dispatcher.waiting()).toEqual([]);
     expect(await s.dispatcher.run(LiveAction.manual(MESSAGE))).toEqual({ outcome: "none", messageId: MESSAGE, because: "the dispatcher is closed" });
+    await s.close();
+  });
+
+  test("work on a message whose call is in flight waits for that call, from another dispatcher of the runtime or from none: the acceptance is recorded first, so nothing is cancelled and the selection stays, while another message is carried meanwhile", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const answers = [() => new Promise<Response>((resolve) => (answer = resolve)), accepted];
+    const s = await scene({}, () => answers.shift()!());
+    const first = await preparedTwice(s, MESSAGE);
+    const second = await toLongForm(s, SECOND);
+    const records = localRecordsOf(s.alice.runtime, undefined);
+    const settled: string[] = [];
+    const running = s.dispatcher.run(first.action).finally(() => settled.push("dispatch"));
+    await until("the call is in flight", () => s.wire.posts.length === 1);
+
+    const other = new Dispatcher(s.alice.session, { didcomm, fetch: s.wire.fetch });
+    const cancelled = other.cancel(MESSAGE).finally(() => settled.push("cancel"));
+    const selected = selectPreparation(s.alice.session, MESSAGE, first.elsewhere).finally(() => settled.push("select"));
+    expect(await other.run(second.action)).toMatchObject({ outcome: "submitted", messageId: SECOND });
+    expect(settled).toEqual([]);
+    let fold = await scanVault(s.alice.runtime.vault, s.alice.keys);
+    expect(fold.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: false, terminal: null });
+    expect(await records.selected(MESSAGE)).toBe(first.selected);
+
+    answer(accepted());
+    expect(await running).toMatchObject({ outcome: "submitted", messageId: MESSAGE, preparationEventCid: first.selected });
+    expect(await cancelled).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await selected).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(settled).toEqual(["dispatch", "cancel", "select"]);
+    fold = await scanVault(s.alice.runtime.vault, s.alice.keys);
+    expect(fold.set.of("delivery.submitted").map((event) => event.data.messageId).sort()).toEqual([MESSAGE, SECOND]);
+    expect(fold.set.of("delivery.failed")).toEqual([]);
+    expect(await records.selected(MESSAGE)).toBe(first.selected);
+    expect(s.wire.posts).toHaveLength(2);
+    other.close();
+    await s.close();
+  });
+
+  test("a dispatcher given local records selects and carries by them, while a dispatcher and the procedures given none share the runtime's records in memory", async () => {
+    const answers = [() => new Response("later", { status: 503 }), accepted];
+    const s = await scene({}, () => answers.shift()!());
+    const records = new LocalRecords(transientOptions(), s.alice.runtime.author);
+    const own = new Dispatcher(s.alice.session, { didcomm, fetch: s.wire.fetch, local: records });
+    const { selected, elsewhere } = await preparedTwice(s, MESSAGE);
+    const selections = async () => [await localRecordsOf(s.alice.runtime, undefined).selected(MESSAGE), await records.selected(MESSAGE)];
+    expect(await selections()).toEqual([selected, null]);
+
+    expect(await s.dispatcher.retry(MESSAGE)).toMatchObject({ outcome: "failed", preparationEventCid: selected });
+    expect(await own.retry(MESSAGE)).toEqual({ outcome: "none", messageId: MESSAGE, because: "2 valid preparations of the message are here, and which one to carry is to be chosen" });
+    expect(await own.select(MESSAGE, elsewhere)).toEqual({ outcome: "selected", messageId: MESSAGE, preparationEventCid: elsewhere });
+    expect(await selections()).toEqual([selected, elsewhere]);
+
+    expect(await own.retry(MESSAGE)).toMatchObject({ outcome: "submitted", preparationEventCid: elsewhere });
+    const fold = await scanVault(s.alice.runtime.vault, s.alice.keys);
+    expect(fold.set.of("delivery.submitted").map((event) => event.data.preparationEventCid)).toEqual([elsewhere]);
+    expect(s.wire.posts).toHaveLength(2);
+    own.close();
     await s.close();
   });
 

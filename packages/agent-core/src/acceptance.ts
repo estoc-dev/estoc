@@ -28,8 +28,22 @@ export async function recordAcceptance(runtime: VaultRuntime, local: LocalRecord
   return committed(runtime, local, messageId, preparationEventCid);
 }
 
+/**
+ * `work` in this runtime's turn on the outbound message, after every
+ * earlier piece of work on it and before every later one: its
+ * preparation, its call, its cancellation, a choice of what it
+ * carries. The acceptance owed for the message is recorded first, so
+ * that no piece of work takes a message the wire accepted for one still
+ * to be sent, and is handed over as `owed`; null when none was owed. A
+ * recorded acceptance is not the fold's reading of the message: intents
+ * that have come to disagree leave it in conflict.
+ */
+export function outboundTurn<T>(session: Session, messageId: MessageId, local: LocalRecords, work: (local: LocalRecords, owed: VaultEvent<"delivery.submitted"> | null) => Promise<T>): Promise<T> {
+  return session.turn(`outbound ${messageId}`, async () => work(local, await recordOwedAcceptance(session.runtime, local, messageId)));
+}
+
 /** The acceptance of a preparation of `messageId` this runtime owes, recorded now; null when it owes none. */
-export async function recordOwedAcceptance(runtime: VaultRuntime, local: LocalRecords, messageId: MessageId): Promise<VaultEvent<"delivery.submitted"> | null> {
+async function recordOwedAcceptance(runtime: VaultRuntime, local: LocalRecords, messageId: MessageId): Promise<VaultEvent<"delivery.submitted"> | null> {
   const preparationEventCid = await local.owedAcceptance(messageId);
   return preparationEventCid === null ? null : committed(runtime, local, messageId, preparationEventCid);
 }
