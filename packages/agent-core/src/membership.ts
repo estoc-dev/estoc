@@ -152,7 +152,6 @@ export class Member implements Membership, BoundReplica {
     return this.spoken();
   }
 
-  /** The replica's queue at the mediator drained over its link. */
   async drain(): Promise<Drained> {
     return this.pickupOver(await this.link()).drain();
   }
