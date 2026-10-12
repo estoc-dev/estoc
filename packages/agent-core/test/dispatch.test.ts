@@ -353,6 +353,91 @@ describe("dispatch to a direct endpoint", () => {
     await closeAll(alice, bob);
   });
 
+  test("an acceptance still owed is recorded before a prepare reads intents that have come to disagree: the prepare finds the conflict, expires nothing and calls nothing", async () => {
+    const { alice, bob } = await parties();
+    const wire = posting(accepted);
+    const target = { channel: { localDid: alice.did, peerDid: bob.longFormDid } };
+    const sent = await send(alice.session, target, { ...HELLO, createdTime: 1_000, expiresTime: 2_000 }, { messageId: MESSAGE });
+    const other = await send(alice.session, target, { type: BASIC_MESSAGE, body: { content: "another" } }, { messageId: SECOND });
+    refuseSubmissions(alice.runtime, 1);
+    await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, now: () => 1_999_999 })).rejects.toThrow(/disk is full/);
+    await merged(alice.runtime, "message.out", { ...other.intent.data, messageId: MESSAGE }, after(sent.intent.at, 1));
+
+    const conflict = { outcome: "none", messageId: MESSAGE, because: "the intents recorded under one message ID disagree" };
+    expect(await prepare(alice.session, MESSAGE, { didcomm, now: () => 2_000_000 })).toEqual(conflict);
+    let f = await fold(alice);
+    expect(f.outbound.outbounds.get(MESSAGE)).toMatchObject({ submitted: false, terminal: null, outcome: { status: "conflict" } });
+    expect(f.set.of("delivery.submitted").map((event) => event.data.messageId)).toEqual([MESSAGE]);
+    expect(f.set.of("delivery.failed")).toEqual([]);
+
+    expect(await prepare(alice.session, MESSAGE, { didcomm, now: () => 2_000_000 })).toEqual(conflict);
+    expect(await dispatch(alice.session, LiveAction.manual(MESSAGE), { didcomm, fetch: wire.fetch, now: () => 2_000_000 })).toEqual(conflict);
+    f = await fold(alice);
+    expect(f.set.of("delivery.submitted")).toHaveLength(1);
+    expect(f.set.of("delivery.failed")).toEqual([]);
+    expect(wire.posts).toHaveLength(1);
+    await closeAll(alice, bob);
+  });
+
+  test("the action whose call was accepted dispatches again as submitted while the acceptance is owed, not as spent: the acceptance is recorded and nothing is called", async () => {
+    const { alice, bob } = await parties();
+    const wire = posting(accepted);
+    const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId: MESSAGE });
+    refuseSubmissions(alice.runtime, 1);
+    await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch })).rejects.toThrow(/disk is full/);
+    expect(sent.action.spent).toBe(true);
+
+    const result = submitted(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch }));
+    expect(result.submitted.data).toEqual({ messageId: MESSAGE, preparationEventCid: result.preparationEventCid });
+    expect(await dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch })).toEqual({ outcome: "spent", messageId: MESSAGE });
+    expect((await fold(alice)).set.of("delivery.submitted")).toHaveLength(1);
+    expect(wire.posts).toHaveLength(1);
+    await closeAll(alice, bob);
+  });
+
+  test("an acceptance still owed is recorded before a cancel or a selection of its message, which then cancels nothing and selects nothing; one that cannot be recorded fails them with nothing written", async () => {
+    const { alice, bob } = await parties();
+    const wire = posting(accepted);
+    const local = new LocalRecords(transientOptions(), alice.runtime.author);
+    const owing = async (messageId: MessageId) => {
+      const sent = await send(alice.session, { channel: { localDid: alice.did, peerDid: bob.longFormDid } }, HELLO, { messageId });
+      const made = await prepare(alice.session, messageId, { didcomm, local });
+      if (made.outcome !== "prepared") throw new Error(`not prepared: ${JSON.stringify(made)}`);
+      const elsewhere = await merged(alice.runtime, "message.prepared", made.prepared.data, after(made.prepared.at, 1));
+      refuseSubmissions(alice.runtime, 2);
+      await expect(dispatch(alice.session, sent.action, { didcomm, fetch: wire.fetch, local })).rejects.toThrow(/disk is full/);
+      return { selected: made.prepared.cid, elsewhere: elsewhere.cid as EventReference<"message.prepared"> };
+    };
+    const state = async (messageId: MessageId) => ({
+      outcome: (await fold(alice)).outbound.outbounds.get(messageId)!.outcome.status,
+      owed: await local.owedAcceptance(messageId),
+      selected: await local.selected(messageId),
+    });
+
+    const first = await owing(MESSAGE);
+    await expect(cancel(alice.session, MESSAGE, { local })).rejects.toThrow(/disk is full/);
+    expect(await state(MESSAGE)).toEqual({ outcome: "prepared", owed: first.selected, selected: first.selected });
+    expect(await cancel(alice.session, MESSAGE, { local })).toEqual({ outcome: "none", messageId: MESSAGE, because: "submitted" });
+    expect(await state(MESSAGE)).toEqual({ outcome: "submitted", owed: null, selected: first.selected });
+
+    const second = await owing(SECOND);
+    await expect(selectPreparation(alice.session, SECOND, second.elsewhere, { local })).rejects.toThrow(/disk is full/);
+    expect(await state(SECOND)).toEqual({ outcome: "prepared", owed: second.selected, selected: second.selected });
+    expect(await selectPreparation(alice.session, SECOND, second.elsewhere, { local })).toEqual({ outcome: "none", messageId: SECOND, because: "submitted" });
+    expect(await state(SECOND)).toEqual({ outcome: "submitted", owed: null, selected: second.selected });
+
+    const f = await fold(alice);
+    expect(new Map(f.set.of("delivery.submitted").map((event) => [event.data.messageId, event.data.preparationEventCid]))).toEqual(
+      new Map([
+        [MESSAGE, first.selected],
+        [SECOND, second.selected],
+      ])
+    );
+    expect(f.set.of("delivery.failed")).toEqual([]);
+    expect(wire.posts).toHaveLength(2);
+    await closeAll(alice, bob);
+  });
+
   test("an acceptance that could be neither kept as owed nor recorded leaves the outcome unknown: the message stays prepared, and only a manual retry carries the envelope again", async () => {
     const { alice, bob } = await parties();
     const trace = await AgentTrace.open(alice.runtime.local);

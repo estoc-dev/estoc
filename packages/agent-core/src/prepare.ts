@@ -70,7 +70,7 @@ import {
 } from "@estoc/vault";
 
 import type { DidcommApi, IMessage } from "./protocol/didcomm.js";
-import { recordOwedAcceptance } from "./acceptance.js";
+import { outboundTurn } from "./acceptance.js";
 import { addressingOf, recipientEndOf, seal, senderEndOf, type Ends } from "./ends.js";
 import { UnknownEntity } from "./errors.js";
 import { commitResolution } from "./evidence.js";
@@ -106,11 +106,6 @@ export type Prepared =
   /** the expiry had come when the message was looked at, whether or not a preparation was made: the message is terminated */
   | { outcome: "expired"; messageId: MessageId; failed: VaultEvent<"delivery.failed"> };
 
-/** The key every piece of work on one outbound runs under, in turn per runtime (`VaultSession.turn`): its preparation here, its transport call after. */
-export function outboundWorkKey(messageId: MessageId): string {
-  return `outbound ${messageId}`;
-}
-
 export function hasExpired(intent: MessageOut, now: () => number): boolean {
   return intent.expiresTime !== null && now() >= intent.expiresTime * 1000;
 }
@@ -135,11 +130,9 @@ export function expiryPhase(outbound: Outbound): "preparation" | "dispatch" {
   return outbound.preparations.length === 0 ? "preparation" : "dispatch";
 }
 
-/** The preparation of one queued outbound: made here, or the one selected. An acceptance this runtime saw and has not recorded yet is recorded first, so that the fold read here shows the message submitted rather than open to expiry. */
+/** The preparation of one queued outbound: made here, or the one selected. */
 export function prepare(session: Session, messageId: MessageId, options: PrepareOptions): Promise<Prepared> {
-  const local = localRecordsOf(session.runtime, options.local);
-  return session.turn(outboundWorkKey(messageId), async () => {
-    await recordOwedAcceptance(session.runtime, local, messageId);
+  return outboundTurn(session, messageId, localRecordsOf(session.runtime, options.local), async (local) => {
     const { result, notes } = await session.locked((locked) => prepareUnderLock(locked, messageId, options, local));
     await noteAll(options.trace ?? null, notes);
     return result;
