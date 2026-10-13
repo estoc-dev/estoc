@@ -199,7 +199,9 @@ hole in a sparse array is refused like any value that is not a draft.
 outside any transaction — each value validated with its `cid`, a CID
 for other bytes refused before any lookup — then classifies each input
 against what is held, by CID: duplicate or new; checks for a fork and
-accepts, in one transaction. `appendAll` hashes each draft's envelope
+accepts, in one transaction — `ingestCanonical(events, publish)`, which
+takes events already fixed by `canonicalEvent` and is how the SQLite
+vault publishes an ingest's objects with its events. `appendAll` hashes each draft's envelope
 the same way and answers a CID already held, or repeated in the batch,
 with the event held, adding no row and no position. `scan` orders in
 SQL by `(at, cid)` and reads every row before the first yield, one cut;

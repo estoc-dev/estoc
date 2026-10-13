@@ -10,7 +10,7 @@
  */
 
 import { MissingRoot, NotAVault, ObjectTooLarge, UnreferencedObject, UnsupportedOperation } from "./errors.js";
-import { canonicalEvent, validateDraft, type AuthorId, type Cid, type Draft, type Event, type EventCid, type EventStore, type EventTally, type Ingested, type Rejected } from "./event.js";
+import { readIngestInput, validateDraft, type AuthorId, type CanonicalEvent, type Cid, type Draft, type Event, type EventCid, type EventStore, type EventTally, type IngestInput, type Ingested } from "./event.js";
 import type { JsonObject } from "./json.js";
 import { checkMetadata, checkWrappedSeed, type KeystoreAccess, type VaultMetadata, type WrappedSeed } from "./keystore.js";
 import { MemoryEventStore } from "./memory-events.js";
@@ -230,7 +230,7 @@ export interface Stores {
    * classified and accepted, and the prepared objects published, in
    * one transaction, or nothing is.
    */
-  ingestion(body: (prepared: Preparation) => Promise<Event[]>): Promise<Ingested>;
+  ingestion(body: (prepared: Preparation) => Promise<readonly CanonicalEvent[]>): Promise<Ingested>;
 }
 
 /** How a view enters the lock: by taking it, or — already inside — by doing nothing. */
@@ -427,7 +427,7 @@ class HeldView extends View implements Held {
   }
 
   ingest(events: AsyncIterable<unknown> | Iterable<unknown>, stage?: Stage): Promise<Ingested> {
-    return this.mutate(async () => ingestRead(this.stores, await readAll(events), stage));
+    return this.mutate(async () => ingestRead(this.stores, await readIngestInput(events), stage));
   }
 
   collect(keep: KeepUnderLock): Promise<Collected> {
@@ -443,41 +443,19 @@ class HeldView extends View implements Held {
   }
 }
 
-/** The input of `ingest`, read whole: the events fixed in canonical form, and the inputs that were not events, with why. */
-interface Read {
-  events: Event[];
-  rejected: Rejected[];
-}
-
 /**
- * The input of `ingest`, read whole before any of it is classified —
- * by the runtime before it takes the lock, since a slow source should
- * not hold the vault, and by a held view in its turn among the
- * operation's mutations. Each input is fixed — validated and copied into canonical form, or
- * recorded as rejected with its error — before the source is asked for
- * the next, so a source that reuses one object between yields is read
- * as it yielded, and what reaches the store is the runtime's own data,
- * which nothing outside can change.
+ * Ingest what `readIngestInput` read — read by the runtime before it
+ * takes the lock, since a slow source should not hold the vault, and by
+ * a held view in its turn among the operation's mutations: the events to
+ * the store in one transaction with what `stage` prepares, under the
+ * lock the caller holds; the rejected reported with the store's own.
  */
-async function readAll(events: AsyncIterable<unknown> | Iterable<unknown>): Promise<Read> {
-  const read: Read = { events: [], rejected: [] };
-  for await (const value of events) {
-    try {
-      read.events.push(canonicalEvent(value).event);
-    } catch (err) {
-      read.rejected.push({ value, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-  return read;
-}
-
-/** Ingest what `readAll` read: the events to the store in one transaction with what `stage` prepares, under the lock the caller holds; the rejected reported with the store's own. */
-async function ingestRead(stores: Stores, read: Read, stage?: Stage): Promise<Ingested> {
+async function ingestRead(stores: Stores, input: IngestInput, stage?: Stage): Promise<Ingested> {
   const outcome = await stores.ingestion(async (prepared) => {
     await stage?.(prepared);
-    return read.events;
+    return input.events;
   });
-  return read.rejected.length === 0 ? outcome : { ...outcome, rejected: [...read.rejected, ...outcome.rejected] };
+  return input.rejected.length === 0 ? outcome : { ...outcome, rejected: [...input.rejected, ...outcome.rejected] };
 }
 
 // ---- the runtime --------------------------------------------------------
@@ -569,8 +547,8 @@ export class Runtime implements VaultRuntime {
 
   async ingest(events: AsyncIterable<unknown> | Iterable<unknown>): Promise<Ingested> {
     this.guard("enter"); // inside an async function: a throw here is this promise's rejection
-    const read = await readAll(events);
-    return this.locked(() => ingestRead(this.stores, read));
+    const input = await readIngestInput(events);
+    return this.locked(() => ingestRead(this.stores, input));
   }
 }
 
@@ -662,7 +640,7 @@ export class MemoryVault extends Runtime {
           const prepared = objects.prepare();
           const incoming = await body(prepared);
           let landed = false;
-          const outcome = await events.ingest(incoming, (adding) => {
+          const outcome = await events.ingestCanonical(incoming, (adding) => {
             landed = prepared.publish() + adding > 0;
           });
           if (landed) options.changed?.();

@@ -18,16 +18,17 @@
 import { BadToken, DamagedControl, DamagedHistory, ForkedAuthor, ReadOnlyVault } from "../errors.js";
 import {
   canonicalEnvelope,
-  canonicalEvent,
   canonicalEventBytes,
   checkFilter,
   eventCidOfBytes,
   isEventCid,
   matches,
+  readIngestInput,
   sampleAt,
   validateDraft,
   validateEnvelope,
   type AuthorId,
+  type CanonicalEvent,
   type ChangeToken,
   type Damaged,
   type Draft,
@@ -56,8 +57,6 @@ interface Held {
   event: Event;
   bytes: Uint8Array;
 }
-
-type IngestInput = { held: Held } | { rejected: { value: unknown; error: string } };
 
 export type DecodedEventRow = { event: Event } | { damage: Damaged };
 
@@ -164,29 +163,27 @@ export class SqliteEventStore implements EventStore {
     return last;
   }
 
-  /**
-   * `publish`, when given, runs inside the transaction once the input
-   * is classified and the fork check has passed, before the new events
-   * are accepted, with how many there are: what it writes lands with
-   * them, and a throw from it accepts none.
-   */
-  async ingest(events: AsyncIterable<unknown> | Iterable<unknown>, publish?: (adding: number) => void): Promise<Ingested> {
-    // Read everything first: validation, canonical form and the CID
-    // check are the input's own and need no transaction, which must
-    // not wait on a source. Then, in one transaction, classify each
-    // input against what is held — duplicate or new — in input order,
-    // check for a fork, and only then accept; so the outcome names
-    // what was held when the decision was made, and a write that
-    // landed while the input was still being read is seen.
+  async ingest(events: AsyncIterable<unknown> | Iterable<unknown>): Promise<Ingested> {
     this.requireWritable("ingest");
-    const read: IngestInput[] = [];
-    for await (const value of events) {
-      try {
-        read.push({ held: canonicalEvent(value) });
-      } catch (err) {
-        read.push({ rejected: { value, error: err instanceof Error ? err.message : String(err) } });
-      }
-    }
+    // Validation, canonical form and the CID check are the input's own and need no transaction, which must not wait on a source.
+    const input = await readIngestInput(events);
+    return { ...(await this.ingestCanonical(input.events)), rejected: input.rejected };
+  }
+
+  /**
+   * Events already in canonical form, ingested in one transaction: each
+   * is classified against what is held — duplicate or new — in input
+   * order, the fork check made, and only then the new accepted; so the
+   * outcome names what was held when the decision was made, and a write
+   * that landed while the input was still being read is seen.
+   * `publish`, when given, runs inside the transaction once the input is
+   * classified and the fork check has passed, before the new events are
+   * accepted, with how many there are: what it writes lands with them,
+   * and a throw from it accepts none. How the SQLite vault publishes an
+   * ingest's objects with its events.
+   */
+  async ingestCanonical(events: readonly CanonicalEvent[], publish?: (adding: number) => void): Promise<Ingested> {
+    this.requireWritable("ingest");
     return this.driver.transaction("immediate", () => {
       this.requireSound();
       const outcome: Ingested = { added: 0, duplicates: 0, rejected: [] };
@@ -194,12 +191,7 @@ export class SqliteEventStore implements EventStore {
       const forked: Event[] = [];
       const lookup = this.driver.prepare(`SELECT ${EVENT_COLUMNS} FROM events e WHERE e.cid = ?`);
       try {
-        for (const item of read) {
-          if ("rejected" in item) {
-            outcome.rejected.push(item.rejected);
-            continue;
-          }
-          const incoming = item.held;
+        for (const incoming of events) {
           if (this.held(lookup, incoming.event.cid) !== undefined || staged.has(incoming.event.cid)) {
             outcome.duplicates += 1;
             continue;
