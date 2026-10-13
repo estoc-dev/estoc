@@ -66,7 +66,7 @@ function cameraFailed() {
   <button class="row" type="button" :disabled="importing" data-import-link-open @click="toggle">
     <span class="row-main">
       <span>{{ importing ? "Importing…" : "Import from a link" }}</span>
-      <span class="row-sub">what a copy made on another device holds is merged in</span>
+      <span class="row-sub">the history another device of yours put on a link is merged in</span>
     </span>
     <span class="row-end">{{ open ? "close" : "" }}</span>
   </button>

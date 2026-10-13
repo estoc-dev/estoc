@@ -5,6 +5,7 @@ import { chooseLook, look, type Look } from "../core/look.js";
 import { mediatorLabel } from "../core/mediators.js";
 import { exportedAt, forgetRemembered } from "../core/seen.js";
 import { chooseMediator, downloadBackup, forgetIdentity, handedOutDid, heldNow, lock, mergeBackup, openIndex, publicDid, reconnect, setTraceLevel, state } from "../core/store.js";
+import CopyLink from "./CopyLink.vue";
 import Devices from "./Devices.vue";
 import Icon from "./Icon.vue";
 import ImportLink from "./ImportLink.vue";
@@ -238,6 +239,7 @@ function forget() {
             <input ref="importInput" type="file" accept=".car,application/vnd.ipld.car" :disabled="importing" data-import @change="importBackup" />
           </label>
           <p v-if="importNote" class="note" style="padding: 0 16px 12px" data-import-note>{{ importNote }}</p>
+          <CopyLink v-if="mediation !== null" />
           <ImportLink />
           <button v-if="state.install" class="row" type="button" data-install @click="state.install?.()">
             <span class="row-main">Install as an app</span>

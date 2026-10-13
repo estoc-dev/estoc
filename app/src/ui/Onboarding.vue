@@ -160,8 +160,8 @@ function cameraFailed() {
         <p v-if="restoreError" class="error-text">{{ restoreError }}</p>
         <button class="btn" type="submit" :disabled="restoring" data-restore>{{ restoring ? "Restoring…" : "Restore" }}</button>
         <p class="note">
-          A backup or a link brings back the moment it was made and nothing after it. What that means for your conversations is explained before anything is
-          sent.
+          A backup brings back the moment it was made and nothing after it. A link for a new device brings none of your conversations: another device of yours
+          sends them once this one has joined. What that means is explained before anything is sent.
         </p>
       </form>
     </div>

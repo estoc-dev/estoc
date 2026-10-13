@@ -1,24 +1,31 @@
+import type { DisplayTime } from "@estoc/daemon-api/contract";
 import { reactive } from "vue";
 
 import type { OpenedSnapshotLink } from "../../src/core/store.js";
-import type { MergeResult, Phase, ReplicaId, ReplicaRecord, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotPart } from "../../src/core/types.js";
+import type { MergeResult, Phase, PublishedSnapshotLink, ReplicaId, ReplicaRecord, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotPart } from "../../src/core/types.js";
 
 /**
  * Stands in for the app's store where a vault is restored from a link,
  * where links are made and where they are imported, and where history
  * goes to the vault's other devices: a daemon of the test's, which holds
  * the links it is given and writes down what it is asked. A publish here
- * leaves its pending link behind and fails, as an upload cut short does;
- * an import answers `merged`, or fails with `unmerged` while that is set,
- * once `held` lets it; history sent goes to the devices `told` names, and
- * the mediator, asked which devices there are, answers `relisted` or
- * fails with `unasked`.
+ * puts its link at the head of the list, or, while `unpublished` is set,
+ * leaves it pending there and fails, as an upload cut short does; a
+ * restore from a link fails with `unrestored` while that is set; an import
+ * answers `merged`, or fails with `unmerged` while that is set, once
+ * `held` lets it; history sent goes to the devices `told` names, and the
+ * mediator, asked which devices there are, answers `relisted` or fails
+ * with `unasked`.
  */
 export const daemon = {
   calls: [] as { name: string; args: unknown[] }[],
   links: [] as SnapshotLinkRecord[],
   /** why the list cannot be read, while it cannot */
   unlistable: null as string | null,
+  /** why a publish fails, while it does */
+  unpublished: null as string | null,
+  /** why a restore from a link fails, while it does */
+  unrestored: null as string | null,
   merged: { added: 3, duplicates: 7, objects: 0, repaired: 0, renewed: false } as MergeResult,
   /** why an import fails, while it does */
   unmerged: null as string | null,
@@ -53,7 +60,12 @@ const recorded =
 
 export const createIdentity = recorded("createIdentity");
 export const restoreIdentity = recorded("restoreIdentity");
-export const restoreFromLink = recorded("restoreFromLink");
+export const downloadBackup = recorded("downloadBackup");
+
+export async function restoreFromLink(input: string, passphrase: string): Promise<void> {
+  daemon.calls.push({ name: "restoreFromLink", args: [input, passphrase] });
+  if (daemon.unrestored !== null) throw new Error(daemon.unrestored);
+}
 
 export async function snapshotLinks(): Promise<SnapshotLinkRecord[]> {
   daemon.calls.push({ name: "snapshotLinks", args: [] });
@@ -61,10 +73,17 @@ export async function snapshotLinks(): Promise<SnapshotLinkRecord[]> {
   return [...daemon.links];
 }
 
-export async function publishSnapshotLink(part: SnapshotPart): Promise<never> {
+export async function publishSnapshotLink(part: SnapshotPart): Promise<PublishedSnapshotLink> {
   daemon.calls.push({ name: "publishSnapshotLink", args: [part] });
-  daemon.links.unshift({ status: "pending", hash: `bciqcutshort${daemon.links.length}`, part, placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z" } as SnapshotLinkRecord);
-  throw new Error("the upload was cut short");
+  const hash = `bciqput${daemon.links.length}`;
+  const placed = { hash, part, placedAt: "2026-10-10T12:00:00.000Z" as DisplayTime, retainUntil: "2026-11-09T12:00:00.000Z" as DisplayTime };
+  if (daemon.unpublished !== null) {
+    daemon.links.unshift({ status: "pending", ...placed });
+    throw new Error(daemon.unpublished);
+  }
+  const published: PublishedSnapshotLink = { status: "published", ...placed, revocable: true, link: { url: `https://mediator.test/b/${hash}`, hash, key: "k".repeat(43) } };
+  daemon.links.unshift(published);
+  return published;
 }
 
 export async function importFromLink(input: string): Promise<MergeResult> {

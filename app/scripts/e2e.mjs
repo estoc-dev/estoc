@@ -9,7 +9,9 @@
  * restores the identity in a fresh browser, where sending waits for the
  * restore to be explained, importing a backup into a live vault merges
  * instead of clobbering, a link made for a new device restores the vault in
- * another fresh browser and reads nothing once revoked, and (where a service worker is serving) the shell
+ * another fresh browser and reads nothing once revoked, the history put on a
+ * link by hand is imported on the device that joined, each link is refused
+ * where it does not belong, and (where a service worker is serving) the shell
  * opens with the network off.
  *
  *   npm run preview        # serves the build on :4173 with the service worker
@@ -428,13 +430,13 @@ try {
   const enrollmentLink = '[data-snapshot-link][data-snapshot-part="seed"]';
   await alice.waitForSelector(`${enrollmentLink}[data-snapshot-link="published"]`, { timeout: 15000 });
   ok("Alice made a link for a new device, shown as a QR code and listed");
-  const restoreAt = async (name) => {
+  const restoreAt = async (name, at = snapshotLink) => {
     const ctx = await browser.newContext({ colorScheme });
     const page = await ctx.newPage();
     watch(page, name);
-    await page.goto(snapshotLink);
+    await page.goto(at);
     await page.waitForSelector("[data-snapshot-link-input]", { timeout: 30000 });
-    if ((await page.inputValue("[data-snapshot-link-input]")) !== snapshotLink) fail("the restore should be offered with the link the page was opened at");
+    if ((await page.inputValue("[data-snapshot-link-input]")) !== at) fail("the restore should be offered with the link the page was opened at");
     if (new URL(page.url()).hash !== "") fail("the link should be taken off the page's address");
     await page.fill("[data-backup-passphrase]", PASS.Alice);
     await page.click("[data-restore]");
@@ -456,10 +458,37 @@ try {
   await linked.page.click("[data-you-screen] [data-back]");
   await openConversation(linked.page, "Bob");
   await expectBubble(linked.page, "hello bob");
-  await linked.ctx.close();
   ok("Alice sent the new device her history from Your devices, and it holds her conversation with Bob");
 
+  await linked.page.goto(snapshotLink);
+  await linked.page.click("[data-import-opened-link]");
+  await linked.page.waitForSelector('[data-opened-link-outcome]:has-text("carries no history to import")', { timeout: 60000 });
+  await linked.page.click("[data-opened-link-outcome] button");
+  ok("the link for a new device, opened where the vault is held, is refused as no history to import");
+
+  // The history by hand: a link Alice puts it on from Your vault, which a device of hers imports and a fresh browser cannot restore from.
+  await alice.click("[data-make-copy-link]");
+  await alice.waitForSelector("[data-copy-link-sheet] [data-snapshot-qr]", { timeout: 60000 });
+  const historyLink = await alice.getAttribute("[data-copy-link-sheet] [data-snapshot-url]", "title");
+  await alice.click("[data-copy-link-sheet] [data-snapshot-done]");
+  await alice.waitForSelector("[data-copy-link-sheet]", { state: "detached", timeout: 5000 });
+  const unseeded = await restoreAt("unseeded", historyLink);
+  await unseeded.page.waitForSelector("text=carries no seed to restore a vault from", { timeout: 60000 });
+  await unseeded.ctx.close();
+  ok("Alice put her history on a link from Your vault; a fresh browser opened at it is told it carries no seed");
+  await linked.page.goto(historyLink);
+  await linked.page.click("[data-import-opened-link]");
+  const imported = await linked.page.waitForSelector("[data-opened-link-outcome]:not(.alarm) span", { timeout: 60000 });
+  ok(`the device that joined imports that link: ${await imported.textContent()}`);
+  await linked.ctx.close();
+
   await alice.click("[data-add-device]");
+  // The history sent from Your devices went as a link of the same kind: every one is revoked.
+  const historyListed = '[data-snapshot-link][data-snapshot-part="content"]';
+  for (let left = await alice.locator(historyListed).count(); left > 0; left--) {
+    await alice.locator(`${historyListed} [data-revoke-snapshot-link]`).first().click();
+    await alice.waitForFunction(([listed, left]) => document.querySelectorAll(listed).length < left, [historyListed, left], { timeout: 30000 });
+  }
   await alice.click(`${enrollmentLink} [data-revoke-snapshot-link]`);
   await alice.waitForSelector(enrollmentLink, { state: "detached", timeout: 30000 });
   const revoked = await restoreAt("revoked");

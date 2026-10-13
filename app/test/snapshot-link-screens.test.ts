@@ -14,6 +14,11 @@ import { browserPath, fixturePage } from "./chromium.js";
  */
 const link = snapshotLinkUrl("http://app.test/", { url: "https://mediator.test/b/blob-1", hash: "bciqblobhash", key: "k".repeat(43) });
 
+/** What the daemon refuses a link of the wrong part with, and one past the bound a link to add a device is read to. */
+const OVER_SEED = "the snapshot at that link is over the 1048576 bytes this device takes from a link to add a device: restore from a backup file exported from the vault instead";
+const NO_SEED = "that snapshot is a vault's history and carries no seed to restore a vault from: import it into a vault that is open";
+const NO_CONTENT = "that snapshot is for adding a device and carries no history to import: restore a new device from it";
+
 const device = (id: string, about: Partial<ReplicaRecord>): ReplicaRecord => ({ replicaId: `0199c3a0-7e1d-7000-8000-00000000${id}` as ReplicaRecord["replicaId"], did: `did:peer:4zQm${id}`, self: false, state: "active", addedAt: "2026-10-01T08:00:00.000Z" as DisplayTime, removedAt: null, sent: null, ...about });
 const self = device("00a1", { self: true });
 const joined = device("00b2", { addedAt: "2026-10-12T08:30:00.000Z" as DisplayTime });
@@ -48,6 +53,7 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
   const tracks = () => tab.evaluate(() => window.snapshotFixture.camera.tracks.map((track) => ({ ...track })));
   const hold = (codes: string[]) => tab.evaluate((codes) => window.snapshotFixture.camera.codes.splice(0, Infinity, ...codes), codes);
   const called = () => tab.evaluate(() => window.snapshotFixture.daemon.calls.map((call) => call.name));
+  const publishedParts = () => tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "publishSnapshotLink").map((call) => call.args));
 
   describe("a scan for a link on the first-run screen", () => {
     it("stops the camera when New identity is chosen, and is not running when Restore is chosen again", async () => {
@@ -106,9 +112,74 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
     });
   });
 
+  describe("a restore from a link that is not one for a new device", () => {
+    it("says what the daemon found, a link past the bound or one to a history, and asks for nothing but the restore", async () => {
+      await mount("onboarding", { opened: { link }, unrestored: OVER_SEED });
+      await tab.fill("[data-backup-passphrase]", "the passphrase");
+      await tab.click("[data-restore]");
+      await tab.waitForFunction((over) => document.querySelector("form .error-text")?.textContent === over, OVER_SEED);
+
+      await tab.evaluate((noSeed) => (window.snapshotFixture.daemon.unrestored = noSeed), NO_SEED);
+      await tab.click("[data-restore]");
+      await tab.waitForFunction((noSeed) => document.querySelector("form .error-text")?.textContent === noSeed, NO_SEED);
+      expect(await called()).toEqual(["restoreFromLink", "restoreFromLink"]);
+      expect(await tab.locator("[data-snapshot-link-input]").inputValue()).toBe(link);
+    });
+  });
+
+  describe("the sheet a device is added from", () => {
+    it("makes a link for a new device only, and lists each link made here by the part it carries", async () => {
+      await mount("add-device", { links: [{ status: "pending", hash: "bciqhistory", part: "content", placedAt: "2026-10-09T12:00:00.000Z" as DisplayTime, retainUntil: null }] });
+      expect(await tab.locator("[data-add-device-sheet] button.btn").count()).toBe(1);
+      expect(await tab.locator("[data-make-copy-link]").count()).toBe(0);
+
+      await tab.click("[data-make-snapshot-link]");
+      await tab.locator('[data-shown-part="seed"]').waitFor();
+      expect(await publishedParts()).toEqual([["seed"]]);
+      await tab.click("[data-snapshot-done]");
+      expect(await tab.locator("[data-snapshot-link] .row-main > span:first-child").allTextContents()).toEqual(["A link for a new device", "A copy of your history, unfinished"]);
+    });
+
+    it("offers a backup file instead when the link cannot be made, and exports one when asked", async () => {
+      const over = "the seed and the events a new device enrolls from come to at least 1048600 bytes, over the 1048576 a link to add a device holds";
+      await mount("add-device");
+      expect(await tab.locator("[data-add-device-export]").count()).toBe(0);
+
+      await tab.evaluate((over) => (window.snapshotFixture.daemon.unpublished = over), over);
+      await tab.click("[data-make-snapshot-link]");
+      await tab.locator("[data-add-device-export]").waitFor();
+      expect(await tab.locator("[data-add-device-error]").textContent()).toBe(over);
+
+      await tab.click("[data-add-device-export]");
+      await tab.waitForFunction(() => window.snapshotFixture.daemon.calls.some((call) => call.name === "downloadBackup"));
+      expect(await publishedParts()).toEqual([["seed"]]);
+    });
+  });
+
+  describe("the history put on a link from the vault's page", () => {
+    it("goes without the seed, and is shown with where it is listed to revoke", async () => {
+      await mount("copy-link", { phase: "open" });
+      await tab.click("[data-make-copy-link]");
+      await tab.locator('[data-copy-link-sheet] [data-shown-part="content"]').waitFor();
+      expect(await publishedParts()).toEqual([["content"]]);
+      expect(await tab.locator("[data-copy-link-sheet]").textContent()).toContain("It is listed under You › Add a device, to show again or revoke.");
+
+      await tab.click("[data-snapshot-done]");
+      await tab.locator("[data-copy-link-sheet]").waitFor({ state: "detached" });
+    });
+
+    it("says why when it could not be put", async () => {
+      await mount("copy-link", { phase: "open", unpublished: "the mediator keeps no blobs" });
+      await tab.click("[data-make-copy-link]");
+      await tab.locator("[data-copy-link-note]").waitFor();
+      expect(await tab.locator("[data-copy-link-note]").textContent()).toBe("the mediator keeps no blobs");
+      expect(await tab.locator("[data-copy-link-sheet]").count()).toBe(0);
+    });
+  });
+
   describe("the links listed where they are made", () => {
     it("show the pending link a failed publish left behind, which can be revoked there and then", async () => {
-      await mount("add-device");
+      await mount("add-device", { unpublished: "the upload was cut short" });
       await tab.click("[data-make-snapshot-link]");
       await tab.locator('[data-snapshot-link="pending"]').waitFor();
       expect(await tab.locator("[data-add-device-error]").textContent()).toContain("the upload was cut short");
@@ -116,17 +187,6 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
       await tab.click("[data-revoke-snapshot-link]");
       await tab.locator("[data-snapshot-link]").waitFor({ state: "detached" });
       expect(await called()).toEqual(["snapshotLinks", "publishSnapshotLink", "snapshotLinks", "revokeSnapshotLink", "snapshotLinks"]);
-    });
-
-    it("are made for a new device to join with, or as a copy of the whole vault, and each says which it is", async () => {
-      await mount("add-device");
-      await tab.click("[data-make-snapshot-link]");
-      await tab.locator('[data-snapshot-part="seed"]').waitFor();
-      await tab.click("[data-make-copy-link]");
-      await tab.locator('[data-snapshot-part="content"]').waitFor();
-      expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "publishSnapshotLink").map((call) => call.args))).toEqual([["seed"], ["content"]]);
-      expect(await tab.locator('[data-snapshot-part="seed"] .row-main > span').first().textContent()).toBe("A link for a new device, unfinished");
-      expect(await tab.locator('[data-snapshot-part="content"] .row-main > span').first().textContent()).toBe("A copy of this vault, unfinished");
     });
 
     it("say when they could not be read, and are read again when asked", async () => {
@@ -205,6 +265,14 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
         expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.map((call) => call.args))).toEqual([[link], [later]]);
         expect(await tab.evaluate(() => window.snapshotFixture.state.pendingSnapshotLink)).toBeNull();
       }
+    });
+
+    it("says a link for a new device holds no history to import, and asks for nothing but the import", async () => {
+      await mount("opened-link", { opened: { link }, phase: "open", unmerged: NO_CONTENT });
+      await tab.click("[data-import-opened-link]");
+      await tab.locator("[data-opened-link-outcome].alarm").waitFor();
+      expect(await tab.locator("[data-opened-link-outcome] span").textContent()).toBe(`That link was not imported: ${NO_CONTENT}`);
+      expect(await called()).toEqual(["importFromLink"]);
     });
 
     it("says why the import failed, and lets the link go", async () => {
