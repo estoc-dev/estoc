@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { connect, type ConnectionState } from "../../src/client/index.js";
 import { BASIC_MESSAGE, type CallError, type ClientErrorCode, type JsonObject, type LinesState, type LogLine, type State } from "../../src/contract/index.js";
-import { requestBudget, writeFrame, type Port, type PortHandlers, type Transport } from "../../src/wire/index.js";
+import { ownFrame, requestBudget, writeFrame, type Port, type PortHandlers, type Transport } from "../../src/wire/index.js";
 import { as, linesState, openState } from "../contract/fixtures.js";
 import { settle } from "../wire/ports.js";
 import { at, baseline, handlers, limits, linesAt, scripted, served, transports, type Scripted } from "./daemons.js";
@@ -117,7 +117,7 @@ describe("connecting", () => {
   });
 
   it("ends as a protocol error when the first frame is no welcome", async () => {
-    for (const first of [writeFrame({ kind: "call", id: 1, method: "attach", input: {} }, "text"), '{"kind":"hello","wire":1,"apis":[1]}', "junk"]) {
+    for (const first of [writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input: {} }), "text"), '{"kind":"hello","wire":1,"apis":[1]}', "junk"]) {
       const { s, view } = await shown("text", false);
       await s.say(first);
       expect(view.connection).toEqual(disconnected(client("ProtocolError")));

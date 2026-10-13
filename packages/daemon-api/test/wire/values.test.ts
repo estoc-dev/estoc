@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { exactBytes, readValue, utf8Length, VALUE_CHARGE } from "../../src/wire/index.js";
 
-const read = (value: unknown, options?: Parameters<typeof readValue>[1]) => {
+const read = (value: unknown, options?: Parameters<typeof readValue>[1]): { value: unknown; size: number } => {
   const reading = readValue(value, options);
   if (!reading.ok) throw new Error(`${reading.code}: ${reading.message}`);
   return reading;

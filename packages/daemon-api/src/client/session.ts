@@ -140,7 +140,7 @@ export class Session implements Client {
     if (!read.ok) return clientError(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return clientError("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
-    const data = writeFrame({ ...call, input: read.value }, this.port.transport, schema.bytes.input);
+    const data = writeFrame({ ...call, input: read.value }, this.port.transport);
     if (limits.maxFrameBytes !== null && typeof data === "string" && (data.length > limits.maxFrameBytes || utf8Length(data) > limits.maxFrameBytes)) {
       return clientError("ResourceLimit", `the frame is larger than ${limits.maxFrameBytes} bytes`);
     }

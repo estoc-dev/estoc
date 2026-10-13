@@ -13,6 +13,9 @@ export interface Budget {
   maxDepth: number;
 }
 
+/** A value as `readValue` copies it out: only that reading makes one, so what takes it needs no second look. */
+export type WireValue = ApiValue & { readonly __wireValue: unique symbol };
+
 export type Reading<T> = { ok: true; value: T; size: number } | { ok: false; code: "InvalidArgument" | "ResourceLimit"; message: string };
 
 export interface ReadOptions {
@@ -140,11 +143,11 @@ class Walk {
 }
 
 /** `value` as wire data, or why it is none; `undefined` members are left out, negative zero reads as zero, bytes are copied to their selected view. */
-export function readValue(value: unknown, options: ReadOptions = {}): Reading<ApiValue> {
+export function readValue(value: unknown, options: ReadOptions = {}): Reading<WireValue> {
   const walk = new Walk(options.budget ?? null, new Set(options.bytesAt ?? []));
   try {
     if (value === undefined) throw new Refused("InvalidArgument", "the value is undefined");
-    const read = walk.read(value, 1, false);
+    const read = walk.read(value, 1, false) as WireValue;
     return { ok: true, value: read, size: walk.size };
   } catch (error) {
     if (error instanceof Refused) return { ok: false, code: error.code, message: error.message };

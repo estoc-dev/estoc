@@ -1,5 +1,5 @@
 import { API_VERSION, WIRE_VERSION, schemas, type Baseline, type Bootstrap, type Limits, type LinesState, type State } from "../../src/contract/index.js";
-import { readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type Port, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
+import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type Port, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
 import { as, linesState, openState } from "../contract/fixtures.js";
 import { pair, settle, type Pair } from "../wire/ports.js";
 
@@ -75,7 +75,7 @@ export function scripted(transport: Transport): Scripted {
       if (!closed) await link.right.send(data);
       await settle();
     },
-    frame: (frame, bytesAt) => s.say(writeFrame(frame, transport, bytesAt)),
+    frame: (frame, bytesAt) => s.say(writeFrame(ownFrame(frame, bytesAt), transport)),
     welcome: (own = {}) => s.say(writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "scripted", limits: { ...limits, ...own } }, transport)),
     attach: (value = baseline) => s.frame({ kind: "result", id: 1, value }),
     greet: async () => {

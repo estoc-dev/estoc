@@ -6,10 +6,10 @@
  * and what budget the payload has.
  */
 
-import { schemas, type ApiValue, type Bootstrap, type CallId, type EventName, type Limits } from "../contract/index.js";
+import { schemas, type Bootstrap, type CallId, type EventName, type Limits } from "../contract/index.js";
 import { base64Length, fromBase64, isByteWrapper, wrapBytes } from "./bytes.js";
 import type { Transport } from "./port.js";
-import { readValue, VALUE_CHARGE, type Budget, type Reading } from "./values.js";
+import { readValue, VALUE_CHARGE, type Budget, type Reading, type WireValue } from "./values.js";
 
 /** Room for a long implementation text or a long list of versions; a bootstrap record is small. */
 export const MAX_BOOTSTRAP_BYTES = 4096;
@@ -34,13 +34,18 @@ export function writeBootstrap(record: Bootstrap, transport: Transport): unknown
   return transport === "text" ? JSON.stringify(record) : record;
 }
 
-/** A frame whose payload is not yet read as wire data: what reading an envelope gives, and what writing takes. */
-export type RawFrame =
-  | { kind: "call"; id: CallId; method: string; input: unknown }
-  | { kind: "result"; id: CallId; value: unknown }
-  | { kind: "error"; id: CallId; error: unknown }
-  | { kind: "event"; name: EventName; value: unknown }
-  | { kind: "fault"; error: unknown };
+type Frame<Payload> =
+  | { kind: "call"; id: CallId; method: string; input: Payload }
+  | { kind: "result"; id: CallId; value: Payload }
+  | { kind: "error"; id: CallId; error: Payload }
+  | { kind: "event"; name: EventName; value: Payload }
+  | { kind: "fault"; error: Payload };
+
+/** A frame whose payload is not yet read as wire data: what reading an envelope gives. */
+export type RawFrame = Frame<unknown>;
+
+/** A frame whose payload is read as wire data: what writing takes. */
+export type WireFrame = Frame<WireValue>;
 
 const isCallId = (id: unknown): id is CallId => typeof id === "number" && Number.isSafeInteger(id) && id > 0;
 
@@ -93,7 +98,7 @@ export interface PayloadOptions {
  * stands at a byte member without being either is left for the schema
  * to refuse.
  */
-export function readPayload(raw: unknown, transport: Transport, options: PayloadOptions): Reading<ApiValue> {
+export function readPayload(raw: unknown, transport: Transport, options: PayloadOptions): Reading<WireValue> {
   let payload = raw;
   if (options.bytesAt.length > 0 && isRecord(raw)) {
     const descriptors = Object.getOwnPropertyDescriptors(raw);
@@ -126,38 +131,42 @@ export function requestBudget(limits: Limits, call: Extract<RawFrame, { kind: "c
   return { ok: true, value: budget, size: envelope.size };
 }
 
-/**
- * `frame` as the port carries it, its payload read as wire data first:
- * a value of the sender's own that is none is a defect, thrown, never
- * sent as something else. On a text port the byte members become base64
- * records and the frame one JSON text.
- */
-export function writeFrame(frame: RawFrame, transport: Transport, bytesAt: readonly string[] = []): unknown {
-  const payload = frame.kind === "call" ? frame.input : frame.kind === "error" || frame.kind === "fault" ? frame.error : frame.value;
-  const read = readValue(payload, { bytesAt });
-  if (!read.ok) throw new Error(`the ${frame.kind} frame is not wire data: ${read.message}`);
-  let value = read.value;
-  if (transport === "text" && bytesAt.length > 0 && isRecord(value)) {
-    const entries = Object.entries(value).map(([member, held]) => [member, held instanceof Uint8Array ? wrapBytes(held) : held]);
-    value = Object.fromEntries(entries) as typeof value;
-  }
-  let written: object;
+const payloadOf = (frame: RawFrame): unknown => (frame.kind === "call" ? frame.input : frame.kind === "error" || frame.kind === "fault" ? frame.error : frame.value);
+
+/** `frame`'s envelope around `payload`, without the members the envelope does not know. */
+function withPayload<Payload>(frame: RawFrame, payload: Payload): Frame<Payload> {
   switch (frame.kind) {
     case "call":
-      written = { kind: frame.kind, id: frame.id, method: frame.method, input: value };
-      break;
+      return { kind: frame.kind, id: frame.id, method: frame.method, input: payload };
     case "result":
-      written = { kind: frame.kind, id: frame.id, value };
-      break;
+      return { kind: frame.kind, id: frame.id, value: payload };
     case "error":
-      written = { kind: frame.kind, id: frame.id, error: value };
-      break;
+      return { kind: frame.kind, id: frame.id, error: payload };
     case "event":
-      written = { kind: frame.kind, name: frame.name, value };
-      break;
+      return { kind: frame.kind, name: frame.name, value: payload };
     case "fault":
-      written = { kind: frame.kind, error: value };
-      break;
+      return { kind: frame.kind, error: payload };
   }
-  return transport === "text" ? JSON.stringify(written) : written;
+}
+
+/**
+ * A frame of the sender's own, its payload read as wire data: a value
+ * that is none is a defect, thrown rather than sent as something else.
+ */
+export function ownFrame(frame: RawFrame, bytesAt: readonly string[] = []): WireFrame {
+  const read = readValue(payloadOf(frame), { bytesAt });
+  if (!read.ok) throw new Error(`the ${frame.kind} frame is not wire data: ${read.message}`);
+  return withPayload(frame, read.value);
+}
+
+/**
+ * `frame` as the port carries it. On a text port the byte members
+ * become base64 records and the frame one JSON text; a read payload
+ * holds bytes only at the top-level members it was read with.
+ */
+export function writeFrame(frame: WireFrame, transport: Transport): unknown {
+  const value = payloadOf(frame);
+  if (transport === "clone") return withPayload(frame, value);
+  const payload = isRecord(value) ? Object.fromEntries(Object.entries(value).map(([member, held]) => [member, held instanceof Uint8Array ? wrapBytes(held) : held])) : value;
+  return JSON.stringify(withPayload(frame, payload));
 }
