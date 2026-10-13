@@ -32,20 +32,7 @@ export {
 export { GOAL_CONNECT, invitationUrl, parseInvitation, type Invitation } from "./protocol/oob.js";
 
 export { AmbiguousTarget, BlobMismatch, BlobTooLarge, BlobTransferFailed, BlobUnopened, EntityConflict, LinkClosed, MediatorRefused, NoTarget, NotAReplica, NotificationConflict, ReceiverClosed, ReceiverInUse, UnauthorizedKey, UnknownEntity, Unregistered, Unusable, UnverifiedReply, WrongAccount, WrongMediator } from "./errors.js";
-export {
-  createVault,
-  inspectRuntime,
-  inspectSnapshot,
-  openRestoredVault,
-  openVault,
-  type CreateVaultOptions,
-  type InspectSnapshotOptions,
-  type InspectedRuntime,
-  type InspectedSnapshot,
-  type Unlock,
-  type OpenVaultOptions,
-  type VaultOptions,
-} from "./identity.js";
+export { createVault, inspectRuntime, openRestoredVault, openVault, type CreateVaultOptions, type InspectedRuntime, type Unlock, type OpenVaultOptions, type VaultOptions } from "./identity.js";
 export type { LockedVault, VaultSession } from "./session.js";
 export {
   AgentTrace,

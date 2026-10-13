@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { resolveDIDCommDoc } from "@estoc/did-peer";
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { exportVault, importVault, openPortable, parseStrict, restoreVault, type Imported } from "@estoc/event-store";
+import { Snapshot, exportSnapshot, importSnapshot, parseStrict, restoreSnapshot, type Imported } from "@estoc/event-store";
 import { Keys, vaultHeldRoots, type Channel, type Did, type DidId, type VaultFold } from "@estoc/vault";
 import type { SqliteVault } from "@estoc/event-store";
 
@@ -175,12 +175,13 @@ export async function stop(running: Running): Promise<void> {
   await end(running as Started);
 }
 
-/** The party's vault as it stands, exported to a snapshot file. */
-export async function snapshotOf(running: Running): Promise<string> {
-  const file = await freshFile("snapshot.sqlite");
-  await exportVault(running.runtime, (mode) => openNodeSqlite(file, { mode }), { heldRoots: running.session.heldRoots() });
-  return file;
+/** The party's vault as it stands, exported with both parts. */
+export async function snapshotOf(running: Running): Promise<Uint8Array> {
+  return exportSnapshot(running.runtime, { parts: "both", heldRoots: running.session.heldRoots() });
 }
+
+/** `bytes` read as a snapshot, from a copy: the caller may read them again. */
+const read = (bytes: Uint8Array): Promise<Snapshot> => Snapshot.read(bytes.slice(), { heldRoots: vaultHeldRoots(null) });
 
 /**
  * The party on another machine: `snapshot` restored under the same
@@ -188,17 +189,11 @@ export async function snapshotOf(running: Running): Promise<string> {
  * speaks to the mediator as the same account, so the process it was
  * taken from is stopped first unless the two are to run side by side.
  */
-export async function restoredFrom(running: Running, snapshot: string, options: Partial<AgentOptions> = {}): Promise<Running> {
+export async function restoredFrom(running: Running, snapshot: Uint8Array, options: Partial<AgentOptions> = {}): Promise<Running> {
   const { party } = running;
   const file = await freshFile("vault.sqlite");
-  const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
-  let vault: Pick<Running, "session" | "runtime" | "keys">;
-  try {
-    const restored = await restoreVault(source, (mode) => openNodeSqlite(file, { mode }), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(party.seedKey) });
-    vault = opened(await openRestoredVault(restored.runtime, party.seedKey, scanOf(running)));
-  } finally {
-    source.close();
-  }
+  const restored = await restoreSnapshot(await read(snapshot), () => openNodeSqlite(file, { mode: "create" }), { anchor: await Keys.anchorOf(party.seedKey) });
+  const vault = opened(await openRestoredVault(restored.runtime, party.seedKey, scanOf(running)));
   const life: Life = { death: null, ended: null };
   const self: Started = { party, ...vault, agent: undefined as unknown as Agent, inbounds: [], log: [], calls: 0, refuseNext: { armed: false }, refuseForward: { armed: false }, dead: false, file, options, life };
   started.push(self);
@@ -206,13 +201,8 @@ export async function restoredFrom(running: Running, snapshot: string, options: 
   return self;
 }
 
-export async function imported(running: Running, snapshot: string): Promise<Imported> {
-  const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
-  try {
-    return await importVault(running.runtime, source, { retainedRoots: running.session.retainedRoots() });
-  } finally {
-    source.close();
-  }
+export async function imported(running: Running, snapshot: Uint8Array): Promise<Imported> {
+  return importSnapshot(running.runtime, await read(snapshot), { retainedRoots: running.session.retainedRoots() });
 }
 
 /** An envelope anyone sealed, handed to the mediator for `next` as a sender's agent would hand it. */

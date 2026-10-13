@@ -26,10 +26,11 @@ export interface NodeSqliteOptions {
   /**
    * The journal a `create` leaves the new database in. `wal` with
    * `synchronous=NORMAL` is the runtime's; `delete` with
-   * `synchronous=FULL` is the portable snapshot's, whose file must
-   * stand alone with rollback-format headers. A `readwrite` open keeps
-   * the journal the file has and sets `synchronous` to match; a
-   * `readonly` open commits nothing and leaves the journal mode alone.
+   * `synchronous=FULL` leaves a file that stands alone, with
+   * rollback-format headers and nothing beside it once it is closed.
+   * A `readwrite` open keeps the journal the file has and sets
+   * `synchronous` to match; a `readonly` open commits nothing and
+   * leaves the journal mode alone.
    */
   journal?: "wal" | "delete";
 }
@@ -47,7 +48,7 @@ const MEMORY = ":memory:";
  * is refused with `DatabaseBusy`. A `readonly` open forbids every
  * write through `query_only`, disables extension loading, trusts no
  * schema, and takes the lock its first read leaves it with: on a
- * rollback-journal file — a portable snapshot — the shared lock, so
+ * rollback-journal file the shared lock, so
  * writers are excluded for as long as it is open and other readers
  * are not; on a WAL file the exclusive lock, since a WAL reader keeps
  * no lock a writer would meet, with SQLite recovering the WAL on open

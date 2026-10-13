@@ -1,10 +1,10 @@
-import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { exportVault, openPortable, restoreVault } from "@estoc/event-store";
+import { Snapshot as CarSnapshot, exportSnapshot, restoreSnapshot } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import type { ApiError, MethodInput, MethodName, Snapshot } from "@estoc/daemon-api/contract";
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
@@ -42,8 +42,8 @@ const session = {} as Session;
 
 type Call = <Name extends Exclude<MethodName, "attach">>(name: Name, input: MethodInput<Name>) => Promise<unknown>;
 
-/** A daemon over `root` whose transports are the mediator's, as `wrap` lets them through; its methods as a view calls them, under a backup bound of `maxBackupBytes`. */
-function daemonOver(root: string, mediator: FakeMediator, options: { wrap?: (fetch: typeof globalThis.fetch) => typeof globalThis.fetch; maxBackupBytes?: number } = {}): { daemon: DaemonCore; call: Call; refused: (name: Exclude<MethodName, "attach">, input: unknown) => Promise<ApiError>; fetched: string[] } {
+/** A daemon over `root` whose transports are the mediator's, as `wrap` lets them through; its methods as a view calls them, under a backup bound of `maxBackupBytes` and a seed bound of `maxSeedBytes`. */
+function daemonOver(root: string, mediator: FakeMediator, options: { wrap?: (fetch: typeof globalThis.fetch) => typeof globalThis.fetch; maxBackupBytes?: number; maxSeedBytes?: number } = {}): { daemon: DaemonCore; call: Call; refused: (name: Exclude<MethodName, "attach">, input: unknown) => Promise<ApiError>; fetched: string[] } {
   const fetched: string[] = [];
   const reach = options.wrap?.(mediator.fetch) ?? mediator.fetch;
   const host = nodeHost(root, {
@@ -53,7 +53,7 @@ function daemonOver(root: string, mediator: FakeMediator, options: { wrap?: (fet
     },
     WebSocket: mediator.WebSocket,
   });
-  const daemon = createDaemon(host);
+  const daemon = createDaemon(host, options.maxSeedBytes === undefined ? {} : { maxSeedBytes: options.maxSeedBytes });
   daemons.push(daemon);
   const methods = methodsOf(daemon, limitsOf("clone", options.maxBackupBytes)) as unknown as Record<string, (input: unknown, session: Session) => Promise<unknown>>;
   const call = (name: string, input: unknown) => methods[name]!(input, session);
@@ -106,31 +106,22 @@ async function apart(mediator: FakeMediator, options: Parameters<typeof daemonOv
 /** The daemon's backup restored elsewhere, there an arrangement with `mediatorDid` recorded registered and selected, and that replica exported: a backup that makes the arrangement preferred once merged, though the daemon's replica is no member of it. */
 async function backupPreferring(backup: Uint8Array, mediatorDid: string): Promise<Uint8Array> {
   const root = await folder();
-  await writeFile(path.join(root, "backup.sqlite"), backup);
-  const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
-  let vault: VaultSession;
   let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
-  try {
-    const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
-      heldRoots: vaultHeldRoots(null),
-      anchor: async (wrapped) => {
-        seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
-        return Keys.anchorOf(seedKey);
-      },
-    });
-    vault = await openRestoredVault(restored.runtime, seedKey);
-  } finally {
-    source.close();
-  }
+  const restored = await restoreSnapshot(await CarSnapshot.read(backup, { heldRoots: vaultHeldRoots(null) }), () => openNodeSqlite(path.join(root, "replica.sqlite"), { mode: "create" }), {
+    anchor: async (wrapped) => {
+      seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
+      return Keys.anchorOf(seedKey);
+    },
+  });
+  const vault: VaultSession = await openRestoredVault(restored.runtime, seedKey);
   try {
     const { mediationId } = (await vault.createMediation(mediatorDid as Did)).data;
     await vault.decide(() => [vaultDraft("mediation.granted", { mediationId, routingDid: mediatorDid as Did })]);
     await vault.selectMediation(mediationId);
-    await exportVault(vault.runtime, (mode) => openNodeSqlite(path.join(root, "preferring.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+    return await exportSnapshot(vault.runtime, { parts: "both", heldRoots: vaultHeldRoots(null) });
   } finally {
     await vault.runtime.close();
   }
-  return new Uint8Array(await readFile(path.join(root, "preferring.sqlite")));
 }
 
 async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemonOver>[2] = {}) {
@@ -141,7 +132,7 @@ async function newcomer(mediator: FakeMediator, options: Parameters<typeof daemo
 }
 
 type Link = { url: string; hash: string; key: string };
-type Published = { status: "published"; hash: string; selection: "enrollment" | "all"; placedAt: string; retainUntil: string; revocable: boolean; link: Link };
+type Published = { status: "published"; hash: string; part: "seed" | "content"; placedAt: string; retainUntil: string; revocable: boolean; link: Link };
 
 function latch(): { reached: Promise<void>; release: () => void } {
   let release!: () => void;
@@ -159,23 +150,40 @@ const exists = (file: string): Promise<boolean> =>
 
 const vaultFile = (root: string) => path.join(root, ".estoc", "vault.sqlite");
 
-async function eventsOf(bytes: Uint8Array): Promise<{ anchor: string; cids: string[]; types: Set<string>; objects: number }> {
-  const file = path.join(await folder(), "snapshot.sqlite");
-  await writeFile(file, bytes);
-  const source = openPortable(openNodeSqlite(file, { mode: "readonly" }));
-  try {
-    const cids: string[] = [];
-    const types = new Set<string>();
-    for await (const event of source.vault.events.scan()) {
-      cids.push(event.cid);
-      types.add(event.type);
-    }
-    let objects = 0;
-    for await (const _ of source.vault.objects.list()) objects++;
-    return { anchor: source.metadata.anchor, cids: cids.sort(), types, objects };
-  } finally {
-    source.close();
+/** What the snapshot `bytes` carries, read from a copy of them: the parts, the anchor, and its events and objects. */
+async function eventsOf(bytes: Uint8Array): Promise<{ seed: boolean; content: boolean; anchor: string; cids: string[]; types: Set<string>; objects: number }> {
+  const source = await CarSnapshot.read(bytes.slice(), { heldRoots: vaultHeldRoots(null) });
+  const cids: string[] = [];
+  const types = new Set<string>();
+  for await (const event of source.vault.events.scan()) {
+    cids.push(event.cid);
+    types.add(event.type);
   }
+  return { seed: source.seed !== undefined, content: source.content !== undefined, anchor: source.metadata.anchor, cids: cids.sort(), types, objects: source.objects };
+}
+
+/** The files the daemon at `root` keeps: its vault and the database it owns the folder by, with what SQLite keeps beside the vault, and nothing else. */
+async function files(root: string): Promise<string[]> {
+  return (await readdir(path.join(root, ".estoc"))).filter((name) => !/^(vault|owner)\.sqlite-/.test(name)).sort();
+}
+
+/** `response` with its body handed out a piece at a time as it is pulled, `pulled` told of each, and no length announced: what a read that stops early leaves unread. */
+async function piecemeal(response: Response, pulled: (bytes: number) => void): Promise<Response> {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let at = 0;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (at >= bytes.length) return controller.close();
+        const piece = bytes.slice(at, at + 256);
+        at += piece.length;
+        pulled(piece.length);
+        controller.enqueue(piece);
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  return new Response(body, { status: response.status });
 }
 
 /** The snapshot a link names, as the mediator holds it, opened. */
@@ -204,13 +212,13 @@ const shown = (daemon: DaemonCore): Snapshot => {
 
 describe("a snapshot link", () => {
   it(
-    "restores the vault on a daemon with none: the anchor and every event the snapshot held, under the passphrase the link does not carry",
+    "of the seed restores the vault on a daemon with none: the anchor and every event the seed carries, under the passphrase the link does not carry",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const published = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
-      const held = await eventsOf((await a.daemon.exportBackup()).bytes);
-      expect(published).toEqual({ status: "published", hash: published.link.hash, selection: "all", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, revocable: true, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
+      const published = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
+      const carried = await eventsOf(await linked(mediator, published.link));
+      expect(published).toEqual({ status: "published", hash: published.link.hash, part: "seed", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string, revocable: true, link: { url: expect.stringMatching(/^https?:\/\//) as string, hash: published.hash, key: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string } });
       expect(Date.parse(published.retainUntil)).toBeGreaterThan(Date.parse(published.placedAt));
 
       const b = await newcomer(mediator);
@@ -221,10 +229,10 @@ describe("a snapshot link", () => {
       expect(await b.call("restoreFromLink", { link: published.link, passphrase: PASSPHRASE })).toBeNull();
       expect(shown(b.daemon).anchor).toBe(shown(a.daemon).anchor);
       expect(shown(b.daemon).restoreUnexplained).toBe(true);
-      expect(shown(b.daemon).conversations.map((conversation) => conversation.petname)).toEqual(["Bob"]);
       const restored = await eventsOf((await b.daemon.exportBackup()).bytes);
-      expect(restored.anchor).toBe(held.anchor);
-      expect(restored.cids).toEqual(expect.arrayContaining(held.cids));
+      expect(restored.anchor).toBe(carried.anchor);
+      expect(restored.cids).toEqual(expect.arrayContaining(carried.cids));
+      expect(await files(b.root)).toEqual(["owner.sqlite", "vault.sqlite"]);
     },
     LONG
   );
@@ -234,9 +242,9 @@ describe("a snapshot link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const first = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
-      const second = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
-      expect([first.selection, second.selection]).toEqual(["enrollment", "all"]);
+      const first = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
+      const second = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
+      expect([first.part, second.part]).toEqual(["seed", "content"]);
       expect(second.hash).not.toBe(first.hash);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [first, second] });
 
@@ -264,11 +272,11 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const failing = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
       const a = await alice(mediator, { wrap: failing });
-      await expect(a.call("publishSnapshotLink", { selection: "all" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
+      await expect(a.call("publishSnapshotLink", { part: "content" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
       const [blob] = [...mediator.blobs.values()];
       expect(blob).toMatchObject({ bytes: null });
       const { links } = (await a.call("snapshotLinks", {})) as { links: unknown[] };
-      expect(links).toEqual([{ status: "pending", hash: blob!.hash, selection: "all", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string }]);
+      expect(links).toEqual([{ status: "pending", hash: blob!.hash, part: "content", placedAt: expect.any(String) as string, retainUntil: expect.any(String) as string }]);
 
       expect(await a.call("revokeSnapshotLink", { hash: blob!.hash })).toBeNull();
       expect(mediator.blobs.size).toBe(0);
@@ -294,7 +302,7 @@ describe("a snapshot link", () => {
         });
       };
       const a = await alice(mediator, { wrap: asABrowser });
-      await expect(a.call("publishSnapshotLink", { selection: "all" })).resolves.toMatchObject({ status: "published" });
+      await expect(a.call("publishSnapshotLink", { part: "content" })).resolves.toMatchObject({ status: "published" });
     },
     LONG
   );
@@ -305,10 +313,10 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
       mediator.intercept = (msg) => (msg.type === BLOB_PUT ? null : undefined);
-      await expect(a.call("publishSnapshotLink", { selection: "all" })).rejects.toThrow();
+      await expect(a.call("publishSnapshotLink", { part: "content" })).rejects.toThrow();
       mediator.intercept = null;
       const { links } = (await a.call("snapshotLinks", {})) as { links: { hash: string }[] };
-      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, selection: "all", placedAt: expect.any(String) as string, retainUntil: null }]);
+      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, part: "content", placedAt: expect.any(String) as string, retainUntil: null }]);
       expect(mediator.blobs.size).toBe(0);
 
       expect(await a.call("revokeSnapshotLink", { hash: links[0]!.hash })).toBeNull();
@@ -332,10 +340,10 @@ describe("a snapshot link", () => {
         await answer.reached;
         return undefined;
       };
-      const publishing = a.call("publishSnapshotLink", { selection: "all" }) as Promise<Published>;
+      const publishing = a.call("publishSnapshotLink", { part: "content" }) as Promise<Published>;
       await put.reached;
       const { links } = (await a.call("snapshotLinks", {})) as { links: { hash: string }[] };
-      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, selection: "all", placedAt: expect.any(String) as string, retainUntil: null }]);
+      expect(links).toEqual([{ status: "pending", hash: expect.any(String) as string, part: "content", placedAt: expect.any(String) as string, retainUntil: null }]);
       const revoking = a.call("revokeSnapshotLink", { hash: links[0]!.hash });
       const deletedEarly = await Promise.race([deleted.reached.then(() => true), delay(300).then(() => false)]);
       answer.release();
@@ -358,9 +366,9 @@ describe("a snapshot link", () => {
       let failing = false;
       const flaky = (fetch: typeof globalThis.fetch): typeof globalThis.fetch => (input, init) => (failing && init?.method === "PUT" ? Promise.resolve(new Response("the disk is full", { status: 507 })) : fetch(input, init));
       const { there, backup } = await apart(mediator, { wrap: flaky });
-      const before = (await there.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const before = (await there.call("publishSnapshotLink", { part: "content" })) as Published;
       failing = true;
-      await expect(there.call("publishSnapshotLink", { selection: "all" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
+      await expect(there.call("publishSnapshotLink", { part: "content" })).rejects.toMatchObject({ name: "BlobTransferFailed", status: 507 });
       failing = false;
       expect(((await there.call("snapshotLinks", {})) as { links: unknown[] }).links).toHaveLength(2);
 
@@ -371,7 +379,7 @@ describe("a snapshot link", () => {
       expect(await there.call("snapshotLinks", {})).toEqual(kept);
       expect((await mediator.fetch(before.link.url)).status).toBe(200);
 
-      const since = (await there.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const since = (await there.call("publishSnapshotLink", { part: "content" })) as Published;
       expect(since.revocable).toBe(true);
       expect(await there.call("revokeSnapshotLink", { hash: since.hash })).toBeNull();
       expect((await mediator.fetch(since.link.url)).status).toBe(404);
@@ -386,7 +394,7 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       mediator.blobLimits = { ...mediator.blobLimits!, quotaBytes: 1 };
       const a = await alice(mediator);
-      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(/^the mediator refused the snapshot: put was refused: e\.p\.blob\.quota/) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { part: "content" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(/^the mediator refused the snapshot: put was refused: e\.p\.blob\.quota/) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
     },
@@ -399,12 +407,12 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       mediator.blobLimits = { ...mediator.blobLimits!, maxBytes: 4096 };
       const a = await alice(mediator);
-      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "ResourceLimit", message: expect.stringMatching(new RegExp(`^the snapshot's events and objects come to \\d+ bytes, over the ${4096 - SEAL_OVERHEAD} a blob at the mediator holds once sealed$`)) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { part: "content" })).toEqual({ code: "ResourceLimit", message: expect.stringMatching(new RegExp(`^the snapshot comes to at least \\d+ bytes, over the ${4096 - SEAL_OVERHEAD} a blob at the mediator holds once sealed$`)) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
 
       mediator.blobLimits = null;
-      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: "the mediator keeps no blobs", effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { part: "content" })).toEqual({ code: "OperationFailed", message: "the mediator keeps no blobs", effect: "none", messageId: null });
     },
     LONG
   );
@@ -416,7 +424,7 @@ describe("a snapshot link", () => {
       const { there, backup } = await apart(mediator);
       const asked = mediator.seenTypes.length;
       expect(await there.daemon.mergeBackup(backup.bytes)).toMatchObject({ renewed: true });
-      expect(await there.call("publishSnapshotLink", { selection: "all" })).toMatchObject({ status: "published", revocable: true });
+      expect(await there.call("publishSnapshotLink", { part: "content" })).toMatchObject({ status: "published", revocable: true });
       const since = mediator.seenTypes.slice(asked);
       expect(since).toContain(REPLICA_ADD);
       expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
@@ -440,7 +448,7 @@ describe("a snapshot link", () => {
       await refused.reached;
       refusing = false;
       const asked = mediator.seenTypes.length;
-      expect(await there.call("publishSnapshotLink", { selection: "all" })).toMatchObject({ status: "published", revocable: true });
+      expect(await there.call("publishSnapshotLink", { part: "content" })).toMatchObject({ status: "published", revocable: true });
       const since = mediator.seenTypes.slice(asked);
       expect(since.filter((type) => type === REPLICA_ADD)).toHaveLength(1);
       expect(since.indexOf(REPLICA_ADD)).toBeLessThan(since.indexOf(BLOB_PUT));
@@ -455,7 +463,7 @@ describe("a snapshot link", () => {
       const elsewhere = await newMediator(201, "https://elsewhere.example/");
       const a = await alice(mediator);
       expect(await a.daemon.mergeBackup(await backupPreferring((await a.daemon.exportBackup()).bytes, elsewhere.did))).toMatchObject({ renewed: false });
-      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(new RegExp(`is already recorded as something else: a member of the arrangement with ${mediator.did}$`)) as string, effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { part: "content" })).toEqual({ code: "OperationFailed", message: expect.stringMatching(new RegExp(`is already recorded as something else: a member of the arrangement with ${mediator.did}$`)) as string, effect: "none", messageId: null });
       expect(mediator.blobs.size).toBe(0);
       expect(elsewhere.seenTypes).toEqual([]);
       expect(a.fetched.filter((request) => request.includes(elsewhere.http))).toEqual([]);
@@ -470,7 +478,7 @@ describe("a snapshot link", () => {
       const mediator = await newMediator();
       const a = await newcomer(mediator);
       await a.daemon.createIdentity("Alice", PASSPHRASE);
-      expect(await a.refused("publishSnapshotLink", { selection: "all" })).toEqual({ code: "OperationFailed", message: "no mediator is set", effect: "none", messageId: null });
+      expect(await a.refused("publishSnapshotLink", { part: "content" })).toEqual({ code: "OperationFailed", message: "no mediator is set", effect: "none", messageId: null });
       expect(a.fetched).toEqual([]);
     },
     LONG
@@ -479,15 +487,22 @@ describe("a snapshot link", () => {
 
 describe("a restore from a link", () => {
   it(
-    "writes nothing when the snapshot runs over this daemon's bound, its bytes are not the ones named, or the key does not open them",
+    "writes nothing when the snapshot runs over the bound of a link to add a device, its bytes are not the ones named, or the key does not open them; past the bound nothing more of it is read",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const sealed = [...mediator.blobs.values()][0]!.bytes!;
 
-      const small = await newcomer(mediator, { maxBackupBytes: 1024 });
-      expect(await small.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({ code: "ResourceLimit", message: "the snapshot is over the 1024 bytes this daemon reads from a link", effect: "none", messageId: null });
+      let read = 0;
+      const small = await newcomer(mediator, { maxSeedBytes: 1024, wrap: (fetch) => async (input, init) => (String(input) === link.url ? piecemeal(await fetch(input, init), (n) => (read += n)) : fetch(input, init)) });
+      expect(await small.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({
+        code: "OperationFailed",
+        message: "the snapshot at that link is over the 1024 bytes this device takes from a link to add a device: restore from a backup file exported from the vault instead",
+        effect: "none",
+        messageId: null,
+      });
+      expect(read).toBeLessThan(sealed.length);
 
       const b = await newcomer(mediator);
       expect(await b.refused("restoreFromLink", { link: { ...link, hash: await blobName(new Uint8Array([1])) }, passphrase: PASSPHRASE })).toEqual({ code: "OperationFailed", message: "the bytes at that link are not the snapshot it names", effect: "none", messageId: null });
@@ -505,11 +520,30 @@ describe("a restore from a link", () => {
   );
 
   it(
+    "of content is refused once it is opened, as history for a vault that is open, and writes nothing",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
+      const b = await newcomer(mediator);
+      expect(await b.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({
+        code: "OperationFailed",
+        message: "that snapshot is a vault's history and carries no seed to restore a vault from: import it into a vault that is open",
+        effect: "none",
+        messageId: null,
+      });
+      expect(await exists(vaultFile(b.root))).toBe(false);
+      expect(b.daemon.publisher.current.state.value.phase).toBe("onboarding");
+    },
+    LONG
+  );
+
+  it(
     "is refused before anything is read where a vault stands already",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const reads = a.fetched.length;
       expect(await a.refused("restoreFromLink", { link, passphrase: PASSPHRASE })).toEqual({ code: "WrongPhase", message: "a vault already exists here", effect: "none", messageId: null });
       expect(a.fetched.slice(reads).filter((request) => request.includes("/b/"))).toEqual([]);
@@ -522,7 +556,7 @@ describe("a restore from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
       const redirects: (RequestRedirect | undefined)[] = [];
       const b = await newcomer(mediator, {
         wrap: (fetch) => (input, init) => {
@@ -537,18 +571,19 @@ describe("a restore from a link", () => {
   );
 });
 
-describe("a link of the events a new replica enrolls from", () => {
+describe("a link of the seed", () => {
   it(
-    "carries the vault's name, arrangements and replicas and no object, and restores a vault that enrolls at the mediator and holds no contact",
+    "carries the seed with the vault's name, arrangements and replicas and no object, and restores a vault that enrolls at the mediator and holds no contact",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
       const [account] = mediator.replicaAccounts;
       expect(replicasOf(mediator, account!)).toHaveLength(1);
-      const enrollment = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
-      expect(enrollment.selection).toBe("enrollment");
+      const enrollment = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
+      expect(enrollment.part).toBe("seed");
       const carried = await eventsOf(await linked(mediator, enrollment.link));
       const whole = await eventsOf((await a.daemon.exportBackup()).bytes);
+      expect([carried.seed, carried.content, whole.seed, whole.content]).toEqual([true, false, true, true]);
       expect([...carried.types].every((type) => ENROLLMENT_EVENT_TYPES.has(type as never))).toBe(true);
       expect(carried.types).toContain("replica.created");
       expect(carried.objects).toBe(0);
@@ -563,6 +598,30 @@ describe("a link of the events a new replica enrolls from", () => {
     },
     LONG
   );
+
+  it(
+    "past the daemon's bound is refused at publishing, nothing put, and the backup file restores the new device instead",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator, { maxSeedBytes: 512 });
+      expect(await a.refused("publishSnapshotLink", { part: "seed" })).toEqual({
+        code: "OperationFailed",
+        message: expect.stringMatching(/^the seed and the events a new device enrolls from come to at least \d+ bytes, over the 512 a link to add a device holds: export a backup, and restore the new device from that file$/) as string,
+        effect: "none",
+        messageId: null,
+      });
+      expect(mediator.blobs.size).toBe(0);
+      expect(await a.call("snapshotLinks", {})).toEqual({ links: [] });
+
+      const { name, bytes } = await a.daemon.exportBackup();
+      expect(name).toMatch(/^Alice-\d{4}-\d{2}-\d{2}\.estoc\.car$/);
+      const b = await newcomer(mediator, { maxSeedBytes: 512 });
+      await b.daemon.restoreIdentity(bytes, PASSPHRASE);
+      expect(shown(b.daemon)).toMatchObject({ anchor: shown(a.daemon).anchor, label: "Alice", restoreUnexplained: true });
+      expect(shown(b.daemon).conversations.map((conversation) => conversation.petname)).toEqual(["Bob"]);
+    },
+    LONG
+  );
 });
 
 describe("an import from a link", () => {
@@ -571,11 +630,11 @@ describe("an import from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const enrollment = (await a.call("publishSnapshotLink", { selection: "enrollment" })) as Published;
+      const enrollment = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
       const b = await newcomer(mediator);
       await b.call("restoreFromLink", { link: enrollment.link, passphrase: PASSPHRASE });
 
-      const all = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const all = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const whole = await eventsOf(await linked(mediator, all.link));
       const carried = await eventsOf(await linked(mediator, enrollment.link));
       const merged = await b.call("importFromLink", { link: all.link });
@@ -591,13 +650,26 @@ describe("an import from a link", () => {
   );
 
   it(
+    "is refused, with nothing written, for a seed, which is for a new device",
+    async () => {
+      const mediator = await newMediator();
+      const a = await alice(mediator);
+      const before = await eventsOf((await a.daemon.exportBackup()).bytes);
+      const { link } = (await a.call("publishSnapshotLink", { part: "seed" })) as Published;
+      expect(await a.refused("importFromLink", { link })).toEqual({ code: "OperationFailed", message: "that snapshot is for adding a device and carries no history to import: restore a new device from it", effect: "none", messageId: null });
+      expect((await eventsOf((await a.daemon.exportBackup()).bytes)).cids).toEqual(before.cids);
+    },
+    LONG
+  );
+
+  it(
     "is refused, with nothing written, for another vault's snapshot",
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
       const before = await eventsOf((await a.daemon.exportBackup()).bytes);
       const other = await alice(mediator);
-      const { link } = (await other.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await other.call("publishSnapshotLink", { part: "content" })) as Published;
       expect(await a.refused("importFromLink", { link })).toEqual({ code: "OperationFailed", message: "that snapshot is of another vault, and is not merged into this one", effect: "none", messageId: null });
       expect((await eventsOf((await a.daemon.exportBackup()).bytes)).cids).toEqual(before.cids);
     },
@@ -609,7 +681,7 @@ describe("an import from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const small = await alice(mediator, { maxBackupBytes: 1024 });
       const before = await eventsOf((await small.daemon.exportBackup()).bytes);
       expect(await small.refused("importFromLink", { link })).toEqual({ code: "ResourceLimit", message: "the snapshot is over the 1024 bytes this daemon reads from a link", effect: "none", messageId: null });
@@ -624,7 +696,7 @@ describe("an import from a link", () => {
     async () => {
       const mediator = await newMediator();
       const a = await alice(mediator);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const b = await newcomer(mediator);
       expect(await b.refused("importFromLink", { link })).toEqual({ code: "WrongPhase", message: "no open vault", effect: "none", messageId: null });
       expect(b.fetched).toEqual([]);
@@ -639,7 +711,7 @@ describe("an import from a link", () => {
       const a = await alice(mediator);
       const early = await a.daemon.exportBackup();
       await a.daemon.createContact("Carmen", [{ localDid: shortForm("Anna"), peerDid: shortForm("Carmen") } as Channel]);
-      const { link } = (await a.call("publishSnapshotLink", { selection: "all" })) as Published;
+      const { link } = (await a.call("publishSnapshotLink", { part: "content" })) as Published;
       const brought = new Set((await eventsOf(await linked(mediator, link))).cids);
       for (const cid of (await eventsOf(early.bytes)).cids) brought.delete(cid);
       expect(brought.size).toBeGreaterThan(0);
@@ -655,7 +727,7 @@ describe("an import from a link", () => {
           return fetch(input, init);
         },
       });
-      await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+      await b.daemon.restoreIdentity(early.bytes.slice(), PASSPHRASE);
       /** An import of the link whose read is held until `meanwhile` is done. */
       const importAround = async (meanwhile: () => Promise<void>): Promise<ApiError> => {
         const reached = latch();
@@ -681,7 +753,7 @@ describe("an import from a link", () => {
         await importAround(async () => {
           const { hold } = b.daemon.publisher.current.state.value;
           await b.daemon.forgetIdentity(hold!);
-          await b.daemon.restoreIdentity(early.bytes, PASSPHRASE);
+          await b.daemon.restoreIdentity(early.bytes.slice(), PASSPHRASE);
         })
       ).toEqual(letGo);
       expect(await merged()).toEqual([]);

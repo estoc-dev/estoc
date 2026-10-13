@@ -6,24 +6,16 @@ import type { SeedKey } from "@estoc/keystore";
 export const VAULT_FILE = "vault.sqlite";
 
 /**
- * The SQLite files of one daemon, by name: the vault's runtime, and
- * for the length of an export, a restore or a merge, the portable
- * snapshot beside it. Whoever has this has all of them, from
- * `DaemonHost.storage()` to `close()`: no other daemon makes, opens or
- * removes a file here meanwhile, which is what lets a file be removed
- * once its connection has closed with nobody taking it in between. An
- * open takes the file and refuses a second one with `DatabaseBusy`
- * until it closes. A snapshot crosses the host's boundary as the bytes
- * of its file.
+ * The SQLite files of one daemon, by name: the vault's runtime. Whoever
+ * has this has all of them, from `DaemonHost.storage()` to `close()`:
+ * no other daemon makes, opens or removes a file here meanwhile, which
+ * is what lets a file be removed once its connection has closed with
+ * nobody taking it in between. An open takes the file and refuses a
+ * second one with `DatabaseBusy` until it closes.
  */
 export interface DaemonStorage {
   has(name: string): Promise<boolean>;
-  /** `runtime` and `portable` differ in the journal a created file is left in; an existing file keeps its own. */
-  open(name: string, mode: OpenMode, kind: "runtime" | "portable"): Promise<SqliteDriver>;
-  /** The complete bytes of the file `name`, which no connection may hold open; a file larger than `maxBytes` is `TooLarge` before any of it is read. */
-  exportFile(name: string, maxBytes?: number): Promise<Uint8Array>;
-  /** Puts a complete database file among the host's as `name`, which must not exist yet. Nothing of it is trusted until it is opened and validated. */
-  importFile(name: string, bytes: Uint8Array): Promise<void>;
+  open(name: string, mode: OpenMode): Promise<SqliteDriver>;
   /** Deletes `name`, which no connection may hold open, with whatever SQLite kept beside it; nothing when there is none. */
   remove(name: string): Promise<void>;
   /** Lets go of the files as a whole, every connection to them closed first; another daemon may take them from here. */

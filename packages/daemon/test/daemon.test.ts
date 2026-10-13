@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it, test } from "vitest";
 
-import { SqliteVault, exportVault, openPortable, restoreVault, type SqliteDriver } from "@estoc/event-store";
+import { SqliteVault, Snapshot as CarSnapshot, exportSnapshot, restoreSnapshot, type SqliteDriver } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { unlockSeedKeystore } from "@estoc/keystore";
 import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, vaultDraft, vaultHeldRoots, type Channel, type Did, type DidId, type EventReference, type ExecutionId, type MediationId, type MintedDid } from "@estoc/vault";
@@ -202,8 +202,7 @@ describe("the daemon over a folder", () => {
 
     const backup = await ui.daemon.exportBackup({});
     expect(backup.bytes).toBeInstanceOf(Uint8Array);
-    expect(backup.name).toMatch(/^Alice-.*\.estoc\.sqlite$/);
-    expect(new TextDecoder().decode(backup.bytes.subarray(0, 15))).toBe("SQLite format 3");
+    expect(backup.name).toMatch(/^Alice-.*\.estoc\.car$/);
 
     const elsewhere = createDaemon(nodeHost(root));
     daemons.push(elsewhere);
@@ -300,28 +299,23 @@ describe("the daemon over a folder", () => {
     expect(heard.snapshot()).toMatchObject({ label: "Another" });
   });
 
-  it("restores and merges no backup of the earlier vault version, and leaves the vault there is as it is", async () => {
-    const { daemon, heard } = daemonOver(await folder());
+  it("restores and merges no backup in the earlier format, a SQLite file, and leaves the vault there is as it is", async () => {
+    const root = await folder();
+    const { daemon, heard } = daemonOver(root);
     await daemon.boot();
     await daemon.createIdentity("Alice", PASSPHRASE);
-    const file = path.join(await folder(), "earlier.sqlite");
-    await writeFile(file, (await daemon.exportBackup()).bytes);
-    const db = new DatabaseSync(file);
-    try {
-      db.exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4");
-    } finally {
-      db.close();
-    }
-    const earlier = await readFile(file);
+    await daemon.lock();
+    const earlier = await readFile(vaultFile(root));
+    await daemon.unlock(PASSPHRASE);
 
     const shown = heard.events.length;
-    await expect(daemon.mergeBackup(earlier)).rejects.toThrow(/vault version 4 is not 5/);
+    await expect(daemon.mergeBackup(Uint8Array.from(earlier))).rejects.toMatchObject({ code: "OperationFailed", message: expect.stringMatching(/^that is no snapshot this version reads: /) });
     expect(heard.events.slice(shown).filter(([name]) => name !== "lines" && name !== "log")).toEqual([]);
 
     const elsewhere = await folder();
     const other = daemonOver(elsewhere);
     await other.daemon.boot();
-    await expect(other.daemon.restoreIdentity(earlier, PASSPHRASE)).rejects.toThrow(/vault version 4 is not 5/);
+    await expect(other.daemon.restoreIdentity(Uint8Array.from(earlier), PASSPHRASE)).rejects.toMatchObject({ code: "OperationFailed", message: expect.stringMatching(/^that is no snapshot this version reads: /) });
     expect(other.heard.phases().at(-1)).toBe("onboarding");
     await expect(stat(vaultFile(elsewhere))).rejects.toThrow();
   });
@@ -371,8 +365,8 @@ describe("a daemon's files, one operation at a time", () => {
     const occupied = /a vault already exists here/;
     const races: [string, (daemon: DaemonCore) => Promise<unknown>[]][] = [
       ["Alice", (daemon) => [daemon.createIdentity("Alice", PASSPHRASE), daemon.createIdentity("Bob", PASSPHRASE)]],
-      ["Alice", (daemon) => [daemon.restoreIdentity(backup.bytes, PASSPHRASE), daemon.createIdentity("Bob", PASSPHRASE)]],
-      ["Bob", (daemon) => [daemon.createIdentity("Bob", PASSPHRASE), daemon.restoreIdentity(backup.bytes, PASSPHRASE)]],
+      ["Alice", (daemon) => [daemon.restoreIdentity(backup.bytes.slice(), PASSPHRASE), daemon.createIdentity("Bob", PASSPHRASE)]],
+      ["Bob", (daemon) => [daemon.createIdentity("Bob", PASSPHRASE), daemon.restoreIdentity(backup.bytes.slice(), PASSPHRASE)]],
     ];
     for (const [label, race] of races) {
       const root = await folder();
@@ -438,9 +432,9 @@ describe("a daemon's files, one operation at a time", () => {
     await daemon.boot();
     await daemon.createIdentity("Alice", PASSPHRASE);
     const backup = await daemon.exportBackup();
-    const noSnapshot = new TextEncoder().encode("no database at all");
+    const noSnapshot = new TextEncoder().encode("no snapshot at all");
 
-    const results = await Promise.allSettled([daemon.exportBackup(), daemon.mergeBackup(backup.bytes), daemon.exportBackup(), daemon.mergeBackup(noSnapshot), daemon.mergeBackup(backup.bytes), daemon.exportBackup()]);
+    const results = await Promise.allSettled([daemon.exportBackup(), daemon.mergeBackup(backup.bytes.slice()), daemon.exportBackup(), daemon.mergeBackup(noSnapshot), daemon.mergeBackup(backup.bytes.slice()), daemon.exportBackup()]);
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled", "rejected", "fulfilled", "fulfilled"]);
     for (const index of [1, 4]) expect((results[index] as PromiseFulfilledResult<unknown>).value).toMatchObject({ added: 0 });
     // An export is whole if it validates as a snapshot, which a merge does before it takes anything from one.
@@ -452,7 +446,7 @@ describe("a daemon's files, one operation at a time", () => {
     // A close lets the operation under way finish and refuses the one still waiting behind it.
     const underWay = daemon.exportBackup();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const behind = daemon.mergeBackup(backup.bytes);
+    const behind = daemon.mergeBackup(backup.bytes.slice());
     const closed = daemon.close();
     expect(settledAs(await Promise.allSettled([underWay, behind]))).toEqual(["fulfilled", expect.stringMatching(/the daemon is closed/)]);
     await closed;
@@ -528,7 +522,7 @@ describe("a vault whose history is damaged", () => {
         ...host,
         async storage() {
           const storage = await host.storage();
-          return { ...storage, open: async (name, mode, kind) => (held = await storage.open(name, mode, kind)) };
+          return { ...storage, open: async (name, mode) => (held = await storage.open(name, mode)) };
         },
       },
       damageAnEvent() {
@@ -691,7 +685,7 @@ describe("two copies of one runtime, both written to", () => {
     await there.daemon.unlock(PASSPHRASE);
     await there.daemon.createContact("Carmen", pairWith("Carmen"));
 
-    const merged = await there.daemon.mergeBackup(fromHere.bytes);
+    const merged = await there.daemon.mergeBackup(fromHere.bytes.slice());
     expect(merged).toMatchObject({ renewed: true });
     expect(merged.added).toBeGreaterThan(0);
     expect(there.heard.phases()).not.toContain("unreadable");
@@ -715,8 +709,9 @@ describe("two copies of one runtime, both written to", () => {
       const copy = await folder();
       await cp(path.join(first.root, ".estoc"), path.join(copy, ".estoc"), { recursive: true });
 
-      let merges = 0;
-      let secondMergeReached = false;
+      // Armed for the merge, which opens the vault once: to reopen it under a fresh replica ID, between the two imports.
+      let armed = false;
+      let reopenReached = false;
       let release = (): void => undefined;
       const released = new Promise<void>((resolve) => (release = resolve));
       const host = nodeHost(copy, { fetch: mediator.fetch, WebSocket: mediator.WebSocket });
@@ -726,12 +721,13 @@ describe("two copies of one runtime, both written to", () => {
           const storage = await host.storage();
           return {
             ...storage,
-            async importFile(name, bytes) {
-              if (name === "merge-source.sqlite" && ++merges === 2) {
-                secondMergeReached = true;
+            async open(name, mode) {
+              if (armed) {
+                armed = false;
+                reopenReached = true;
                 await released;
               }
-              return storage.importFile(name, bytes);
+              return storage.open(name, mode);
             },
           };
         },
@@ -747,6 +743,8 @@ describe("two copies of one runtime, both written to", () => {
       const here = daemonOver(first.root, mediator);
       await here.daemon.boot();
       await here.daemon.unlock(PASSPHRASE);
+      // The mediator gives the replica's line to the original, so that none is live for the replica once it closes: what is sent to the replica then waits there.
+      await until("the daemon over the original folder is live", () => here.heard.lines()?.connections[0]?.live === true);
       const { didId, invitation } = await here.daemon.createInvitation();
       const invited = here.heard.snapshot().dids.find((did) => did.didId === (didId as string))!.did! as Did;
       const backup = await here.daemon.exportBackup();
@@ -758,9 +756,10 @@ describe("two copies of one runtime, both written to", () => {
 
       const asked = mediator.seenTypes.length;
       const opened = heard.events.filter(([name]) => name === "opened").length;
+      armed = true;
       const merging = there.mergeBackup(backup.bytes);
       try {
-        await until("the second merge is reached", () => secondMergeReached);
+        await until("the vault is reopened for the second import", () => reopenReached);
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(mediator.seenTypes.slice(asked)).toEqual([]);
         expect(heard.events.filter(([name]) => name === "opened")).toHaveLength(opened);
@@ -880,29 +879,20 @@ describe("a backup merged that retires the only mediator", () => {
   /** The daemon's backup restored elsewhere, its one mediation retired there, and that replica exported: a backup with one event to merge. */
   async function backupRetiring(backup: Uint8Array, mediationId: MediationId): Promise<Uint8Array> {
     const root = await folder();
-    await writeFile(path.join(root, "backup.sqlite"), backup);
-    const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
-    let vault: VaultSession;
     let seedKey!: Awaited<ReturnType<typeof unlockSeedKeystore>>;
-    try {
-      const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
-        heldRoots: vaultHeldRoots(null),
-        anchor: async (wrapped) => {
-          seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
-          return Keys.anchorOf(seedKey);
-        },
-      });
-      vault = await openRestoredVault(restored.runtime, seedKey);
-    } finally {
-      source.close();
-    }
+    const restored = await restoreSnapshot(await CarSnapshot.read(backup, { heldRoots: vaultHeldRoots(null) }), () => openNodeSqlite(path.join(root, "replica.sqlite"), { mode: "create" }), {
+      anchor: async (wrapped) => {
+        seedKey = await unlockSeedKeystore(wrapped, PASSPHRASE);
+        return Keys.anchorOf(seedKey);
+      },
+    });
+    const vault: VaultSession = await openRestoredVault(restored.runtime, seedKey);
     try {
       await vault.decide(() => [vaultDraft("mediation.retired", { mediationId, because: "no longer used" })]);
-      await exportVault(vault.runtime, (mode) => openNodeSqlite(path.join(root, "retired.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+      return await exportSnapshot(vault.runtime, { parts: "both", heldRoots: vaultHeldRoots(null) });
     } finally {
       await vault.runtime.close();
     }
-    return new Uint8Array(await readFile(path.join(root, "retired.sqlite")));
   }
 
   it("leaves the agent that takes over nothing to connect, and shows its lines empty without a call: the UI there and one that joins see no connection where the old agent's stood", async () => {
@@ -1176,9 +1166,9 @@ describe("two daemons over a mediator", () => {
       const root = await folder();
       const first = daemonOver(root, mediator);
       await first.daemon.boot();
-      await expect(first.daemon.restoreIdentity(backup.bytes, "not the passphrase")).rejects.toThrow(/does not open this backup/);
+      await expect(first.daemon.restoreIdentity(backup.bytes.slice(), "not the passphrase")).rejects.toThrow(/does not open this backup/);
       await expect(stat(path.join(root, ".estoc", "vault.sqlite"))).rejects.toThrow();
-      await first.daemon.restoreIdentity(backup.bytes, PASSPHRASE);
+      await first.daemon.restoreIdentity(backup.bytes.slice(), PASSPHRASE);
       expect(first.heard.snapshot()).toMatchObject({ label: "Alice", restoreUnexplained: true });
       expect(contactsOf(first.heard.snapshot())).toMatchObject([{ petname: "Bobby" }]);
 
@@ -1387,25 +1377,16 @@ describe("a daemon whose vault records an observation it does not admit", () => 
   /** Alice's backup restored on another machine, the issuer's document brought in there, and that replica exported: the evidence comes back as a backup to merge. */
   async function backupHoldingIssuer(backup: Uint8Array, didId: DidId, prior: MintedDid): Promise<Uint8Array> {
     const root = await folder();
-    await writeFile(path.join(root, "backup.sqlite"), backup);
-    const source = openPortable(openNodeSqlite(path.join(root, "backup.sqlite"), { mode: "readonly" }));
-    let runtime: SqliteVault;
-    try {
-      const restored = await restoreVault(source, (mode) => openNodeSqlite(path.join(root, "replica.sqlite"), { mode }), {
-        heldRoots: vaultHeldRoots(null),
-        anchor: async (wrapped) => Keys.anchorOf(await unlockSeedKeystore(wrapped, PASSPHRASE)),
-      });
-      runtime = new SqliteVault(restored.runtime);
-    } finally {
-      source.close();
-    }
+    const restored = await restoreSnapshot(await CarSnapshot.read(backup, { heldRoots: vaultHeldRoots(null) }), () => openNodeSqlite(path.join(root, "replica.sqlite"), { mode: "create" }), {
+      anchor: async (wrapped) => Keys.anchorOf(await unlockSeedKeystore(wrapped, PASSPHRASE)),
+    });
+    const runtime = new SqliteVault(restored.runtime);
     try {
       await issuerRecovered({ runtime, didId } as Addressed, prior);
-      await exportVault(runtime, (mode) => openNodeSqlite(path.join(root, "evidence.sqlite"), { mode }), { heldRoots: vaultHeldRoots(null) });
+      return await exportSnapshot(runtime, { parts: "both", heldRoots: vaultHeldRoots(null) });
     } finally {
       await runtime.close();
     }
-    return new Uint8Array(await readFile(path.join(root, "evidence.sqlite")));
   }
 
   const inputsOf = (channel: ReturnType<typeof channelIn>) => channel.messages.filter(({ direction, headers }) => direction === "in" && headers?.type !== EMPTY_MESSAGE_TYPE).map(({ body, verification }) => [body.state === "available" ? body.body : body.state, verification.status]);

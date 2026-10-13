@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { MemoryVault, SqliteVault, VAULT_VERSION, exportVault, importVault, openPortable, restoreVault, type Event, type OpenDestination, type VaultRuntime } from "@estoc/event-store";
+import { MemoryVault, Snapshot, SqliteVault, VAULT_VERSION, exportSnapshot, importSnapshot, restoreSnapshot, type CreateDestination, type Event, type VaultRuntime } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { createSeedKeystore } from "@estoc/keystore";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -30,7 +30,7 @@ const encoder = new TextEncoder();
 const has = (vault: MemoryVault, cid: Cid) => vault.vault.objects.has(cid);
 
 describe("the retention handed to the event store", () => {
-  it("is the same for collection, export and validation", async () => {
+  it("is the same for collection, export and a snapshot's read", async () => {
     const { scene, keys, a0, b0 } = await vaults();
     const root = resolved(scene, a0.didId, b0);
     const out = intent(scene, a0, b0);
@@ -55,14 +55,13 @@ describe("the events a new replica enrolls from", () => {
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
   });
-  const at = (): OpenDestination => {
+  const at = (): CreateDestination => {
     const file = path.join(dir, `vault-${n++}.sqlite`);
-    return (mode) => openNodeSqlite(file, { mode });
+    return () => openNodeSqlite(file, { mode: "create" });
   };
-  const exported = async (runtime: VaultRuntime, keys: Keys, types?: ReadonlySet<string>) => {
-    const open = at();
-    const validated = await exportVault(runtime, open, { heldRoots: vaultHeldRoots(keys), ...(types === undefined ? {} : { types }) });
-    return { validated, snapshot: openPortable(await open("readonly")) };
+  const exported = async (runtime: VaultRuntime, keys: Keys, types?: ReadonlySet<string>): Promise<Snapshot> => {
+    const heldRoots = vaultHeldRoots(keys);
+    return Snapshot.read(await exportSnapshot(runtime, types === undefined ? { parts: "both", heldRoots } : { parts: "seed", types, heldRoots }), { heldRoots });
   };
 
   it("carry no object; restored, they read as the vault's name, its arrangements and its replicas with no DID, and the whole history imported over them adds the rest, then nothing", async () => {
@@ -85,10 +84,8 @@ describe("the events a new replica enrolls from", () => {
     await source.ingest(scene.events);
 
     const entry = await exported(source, keys, ENROLLMENT_EVENT_TYPES);
-    expect(entry.validated).toMatchObject({ events: enrollment.length, objects: 0 });
-    const destination = at();
-    const restored = await restoreVault(entry.snapshot, destination, { heldRoots: vaultHeldRoots(keys), anchor });
-    entry.snapshot.close();
+    expect(entry).toMatchObject({ events: enrollment.length, objects: 0 });
+    const restored = await restoreSnapshot(entry, at(), { anchor });
     const replica = new SqliteVault(restored.runtime);
     try {
       const fold = await scanVault(replica.vault, keys);
@@ -99,9 +96,9 @@ describe("the events a new replica enrolls from", () => {
       expect(requiredReceivingSet(fold.mediations, fold.dids)).toEqual(new Set([MEDIATION]));
 
       const whole = await exported(source, keys);
-      expect(whole.validated).toMatchObject({ events: scene.events.length, objects: 1 });
-      const imported = await importVault(replica, whole.snapshot, { retainedRoots: vaultRetention(keys) });
-      expect(imported).toEqual({ added: scene.events.length - enrollment.length, duplicates: enrollment.length, objects: 1, repaired: 0 });
+      expect(whole).toMatchObject({ events: scene.events.length, objects: 1 });
+      const imported = await importSnapshot(replica, whole, { retainedRoots: vaultRetention(keys) });
+      expect(imported).toMatchObject({ added: scene.events.length - enrollment.length, duplicates: enrollment.length, objects: 1, repaired: 0 });
       const cids = async (runtime: VaultRuntime) => {
         const events: Event[] = [];
         for await (const event of runtime.vault.events.scan()) events.push(event);
@@ -109,8 +106,7 @@ describe("the events a new replica enrolls from", () => {
       };
       expect(await cids(replica)).toEqual(await cids(source));
       expect(await replica.vault.objects.read(out.data.bodyCid, body.length)).toEqual(body);
-      expect(await importVault(replica, whole.snapshot, { retainedRoots: vaultRetention(keys) })).toEqual({ added: 0, duplicates: scene.events.length, objects: 0, repaired: 0 });
-      whole.snapshot.close();
+      expect(await importSnapshot(replica, whole, { retainedRoots: vaultRetention(keys) })).toMatchObject({ added: 0, duplicates: scene.events.length, objects: 0, repaired: 0 });
     } finally {
       await replica.close();
     }

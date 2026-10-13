@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`inspectSnapshot` is gone** (breaking): it read a portable SQLite
+  snapshot, which no longer exists, and nothing called it. A snapshot is
+  a CAR now, read and validated by `Snapshot.read` of
+  `@estoc/event-store`.
+
 - **The vault, bound** (breaking): `createVault` and `openVault` return a
   `VaultSession` — the runtime with the seed's keys and the fold options
   bound once — instead of `{ runtime, keys, fold }`, and a runtime the

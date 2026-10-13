@@ -150,7 +150,7 @@ export async function initVault(root: string, label: string, passphrase: string)
   try {
     if (await storage.has(VAULT_FILE)) throw new Error(`${vault.dir} already holds a vault`);
     const { doc, seedKey } = await createSeedKeystore(passphrase);
-    const driver = await storage.open(VAULT_FILE, "create", "runtime");
+    const driver = await storage.open(VAULT_FILE, "create");
     try {
       const created = await createVault(driver, { seedKey, wrapped: { version: 3, seedJwe: doc.seedJwe }, label });
       try {
@@ -200,7 +200,7 @@ export async function vaultStatus(vault: Vault): Promise<VaultStatus> {
 async function looked<T>(vault: Vault, storage: DaemonStorage, work: (inspected: Awaited<ReturnType<typeof inspectRuntime>>) => Promise<T>): Promise<T> {
   try {
     if (!(await storage.has(VAULT_FILE))) throw new Error(`no vault in ${vault.dir} yet (run \`estoc init\`)`);
-    const inspected = await inspectRuntime(await storage.open(VAULT_FILE, "readwrite", "runtime"));
+    const inspected = await inspectRuntime(await storage.open(VAULT_FILE, "readwrite"));
     try {
       return await work(inspected);
     } finally {

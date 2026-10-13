@@ -24,8 +24,7 @@ import { poolCases } from "./pool-cases.js";
 import type { Exchanged, PageAnswer, WorkerAsk, WorkerCaseResult, WorkerReply, WorkerRequest } from "./sqlite-worker.js";
 
 export interface SuiteInput {
-  utf16: { snapshot: number[]; forged: number[] };
-  /** A portable snapshot the other platform exported. */
+  /** A CAR snapshot the other platform exported. */
   snapshot: number[];
 }
 
@@ -186,7 +185,7 @@ function shares(cases: Case[]): string[][] {
   return [small, ...cases.filter((c) => c.large !== undefined).map((c) => [c.name])];
 }
 
-window.runSqliteSuite = async ({ utf16, snapshot }: SuiteInput): Promise<SuiteOutput> => {
+window.runSqliteSuite = async ({ snapshot }: SuiteInput): Promise<SuiteOutput> => {
   const results: WorkerCaseResult[] = [];
   results.push(
     await attempt("the pool is refused on the main thread", async () => {
@@ -209,7 +208,7 @@ window.runSqliteSuite = async ({ utf16, snapshot }: SuiteInput): Promise<SuiteOu
   try {
     const running = [
       ...shares(driverCases).map((names, i) => casesOf({ cmd: "cases", directory: `/cases-${i}`, names })),
-      ...shares(OPEN_CASES).map((names, i) => casesOf({ cmd: "open", directory: `/open-${i}`, utf16, names })),
+      ...shares(OPEN_CASES).map((names, i) => casesOf({ cmd: "open", directory: `/open-${i}`, names })),
       ...shares(poolCases).map((names) => casesOf({ cmd: "pool", names })),
     ];
     const suites = casesOf({ cmd: "suites", directory: "/suites" });

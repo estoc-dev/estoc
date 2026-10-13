@@ -4,17 +4,17 @@
  * kept in either journal, reopening the same.
  */
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 
 import { openNodeSqlite } from "../../src/node.js";
-import { SqliteVault, createRuntime, exportVault, openPortable, openRuntime, restoreVault, type OpenMode, type SqliteDriver } from "../../src/index.js";
+import { SqliteVault, Snapshot, createRuntime, exportSnapshot, openRuntime, restoreSnapshot, type OpenMode, type SqliteDriver } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
 import { all } from "../suite/helpers.js";
-import { importCases, type ImportHarness } from "./import-cases.js";
-import { HELLO, HELLO_CID, draft, rootsOf } from "./vault-cases.js";
+import { importCases } from "./import-cases.js";
+import { HELLO, HELLO_CID, draft, rootsOf, type VaultHarness } from "./vault-cases.js";
 
 let dir: string;
 let n = 0;
@@ -31,11 +31,9 @@ const fresh = (): string => path.join(dir, `vault-${n++}.sqlite`);
 const open = (target: string, mode: OpenMode): SqliteDriver => openNodeSqlite(target, { mode });
 
 describe("the import cases on node:sqlite files", () => {
-  const harness: ImportHarness = {
+  const harness: VaultHarness = {
     fresh,
     open: async (target, mode) => open(target, mode),
-    fileBytes: async (target) => new Uint8Array(await readFile(target)),
-    importFile: (target, bytes) => writeFile(target, bytes),
   };
   for (const c of importCases) {
     test(c.name, async () => {
@@ -45,22 +43,15 @@ describe("the import cases on node:sqlite files", () => {
   }
 });
 
-describe("restoreVault on a path", () => {
+describe("restoreSnapshot on a path", () => {
   it("lays the runtime in whatever journal the destination was created with, and the same open reopens it", async () => {
     const vault = new SqliteVault(createRuntime(open(fresh(), "create"), { metadata: META, wrapped: WRAPPED }));
     await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])]);
-    const exported = fresh();
-    await exportVault(vault, (mode) => open(exported, mode), { heldRoots: rootsOf });
+    const snapshot = await Snapshot.read(await exportSnapshot(vault, { parts: "both", heldRoots: rootsOf }), { heldRoots: rootsOf });
     await vault.close();
     for (const journal of ["wal", "delete"] as const) {
-      const snapshot = openPortable(open(exported, "readonly"));
       const target = fresh();
-      let restored;
-      try {
-        restored = await restoreVault(snapshot, (mode) => openNodeSqlite(target, mode === "create" ? { mode, journal } : { mode }), { heldRoots: rootsOf, anchor: ANCHOR });
-      } finally {
-        snapshot.close();
-      }
+      const restored = await restoreSnapshot(snapshot, () => openNodeSqlite(target, { mode: "create", journal }), { anchor: ANCHOR });
       expect(restored).toMatchObject({ events: 1, objects: 1, objectBytes: 5 });
       const first = new SqliteVault(restored.runtime);
       expect((await all(first.vault.events.scan())).map((e) => e.roots)).toEqual([[HELLO_CID]]);

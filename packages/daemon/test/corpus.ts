@@ -3,12 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { openPortable } from "@estoc/event-store";
-import { openNodeSqlite } from "@estoc/event-store/node";
-import { Keys } from "@estoc/vault";
-
 import { decode as decodeLongForm, isLongForm } from "../../did-peer/src/did-peer-4.js";
-import { compare, readPortable, type CorpusRead } from "./corpus-read.js";
+import { compare, keptVault, readKept, type CorpusRead, type KeptVault } from "./corpus-read.js";
 
 export { foldText, snapshotText, type CorpusRead } from "./corpus-read.js";
 
@@ -21,20 +17,16 @@ export { foldText, snapshotText, type CorpusRead } from "./corpus-read.js";
  * when what a fold or a record says is changed on purpose.
  */
 export const CORPUS = path.join(path.dirname(fileURLToPath(import.meta.url)), "corpus");
-export const CORPUS_VAULT = path.join(CORPUS, "vault.sqlite");
+export const CORPUS_VAULT = path.join(CORPUS, "vault.car");
 export const CORPUS_PASSPHRASE = "a passphrase for a benchmark";
 
 export const hashOf = (text: string): string => `${createHash("sha256").update(text).digest("hex")}\n`;
 
-/** The vault in `file`, a portable snapshot, read from nothing as the daemon reads one for a state. */
-export async function readCorpus(file = CORPUS_VAULT, passphrase = CORPUS_PASSPHRASE): Promise<CorpusRead> {
-  const source = openPortable(openNodeSqlite(file, { mode: "readonly" }));
-  try {
-    return await readPortable(source, await Keys.unlock(source.wrapped, passphrase, source.metadata.anchor));
-  } finally {
-    source.close();
-  }
-}
+/** The vault in `file`, a snapshot with both parts, and its keys. */
+export const keptIn = async (file = CORPUS_VAULT, passphrase = CORPUS_PASSPHRASE): Promise<KeptVault> => keptVault(new Uint8Array(await readFile(file)), passphrase);
+
+/** The vault in `file` read from nothing as the daemon reads one for a state. */
+export const readCorpus = async (file = CORPUS_VAULT, passphrase = CORPUS_PASSPHRASE): Promise<CorpusRead> => readKept(await keptIn(file, passphrase));
 
 export const expected = (name: "fold.sha256" | "snapshot.json"): Promise<string> => readFile(path.join(CORPUS, name), "utf8");
 

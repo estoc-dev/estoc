@@ -17,13 +17,22 @@
   of its objects, `seed` and `content`. `restoreSnapshot` needs the
   seed part and `importSnapshot` the content part, `MissingPart`
   otherwise before anything is written; the import hands back the
-  range. The portable snapshot is unchanged beside it.
+  range.
 - **`EventTally.lastSeq`**: the position accepted last, where a
   change token issued now stands; what a content part's range ends
   at.
-- `restoreVault` and `importVault` share their laying and merging
-  with the snapshot's restore and import; nothing changes for their
-  callers.
+- **The portable SQLite snapshot is gone (breaking).** The CAR is the
+  one snapshot: `exportVault`, `openPortable`, `validatePortable`,
+  `restoreVault`, `importVault` and their types are removed, and the
+  pool's `exportFile` and `importFile` with them. `restoreSnapshot`
+  takes `create`, a function with no mode that makes the destination,
+  and writes the objects the read already checked without hashing
+  them again; `importSnapshot` lives in `src/import.ts`. A runtime's
+  `vault_meta.kind` can only be `runtime`, and its open checks the
+  application ID and the schema version but no longer the text
+  encoding or the spelling of the schema's names, which guarded files
+  another party wrote: no file of another party's is opened now. The
+  schema and its version are unchanged.
 
 - **Vault version 5** (breaking): `VAULT_VERSION` is exported and is 5.
   `VaultMetadata.version` is `typeof VAULT_VERSION`, and the SQLite

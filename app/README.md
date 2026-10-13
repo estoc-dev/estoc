@@ -63,7 +63,7 @@ your data never touches the place the app was served from.
   in the daemon's worker ([@estoc/event-store]). Nothing about you is
   stored anywhere else.
 - **Backups you own.** *Export a backup*, on the You screen, writes the
-  vault as one portable `.sqlite` file. The passphrase seals the seed in
+  vault as one `.estoc.car` file. The passphrase seals the seed in
   it and nothing else: whoever has the file reads the messages. *Restore*
   on a fresh install brings back that moment and nothing after it, and
   says so at the head of the list before anything can be sent: DIDs
@@ -85,16 +85,16 @@ your data never touches the place the app was served from.
   out, and the last list while the mediator is out of reach; one that
   joined since and was sent nothing yet is
   marked new, with *Send history* on its row, and *Sync now* sends to
-  every other. Either puts a copy of the whole vault at the mediator and
-  mails its link to the device, which takes in what it lacks as the link
+  every other. Either puts the vault's history, without its seed, at the
+  mediator and mails its link to the device, which takes in what it lacks as the link
   arrives, mail it could not open before among it, and says so under its
   own *Your devices*; sending again brings nothing new. The same copy goes
   by hand as *Back up to a link* on the same sheet: opened on a device
   that holds the vault, or pasted or scanned under *Import from a link*,
-  it is merged in as a backup is; opened on a fresh install, it restores
-  the vault as it was then. Whoever holds a copy's link reads the
-  messages until the mediator lets it go or it is revoked; the passphrase
-  still seals the seed. The links made are listed, each saying what it
+  it is merged in as a backup is; a fresh install restores from a backup
+  file or a link for a new device instead. Whoever holds a copy's link
+  reads the messages until the mediator lets it go or it is revoked. The
+  links made are listed, each saying what it
   carries, with when they expire, to show again or revoke. A vault over
   what one blob at the mediator holds goes by backup file instead.
 - **Offline.** Installed, Estoc opens with no network at all: the app

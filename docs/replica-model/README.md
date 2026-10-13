@@ -6,9 +6,10 @@ that append them are specified by the code under
 [`packages/vault/README.md`](../../packages/vault/README.md).
 The suite has four specifications. A vault may run
 one writable full runtime or several as distinct replicas of one
-replica-mediation arrangement. SQLite is the sole persistent vault and portable
-interchange format. This guide is informative; linked specification sections
-define requirements. The target uses vault version 5 and SQLite schema 2,
+replica-mediation arrangement. SQLite is the sole persistent vault, and a
+snapshot, a DASL CAR, is the interchange format. This guide is informative;
+linked specification sections define requirements. The target uses vault
+version 5 and SQLite schema 2,
 retaining the version-3 seed wrapper and existing key/domain-ID derivation;
 the inbound transcripts take the canonical wire ID, under which a lower-case
 ID derives as before.
@@ -59,7 +60,7 @@ permits at most one compatible intent per execution.
 
 | Layer | Documents | Responsibility |
 | --- | --- | --- |
-| Storage | [Event store](event-store.md) | Event and object identity, retention, commit durability and versioning; the stores, the SQLite vault and the portable snapshot are code |
+| Storage | [Event store](event-store.md) | Event and object identity, retention, commit durability and versioning; the stores, the SQLite vault and the snapshot are code |
 | Domain facts | [Vault events](vault-events.md) | The vault model, its principles and boundaries; payloads, identifiers, held roots and the folds over them are code |
 | Communication authority | [Channels](channels.md) | Fixed DID pairs, addresses, DID profiles and resolution, and the boundaries of admission, continuity and denial; the channel payloads, the continuity adapter, admission and dispatch authority are code |
 | Runtime | [Delivery](distributed-delivery.md) | Message layers and CIDs, channel-local identity, ACK paths, preparations, runtime-local delivery records and live dispatch actions |
@@ -97,7 +98,7 @@ endings.
 | Integrate continuity | [Event identity](event-store.md#invariants) → [continuity model](channels.md#continuity) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [continuity fold](../../packages/vault/src/fold/continuity.ts) → [admission](channels.md#application-admission) |
 | Implement sending | [Send](distributed-delivery.md#send-an-ordinary-message) → [address selection](channels.md#sending) → [preparation](distributed-delivery.md#preparing-a-package) → [local delivery records](distributed-delivery.md#runtime-local-delivery-records) → [delivery fold](../../packages/vault/src/fold/outbound.ts) |
 | Implement receiving | [Receive](distributed-delivery.md#receive-a-message) → [resolution](channels.md#did-resolution) → [receive gate](../../packages/agent-core/src/receive/gate.ts) → [channel evidence](../../packages/vault/src/fold/channels.ts) → [source evidence](distributed-delivery.md#address-chains-and-observation-membership) → [inbound fold](../../packages/vault/src/fold/inbound.ts) |
-| Back up or recover | [What a snapshot exposes](vault-events.md#privacy-and-security-boundaries) → [export](../../packages/event-store/src/sqlite/export.ts), [restore](../../packages/event-store/src/sqlite/restore.ts) and [import](../../packages/event-store/src/sqlite/import.ts) → [what a restore loses](channels.md#merge-restore-and-replicas) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
+| Back up or recover | [What a snapshot exposes](vault-events.md#privacy-and-security-boundaries) → [export and read](../../packages/event-store/src/snapshot.ts), [restore](../../packages/event-store/src/sqlite/restore.ts) and [import](../../packages/event-store/src/import.ts) → [what a restore loses](channels.md#merge-restore-and-replicas) → [unfinished receive work](distributed-delivery.md#receive-recovery) |
 
 <a id="rule-ownership"></a>
 
@@ -106,8 +107,8 @@ endings.
 Change the defining section and align its consumers. ES owns event identity,
 commit durability and versioning, and the envelope and batch rules are
 [event.ts](../../packages/event-store/src/event.ts)'s; the object profile is
-`@estoc/dasl`'s, and the stores, the SQLite lifecycle and the portable snapshot
-are owned by their code in `packages/event-store`. CH owns channel identity,
+`@estoc/dasl`'s, and the stores, the SQLite lifecycle and the snapshot are
+owned by their code in `packages/event-store`. CH owns channel identity,
 addresses, the DID profiles and local resolution, and the boundaries of
 admission, continuity and denial; the channel payloads, the continuity
 adapter, operation eligibility, admission, the receive gate, the
@@ -144,7 +145,7 @@ DD owns runtime ordering and message/effect identity.
 | Invitations | [disclosure](../../packages/vault/src/schema.ts), [invitation fold](../../packages/vault/src/fold/invitations.ts) | [CH invitations](channels.md#invitations) |
 | Denial and contact views | [CH denial and contacts](channels.md#effects-and-recovery) | [contact selection](../../packages/vault/src/schema.ts), [deletion](../../packages/vault/src/contact-commands.ts), [channel and contact views](../../packages/vault/src/fold/views.ts) |
 | Submission/receipt state | [outbound fold](../../packages/vault/src/fold/outbound.ts) | [DD completion](distributed-delivery.md#submission-completion-and-expiration) |
-| Restore and import | [restore](../../packages/event-store/src/sqlite/restore.ts), [import](../../packages/event-store/src/sqlite/import.ts) | [CH restore](channels.md#merge-restore-and-replicas), [DD recovery](distributed-delivery.md#receive-recovery) |
+| Restore and import | [restore](../../packages/event-store/src/sqlite/restore.ts), [import](../../packages/event-store/src/import.ts) | [CH restore](channels.md#merge-restore-and-replicas), [DD recovery](distributed-delivery.md#receive-recovery) |
 
 <a id="evidence-and-references"></a>
 

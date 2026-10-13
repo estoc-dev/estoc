@@ -4,14 +4,13 @@
  * and over the wasm pool in a Chromium Worker by
  * `browser-driver.test.ts`. What the two platforms must agree on: the
  * range an export reads in the lock that fixes its cut; restores of
- * the seed alone, of both parts and of a portable snapshot, and an
- * import of the content, holding the same events and objects; the
- * restored runtime a replica of its own and the import placing what it
- * adds by the target's acceptance; a block both an event and an
- * object, restored and imported as both; a part missing, refused
- * before anything is written; a restore failing at any statement; an
- * export over damage; the export's bound, met before an object is
- * read; a portable file
+ * the seed alone and of both parts, and an import of the content,
+ * holding the same events and objects; the restored runtime a replica
+ * of its own and the import placing what it adds by the target's
+ * acceptance; a block both an event and an object, restored and
+ * imported as both; a part missing, refused before anything is
+ * written; a restore failing at any statement; an export over damage;
+ * the export's bound, met before an object is read; a SQLite file
  * refused; and the snapshot owning its bytes, taken from the caller
  * and handed out only as copies.
  */
@@ -27,12 +26,10 @@ import {
   compareEvents,
   createRuntime,
   exportSnapshot,
-  exportVault,
   importSnapshot,
   openInspector,
   openRuntime,
   restoreSnapshot,
-  restoreVault,
   type Cid,
   type Event,
   type ExportSnapshotOptions,
@@ -45,7 +42,7 @@ import {
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
 import { authorN } from "../suite/helpers.js";
 import { type Case, assert, assertBytes, assertEqual, assertRejects, rawOver } from "./driver-cases.js";
-import { destination, opened, type ExportHarness } from "./export-cases.js";
+import { destination, type ExportHarness } from "./export-cases.js";
 import { HELLO, HELLO_CID, MIB, WORLD, WORLD_CID, all, bytesOf, cidOf, clock, corruptChunk, damageEvent, draft, make, retainedOf, rootsOf, rows } from "./vault-cases.js";
 
 export interface SnapshotCase extends Case {
@@ -193,21 +190,16 @@ export const snapshotCases: SnapshotCase[] = [
     },
   },
   {
-    name: "the seed and the content restored together, the seed restored with the content imported into it, and a portable snapshot of the same vault restored all hold the events and objects of the vault exported; the content imported again adds nothing",
+    name: "the seed and the content restored together, and the seed restored with the content imported into it, both hold the events and objects of the vault exported; the content imported again adds nothing",
     run: async (h) => {
       const { vault, events } = await filled(h);
       const expected = await held(vault);
       const both = await read(exported(vault, "both"));
       const seed = await read(exported(vault, "seed"));
       const content = await read(exported(vault, "content"));
-      const portableFile = h.fresh();
-      await exportVault(vault, destination(h, portableFile), { heldRoots: rootsOf });
       await vault.close();
       const together = new SqliteVault((await restoreSnapshot(both, destination(h, h.fresh()), { anchor: ANCHOR })).runtime);
       const seeded = new SqliteVault((await restoreSnapshot(seed, destination(h, h.fresh()), { anchor: ANCHOR })).runtime);
-      const portable = await opened(h, portableFile);
-      const fromPortable = new SqliteVault((await restoreVault(portable, destination(h, h.fresh()), { heldRoots: rootsOf, anchor: ANCHOR })).runtime);
-      portable.close();
       try {
         const enrolled = events.filter((event) => event.type === ENROLLMENT).length;
         assertEqual((await held(seeded)).events.length, enrolled, "the seed alone restores the enrollment events");
@@ -218,10 +210,9 @@ export const snapshotCases: SnapshotCase[] = [
         );
         assertEqual(await held(together), expected, "the seed and the content restored together");
         assertEqual(await held(seeded), expected, "the seed restored, the content imported");
-        assertEqual(await held(fromPortable), expected, "the portable snapshot restored");
         assertEqual(await importSnapshot(together, content, { retainedRoots: retainedOf }), { added: 0, duplicates: events.length, objects: 0, repaired: 0, range: content.content }, "the content again");
       } finally {
-        for (const restored of [together, seeded, fromPortable]) await restored.close();
+        for (const restored of [together, seeded]) await restored.close();
       }
     },
   },
@@ -342,7 +333,7 @@ export const snapshotCases: SnapshotCase[] = [
         let given: SqliteDriver | undefined;
         let restored;
         try {
-          restored = await restoreSnapshot(both, async (mode) => (given = failingCreate(await h.open(target, mode), n)), { anchor: ANCHOR });
+          restored = await restoreSnapshot(both, async () => (given = failingCreate(await h.open(target, "create"), n)), { anchor: ANCHOR });
         } catch (err) {
           assert(err instanceof Error && err.name === "SqliteError", `statement ${n}: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
           await assertRejects(async () => given?.exec("SELECT 1"), "DatabaseClosed", `statement ${n}: the destination is closed`);
@@ -418,13 +409,11 @@ export const snapshotCases: SnapshotCase[] = [
     },
   },
   {
-    name: "a portable SQLite snapshot is no CAR: its file is refused as InvalidSnapshot",
-    run: async (h) => {
-      const { vault } = await filled(h);
-      const file = h.fresh();
-      await exportVault(vault, destination(h, file), { heldRoots: rootsOf });
-      await vault.close();
-      const err = await assertRejects(() => read(h.fileBytes(file)), "InvalidSnapshot", "the portable file");
+    name: "a SQLite file, as a backup of the earlier format is, is no CAR: refused as InvalidSnapshot",
+    run: async () => {
+      const file = new Uint8Array(4096);
+      file.set(new TextEncoder().encode("SQLite format 3\0"));
+      const err = await assertRejects(() => read(file), "InvalidSnapshot", "the SQLite file");
       assertEqual((err as unknown as { problems: { where: string }[] }).problems.map((problem) => problem.where), ["car"], "refused as a container");
     },
   },

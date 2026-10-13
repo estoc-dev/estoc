@@ -200,41 +200,19 @@ describe("a send the domain finds no target for", () => {
 });
 
 describe("an export", () => {
-  it("over the backup bound is refused before the file is built, or before one built within it is read whole, and leaves no file behind", async () => {
+  it("over the backup bound is refused before an object is read, and leaves no file behind", async () => {
     const root = await folder();
-    const reads: (number | undefined)[] = [];
-    const host = nodeHost(root);
-    const watched: DaemonHost = {
-      ...host,
-      storage: async () => {
-        const storage = await host.storage();
-        return {
-          ...storage,
-          exportFile: (name, maxBytes) => {
-            reads.push(maxBytes);
-            return storage.exportFile(name, maxBytes);
-          },
-        };
-      },
-    };
-    const { daemon, call, refused } = methodsOver(watched, 64);
+    const { daemon, call, refused } = methodsOver(nodeHost(root), 64);
     await daemon.boot();
     await call("createIdentity", { name: "Alice", passphrase: PASSPHRASE });
-    const leftover = async () => (await readdir(path.join(root, ".estoc"))).filter((name) => !/^(vault|owner)\.sqlite/.test(name));
+    const files = async () => (await readdir(path.join(root, ".estoc"))).filter((name) => !/^(vault|owner)\.sqlite-/.test(name)).sort();
 
-    expect(await refused("exportBackup", {})).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the backup's events and objects come to \d+ bytes, over the 64 /) as string, effect: "none", messageId: null });
-    expect(reads).toEqual([]);
-    expect(await leftover()).toEqual([]);
-
-    const loose = methodsOf(daemon, limitsOf("clone", 20_000));
-    expect(await refusalOf(loose.exportBackup({}, session))).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the snapshot file is \d+ bytes, over the bound of 20000$/) as string, effect: "none", messageId: null });
-    expect(reads).toEqual([20_000]);
-    expect(await leftover()).toEqual([]);
+    expect(await refused("exportBackup", {})).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the backup comes to at least \d+ bytes, over the 64 this daemon delivers$/) as string, effect: "none", messageId: null });
+    expect(await files()).toEqual(["owner.sqlite", "vault.sqlite"]);
 
     const { bytes } = (await methodsOf(daemon, limitsOf("clone")).exportBackup({}, session)) as { bytes: Uint8Array };
-    expect(bytes.byteLength).toBeGreaterThan(20_000);
-    expect(reads).toEqual([20_000, 512 * 1024 * 1024]);
-    expect(await leftover()).toEqual([]);
+    expect(bytes.byteLength).toBeGreaterThan(64);
+    expect(await files()).toEqual(["owner.sqlite", "vault.sqlite"]);
   });
 });
 

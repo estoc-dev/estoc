@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { SqliteVault, canonicalText, exportVault, openPortable, restoreVault, type AuthorId, type JsonValue } from "@estoc/event-store";
+import { SqliteVault, Snapshot, canonicalText, exportSnapshot, restoreSnapshot, type AuthorId, type JsonValue } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { Keys, rawCidOfBytes, vaultHeldRoots, type Did, type DidId, type EventReference, type ExecutionId, type MediationId, type MessageId } from "@estoc/vault";
 
@@ -89,7 +89,7 @@ describe("the local records", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "estoc-local-records-"));
     const file = path.join(dir, "vault.sqlite");
     try {
-      const alice = await directParty(1, "https://alice.example/didcomm", ALICE, openNodeSqlite(file, { mode: "create", journal: "delete" }));
+      const alice = await directParty(1, "https://alice.example/didcomm", ALICE, openNodeSqlite(file, { mode: "create" }));
       const records = new LocalRecords(alice.runtime.local.options, alice.runtime.author);
       await written(records);
       await alice.runtime.local.clearCaches();
@@ -100,12 +100,9 @@ describe("the local records", () => {
       expect(reopened.runtime.author).toBe(alice.runtime.author);
       expect(await read(new LocalRecords(reopened.runtime.local.options, reopened.runtime.author))).toEqual([LEFT, PREPARED, ACCEPTED]);
 
-      const snapshot = path.join(dir, "snapshot.sqlite");
-      await exportVault(reopened.runtime, (mode) => openNodeSqlite(snapshot, { mode }), { heldRoots: reopened.heldRoots() });
-      const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
+      const source = await Snapshot.read(await exportSnapshot(reopened.runtime, { parts: "both", heldRoots: reopened.heldRoots() }), { heldRoots: vaultHeldRoots(null) });
       const restoredFile = path.join(dir, "restored.sqlite");
-      const restored = new SqliteVault((await restoreVault(source, (mode) => openNodeSqlite(restoredFile, { mode }), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(alice.seedKey) })).runtime);
-      source.close();
+      const restored = new SqliteVault((await restoreSnapshot(source, () => openNodeSqlite(restoredFile, { mode: "create" }), { anchor: await Keys.anchorOf(alice.seedKey) })).runtime);
       expect(await restored.local.options.keys()).toEqual([]);
       await restored.close();
       await reopened.runtime.close();

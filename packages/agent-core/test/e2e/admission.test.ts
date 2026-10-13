@@ -54,7 +54,7 @@ async function recordsOf(running: Running): Promise<unknown> {
 }
 
 /** Alice and Bob, each having written to the other once; then Alice offline, a snapshot of her vault taken as she went. */
-async function acquainted(): Promise<{ mediator: FakeMediator; alice: Running; bob: Running; a0: Did; b0: Did; snapshot: string }> {
+async function acquainted(): Promise<{ mediator: FakeMediator; alice: Running; bob: Running; a0: Did; b0: Did; snapshot: Uint8Array }> {
   const mediator = await newMediator();
   const alice = await run(mediator, 1, ALICE, { privateAddresses: false });
   const bob = await run(mediator, 2, BOB, { privateAddresses: false });
@@ -76,7 +76,7 @@ async function acquainted(): Promise<{ mediator: FakeMediator; alice: Running; b
  * the transport, and once the restored replica's own enrollment is
  * merged back both replicas hold the same events and read the same records.
  */
-async function converging(alice: Running, snapshot: string, mediator: FakeMediator): Promise<void> {
+async function converging(alice: Running, snapshot: Uint8Array, mediator: FakeMediator): Promise<void> {
   const forwards = forwardsSeen(mediator);
   const inbounds = alice.inbounds.length;
   const before = await recordsOf(alice);

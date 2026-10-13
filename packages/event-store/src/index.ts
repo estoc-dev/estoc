@@ -3,11 +3,10 @@
  * canonical JSON, the event envelope and its store, raw DASL objects
  * and theirs, the vault over both, and, for what persists, the SQLite
  * driver contract, the runtime's schema, opening, stores, local
- * state and vault, and the portable snapshot's export, validation,
- * reader, restore and import; the snapshot as a CAR of a seed part and
- * a content part, its export and its read, its restore and its
- * import. The platform adapters live under `./node` and `./browser`.
- * No event type is defined here.
+ * state and vault; the snapshot as a CAR of a seed part and a content
+ * part, its export and its read, its restore into a new SQLite runtime
+ * and its import into any. The platform adapters live under `./node`
+ * and `./browser`. No event type is defined here.
  */
 
 export type { JsonPrimitive, JsonValue, JsonObject } from "./json.js";
@@ -71,10 +70,10 @@ export { WriterLock, Runtime, MemoryVault, heldRootsOf, type MemoryVaultOptions 
 export type { SqlValue, SqlRow, TransactionMode, OpenMode, SqliteStatement, SqliteDriver, RawConnection, RawStatement } from "./sqlite/driver.js";
 export { Connection, checkParams, decodeText, decodeUtf8, exactInteger, ownBytes } from "./sqlite/driver.js";
 
-export { APPLICATION_ID, SCHEMA_VERSION, createTables, checkSchema, type DatabaseKind } from "./sqlite/schema.js";
+export { APPLICATION_ID, SCHEMA_VERSION, createTables, checkSchema } from "./sqlite/schema.js";
 
-export type { Locked, RuntimeDatabase, PortableDatabase, CreateRuntimeOptions, OpenRuntimeOptions } from "./sqlite/open.js";
-export { createRuntime, publishedRuntime, openRuntime, openInspector, openPortable, type OpenPortableOptions } from "./sqlite/open.js";
+export type { Locked, RuntimeDatabase, CreateRuntimeOptions, OpenRuntimeOptions } from "./sqlite/open.js";
+export { createRuntime, publishedRuntime, openRuntime, openInspector } from "./sqlite/open.js";
 
 export { SqliteEventStore, type SqliteEventStoreOptions, type EventStoreDatabase, type DecodeOptions } from "./sqlite/events.js";
 
@@ -84,15 +83,11 @@ export type { LocalOptions, LocalCache, LocalTrace, LocalState, TraceEntry, Trac
 
 export { SqliteVault, type SqliteVaultOptions } from "./sqlite/vault.js";
 
-export { PortableVault, validatePortable, type ValidateOptions, type Validated } from "./sqlite/portable.js";
-
-export { exportVault, type OpenDestination, type ExportOptions, type Exported } from "./sqlite/export.js";
-
-export { restoreVault, restoreSnapshot, type RestoreOptions, type RestoreSnapshotOptions, type Restored } from "./sqlite/restore.js";
-
-export { importVault, importSnapshot, type ImportOptions, type Imported, type ImportedSnapshot } from "./sqlite/import.js";
-
 export { Snapshot, exportSnapshot, SNAPSHOT_VERSION, type SnapshotRange, type SnapshotParts, type ExportSnapshotOptions, type ReadSnapshotOptions } from "./snapshot.js";
+
+export { restoreSnapshot, type CreateDestination, type RestoreOptions, type Restored } from "./sqlite/restore.js";
+
+export { importSnapshot, type ImportOptions, type Imported } from "./import.js";
 
 export {
   InvalidJson,

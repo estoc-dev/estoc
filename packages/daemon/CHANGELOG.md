@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Snapshots are CAR files (breaking)**: a backup is the event-store
+  snapshot with both parts, `<label>-<date>.estoc.car`, built in memory
+  and read once, with no temporary file on either side; a backup of the
+  earlier SQLite format is refused as no snapshot this version reads.
+  `restoreIdentity` and `restoreFromLink` refuse a snapshot without the
+  seed part, `mergeBackup`, `importFromLink` and a received history one
+  without the content part, each with nothing written and words saying
+  which to use instead. `publishSnapshotLink(part)` takes `seed` or
+  `content` in place of `selection`; `sync` sends `content`. A seed is
+  held to `maxSeedBytes`, an option of `createDaemon` (1 MiB unless set,
+  `DEFAULT_MAX_SEED_BYTES`), when it is put and when `restoreFromLink`,
+  which no longer takes a bound, reads it. `DaemonStorage` is `has`,
+  `open`, `remove` and `close`: `exportFile`, `importFile` and the file
+  kind are gone. The bytes `restoreIdentity` and `mergeBackup` are
+  given are the daemon's from then on.
 - The daemon holds the vault as the `VaultSession` `@estoc/agent-core`
   binds, and reads, decides, mints, exports and merges through it; a
   restore is bound by `openRestoredVault`. Nothing changes over the API.

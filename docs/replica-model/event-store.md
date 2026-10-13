@@ -5,16 +5,19 @@
 <!-- suite-navigation:end -->
 
 Status: **version 5** — content-addressed events. SQLite is the sole
-persistent vault and interchange format. The event model, the `EventStore`,
-`ObjectStore` and `Vault` interfaces, the SQLite vault and the portable
-snapshot are code in [`@estoc/event-store`](../../packages/event-store/README.md):
+persistent vault; a snapshot, a DASL CAR of a seed part and a content part,
+is the interchange format. The event model, the `EventStore`, `ObjectStore`
+and `Vault` interfaces, the SQLite vault and the snapshot are code in
+[`@estoc/event-store`](../../packages/event-store/README.md):
 the envelope, its validation, its identity and its order in
 [event.ts](../../packages/event-store/src/event.ts); the object store and its
 streaming hash in [objects.ts](../../packages/event-store/src/objects.ts); the
 vault, its writer lock and the held view in
-[vault.ts](../../packages/event-store/src/vault.ts); the SQLite schema, the
-opening of a runtime or a snapshot, export, validation, restore and import
-under [src/sqlite/](../../packages/event-store/src/sqlite/); the conformance
+[vault.ts](../../packages/event-store/src/vault.ts); the snapshot's format,
+export and read in [snapshot.ts](../../packages/event-store/src/snapshot.ts)
+and its import in [import.ts](../../packages/event-store/src/import.ts); the
+SQLite schema, the opening of a runtime and a restore under
+[src/sqlite/](../../packages/event-store/src/sqlite/); the conformance
 suites under `test/suite/` as the evidence every store must give.
 This document keeps the contracts the code cannot state about itself: what
 event identity promises to the layers above, what a successful commit
@@ -44,7 +47,8 @@ accepted event set, never on arrival or physical row order.
 Content addressing does not authenticate the author or the supplied history.
 `author` is provenance, not a credential: it names one writable incarnation of
 the vault, not hardware, a person or an execution-host key, and it is the
-runtime's replica ID. Creation and portable restore mint a fresh author. Only
+runtime's replica ID. Creation and a restore from a snapshot mint a fresh
+author. Only
 an exact move keeps it and the store generation: the complete current runtime,
 moved once the old writer is permanently stopped and the database is cleanly
 closed or recovered into one standalone file. A runtime copy taken before later
@@ -74,9 +78,13 @@ stored column, a server or an HTTP digest claims, and object content is not
 executed.
 
 Only explicit event roots retain objects; a CID merely mentioned in a payload
-or inside an object retains nothing and is not fetched. Local IDs, positions,
-change tokens and caches never travel with portable state; losing them cannot
-lose a committed decision or message body.
+or inside an object retains nothing and is not fetched. Change tokens and
+caches never travel in a snapshot. A content part is labelled with the range
+it was exported as: the exporting replica, its store generation and the
+positions it accepted the events at. The label stays the exporter's: no
+restore or import takes it for a replica ID, a generation, a position or a
+token of its own, and losing it cannot lose a committed decision or message
+body.
 
 <a id="commit-and-durability-terminology"></a>
 
@@ -106,7 +114,8 @@ wrapper version is independent and remains 3. For a published vault version,
 compatible additions are new event types, optional payload fields with a fixed
 absent meaning, or negotiated capabilities. Changing existing meaning, the
 envelope, ID or CID formats, derivation or a required fold needs a new vault
-version. Changing the portable schema needs a new SQLite schema version. An
+version. Changing the runtime's schema needs a new SQLite schema version, and
+changing the snapshot's header or block rules a new snapshot format. An
 earlier vault version is refused before any payload is read and is not
 rewritten; no migration or import/restore compatibility with earlier vaults is
 required, and a version bump renames no key-derivation purpose string.

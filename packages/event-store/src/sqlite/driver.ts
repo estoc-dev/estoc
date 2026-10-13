@@ -39,10 +39,9 @@ export type TransactionMode = "deferred" | "immediate" | "exclusive";
  * closes. A `readonly` open excludes writers for as long as it is open
  * and hardens the connection for a file another party wrote — no
  * writes, no extension loading, untrusted schema. A rollback-journal
- * file, which is what a portable snapshot is, it shares with other
- * readers where the platform can, so an immutable snapshot may be
- * validated and delivered at once; a WAL file it owns as a writable
- * open would, since a WAL reader cannot keep writers out any other way.
+ * file it shares with other readers where the platform can; a WAL file
+ * it owns as a writable open would, since a WAL reader cannot keep
+ * writers out any other way.
  * Either way SQLite recovers what a journal left on open, as it does
  * for any connection, and the read-only connection commits nothing.
  */

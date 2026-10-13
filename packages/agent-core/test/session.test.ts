@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 
-import { exportVault, openPortable, restoreVault } from "@estoc/event-store";
+import { Snapshot, exportSnapshot, restoreSnapshot } from "@estoc/event-store";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { createSeedKeystore } from "@estoc/keystore";
 import { IdentityMismatch, Keys, PING_RESPONSE_EFFECT, PING_TYPE, vaultHeldRoots, type DidId, type MessageId, type VaultFold } from "@estoc/vault";
@@ -88,18 +88,10 @@ describe("the vault session", () => {
 
   it("binds a restored runtime under the seed that derives its anchor, and closes one another seed is offered for", async () => {
     const alice = await freshVault(1, "Alice");
-    const snapshot = fresh();
-    await exportVault(alice.runtime, (mode) => openNodeSqlite(snapshot, { mode }), { heldRoots: alice.session.heldRoots() });
+    const snapshot = await Snapshot.read(await exportSnapshot(alice.runtime, { parts: "both", heldRoots: alice.session.heldRoots() }), { heldRoots: vaultHeldRoots(null) });
     await alice.runtime.close();
     const other = await createSeedKeystore(PASSPHRASE, { seed: seedOf(2) });
-    const restoredInto = async (file: string) => {
-      const source = openPortable(openNodeSqlite(snapshot, { mode: "readonly" }));
-      try {
-        return (await restoreVault(source, (mode) => openNodeSqlite(file, { mode }), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(alice.seedKey) })).runtime;
-      } finally {
-        source.close();
-      }
-    };
+    const restoredInto = async (file: string) => (await restoreSnapshot(snapshot, () => openNodeSqlite(file, { mode: "create" }), { anchor: await Keys.anchorOf(alice.seedKey) })).runtime;
 
     const refused = fresh();
     await expect(openRestoredVault(await restoredInto(refused), other.seedKey)).rejects.toBeInstanceOf(IdentityMismatch);

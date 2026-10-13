@@ -10,10 +10,9 @@ import { FOLDER_VAULT, POOL_DIRECTORY } from "./places.js";
 /**
  * The daemon in a dedicated worker of this page: the vault is one SQLite
  * database in a pool of access handles over a directory of this origin's
- * private file system (one identity per install), and a snapshot on its
- * way in or out is a database beside it. The pool is one worker's at a
- * time, by a Web Lock it takes with the directory, so a second tab waits
- * for the first to close. The unlocked seed waits in IndexedDB between
+ * private file system (one identity per install). The pool is one
+ * worker's at a time, by a Web Lock it takes with the directory, so a
+ * second tab waits for the first to close. The unlocked seed waits in IndexedDB between
  * sessions as a non-extractable key. The worker's life is the tab's.
  *
  * The daemon boots as soon as the worker does, whether or not a view is
@@ -25,8 +24,6 @@ async function storage(): Promise<DaemonStorage> {
   return {
     has: async (name) => pool.names().includes(name),
     open: (name, mode) => pool.open(name, mode),
-    exportFile: (name) => pool.exportFile(name),
-    importFile: (name, bytes) => pool.importFile(name, bytes),
     async remove(name) {
       if (pool.names().includes(name)) pool.remove(name);
     },

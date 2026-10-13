@@ -6,10 +6,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { createSeedKeystore } from "@estoc/keystore";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 
@@ -30,7 +29,6 @@ import {
   createRuntime,
   createTables,
   openInspector,
-  openPortable,
   openRuntime,
   type Locked,
   type OpenMode,
@@ -41,17 +39,14 @@ import {
 } from "../../src/index.js";
 import { ANCHOR, META, REWRAPPED, WRAPPED } from "../fixtures.js";
 import { openCases, type OpenHarness } from "./open-cases.js";
-import { utf16Forged, utf16Snapshot } from "./utf16.js";
 
 const EVENT_ID = "01924f2e-8f6b-7c3a-9d1e-2b4c6a8e0f13";
 
 let dir: string;
-let utf16: { snapshot: Uint8Array; forged: Uint8Array };
 let n = 0;
 
 beforeAll(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "estoc-open-"));
-  utf16 = { snapshot: await utf16Snapshot(path.join(dir, "utf16-snapshot.sqlite")), forged: await utf16Forged(path.join(dir, "utf16-forged.sqlite")) };
 });
 
 afterAll(async () => {
@@ -72,7 +67,7 @@ function alter(file: string, sql: string): void {
   }
 }
 
-/** A database made by hand, in a rollback journal so it can be read as a snapshot too. */
+/** A database made by hand, in a rollback journal. */
 function handmade(body: (db: SqliteDriver) => void): string {
   const file = fresh();
   const db = open(file, "create", "delete");
@@ -84,12 +79,12 @@ function handmade(body: (db: SqliteDriver) => void): string {
   return file;
 }
 
-function fill(db: SqliteDriver, kind: "runtime" | "portable", meta: { format?: string; version?: number; ready?: number; anchor?: string } = {}): SqliteDriver {
+function fill(db: SqliteDriver, meta: { format?: string; version?: number; ready?: number; anchor?: string } = {}): SqliteDriver {
   db.exec(`PRAGMA application_id = 1163088963; PRAGMA user_version = 2`);
-  createTables(db, kind);
-  db.prepare("INSERT INTO vault_meta VALUES (1, ?, ?, ?, ?, ?)").run(meta.format ?? "estoc-sqlite", meta.version ?? VAULT_VERSION, kind, meta.ready ?? 1, meta.anchor ?? ANCHOR);
+  createTables(db);
+  db.prepare("INSERT INTO vault_meta VALUES (1, ?, ?, 'runtime', ?, ?)").run(meta.format ?? "estoc-sqlite", meta.version ?? VAULT_VERSION, meta.ready ?? 1, meta.anchor ?? ANCHOR);
   db.prepare("INSERT INTO keystore VALUES (1, 3, ?)").run(new TextEncoder().encode(WRAPPED.seedJwe));
-  if (kind === "runtime") db.exec(`INSERT INTO store_state VALUES (1, '${EVENT_ID}', '${EVENT_ID}', 0)`);
+  db.exec(`INSERT INTO store_state VALUES (1, '${EVENT_ID}', '${EVENT_ID}', 0)`);
   return db;
 }
 
@@ -114,19 +109,6 @@ describe("the open cases on node:sqlite files", () => {
   const harness: OpenHarness = {
     fresh,
     open: async (target, mode) => open(target, mode, mode === "create" ? "delete" : undefined),
-    importFile: (target, bytes) => writeFile(target, bytes),
-    fileBytes: async (target) => new Uint8Array(await readFile(target)),
-    writeSchema: async (target, sql) => {
-      const db = new DatabaseSync(target, { defensive: false });
-      try {
-        db.exec(`PRAGMA writable_schema = ON; ${sql}; PRAGMA writable_schema = OFF`);
-      } finally {
-        db.close();
-      }
-    },
-    get utf16() {
-      return utf16;
-    },
   };
   for (const c of openCases) {
     test(c.name, async () => {
@@ -253,12 +235,12 @@ describe("openRuntime", () => {
       { name: "another format", file: handmade((db) => fillLoose(db, "estoc-other", 3, "runtime", 1)), message: /format "estoc-other"/ },
       { name: "the earlier vault version, which no migration reads", file: handmade((db) => fillLoose(db, "estoc-sqlite", 4, "runtime", 1)), message: /vault version 4 is not 5/ },
       { name: "a later vault version", file: handmade((db) => fillLoose(db, "estoc-sqlite", 6, "runtime", 1)), message: /vault version 6 is not 5/ },
-      { name: "a portable snapshot", file: handmade((db) => fill(db, "portable")), message: /a portable one, not a runtime/ },
-      { name: "an unready runtime", file: handmade((db) => fill(db, "runtime", { ready: 0 })), message: /not ready/ },
-      { name: "no metadata row", file: handmade((db) => fill(db, "runtime").exec("DELETE FROM vault_meta")), message: /vault_meta has 0 rows/ },
-      { name: "a metadata row keyed other than 1", file: handmade((db) => fill(db, "runtime").exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET singleton = 2")), message: /vault_meta's row is keyed 2, not 1/ },
-      { name: "a keystore row keyed other than 1", file: handmade((db) => fill(db, "runtime").exec("PRAGMA ignore_check_constraints = ON; UPDATE keystore SET singleton = 2")), message: /keystore's row is keyed 2, not 1/ },
-      { name: "an anchor that is not a DID", file: handmade((db) => fill(db, "runtime", { anchor: "nobody" })), message: /anchor is a DID/ },
+      { name: "a portable snapshot of the earlier snapshot format", file: handmade((db) => fillLoose(db, "estoc-sqlite", VAULT_VERSION, "portable", 1)), message: /a portable one, not a runtime/ },
+      { name: "an unready runtime", file: handmade((db) => fill(db, { ready: 0 })), message: /not ready/ },
+      { name: "no metadata row", file: handmade((db) => fill(db).exec("DELETE FROM vault_meta")), message: /vault_meta has 0 rows/ },
+      { name: "a metadata row keyed other than 1", file: handmade((db) => fill(db).exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET singleton = 2")), message: /vault_meta's row is keyed 2, not 1/ },
+      { name: "a keystore row keyed other than 1", file: handmade((db) => fill(db).exec("PRAGMA ignore_check_constraints = ON; UPDATE keystore SET singleton = 2")), message: /keystore's row is keyed 2, not 1/ },
+      { name: "an anchor that is not a DID", file: handmade((db) => fill(db, { anchor: "nobody" })), message: /anchor is a DID/ },
     ];
     for (const c of cases) {
       let asked = false;
@@ -306,7 +288,7 @@ describe("openRuntime", () => {
   it("refuses a table whose type, collation, key or reference differs even when the names agree, and one that is not STRICT", async () => {
     const remade = (table: string, ddl: string): string =>
       handmade((db) => {
-        fill(db, "runtime");
+        fill(db);
         db.exec(`DROP TABLE ${table}; ${ddl}`);
       });
     const cases: [string, string, RegExp][] = [
@@ -340,7 +322,7 @@ describe("openRuntime", () => {
       await rejectsWith(openRuntime(open(file, "readwrite"), { anchor: ANCHOR }), NotAVault, message, name);
     }
     const spelled = handmade((db) => {
-      fill(db, "runtime");
+      fill(db);
       db.exec("DROP TABLE objects; create   table objects(cid text collate binary not null primary key,size integer not null)strict");
     });
     const vault = await openRuntime(open(spelled, "readwrite"), { anchor: ANCHOR });
@@ -435,8 +417,8 @@ describe("the wrapped seed", () => {
       expect(() => checkWrappedSeed({ version: 3, seedJwe }), name).toThrow(NotAVault);
       expect(() => checkWrappedSeed({ version: 3, seedJwe }), name).toThrow(message);
     }
-    const stored = handmade((db) => fill(db, "portable").prepare("UPDATE keystore SET seed_jwe = ?").run(new TextEncoder().encode("e30....")));
-    expect(() => openPortable(open(stored, "readonly"))).toThrow(/header has nothing/);
+    const stored = handmade((db) => fill(db).prepare("UPDATE keystore SET seed_jwe = ?").run(new TextEncoder().encode("e30....")));
+    expect(() => openInspector(open(stored, "readwrite"))).toThrow(/header has nothing/);
   });
 });
 
@@ -536,65 +518,9 @@ describe("openInspector", () => {
     expect(() => readonly.exec("SELECT 1")).toThrow(DatabaseClosed);
     alter(file, "DELETE FROM store_state");
     expect(() => openInspector(open(file, "readwrite"))).toThrow(DamagedControl);
-    const snapshot = handmade((db) => fill(db, "portable"));
+    const snapshot = handmade((db) => fillLoose(db, "estoc-sqlite", VAULT_VERSION, "portable", 1));
     expect(() => openInspector(open(snapshot, "readwrite"))).toThrow(/a portable one, not a runtime/);
     expect(() => openInspector(open(fresh(), "create"))).toThrow(TypeError);
-  });
-});
-
-describe("openPortable", () => {
-  it("opens a snapshot read-only, as far as its metadata and wrapper, sharing it with other readers", async () => {
-    const file = handmade((db) => fill(db, "portable"));
-    const snapshot = openPortable(open(file, "readonly"));
-    expect(snapshot.metadata).toEqual(META);
-    expect(snapshot.wrapped).toEqual(WRAPPED);
-    expect(() => snapshot.driver.exec("DELETE FROM events")).toThrow(/readonly/);
-    const another = openPortable(open(file, "readonly"));
-    another.close();
-    expect(await probeInAnotherProcess(file)).toEqual({ read: "ok", write: "code 5" });
-    snapshot.close();
-    expect(() => snapshot.driver.exec("SELECT 1")).toThrow(DatabaseClosed);
-  });
-
-  it("requires a read-only driver", () => {
-    const file = handmade((db) => fill(db, "portable"));
-    expect(() => openPortable(open(file, "readwrite"))).toThrow(TypeError);
-    expect(() => openPortable(open(fresh(), "create"))).toThrow(TypeError);
-  });
-
-  it("checks the file's identity and headers, then the schema, then the metadata, and reads nothing else", () => {
-    const cases: [string, string, RegExp][] = [
-      ["an empty database", handmade(() => undefined), /application_id 0/],
-      ["a runtime", handmade((db) => fill(db, "runtime")), /table event_positions is not in the portable schema/],
-      ["a runtime's kind", handmade((db) => fill(db, "portable").exec("UPDATE vault_meta SET kind = 'runtime'")), /a runtime one, not a portable/],
-      ["an unready snapshot", handmade((db) => fill(db, "portable", { ready: 0 })), /not ready/],
-      ["a metadata row keyed other than 1", handmade((db) => fill(db, "portable").exec("PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET singleton = 2")), /vault_meta's row is keyed 2, not 1/],
-      ["a keystore row keyed other than 1", handmade((db) => fill(db, "portable").exec("PRAGMA ignore_check_constraints = ON; UPDATE keystore SET singleton = 2")), /keystore's row is keyed 2, not 1/],
-      ["a view, before the bad metadata under it", handmade((db) => fill(db, "portable", { ready: 0 }).exec("CREATE VIEW v AS SELECT 1")), /the schema has a view, v/],
-      ["a trigger", handmade((db) => fill(db, "portable").exec("CREATE TRIGGER t AFTER INSERT ON events BEGIN SELECT 1; END")), /the schema has a trigger, t/],
-      ["an index a constraint did not make", handmade((db) => fill(db, "portable").exec("CREATE INDEX i ON events (author)")), /table events has an index a constraint did not make/],
-      ["ANALYZE statistics", handmade((db) => fill(db, "portable").exec("ANALYZE")), /table sqlite_stat1 is not in the portable schema/],
-      ["a local table", handmade((db) => fill(db, "portable").exec("CREATE TABLE local_notes (k TEXT) STRICT")), /table local_notes is not in the portable schema/],
-      ["a table named __proto__", handmade((db) => fill(db, "portable").exec('CREATE TABLE "__proto__" (secret BLOB) STRICT')), /table __proto__ is not in the portable schema/],
-      ["a wrapper that is not a compact JWE", handmade((db) => fill(db, "portable").exec("UPDATE keystore SET seed_jwe = X'00'")), /keystore.seed_jwe/],
-      ["no wrapper", handmade((db) => fill(db, "portable").exec("DELETE FROM keystore")), /keystore has 0 rows/],
-    ];
-    for (const [name, file, message] of cases) {
-      const driver = open(file, "readonly");
-      expect(() => openPortable(driver), name).toThrow(NotAVault);
-      const again = open(file, "readonly");
-      expect(() => openPortable(again), name).toThrow(message);
-      expect(() => driver.exec("SELECT 1"), `${name}: the driver is closed`).toThrow(DatabaseClosed);
-    }
-  });
-
-  it("refuses a WAL file: a snapshot stands alone with rollback-format headers", async () => {
-    const file = fresh();
-    const db = open(file, "create");
-    fill(db, "portable");
-    db.close();
-    expect(Array.from((await readFile(file)).subarray(18, 20))).toEqual([2, 2]);
-    expect(() => openPortable(open(file, "readonly"))).toThrow(/a WAL file is not a portable snapshot/);
   });
 });
 

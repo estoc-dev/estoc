@@ -157,7 +157,7 @@ async function selected(held: Held, types: ReadonlySet<string>): Promise<Event[]
 }
 
 /** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as a read folds them from the snapshot's own events. Read only, as a snapshot is: a commit is refused. */
-export async function selection(metadata: VaultMetadata, held: Held, events: Event[]): Promise<Vault> {
+async function selection(metadata: VaultMetadata, held: Held, events: Event[]): Promise<Vault> {
   const selected = new MemoryVault({ metadata });
   await selected.ingest(events);
   return {
@@ -330,9 +330,9 @@ function headerOf(metadata: CarMetadata): Header {
   const names = Object.keys(metadata);
   if (names.length !== 1 || names[0] !== "estoc") throw new NotAVault(`a snapshot's CAR header has one member beside version and roots, estoc, where this one has ${names.map((name) => JSON.stringify(name)).join(", ") || "none"}`);
   const estoc = mapOf(metadata["estoc"], "the header's estoc member");
-  members(estoc, ["snapshot", "vault_version", "anchor"], ["seed", "content"], "the header's estoc member");
-  if (estoc["snapshot"] !== SNAPSHOT_VERSION) throw new NotAVault(`snapshot format ${shown(estoc["snapshot"])} is not ${SNAPSHOT_VERSION}`);
-  if (estoc["vault_version"] !== VAULT_VERSION) throw new NotAVault(`vault version ${shown(estoc["vault_version"])} is not ${VAULT_VERSION}`);
+  checkMembers(estoc, ["snapshot", "vault_version", "anchor"], ["seed", "content"], "the header's estoc member");
+  if (estoc["snapshot"] !== SNAPSHOT_VERSION) throw new NotAVault(`snapshot format ${describeDrislValue(estoc["snapshot"])} is not ${SNAPSHOT_VERSION}`);
+  if (estoc["vault_version"] !== VAULT_VERSION) throw new NotAVault(`vault version ${describeDrislValue(estoc["vault_version"])} is not ${VAULT_VERSION}`);
   const vault = checkMetadata({ version: VAULT_VERSION, anchor: estoc["anchor"] });
   const seed = Object.hasOwn(estoc, "seed") ? seedOf(estoc["seed"] as Drisl) : undefined;
   const content = Object.hasOwn(estoc, "content") ? rangeOf(estoc["content"] as Drisl) : undefined;
@@ -341,18 +341,18 @@ function headerOf(metadata: CarMetadata): Header {
 }
 
 function seedOf(value: Drisl): WrappedSeed {
-  if (typeof value !== "string") throw new NotAVault(`the seed part is a compact JWE, not ${shown(value)}`);
+  if (typeof value !== "string") throw new NotAVault(`the seed part is a compact JWE, not ${describeDrislValue(value)}`);
   return checkWrappedSeed({ version: 3, seedJwe: value });
 }
 
 function rangeOf(value: Drisl): SnapshotRange {
   const range = mapOf(value, "the content part's range");
-  members(range, RANGE_MEMBERS, [], "the content part's range");
+  checkMembers(range, RANGE_MEMBERS, [], "the content part's range");
   const { replica, generation, after, through } = range;
-  if (!isAuthorId(replica)) throw new NotAVault(`the range's replica ${shown(replica)} is not a canonical UUIDv7`);
-  if (!isUuidv7(generation)) throw new NotAVault(`the range's generation ${shown(generation)} is not a canonical UUIDv7`);
+  if (!isAuthorId(replica)) throw new NotAVault(`the range's replica ${describeDrislValue(replica)} is not a canonical UUIDv7`);
+  if (!isUuidv7(generation)) throw new NotAVault(`the range's generation ${describeDrislValue(generation)} is not a canonical UUIDv7`);
   for (const [name, position] of [["after", after], ["through", through]] as const) {
-    if (typeof position !== "number" || !Number.isSafeInteger(position) || position < 0) throw new NotAVault(`the range's ${name} ${shown(position)} is not a position`);
+    if (typeof position !== "number" || !Number.isSafeInteger(position) || position < 0) throw new NotAVault(`the range's ${name} ${describeDrislValue(position)} is not a position`);
   }
   if ((after as number) > (through as number)) throw new NotAVault(`the range runs from ${after as number} to ${through as number}, backwards`);
   if (after !== 0) throw new NotAVault(`the content part starts after position ${after as number}: an increment, which this reader does not take; a content part starts at 0`);
@@ -360,20 +360,18 @@ function rangeOf(value: Drisl): SnapshotRange {
 }
 
 function mapOf(value: Drisl | undefined, what: string): { readonly [key: string]: Drisl } {
-  if (typeof value !== "object" || value === null || Array.isArray(value) || value instanceof Uint8Array || value instanceof Link || value instanceof Float) throw new NotAVault(`${what} is a map, not ${shown(value)}`);
+  if (typeof value !== "object" || value === null || Array.isArray(value) || value instanceof Uint8Array || value instanceof Link || value instanceof Float) throw new NotAVault(`${what} is a map, not ${describeDrislValue(value)}`);
   return value;
 }
 
-/** `map` has every member of `required`, any of `optional`, and nothing else. */
-function members(map: { readonly [key: string]: Drisl }, required: readonly string[], optional: readonly string[], what: string): void {
+function checkMembers(map: { readonly [key: string]: Drisl }, required: readonly string[], optional: readonly string[], what: string): void {
   const unknown = Object.keys(map).filter((key) => !required.includes(key) && !optional.includes(key));
   if (unknown.length > 0) throw new NotAVault(`${what} has ${unknown.map((key) => JSON.stringify(key)).join(", ")}, which this format does not`);
   const missing = required.filter((key) => !Object.hasOwn(map, key));
   if (missing.length > 0) throw new NotAVault(`${what} has no ${missing.join(", ")}`);
 }
 
-/** A DRISL value as an error names it. */
-function shown(value: Drisl | undefined): string {
+function describeDrislValue(value: Drisl | undefined): string {
   if (value === undefined) return "nothing";
   if (typeof value === "string") return JSON.stringify(value);
   if (value === null || typeof value === "number" || typeof value === "boolean") return String(value);
@@ -391,8 +389,7 @@ function eventOf(block: Uint8Array): Event {
   return event;
 }
 
-/** How much of an object one chunk of a stream hands out. */
-const PIECE_BYTES = 1024 * 1024;
+const OBJECT_READ_CHUNK_BYTES = 1024 * 1024;
 
 /**
  * A snapshot's events and objects as a read-only `Vault`: scans in
@@ -424,7 +421,7 @@ class SnapshotVault implements Vault {
     this.objects = {
       open: async (cid) => {
         const bytes = block(cid);
-        return bytes === undefined ? null : pieces(bytes);
+        return bytes === undefined ? null : chunks(bytes);
       },
       read: async (cid, maxBytes) => {
         const bytes = block(cid);
@@ -449,8 +446,8 @@ class SnapshotVault implements Vault {
   }
 }
 
-/** `bytes` as a stream of copies, a piece at a time as the reader pulls. */
-function pieces(bytes: Uint8Array): ReadableStream<Uint8Array> {
+/** `bytes` as a stream of copies, a chunk at a time as the reader pulls. */
+function chunks(bytes: Uint8Array): ReadableStream<Uint8Array> {
   let at = 0;
   return new ReadableStream<Uint8Array>(
     {
@@ -459,7 +456,7 @@ function pieces(bytes: Uint8Array): ReadableStream<Uint8Array> {
           controller.close();
           return;
         }
-        const end = Math.min(bytes.length, at + PIECE_BYTES);
+        const end = Math.min(bytes.length, at + OBJECT_READ_CHUNK_BYTES);
         controller.enqueue(bytes.slice(at, end));
         at = end;
       },

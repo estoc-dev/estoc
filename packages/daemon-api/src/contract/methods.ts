@@ -9,7 +9,7 @@ import type { ChannelId, ContactId, DidId, EventCid, ExecutionId, Hold, Mediatio
 import type { LinesState } from "./lines.js";
 import type { Invitation, TraceLevel } from "./protocol.js";
 import type { MessageContent } from "./records.js";
-import type { PublishedSnapshotLink, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "./snapshot-links.js";
+import type { PublishedSnapshotLink, SnapshotLink, SnapshotLinkRecord, SnapshotPart } from "./snapshot-links.js";
 import type { RevisionMarker, State } from "./state.js";
 
 /** The input of a method that takes no arguments. */
@@ -130,27 +130,45 @@ export interface Methods {
   refresh: Method<Empty, RevisionMarker>;
 
   createIdentity: Method<{ name: string; passphrase: string }, null>;
+  /** A vault restored from a backup, which must carry the seed: under the passphrase that opens it, with the content too when the backup carries it. */
   restoreIdentity: Method<{ backup: Uint8Array; passphrase: string }, null>;
   unlock: Method<{ passphrase: string }, null>;
   lock: Method<Empty, null>;
   forgetIdentity: Method<{ hold: Hold }, null>;
+  /** The vault's snapshot as a file, `.car`: the seed and the content, what a new device restores the whole vault from; over `maxBackupBytes` it is refused whole, under the common `ResourceLimit`. */
   exportBackup: Method<Empty, { name: string; bytes: Uint8Array }>;
+  /** A backup's content merged into the open vault; the seed it may carry is not read. One without content is refused with nothing written. */
   mergeBackup: Method<{ backup: Uint8Array }, MergeResult>;
   explainedRestore: Method<Empty, null>;
-  /** The vault's snapshot of `selection` sealed and put at the selected mediator as this replica's blob, and the link that restores or imports it; one over what a blob there holds once sealed is refused whole, under the common `ResourceLimit`. */
-  publishSnapshotLink: Method<{ selection: SnapshotSelection }, PublishedSnapshotLink>;
+  /**
+   * The vault's snapshot of `part` sealed and put at the selected mediator as this replica's blob, and the link that restores
+   * (`seed`) or imports (`content`) it. Content over what a blob there holds once sealed is refused whole, under the common
+   * `ResourceLimit`. A seed over the bound a link to add a device is held to is refused, the backup file being what such a vault
+   * is restored from instead.
+   */
+  publishSnapshotLink: Method<{ part: SnapshotPart }, PublishedSnapshotLink>;
   /** The blob a snapshot of this daemon's was put as, pending or published, deleted at the mediator and its record forgotten: its link reads nothing from then on. A publish of it still under way is waited for first; one that is not `revocable` is refused, and stays listed. */
   revokeSnapshotLink: Method<{ hash: string }, null>;
   /** The snapshots this daemon put that the mediator keeps or may keep, by when they were put: published ones until they expire, pending ones until they are revoked or expire. */
   snapshotLinks: Method<Empty, { links: SnapshotLinkRecord[] }>;
-  /** A vault restored from a link as `restoreIdentity` restores one from a backup: the sealed snapshot read, checked against its name and opened first. One over `maxBackupBytes` is refused under the common `ResourceLimit` once the read runs past it, and nothing is written. */
+  /**
+   * A vault restored from a seed link as `restoreIdentity` restores one from a backup: the sealed snapshot read, checked against its
+   * name and opened first. The read stops at the bound a link to add a device is held to, the one a seed is published within, before
+   * anything is opened, and is refused, the backup file being what such a vault is restored from; a link to content is refused once
+   * it is opened, as one to import into a vault that is open. Nothing is written either way.
+   */
   restoreFromLink: Method<{ link: SnapshotLink; passphrase: string }, null>;
-  /** A link's snapshot merged into the open vault as `mergeBackup` merges a backup, read as `restoreFromLink` reads it: nothing is read where no vault is open, and nothing is written when the read or the opening fails, when the snapshot is another vault's, or when the vault is let go of while it is read. A merge of it again brings nothing. */
+  /**
+   * A content link's snapshot merged into the open vault as `mergeBackup` merges a backup, the sealed snapshot read and opened as
+   * `restoreFromLink` reads it but bounded by `maxBackupBytes`, under the common `ResourceLimit` past it: nothing is read where no
+   * vault is open, and nothing is written when the read or the opening fails, when the link is a seed's, which is for a new device,
+   * when the snapshot is another vault's, or when the vault is let go of while it is read. A merge of it again brings nothing.
+   */
   importFromLink: Method<{ link: SnapshotLink }, MergeResult>;
   /** The replicas of the arrangement this daemon's replica is in, asked of its mediator again; the snapshot shows them. */
   refreshReplicas: Method<Empty, null>;
   /**
-   * The whole vault's snapshot published as `publishSnapshotLink` publishes one, and its link mailed to `replicaId`, or to every
+   * The vault's content part published as `publishSnapshotLink` publishes one, and its link mailed to `replicaId`, or to every
    * other replica the mediator lists active when it is left out; each imports it as the link arrives. Refused before anything is
    * put when there is no such replica. `told` is those the mediator took the mail for; why another was not is in the snapshot.
    */

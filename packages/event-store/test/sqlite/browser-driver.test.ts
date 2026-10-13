@@ -7,9 +7,8 @@
  * snapshot and pool case, per test of the three conformance suites, and per
  * case of the page's own. The Worker's bundle gets the suites' `vitest`
  * from `test/browser/vitest-stand-in.ts`, which collects the tests for
- * the Worker to run. What the Worker cannot make for itself is made
- * here with Node's SQLite — a UTF-16 database, and a portable snapshot
- * of a sample vault, which the Worker inspects, restores, extends and
+ * the Worker to run. A CAR snapshot of a sample vault is made here
+ * over Node's SQLite, which the Worker inspects, restores, extends and
  * exports back, for the snapshot it made to be inspected and imported
  * here: the two platforms exchanging one format, each way. The page
  * is given the DevTools protocol before it loads, to measure what its
@@ -17,7 +16,7 @@
  * `ESTOC_BROWSER=/path/to/chrome` names one.
  */
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
@@ -29,20 +28,19 @@ import { type Browser, chromium } from "playwright-core";
 import { afterAll, describe, expect, it, test } from "vitest";
 
 import { openNodeSqlite } from "../../src/node.js";
-import { exportVault, importVault, openPortable } from "../../src/index.js";
+import { exportSnapshot, importSnapshot, Snapshot } from "../../src/index.js";
 import { findChromium } from "../browser/chromium.js";
 import { poolCases } from "../browser/pool-cases.js";
 import type { SuiteOutput } from "../browser/sqlite-page.js";
 import type { WorkerCaseResult } from "../browser/sqlite-worker.js";
 import { driverCases } from "./driver-cases.js";
 import { eventCases } from "./event-cases.js";
-import { fillSample, inspectPortable, type Inspection } from "./exchange.js";
-import { destination, exportCases, type ExportHarness, opened } from "./export-cases.js";
+import { fillSample, inspect, type Inspection } from "./exchange.js";
+import { exportCases, type ExportHarness } from "./export-cases.js";
 import { importCases } from "./import-cases.js";
 import { objectCases } from "./object-cases.js";
 import { openCases } from "./open-cases.js";
 import { snapshotCases } from "./snapshot-cases.js";
-import { utf16Forged, utf16Snapshot } from "./utf16.js";
 import { clock, make, retainedOf, rootsOf, vaultCases, vaultOver } from "./vault-cases.js";
 
 const browserPath = findChromium();
@@ -99,21 +97,14 @@ async function inChromium(executablePath: string): Promise<Outcome> {
   const harness: ExportHarness = {
     fresh: () => path.join(dir, `vault-${n++}.sqlite`),
     open: async (target, mode) => openNodeSqlite(target, { mode }),
-    fileBytes: async (target) => new Uint8Array(await readFile(target)),
   };
   const sampleVault = harness.fresh();
   const { vault } = await make(harness, sampleVault, clock().now);
   await fillSample(vault, clock());
-  const snapshotFile = harness.fresh();
-  await exportVault(vault, destination(harness, snapshotFile), { heldRoots: rootsOf });
+  const sent = await exportSnapshot(vault, { parts: "both", heldRoots: rootsOf });
   await vault.close();
-  const sent = await opened(harness, snapshotFile);
-  const sample = await inspectPortable(sent);
-  sent.close();
-  const input = {
-    utf16: { snapshot: Array.from(await utf16Snapshot(path.join(dir, "utf16.sqlite"))), forged: Array.from(await utf16Forged(path.join(dir, "forged.sqlite"))) },
-    snapshot: Array.from(await readFile(snapshotFile)),
-  };
+  const sample = await inspect(sent);
+  const input = { snapshot: Array.from(sent) };
 
   const page = await bundle("../browser/sqlite-page.ts", "iife");
   const worker = await bundle("../browser/sqlite-worker.ts", "esm", { vitest: fileURLToPath(new URL("../browser/vitest-stand-in.ts", import.meta.url)) });
@@ -196,29 +187,24 @@ describe.skipIf(outcome === undefined)("sqlite-wasm driver (in a Chromium Worker
     }
   });
 
-  describe("a portable snapshot crossing platforms", () => {
+  describe("a CAR snapshot crossing platforms", () => {
     test("the snapshot node:sqlite exported inspects in Chromium as it does here", () => {
       expect(outcome?.exchanged.inspected).toEqual(outcome?.sample);
     });
 
     test("the snapshot Chromium exported, continued from the one it was sent, inspects here as it did there, and imports into the sample vault", async () => {
       if (outcome === undefined) return;
-      const { exchanged, sample, dir, sampleVault } = outcome;
+      const { exchanged, sample, sampleVault } = outcome;
       expect(exchanged.continued.events).toHaveLength(sample.events.length + 1);
       expect(exchanged.continued.objects).toHaveLength(sample.objects.length + 1);
-      const file = path.join(dir, "continued.sqlite");
-      await writeFile(file, new Uint8Array(exchanged.bytes));
-      const back = openPortable(openNodeSqlite(file, { mode: "readonly" }));
+      const back = new Uint8Array(exchanged.bytes);
+      expect(await inspect(back)).toEqual(exchanged.continued);
+      const { vault } = await vaultOver(openNodeSqlite(sampleVault, { mode: "readwrite" }), clock().now);
       try {
-        expect(await inspectPortable(back)).toEqual(exchanged.continued);
-        const { vault } = await vaultOver(openNodeSqlite(sampleVault, { mode: "readwrite" }), clock().now);
-        try {
-          expect(await importVault(vault, back, { retainedRoots: retainedOf })).toEqual({ added: 1, duplicates: sample.events.length, objects: 1, repaired: 0 });
-        } finally {
-          await vault.close();
-        }
+        const snapshot = await Snapshot.read(back, { heldRoots: rootsOf });
+        expect(await importSnapshot(vault, snapshot, { retainedRoots: retainedOf })).toEqual({ added: 1, duplicates: sample.events.length, objects: 1, repaired: 0, range: exchanged.continued.content });
       } finally {
-        back.close();
+        await vault.close();
       }
     });
   });
