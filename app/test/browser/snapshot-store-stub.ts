@@ -22,9 +22,7 @@ export const daemon = {
   links: [] as SnapshotLinkRecord[],
   /** why the list cannot be read, while it cannot */
   unlistable: null as string | null,
-  /** why a publish fails, while it does */
   unpublished: null as string | null,
-  /** why a restore from a link fails, while it does */
   unrestored: null as string | null,
   merged: { added: 3, duplicates: 7, objects: 0, repaired: 0, renewed: false } as MergeResult,
   /** why an import fails, while it does */

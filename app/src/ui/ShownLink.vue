@@ -6,7 +6,6 @@ import type { PublishedSnapshotLink } from "../core/types.js";
 import { qrSvgOf } from "./qr.js";
 import { dateOf } from "./util.js";
 
-/** A link this device made, to hand over: as a QR code and as text, with what to do with it on the other device and until when it works; the slot says more before Done. */
 const props = defineProps<{ shown: PublishedSnapshotLink }>();
 const emit = defineEmits<{ done: [] }>();
 
