@@ -341,9 +341,6 @@ importers:
 
   packages/dasl:
     dependencies:
-      '@ipld/car':
-        specifier: ^5.4.7
-        version: 5.4.7
       multiformats:
         specifier: ^14.0.5
         version: 14.0.5
@@ -354,6 +351,9 @@ importers:
       '@atcute/cid':
         specifier: ^2.4.2
         version: 2.4.2
+      '@ipld/car':
+        specifier: ^5.4.7
+        version: 5.4.7
       '@ipld/dag-cbor':
         specifier: 10.0.2
         version: 10.0.2

@@ -1,8 +1,8 @@
 /**
  * @estoc/dasl — DASL (https://dasl.ing). CIDs, multihashes, base32,
- * sha-256 and varints are multiformats', a CAR is written by @ipld/car;
- * the DASL profile over them and the DRISL codec are here, one module
- * each: cid, drisl, car.
+ * sha-256 and varints are multiformats'; the DASL profile over them, the
+ * DRISL codec and the CAR container are here, one module each: cid,
+ * drisl, car.
  *
  * Everything here is pure: bytes in, bytes out, no IO, no policy. It runs
  * in Node, workerd and the browser. What a DRISL document *means* — a
@@ -28,4 +28,4 @@ export {
   type DaslCid,
 } from "./cid.js";
 export { Link, Float, encodeDrisl, decodeDrisl, MAX_DEPTH, type Drisl } from "./drisl.js";
-export { encodeCar, decodeCar, type Car } from "./car.js";
+export { encodeCar, decodeCar, carLength, CarWriter, type Car, type CarHeader, type CarMetadata } from "./car.js";
