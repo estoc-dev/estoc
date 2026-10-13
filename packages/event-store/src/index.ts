@@ -20,6 +20,7 @@ export type {
   AuthorId,
   EventEnvelope,
   Event,
+  CanonicalEvent,
   Draft,
   Filter,
   ChangeToken,

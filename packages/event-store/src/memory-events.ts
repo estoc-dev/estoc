@@ -13,13 +13,14 @@ import { v7 } from "uuid";
 import { BadToken, ForkedAuthor } from "./errors.js";
 import {
   canonicalEnvelope,
-  canonicalEvent,
   checkFilter,
   compareEvents,
   matches,
+  readIngestInput,
   sampleAt,
   validateDraft,
   type AuthorId,
+  type CanonicalEvent,
   type ChangeToken,
   type Damaged,
   type Draft,
@@ -38,9 +39,6 @@ export interface MemoryEventStoreOptions {
   /** the wall clock in Unix milliseconds; default `Date.now`, pinned by tests */
   now?: () => number;
 }
-
-/** What one `ingest` read before taking the lock: each input either as an accepted event would be held, or rejected. */
-type Read = { held: Event; bytes: number } | { rejected: { value: unknown; error: string } };
 
 export class MemoryEventStore implements EventStore {
   readonly author: AuthorId;
@@ -110,53 +108,44 @@ export class MemoryEventStore implements EventStore {
     this.bytes += bytes;
   }
 
+  async ingest(events: AsyncIterable<unknown> | Iterable<unknown>): Promise<Ingested> {
+    // Validation, canonical form and the CID check are the input's own and need no lock.
+    const input = await readIngestInput(events);
+    return { ...(await this.ingestCanonical(input.events)), rejected: input.rejected };
+  }
+
   /**
-   * `publish`, when given, runs once the input is classified and the
-   * fork check has passed, in the same synchronous step that accepts
+   * Events already in canonical form, ingested: under the writer lock,
+   * each is classified against what is held — duplicate or new — in
+   * input order, the fork check made, and only then the new accepted; so
+   * the outcome names what was actually held when the decision was made,
+   * and a write that landed while the input was still being read is
+   * seen. `publish`, when given, runs once the input is classified and
+   * the fork check has passed, in the same synchronous step that accepts
    * the new events, with how many there are: what it publishes lands
-   * with them, and a throw from it accepts none.
+   * with them, and a throw from it accepts none. How the vault in memory
+   * publishes an ingest's objects with its events.
    */
-  async ingest(events: AsyncIterable<unknown> | Iterable<unknown>, publish?: (adding: number) => void): Promise<Ingested> {
-    // Read everything first: validation, canonical form and the CID
-    // check are the input's own and need no lock. Then, under the
-    // writer lock, classify each input against what is held —
-    // duplicate or new — in input order, check for a fork, and only
-    // then accept; so the outcome names what was actually held when
-    // the decision was made, and a write that lands while the input
-    // is still being read is seen.
-    const read: Read[] = [];
-    for await (const value of events) {
-      try {
-        const { event, bytes } = canonicalEvent(value);
-        read.push({ held: event, bytes: bytes.length });
-      } catch (err) {
-        read.push({ rejected: { value, error: err instanceof Error ? err.message : String(err) } });
-      }
-    }
+  async ingestCanonical(events: readonly CanonicalEvent[], publish?: (adding: number) => void): Promise<Ingested> {
     return this.serialise(() => {
       const outcome: Ingested = { added: 0, duplicates: 0, rejected: [] };
-      const staged = new Map<EventCid, { held: Event; bytes: number }>();
+      const staged = new Map<EventCid, CanonicalEvent>();
       const forked: Event[] = [];
-      for (const item of read) {
-        if ("rejected" in item) {
-          outcome.rejected.push(item.rejected);
-          continue;
-        }
-        const incoming = item.held;
-        if (this.held.has(incoming.cid) || staged.has(incoming.cid)) {
+      for (const incoming of events) {
+        if (this.held.has(incoming.event.cid) || staged.has(incoming.event.cid)) {
           outcome.duplicates += 1;
           continue;
         }
-        if (incoming.author === this.author) {
-          forked.push(incoming);
+        if (incoming.event.author === this.author) {
+          forked.push(incoming.event);
           continue;
         }
-        staged.set(incoming.cid, item);
+        staged.set(incoming.event.cid, incoming);
       }
       if (forked.length > 0) throw new ForkedAuthor(this.author, forked);
       publish?.(staged.size);
-      for (const { held, bytes } of staged.values()) {
-        this.accept(held, bytes);
+      for (const { event, bytes } of staged.values()) {
+        this.accept(event, bytes.length);
         outcome.added += 1;
       }
       return outcome;

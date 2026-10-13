@@ -94,7 +94,7 @@ describe("Runtime", () => {
         ingestion: async (body) => {
           const prepared = objects.prepare();
           const incoming = await body(prepared);
-          return events.ingest(incoming, () => prepared.publish());
+          return events.ingestCanonical(incoming, () => prepared.publish());
         },
       },
       keystore,
@@ -136,7 +136,7 @@ describe("Runtime guard", () => {
         ingestion: async (body) => {
           const prepared = objects.prepare();
           const incoming = await body(prepared);
-          return events.ingest(incoming, () => prepared.publish());
+          return events.ingestCanonical(incoming, () => prepared.publish());
         },
       },
       keystore: () => ({ read: () => Promise.reject(new NotAVault("none")), rewrap: () => Promise.resolve() }),

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **An ingested event is encoded and hashed once.** `canonicalEvent`
+  and `canonicalEnvelope` return a `CanonicalEvent`: the event, its
+  canonical bytes and its CID, which only they make. The body of
+  `Stores.ingestion` returns these, and the stores accept them through
+  `ingestCanonical(events, publish)` without validating, encoding or
+  hashing them again; `ingest` reads its input into them and goes the
+  same way. `MemoryEventStore.ingest` and `SqliteEventStore.ingest` no
+  longer take `publish` (breaking): a store's own transaction is
+  `ingestCanonical`.
 - **The snapshot as a CAR.** `exportSnapshot(runtime, { parts,
   types, heldRoots, maxBytes })` writes a DASL CAR of the seed part
   (the wrapper, with the events of `types` when it travels alone),

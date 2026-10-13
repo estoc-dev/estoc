@@ -324,32 +324,60 @@ export function eventCidOf(envelope: EventEnvelope): EventCid {
 }
 
 /**
- * An envelope as an accepted event is held: validated, then the form
- * its canonical bytes parse to — member order, `-0` and all — as fresh
- * data of its own, with the CID those bytes hash to. What a local
- * append makes of a draft once `at` and `author` are set. Throws
- * `InvalidEvent` or `InvalidJson`.
+ * An event as an accepted event is held, with the canonical bytes it is
+ * equal by: validated, in the form those bytes parse to — member order,
+ * `-0` and all — as fresh data of its own, under the CID they hash to.
+ * Only `canonicalEnvelope` and `canonicalEvent` make one, so a store
+ * handed one keeps it as it is, without checking, encoding or hashing it
+ * again.
  */
-export function canonicalEnvelope(value: unknown): { event: Event; bytes: Uint8Array } {
+export type CanonicalEvent = { readonly event: Event; readonly bytes: Uint8Array } & { readonly __canonicalEvent: unique symbol };
+
+/**
+ * An envelope as an accepted event is held: what a local append makes
+ * of a draft once `at` and `author` are set. Throws `InvalidEvent` or
+ * `InvalidJson`.
+ */
+export function canonicalEnvelope(value: unknown): CanonicalEvent {
   const bytes = canonicalEventBytes(validateEnvelope(value));
-  return { event: withCid(bytes, eventCidOfBytes(bytes)), bytes };
+  return held(bytes, eventCidOfBytes(bytes));
+}
+
+/** A value as an accepted event is held, validated with its CID. Throws `InvalidEvent` or `InvalidJson`. */
+export function canonicalEvent(value: unknown): CanonicalEvent {
+  const { bytes, cid } = checkedEvent(value);
+  return held(bytes, cid);
+}
+
+/** The event `bytes` — an envelope's canonical bytes — spell, under `cid`, the CID they hash to. */
+function held(bytes: Uint8Array, cid: EventCid): CanonicalEvent {
+  return { event: { ...(parseStrict(bytes) as EventEnvelope), cid }, bytes } as CanonicalEvent;
+}
+
+/** The input of an `ingest`, read whole: the events fixed in canonical form, and the inputs that were not events, with why. */
+export interface IngestInput {
+  events: CanonicalEvent[];
+  rejected: Rejected[];
 }
 
 /**
- * A value as an accepted event is held: validated with its CID, then
- * the form its canonical bytes parse to. What a store fixes each input
- * of `ingest` to before it asks the source for the next, so a source
- * that reuses one working object between yields is read as it yielded.
- * Throws `InvalidEvent` or `InvalidJson`.
+ * The input of an `ingest`, read whole before any of it is classified.
+ * Each input is fixed — made a `CanonicalEvent`, or recorded as rejected
+ * with its error — before the source is asked for the next, so a source
+ * that reuses one object between yields is read as it yielded, and what
+ * a store classifies is data of its own, which nothing outside can
+ * change.
  */
-export function canonicalEvent(value: unknown): { event: Event; bytes: Uint8Array } {
-  const { bytes, cid } = checkedEvent(value);
-  return { event: withCid(bytes, cid), bytes };
-}
-
-/** The event `bytes` — an envelope's canonical bytes — spell, with `cid`, the CID they hash to. */
-function withCid(bytes: Uint8Array, cid: EventCid): Event {
-  return { ...(parseStrict(bytes) as EventEnvelope), cid };
+export async function readIngestInput(events: AsyncIterable<unknown> | Iterable<unknown>): Promise<IngestInput> {
+  const input: IngestInput = { events: [], rejected: [] };
+  for await (const value of events) {
+    try {
+      input.events.push(canonicalEvent(value));
+    } catch (err) {
+      input.rejected.push({ value, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return input;
 }
 
 /** The canonical text of an envelope: `canonicalEventBytes` as a string. */

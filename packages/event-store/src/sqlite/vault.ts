@@ -88,7 +88,7 @@ export class SqliteVault extends Runtime {
         events,
         objects,
         transaction: (body) => publishing(body, (drafts, publish) => events.appendAll(drafts, publish)),
-        ingestion: (body) => publishing(body, (incoming, publish) => events.ingest(incoming, publish)),
+        ingestion: (body) => publishing(body, (incoming, publish) => events.ingestCanonical(incoming, publish)),
       },
       keystore: (runtime) => {
         const access = db.keystore((op) => runtime.locked(() => op()));
