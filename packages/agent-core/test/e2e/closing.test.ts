@@ -69,7 +69,7 @@ describe("a message erased", () => {
     expect(await alice.runtime.vault.objects.has(bodyCid)).toBe(false);
     const shown = await (await alice.agent.records()).channel(channelOf(alice.party.did, bob.party.did));
     expect(shown.messages.filter((message) => message.direction === "in")).toMatchObject([{ messageId: received(FIRST), body: { state: "erased" }, input: { status: "complete" } }]);
-    await expect(snapshotOf(alice)).resolves.toEqual(expect.any(String));
+    await expect(snapshotOf(alice)).resolves.toEqual(expect.any(Uint8Array));
   });
 });
 

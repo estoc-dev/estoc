@@ -17,7 +17,7 @@ export interface Parties {
 }
 
 export interface CrossingInput {
-  /** The kept vault's file, and the passphrase that opens it. */
+  /** The kept vault's snapshot, and the passphrase that unlocks its seed. */
   corpus: { bytes: number[]; passphrase: string };
   exchange: Parties & {
     /** The plaintext each runtime seals from the sender to the recipient. */

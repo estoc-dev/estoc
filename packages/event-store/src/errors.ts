@@ -303,7 +303,7 @@ export class IncompleteSnapshot extends Error {
   }
 }
 
-/** A snapshot past the bound the caller set: on the file a portable open reads, on the events and objects a portable export copies, or on the CAR an export writes; refused before what the bound covers is read. */
+/** A snapshot past the bound the caller set on the CAR an export writes, refused before what the bound covers is read. */
 export class SnapshotTooLarge extends Error {
   constructor(
     readonly maxBytes: number,

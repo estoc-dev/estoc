@@ -1,11 +1,10 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { openNodeSqlite } from "@estoc/event-store/node";
 import { DatabaseExists, type SqliteDriver } from "@estoc/event-store";
 import type { DidcommApi } from "@estoc/agent-core";
 import { guardedFetch } from "@estoc/did-web/node";
 
-import { TooLarge } from "../errors.js";
 import type { DaemonHost, DaemonStorage } from "../host.js";
 
 /** Where a folder keeps its vault: beside the person's files, never among them. */
@@ -27,15 +26,14 @@ export interface NodeHostOptions {
 
 /**
  * The daemon in a folder on disk: `<root>/.estoc/vault.sqlite` is the
- * vault, and a snapshot in transit is a file beside it. The folder is
- * one daemon's at a time through SQLite's own locking, on a database
- * kept for nothing else: the vault's lock alone covers neither the
- * moments the vault is closed — between a lock and an unlock, before a
- * removal — nor a file that does not exist yet, and a lock SQLite holds
- * goes with the process that held it, so a second daemon on the folder
- * waits and none needs a pid file. The seed unlocked from the vault's
- * wrapper lives in this process's memory only: every start is a locked
- * vault until a UI gives the passphrase.
+ * vault. The folder is one daemon's at a time through SQLite's own
+ * locking, on a database kept for nothing else: the vault's lock alone
+ * covers neither the moments the vault is closed — between a lock and
+ * an unlock, before a removal — nor a file that does not exist yet,
+ * and a lock SQLite holds goes with the process that held it, so a
+ * second daemon on the folder waits and none needs a pid file. The
+ * seed unlocked from the vault's wrapper lives in this process's memory
+ * only: every start is a locked vault until a UI gives the passphrase.
  */
 export function nodeHost(root: string, options: NodeHostOptions = {}): DaemonHost {
   const dir = path.join(root, ESTOC_DIR);
@@ -63,13 +61,7 @@ export function nodeHost(root: string, options: NodeHostOptions = {}): DaemonHos
   function storageUnder(owner: SqliteDriver): DaemonStorage {
     return {
       has: (name) => exists(fileOf(name)),
-      open: async (name, mode, kind) => openNodeSqlite(fileOf(name), { mode, journal: kind === "runtime" ? "wal" : "delete" }),
-      exportFile: async (name, maxBytes) => {
-        const { size } = await stat(fileOf(name));
-        if (maxBytes !== undefined && size > maxBytes) throw new TooLarge(`the snapshot file is ${size} bytes, over the bound of ${maxBytes}`);
-        return new Uint8Array(await readFile(fileOf(name)));
-      },
-      importFile: (name, bytes) => writeFile(fileOf(name), bytes, { flag: "wx", mode: 0o600 }),
+      open: async (name, mode) => openNodeSqlite(fileOf(name), { mode }),
       async remove(name) {
         for (const suffix of ["", "-wal", "-shm", "-journal"]) await rm(fileOf(name) + suffix, { force: true });
       },

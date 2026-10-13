@@ -1,18 +1,18 @@
 /**
- * Restore and import on whatever the platform's driver is, as cases
- * free of any test framework: run over `node:sqlite` by
- * `import.test.ts` and over the wasm pool in a Chromium Worker by
- * `browser-driver.test.ts`. What the two platforms' SQLite must agree
- * on: a restore laying a runtime from a snapshot's values under a
- * fresh identity, and its refusals before and after the destination
- * is made; an import's union, what it reports, what it keeps of the
- * target and what a repeat of it writes; a fork; the roots the union
- * requires bytes for, in both directions; what an import fills and
- * repairs, and what it leaves; the source checked before the lock;
- * a reference the union fold released beside one it holds under the
- * same CID; a reused object found damaged while the source streams;
- * damage the union's fold meets in a stream of the target's; and an
- * import interrupted at every statement of its transaction.
+ * Restore and import of the CAR snapshot on whatever the platform's
+ * driver is, as cases free of any test framework: run over
+ * `node:sqlite` by `import.test.ts` and over the wasm pool in a
+ * Chromium Worker by `browser-driver.test.ts`. What the two platforms'
+ * SQLite must agree on: a restore laying a runtime from a snapshot's
+ * values under a fresh identity, and its refusals before and after the
+ * destination is made; an import's union, what it reports, what it
+ * keeps of the target and what a repeat of it writes; a fork; the
+ * roots the union requires bytes for, in both directions; what an
+ * import fills and repairs, and what it leaves; what is refused before
+ * the lock; a reference the union fold released beside one it holds
+ * under the same CID; a reused object found damaged while the snapshot
+ * streams; damage the union's fold meets in a stream of the target's;
+ * and an import interrupted at every statement of its transaction.
  */
 
 import {
@@ -21,17 +21,17 @@ import {
   MemoryVault,
   SqliteError,
   SqliteVault,
+  Snapshot,
   canonicalEventBytes,
   compareEvents,
   createRuntime,
   envelopeOf,
   eventCidOf,
-  exportVault,
-  importVault,
+  exportSnapshot,
+  importSnapshot,
   openInspector,
-  openRuntime,
   heldRootsOf,
-  restoreVault,
+  restoreSnapshot,
   type AuthorId,
   type EventEnvelope,
   type Cid,
@@ -39,7 +39,6 @@ import {
   type Event,
   type HeldRoots,
   type Imported,
-  type PortableDatabase,
   type RestoreOptions,
   type RetainedRoots,
   type SqliteDriver,
@@ -49,16 +48,11 @@ import {
 } from "../../src/index.js";
 import { ANCHOR, META, REWRAPPED, WRAPPED } from "../fixtures.js";
 import { type Case, assert, assertBytes, assertEqual, assertRejects, rawOver } from "./driver-cases.js";
-import { altered, destination, opened, settled, type ExportHarness } from "./export-cases.js";
-import { HELLO, HELLO_CID, MIB, WORLD, WORLD_CID, all, bytesOf, cidOf, clock, corruptChunk, draft, exec, failingAt, make, reopen, retainedOf, rootsOf, rows, vaultOver, type Made } from "./vault-cases.js";
-
-export interface ImportHarness extends ExportHarness {
-  /** Puts `bytes`, a complete database file, at `target`. */
-  importFile(target: string, bytes: Uint8Array): Promise<void>;
-}
+import { destination, settled } from "./export-cases.js";
+import { HELLO, HELLO_CID, MIB, WORLD, WORLD_CID, all, bytesOf, cidOf, clock, corruptChunk, draft, exec, failingAt, make, reopen, retainedOf, rootsOf, rows, vaultOver, type Made, type VaultHarness } from "./vault-cases.js";
 
 export interface ImportCase extends Case {
-  run(harness: ImportHarness): Promise<string | void>;
+  run(harness: VaultHarness): Promise<string | void>;
 }
 
 const BIG = bytesOf(2 * MIB + 7, 11);
@@ -70,15 +64,13 @@ const ids = (events: Event[]): string[] => events.map((e) => e.cid).sort();
 /** The event an envelope is: its five fields under the CID they hash to. */
 const eventOf = (envelope: EventEnvelope): Event => ({ ...envelopeOf(envelope), cid: eventCidOf(envelope) });
 
-/** Exports `vault` to a fresh target and opens the snapshot read-only. */
-async function snapshotOf(h: ImportHarness, vault: VaultRuntime, heldRoots: HeldRoots = rootsOf): Promise<{ target: string; snapshot: PortableDatabase }> {
-  const target = h.fresh();
-  await exportVault(vault, destination(h, target), { heldRoots });
-  return { target, snapshot: await opened(h, target) };
+/** `vault` exported with both parts and read back. */
+async function snapshotOf(vault: VaultRuntime, heldRoots: HeldRoots = rootsOf): Promise<Snapshot> {
+  return Snapshot.read(await exportSnapshot(vault, { parts: "both", heldRoots }), { heldRoots });
 }
 
-/** A vault holding hello and the big object under two events, exported; the vault closed. */
-async function seededSnapshot(h: ImportHarness, now: () => number): Promise<{ target: string; events: Event[]; author: AuthorId }> {
+/** A vault holding hello and the big object under two events, exported with both parts and read back; the vault closed. */
+async function seededSnapshot(h: VaultHarness, now: () => number): Promise<{ snapshot: Snapshot; events: Event[]; author: AuthorId }> {
   const { vault } = await make(h, h.fresh(), now);
   const events = await vault.vault.commit(
     [
@@ -87,11 +79,16 @@ async function seededSnapshot(h: ImportHarness, now: () => number): Promise<{ ta
     ],
     [draft([HELLO_CID], { i: 0 }), draft([BIG_CID], { i: 1 })]
   );
-  const target = h.fresh();
-  await exportVault(vault, destination(h, target), { heldRoots: rootsOf });
+  const snapshot = await snapshotOf(vault);
   const { author } = vault;
   await vault.close();
-  return { target, events, author };
+  return { snapshot, events, author };
+}
+
+/** What an import counted, the range the snapshot is labelled with aside. */
+async function counted(target: VaultRuntime, snapshot: Snapshot, retainedRoots: RetainedRoots): Promise<Omit<Imported, "range">> {
+  const { added, duplicates, objects, repaired } = await importSnapshot(target, snapshot, { retainedRoots });
+  return { added, duplicates, objects, repaired };
 }
 
 const tables = (driver: SqliteDriver): Record<string, number> => {
@@ -168,31 +165,28 @@ const evidencedForgiving = evidencedBy((objects, witness) =>
 
 /**
  * `snapshot` with the read of the object `cid` held at a gate: the
- * import is inside the lock and waiting on the source once `arrived`
+ * import is inside the lock and waiting on the snapshot once `arrived`
  * resolves, and goes on once `release` is called.
  */
-function gated(snapshot: PortableDatabase, cid: Cid): { source: PortableDatabase; arrived: Promise<void>; release: () => void } {
+function gated(snapshot: Snapshot, cid: Cid): { source: Snapshot; arrived: Promise<void>; release: () => void } {
   let arrive!: () => void;
   let release!: () => void;
   const arrived = new Promise<void>((resolve) => (arrive = resolve));
   const gate = new Promise<void>((resolve) => (release = resolve));
-  const source: PortableDatabase = {
-    ...snapshot,
-    vault: {
-      ...snapshot.vault,
-      objects: {
-        ...snapshot.vault.objects,
-        open: async (requested) => {
-          const stream = await snapshot.vault.objects.open(requested);
-          if (requested === cid) {
-            arrive();
-            await gate;
-          }
-          return stream;
-        },
-      },
+  const { vault } = snapshot;
+  const objects: VaultObjects = {
+    ...vault.objects,
+    open: async (requested) => {
+      const stream = await vault.objects.open(requested);
+      if (requested === cid) {
+        arrive();
+        await gate;
+      }
+      return stream;
     },
   };
+  const gatedVault: Vault = { metadata: vault.metadata, events: vault.events, objects, commit: (sources, drafts) => vault.commit(sources, drafts) };
+  const source = new Proxy(snapshot, { get: (target, property) => (property === "vault" ? gatedVault : Reflect.get(target, property, target)) });
   return { source, arrived, release };
 }
 
@@ -225,12 +219,11 @@ export const importCases: ImportCase[] = [
       const [later] = await vault.vault.commit([], [draft([HELLO_CID], { i: 3 })]);
       await vault.local.options.set("theme", "dark");
       const heldRoots: HeldRoots = async (v) => (await rootsOf(v)).filter((cid) => cid !== unheldCid);
-      const { snapshot } = await snapshotOf(h, vault, heldRoots);
+      const snapshot = await snapshotOf(vault, heldRoots);
       const target = h.fresh();
       const open = destination(h, target);
       let asked: unknown;
-      const restored = await restoreVault(snapshot, open, {
-        heldRoots,
+      const restored = await restoreSnapshot(snapshot, open, {
         anchor: async (wrapped) => {
           asked = wrapped;
           return ANCHOR;
@@ -273,13 +266,9 @@ export const importCases: ImportCase[] = [
         assertEqual((await all((await copy.vault.events.changes(undefined, token)).events)).map((e) => e.cid), [mine?.cid], "the frontier continues from the restored positions");
         assertEqual(await copy.ingest([later]), { added: 0, duplicates: 1, rejected: [] }, "the historical author's event ingests as a duplicate, not a fork");
         // the values round-trip: the copy exports what the snapshot held, plus its own commit
-        const again = await snapshotOf(h, copy, heldRoots);
-        try {
-          assertEqual(ids(await all(again.snapshot.vault.events.scan())), ids([...events, later as Event, mine as Event]), "the second snapshot's events");
-          assertEqual(again.snapshot.wrapped, WRAPPED, "the second snapshot's wrapper");
-        } finally {
-          again.snapshot.close();
-        }
+        const again = await snapshotOf(copy, heldRoots);
+        assertEqual(ids(await all(again.vault.events.scan())), ids([...events, later as Event, mine as Event]), "the second snapshot's events");
+        assertEqual(again.seed, WRAPPED, "the second snapshot's wrapper");
       } finally {
         await copy.close();
       }
@@ -291,83 +280,41 @@ export const importCases: ImportCase[] = [
       } finally {
         await reopened.close();
       }
-      const second = await restoreVault(snapshot, destination(h, h.fresh()), { heldRoots, anchor: ANCHOR });
+      const second = await restoreSnapshot(snapshot, destination(h, h.fresh()), { anchor: ANCHOR });
       assert(second.runtime.author !== runtime.author, "each restore is another replica");
       second.runtime.close();
-      snapshot.close();
       assertEqual(rows(original, "SELECT count(*) AS n FROM objects"), [{ n: 3 }], "the original is untouched");
       await vault.close();
     },
   },
   {
-    name: "a restore is refused before the destination is made for an invalid snapshot or a credential deriving another anchor, and after it — the destination closed and left unready, opening as nothing — when the source fails as its bytes are copied or the destination is not empty; a destination not opened to create is refused",
+    name: "a restore is refused before the destination is made for a credential deriving another anchor or failing to unlock, and after it, the destination closed, when the destination is not empty; a destination not opened to create is refused",
     run: async (h) => {
       const c = clock();
-      const { target: exported } = await seededSnapshot(h, c.now);
-      const refused = async (what: string, snapshot: PortableDatabase, name: string, anchor: RestoreOptions["anchor"] = ANCHOR): Promise<Error> => {
+      const { snapshot } = await seededSnapshot(h, c.now);
+      const refused = async (what: string, name: string, anchor: RestoreOptions["anchor"]): Promise<Error> => {
         const open = destination(h, h.fresh());
-        const err = await assertRejects(() => restoreVault(snapshot, open, { heldRoots: rootsOf, anchor }), name, what);
+        const err = await assertRejects(() => restoreSnapshot(snapshot, open, { anchor }), name, what);
         assertEqual(open.created, 0, `${what}: no destination made`);
         return err;
       };
-      const broken = h.fresh();
-      await h.importFile(broken, await h.fileBytes(exported));
-      await altered(h, broken, (d) => d.exec(`DELETE FROM object_chunks WHERE cid = '${HELLO_CID}'; DELETE FROM objects WHERE cid = '${HELLO_CID}'`));
-      const invalid = await opened(h, broken);
+      const mismatch = await refused("another anchor", "AnchorMismatch", OTHER_ANCHOR);
+      assert(mismatch.message.includes(OTHER_ANCHOR), `the derived anchor is named: ${mismatch.message}`);
+      await refused("a credential that fails to unlock", "Error", () => Promise.reject(new Error("wrong passphrase")));
+      await assertRejects(() => restoreSnapshot(snapshot, async () => h.open(h.fresh(), "create").then((d) => Object.assign(d, { mode: "readwrite" as const })), { anchor: ANCHOR }), "TypeError", "a destination not opened to create");
+      const used = h.fresh();
+      const filled = await h.open(used, "create");
+      filled.exec("CREATE TABLE t (x INTEGER) STRICT");
+      filled.close();
+      let given: SqliteDriver | undefined;
+      const err = await assertRejects(() => restoreSnapshot(snapshot, async () => (given = new Connection(rawOver(await h.open(used, "readwrite")), "create")), { anchor: ANCHOR }), "Error", "a destination that is not empty");
+      assert(/already has a schema/.test(err.message), err.message);
+      await assertRejects(async () => given?.exec("SELECT 1"), "DatabaseClosed", "the destination is closed");
+      const still = await h.open(used, "readwrite");
       try {
-        await refused("an invalid snapshot", invalid, "InvalidSnapshot");
+        assertEqual(rows(still, "SELECT name FROM sqlite_master"), [{ name: "t" }], "the used destination is as it was");
       } finally {
-        invalid.close();
-      }
-      const snapshot = await opened(h, exported);
-      try {
-        const mismatch = await refused("another anchor", snapshot, "AnchorMismatch", OTHER_ANCHOR);
-        assert(mismatch.message.includes(OTHER_ANCHOR), `the derived anchor is named: ${mismatch.message}`);
-        await refused("a credential that fails to unlock", snapshot, "Error", () => Promise.reject(new Error("wrong passphrase")));
-        // a source whose object stream fails once the destination is made: what a source changed under the restore looks like
-        const failing: PortableDatabase = {
-          ...snapshot,
-          vault: {
-            ...snapshot.vault,
-            objects: {
-              ...snapshot.vault.objects,
-              open: async (cid) =>
-                cid !== BIG_CID
-                  ? snapshot.vault.objects.open(cid)
-                  : new ReadableStream<Uint8Array>({
-                      pull: (controller) => controller.error(new Error("the source went away")),
-                    }),
-            },
-          },
-        };
-        const unready = h.fresh();
-        const open = destination(h, unready);
-        let given: SqliteDriver | undefined;
-        const late = await assertRejects(
-          () =>
-            restoreVault(failing, async (mode) => (given = await open(mode)), { heldRoots: rootsOf, anchor: ANCHOR }),
-          "InvalidSnapshot",
-          "a source failing as its bytes are copied"
-        );
-        assertEqual((late as unknown as { problems: { where: string; error: string }[] }).problems, [{ where: `objects/${BIG_CID}`, error: "the source went away" }], "the object named");
-        assertEqual(open.created, 1, "the destination was made");
-        await assertRejects(async () => given?.exec("SELECT 1"), "DatabaseClosed", "the destination is closed");
-        await assertRejects(async () => openRuntime(await h.open(unready, "readwrite"), { anchor: ANCHOR }), "NotAVault", "the unready destination opens as nothing");
-        await assertRejects(() => restoreVault(snapshot, async () => h.open(h.fresh(), "create").then((d) => Object.assign(d, { mode: "readwrite" as const })), { heldRoots: rootsOf, anchor: ANCHOR }), "TypeError", "a destination not opened to create");
-        const used = h.fresh();
-        const filled = await h.open(used, "create");
-        filled.exec("CREATE TABLE t (x INTEGER) STRICT");
-        filled.close();
-        const err = await assertRejects(() => restoreVault(snapshot, async () => new Connection(rawOver(await h.open(used, "readwrite")), "create"), { heldRoots: rootsOf, anchor: ANCHOR }), "Error", "a destination that is not empty");
-        assert(/already has a schema/.test(err.message), err.message);
-        const still = await h.open(used, "readwrite");
-        try {
-          assertEqual(rows(still, "SELECT name FROM sqlite_master"), [{ name: "t" }], "the used destination is as it was");
-        } finally {
-          still.close();
-        }
-      } finally {
-        snapshot.close();
+        still.close();
       }
     },
   },
@@ -383,7 +330,7 @@ export const importCases: ImportCase[] = [
         ],
         [draft([HELLO_CID], { i: 0 }), draft([BIG_CID], { i: 1 })]
       )) as [Event, Event];
-      const { snapshot } = await snapshotOf(h, a.vault);
+      const snapshot = await snapshotOf(a.vault);
       await a.vault.close();
       const seen: string[] = [];
       const bTarget = h.fresh();
@@ -399,7 +346,7 @@ export const importCases: ImportCase[] = [
       const { token } = await b.vault.events.changes();
       const { author, generation } = b;
       const before = tables(bDriver);
-      const outcome = await importVault(b, snapshot, { retainedRoots: retainedOf });
+      const outcome = await counted(b, snapshot, retainedOf);
       assertEqual(outcome, { added: 2, duplicates: 0, objects: 2, repaired: 0 }, "what the import reports: both source events, neither held, and the objects they hold");
       assertEqual([b.author, b.generation], [author, generation], "the identity stays");
       assertEqual(await b.keystore.read(), REWRAPPED, "the wrapper stays");
@@ -419,30 +366,27 @@ export const importCases: ImportCase[] = [
       assertEqual(tables(bDriver), { events: before["events"]! + 2, event_positions: before["event_positions"]! + 2, objects: before["objects"]! + 2, object_chunks: before["object_chunks"]! + 4 }, "the rows one import adds");
       // again: nothing new; the cache is not dropped
       await b.local.cache.put("thumbs", "y", HELLO);
-      const repeated = await importVault(b, snapshot, { retainedRoots: retainedOf });
+      const repeated = await counted(b, snapshot, retainedOf);
       assertEqual(repeated, { added: 0, duplicates: 2, objects: 0, repaired: 0 }, "the repeat");
       assertBytes((await b.local.cache.get("thumbs", "y")) as Uint8Array, HELLO, "the cache stays when nothing landed");
       assertEqual(tables(bDriver), { events: before["events"]! + 2, event_positions: before["event_positions"]! + 2, objects: before["objects"]! + 2, object_chunks: before["object_chunks"]! + 4 }, "no row added by the repeat");
-      snapshot.close();
       // a snapshot with nothing to add: no statement writes
-      const own = await snapshotOf(h, b);
+      const own = await snapshotOf(b);
       const mark = seen.length;
-      assertEqual(await importVault(b, own.snapshot, { retainedRoots: retainedOf }), { added: 0, duplicates: 4, objects: 0, repaired: 0 }, "the target's own snapshot");
+      assertEqual(await counted(b, own, retainedOf), { added: 0, duplicates: 4, objects: 0, repaired: 0 }, "the target's own snapshot");
       const written = seen.slice(mark).filter(writes);
       assertEqual(written, [], "no statement wrote");
-      own.snapshot.close();
       await b.close();
       // the vault in memory as a target
       const { vault: bAgain } = await reopen(h, bTarget, c.now);
-      const fromB = await snapshotOf(h, bAgain);
+      const fromB = await snapshotOf(bAgain);
       await bAgain.close();
       const memory = new MemoryVault({ metadata: META, wrapped: WRAPPED, now: c.now });
       await memory.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID], { in: "memory" })]);
-      assertEqual(await importVault(memory, fromB.snapshot, { retainedRoots: retainedOf }), { added: 4, duplicates: 0, objects: 2, repaired: 0 }, "the import into memory");
+      assertEqual(await counted(memory, fromB, retainedOf), { added: 4, duplicates: 0, objects: 2, repaired: 0 }, "the import into memory");
       assertEqual((await all(memory.vault.events.scan())).length, 5, "the union in memory");
       assertBytes((await memory.vault.objects.read(BIG_CID, BIG.length)) as Uint8Array, BIG, "the big object in memory");
-      assertEqual(await importVault(memory, fromB.snapshot, { retainedRoots: retainedOf }), { added: 0, duplicates: 4, objects: 0, repaired: 0 }, "again, nothing");
-      fromB.snapshot.close();
+      assertEqual(await counted(memory, fromB, retainedOf), { added: 0, duplicates: 4, objects: 0, repaired: 0 }, "again, nothing");
     },
   },
   {
@@ -454,18 +398,15 @@ export const importCases: ImportCase[] = [
       const [e1] = await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])]);
       const { author } = vault;
       await vault.close();
-      // a clone of the runtime file: two writable copies sharing one replica ID
-      const cloneTarget = h.fresh();
-      await h.importFile(cloneTarget, await h.fileBytes(target));
-      const clone = await reopen(h, cloneTarget, c.now);
-      assertEqual(clone.vault.author, author, "the clone writes as the same replica");
+      // another runtime writing under the same replica ID, as a copy of this one's file would
+      const clone = new MemoryVault({ metadata: META, wrapped: WRAPPED, author, now: c.now });
       c.advance(1000);
-      const [e2] = await clone.vault.vault.commit([{ cid: WORLD_CID, source: WORLD }], [draft([WORLD_CID], { from: "clone" })]);
-      const { snapshot } = await snapshotOf(h, clone.vault);
-      await clone.vault.close();
+      const [e2] = await clone.vault.commit([{ cid: WORLD_CID, source: WORLD }], [draft([WORLD_CID], { from: "clone" })]);
+      assertEqual(e2?.author, author, "the clone writes as the same replica");
+      const snapshot = await snapshotOf(clone);
       const { vault: again, driver } = await reopen(h, target, c.now);
       const before = tables(driver);
-      const err = await assertRejects(() => importVault(again, snapshot, { retainedRoots: retainedOf }), "ForkedAuthor", "the import");
+      const err = await assertRejects(() => importSnapshot(again, snapshot, { retainedRoots: retainedOf }), "ForkedAuthor", "the import");
       assertEqual((err as unknown as { events: Event[] }).events.map((e) => e.cid), [e2?.cid], "the forked event named");
       assertEqual(tables(driver), before, "nothing written");
       assertEqual(rows(driver, "SELECT count(*) AS n FROM sqlite_temp_master WHERE name = 'staging_chunks'"), [{ n: 0 }], "nothing staged: the staging table was never made");
@@ -473,7 +414,7 @@ export const importCases: ImportCase[] = [
       const { vault: reset } = await reopen(h, target, c.now, true);
       try {
         assert(reset.author !== author, "a new replica ID");
-        assertEqual(await importVault(reset, snapshot, { retainedRoots: retainedOf }), { added: 1, duplicates: 1, objects: 1, repaired: 0 }, "the import after the reset");
+        assertEqual(await counted(reset, snapshot, retainedOf), { added: 1, duplicates: 0, objects: 1, repaired: 0 }, "the import after the reset");
         assertEqual(
           (await all(reset.vault.events.scan())).map((e) => [e.cid, e.author]),
           [
@@ -486,7 +427,6 @@ export const importCases: ImportCase[] = [
       } finally {
         await reset.close();
       }
-      snapshot.close();
     },
   },
   {
@@ -506,21 +446,19 @@ export const importCases: ImportCase[] = [
       // b: another intent for the same subject
       const b = await make(h, h.fresh(), c.now);
       await b.vault.vault.commit([{ cid: RM_CID, source: RM }], [message("M", "recall", [RM_CID])]);
-      const fromB = await snapshotOf(h, b.vault, contestableHeld);
-      const fromA = await snapshotOf(h, a.vault, contestableHeld);
-      assertEqual(await all(fromA.snapshot.vault.objects.list()), [RM_CID], "a's snapshot carries no envelope: released at its cut");
-      const refused = async (what: string, target: Made, snapshot: PortableDatabase): Promise<void> => {
+      const fromB = await snapshotOf(b.vault, contestableHeld);
+      const fromA = await snapshotOf(a.vault, contestableHeld);
+      assertEqual(await all(fromA.vault.objects.list()), [RM_CID], "a's snapshot carries no envelope: released at its cut");
+      const refused = async (what: string, target: Made, snapshot: Snapshot): Promise<void> => {
         const before = tables(target.driver);
         const events = ids(await all(target.vault.vault.events.scan()));
-        const err = await assertRejects(() => importVault(target.vault, snapshot, { retainedRoots: contestable }), "IncompleteImport", what);
+        const err = await assertRejects(() => importSnapshot(target.vault, snapshot, { retainedRoots: contestable }), "IncompleteImport", what);
         assertEqual((err as unknown as { problems: { where: string }[] }).problems.map((p) => p.where), [`objects/${RE_CID}`], `${what}: the envelope named`);
         assertEqual(tables(target.driver), before, `${what}: nothing written`);
         assertEqual(ids(await all(target.vault.vault.events.scan())), events, `${what}: the events as they were`);
       };
-      await refused("into a: the existing package retains the envelope again", a, fromB.snapshot);
-      await refused("into b: the newly accepted package retains the envelope", b, fromA.snapshot);
-      fromA.snapshot.close();
-      fromB.snapshot.close();
+      await refused("into a: the existing package retains the envelope again", a, fromB);
+      await refused("into b: the newly accepted package retains the envelope", b, fromA);
       await a.vault.close();
       await b.vault.close();
       // a root held before and after, retained by no new event: its bytes are not required
@@ -535,7 +473,7 @@ export const importCases: ImportCase[] = [
       const [pz] = await d.vault.vault.commit([{ cid: RZ_CID, source: RZ }], [pack("Z", [RZ_CID])]);
       await d.vault.vault.commit([], [release(pz as Event)]);
       assertEqual(await d.vault.collect(contestableHeld), { removed: [RZ_CID] }, "d released its package");
-      const fromD = await snapshotOf(h, d.vault, contestableHeld);
+      const fromD = await snapshotOf(d.vault, contestableHeld);
       await d.vault.close();
       for (const state of ["damaged", "absent"] as const) {
         const target = await make(h, h.fresh(), c.now);
@@ -547,14 +485,13 @@ export const importCases: ImportCase[] = [
           exec(target.driver, "DELETE FROM object_chunks WHERE cid = ?", RX_CID);
           exec(target.driver, "DELETE FROM objects WHERE cid = ?", RX_CID);
         }
-        assertEqual(await importVault(target.vault, fromD.snapshot, { retainedRoots: contestable }), { added: 3, duplicates: 0, objects: 1, repaired: 0 }, `${state}: the import goes through; the released package's root, which the union does not hold, needs no bytes`);
+        assertEqual(await counted(target.vault, fromD, contestable), { added: 3, duplicates: 0, objects: 1, repaired: 0 }, `${state}: the import goes through; the released package's root, which the union does not hold, needs no bytes`);
         assertEqual(await target.vault.vault.objects.has(RY_CID), true, `${state}: the new root came along`);
         assertEqual(await target.vault.vault.objects.has(RZ_CID), false, `${state}: the released root did not`);
         if (state === "damaged") await assertRejects(() => target.vault.vault.objects.read(RX_CID, 48), "DamagedObject", "the damage stays");
         else assertEqual(await target.vault.vault.objects.has(RX_CID), false, "the absence stays");
         await target.vault.close();
       }
-      fromD.snapshot.close();
     },
   },
   {
@@ -570,9 +507,9 @@ export const importCases: ImportCase[] = [
         ],
         [draft([HELLO_CID], { i: 0 }), draft([BIG_CID], { i: 1 })]
       );
-      const { snapshot } = await snapshotOf(h, vault);
+      const snapshot = await snapshotOf(vault);
       const imported = async (what: string, into: SqliteVault, outcome: Partial<Imported>): Promise<void> => {
-        assertEqual(await importVault(into, snapshot, { retainedRoots: retainedOf }), { added: 0, duplicates: events.length, objects: 0, repaired: 0, ...outcome }, what);
+        assertEqual(await counted(into, snapshot, retainedOf), { added: 0, duplicates: events.length, objects: 0, repaired: 0, ...outcome }, what);
       };
       corruptChunk(driver, HELLO_CID);
       await assertRejects(() => vault.vault.objects.read(HELLO_CID, 5), "DamagedObject", "hello known damaged");
@@ -591,15 +528,13 @@ export const importCases: ImportCase[] = [
       await assertRejects(() => open.vault.vault.objects.read(BIG_CID, BIG.length), "DamagedObject", "the damage found again");
       await imported("repaired once known", open.vault, { repaired: 1 });
       assertBytes((await open.vault.vault.objects.read(BIG_CID, BIG.length)) as Uint8Array, BIG, "the big object repaired");
-      snapshot.close();
       // a released root is not revived
       const [pkg] = await open.vault.vault.commit([{ cid: WORLD_CID, source: WORLD }], [pack("W", [WORLD_CID])]);
-      const withWorld = await snapshotOf(h, open.vault, contestableHeld);
+      const withWorld = await snapshotOf(open.vault, contestableHeld);
       await open.vault.vault.commit([], [release(pkg as Event)]);
       assertEqual(await open.vault.collect(contestableHeld), { removed: [WORLD_CID] }, "the world released and collected");
-      assertEqual(await importVault(open.vault, withWorld.snapshot, { retainedRoots: contestable }), { added: 0, duplicates: 3, objects: 0, repaired: 0 }, "the snapshot that still has the world adds nothing");
+      assertEqual(await counted(open.vault, withWorld, contestable), { added: 0, duplicates: 3, objects: 0, repaired: 0 }, "the snapshot that still has the world adds nothing");
       assertEqual(await open.vault.vault.objects.has(WORLD_CID), false, "the world is not revived");
-      withWorld.snapshot.close();
       await open.vault.close();
     },
   },
@@ -611,8 +546,8 @@ export const importCases: ImportCase[] = [
       const [pkg] = await vault.vault.commit([{ cid: WORLD_CID, source: WORLD }], [pack("W", [WORLD_CID])]);
       await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [witnessed(pkg as Event, HELLO_CID)]);
       assertEqual(await vault.collect(evidencedHeld), { removed: [WORLD_CID] }, "the world released and collected");
-      const own = await snapshotOf(h, vault, evidencedHeld);
-      assertEqual(await importVault(vault, own.snapshot, { retainedRoots: evidenced }), { added: 0, duplicates: 2, objects: 0, repaired: 0 }, "the target's own snapshot, its witness read from the target");
+      const own = await snapshotOf(vault, evidencedHeld);
+      assertEqual(await counted(vault, own, evidenced), { added: 0, duplicates: 2, objects: 0, repaired: 0 }, "the target's own snapshot, its witness read from the target");
       await vault.close();
       const elsewhere = new MemoryVault({ metadata: META, wrapped: WRAPPED, now: c.now });
       const folded: Vault[] = [];
@@ -620,14 +555,13 @@ export const importCases: ImportCase[] = [
         folded.push(v);
         return evidenced(v);
       };
-      assertEqual(await importVault(elsewhere, own.snapshot, { retainedRoots: recorded }), { added: 2, duplicates: 0, objects: 1, repaired: 0 }, "into a vault with neither object, the witness read from the source");
-      const union = folded[2] as Vault;
-      assertEqual([folded.length, (await all(union.events.scan())).length], [3, 2], "folded over the snapshot, the target, then the union of the two");
+      assertEqual(await counted(elsewhere, own, recorded), { added: 2, duplicates: 0, objects: 1, repaired: 0 }, "into a vault with neither object, the witness read from the source");
+      const union = folded[1] as Vault;
+      assertEqual([folded.length, (await all(union.events.scan())).length], [2, 2], "folded over the target, then the union of the two");
       await assertRejects(() => union.commit([], [draft([])]), "UnsupportedOperation", "a commit to the union");
       assertEqual((await all(elsewhere.vault.events.scan())).length, 2, "the target as imported");
       assertEqual(await elsewhere.vault.objects.has(WORLD_CID), false, "the world is asked of nobody");
       assertBytes((await elsewhere.vault.objects.read(HELLO_CID, 5)) as Uint8Array, HELLO, "the witness came along");
-      own.snapshot.close();
     },
   },
   {
@@ -645,75 +579,65 @@ export const importCases: ImportCase[] = [
         const [pkg] = await origin.vault.vault.commit([{ cid: WORLD_CID, source: WORLD }], [pack("W", [WORLD_CID])]);
         await origin.vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [witnessed(pkg as Event, HELLO_CID)]);
         assertEqual(await origin.vault.collect(heldRootsOf(retainedRoots)), { removed: [WORLD_CID] }, "the world released and collected");
-        const { snapshot } = await snapshotOf(h, origin.vault, heldRootsOf(retainedRoots));
+        const snapshot = await snapshotOf(origin.vault, heldRootsOf(retainedRoots));
         await origin.vault.close();
         const target = await damagedTarget();
-        assertEqual(await importVault(target.vault, snapshot, { retainedRoots }), { added: 2, duplicates: 0, objects: 0, repaired: 1 }, "one import, the witness repaired");
+        assertEqual(await counted(target.vault, snapshot, retainedRoots), { added: 2, duplicates: 0, objects: 0, repaired: 1 }, "one import, the witness repaired");
         assertBytes((await target.vault.vault.objects.read(HELLO_CID, 5)) as Uint8Array, HELLO, "the witness reads back");
         assertEqual(await target.vault.vault.objects.has(WORLD_CID), false, "the world is asked of nobody");
-        snapshot.close();
         await target.vault.close();
       }
       // a release whose witness its own vault never held: the snapshot carries the world and no witness
       const origin = await make(h, h.fresh(), c.now);
       const [pkg] = await origin.vault.vault.commit([{ cid: WORLD_CID, source: WORLD }], [pack("W", [WORLD_CID])]);
       await origin.vault.vault.commit([], [{ type: "release", roots: [], data: { of: (pkg as Event).cid, witness: HELLO_CID } }]);
-      const { snapshot } = await snapshotOf(h, origin.vault, heldRootsOf(evidencedStreaming));
+      const snapshot = await snapshotOf(origin.vault, heldRootsOf(evidencedStreaming));
       await origin.vault.close();
       const target = await damagedTarget();
       const before = tables(target.driver);
-      await assertRejects(() => importVault(target.vault, snapshot, { retainedRoots: evidencedStreaming }), "DamagedObject", "nobody has the witness sound");
+      await assertRejects(() => importSnapshot(target.vault, snapshot, { retainedRoots: evidencedStreaming }), "DamagedObject", "nobody has the witness sound");
       assertEqual(tables(target.driver), before, "nothing written");
-      snapshot.close();
       await target.vault.close();
     },
   },
   {
-    name: "the source is validated before the target's lock is taken: an invalid snapshot is refused while an operation holds the lock, a valid import waits its turn; another vault's snapshot and an inspector are refused with nothing written",
+    name: "an import waits its turn on the lock; another vault's snapshot, a snapshot without the content part and an inspector are refused before the lock is taken, with nothing written",
     run: async (h) => {
       const c = clock();
-      const { target: exported } = await seededSnapshot(h, c.now);
-      const broken = h.fresh();
-      await h.importFile(broken, await h.fileBytes(exported));
-      await altered(h, broken, (d) => exec(d, "UPDATE objects SET size = 6 WHERE cid = ?", HELLO_CID));
+      const { snapshot: valid } = await seededSnapshot(h, c.now);
       const target = h.fresh();
       const { vault } = await make(h, target, c.now);
+      const other = new SqliteVault(createRuntime(await h.open(h.fresh(), "create"), { metadata: { ...META, anchor: OTHER_ANCHOR }, wrapped: WRAPPED }), { now: c.now });
+      await other.vault.commit([], [draft([], { other: true })]);
+      const foreign = await snapshotOf(other);
+      await other.close();
+      const seedAlone = await Snapshot.read(await exportSnapshot(vault, { parts: "seed", types: new Set(["test.event"]), heldRoots: rootsOf }), { heldRoots: rootsOf });
       let admit!: () => void;
       const gate = new Promise<void>((resolve) => {
         admit = resolve;
       });
       const holding = vault.locked(() => gate);
-      const invalid = await opened(h, broken);
-      const refusal = importVault(vault, invalid, { retainedRoots: retainedOf });
-      assertEqual(await settled(refusal), true, "the invalid source is refused without the lock");
-      await assertRejects(() => refusal, "InvalidSnapshot", "the refusal");
-      invalid.close();
-      const valid = await opened(h, exported);
-      const importing = importVault(vault, valid, { retainedRoots: retainedOf });
+      const mismatched = importSnapshot(vault, foreign, { retainedRoots: retainedOf });
+      assertEqual(await settled(mismatched), true, "another vault's snapshot is refused without the lock");
+      const mismatch = await assertRejects(() => mismatched, "AnchorMismatch", "another vault's snapshot");
+      assert(mismatch.message.includes("another vault's snapshot"), mismatch.message);
+      const partless = importSnapshot(vault, seedAlone, { retainedRoots: retainedOf });
+      assertEqual(await settled(partless), true, "a snapshot without content is refused without the lock");
+      await assertRejects(() => partless, "MissingPart", "the seed alone");
+      const importing = counted(vault, valid, retainedOf);
       assertEqual(await settled(importing), false, "the valid import waits on the lock");
       admit();
       await holding;
       assertEqual((await importing).added, 2, "and lands after");
       await vault.close();
-      // another vault's snapshot
-      const other = new SqliteVault(createRuntime(await h.open(h.fresh(), "create"), { metadata: { ...META, anchor: OTHER_ANCHOR }, wrapped: WRAPPED }), { now: c.now });
-      await other.vault.commit([], [draft([], { other: true })]);
-      const foreign = await snapshotOf(h, other);
-      await other.close();
-      const { vault: again, driver } = await reopen(h, target, c.now);
-      const before = tables(driver);
-      const mismatch = await assertRejects(() => importVault(again, foreign.snapshot, { retainedRoots: retainedOf }), "AnchorMismatch", "another vault's snapshot");
-      assert(mismatch.message.includes("another vault's snapshot"), mismatch.message);
-      assertEqual(tables(driver), before, "nothing written");
-      await again.close();
-      foreign.snapshot.close();
-      // an inspector: refused before the source is read, even one with nothing to add
-      const inspector = new SqliteVault(openInspector(await h.open(target, "readwrite")), { now: c.now });
+      // an inspector: refused before the snapshot is read, even one with nothing to add
+      const inspected = openInspector(await h.open(target, "readwrite"));
+      const inspector = new SqliteVault(inspected, { now: c.now });
       try {
         assertEqual(inspector.writable, false, "an inspector is not writable");
-        await assertRejects(() => importVault(inspector, valid, { retainedRoots: retainedOf }), "ReadOnlyVault", "an inspector imports nothing");
-        valid.close();
-        await assertRejects(() => importVault(inspector, valid, { retainedRoots: retainedOf }), "ReadOnlyVault", "refused before the closed source is asked for anything");
+        const before = tables(inspected.driver);
+        await assertRejects(() => importSnapshot(inspector, valid, { retainedRoots: retainedOf }), "ReadOnlyVault", "an inspector imports nothing");
+        assertEqual(tables(inspected.driver), before, "nothing written");
       } finally {
         await inspector.close();
       }
@@ -723,16 +647,17 @@ export const importCases: ImportCase[] = [
     name: "an import interrupted at any statement of its transaction leaves the target with the whole old union, and one whose COMMIT fails with the whole old or the whole new: never staging, never a part",
     run: async (h) => {
       const c = clock();
+      const { snapshot, events: incoming } = await seededSnapshot(h, c.now);
+      /** A target holding hello under an event of its own, closed. */
+      const helloAt = async (target: string): Promise<{ oldUnion: { events: string[]; objects: string[] }; newUnion: { events: string[]; objects: string[] } }> => {
+        const { vault } = await make(h, target, c.now);
+        const [e1] = (await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])])) as [Event];
+        await vault.close();
+        return { oldUnion: { events: [e1.cid], objects: [HELLO_CID] }, newUnion: { events: ids([e1, ...incoming]), objects: [HELLO_CID, BIG_CID].sort() } };
+      };
       const target = h.fresh();
-      const { vault } = await make(h, target, c.now);
-      const [e1] = await vault.vault.commit([{ cid: HELLO_CID, source: HELLO }], [draft([HELLO_CID])]);
-      await vault.close();
-      const pristine = await h.fileBytes(target);
-      const { target: exported, events: incoming } = await seededSnapshot(h, c.now);
-      const snapshot = await opened(h, exported);
-      const oldUnion = { events: [e1?.cid], objects: [HELLO_CID] };
-      const newUnion = { events: ids([e1 as Event, ...incoming]), objects: [HELLO_CID, BIG_CID].sort() };
-      const state = async (): Promise<{ events: (string | undefined)[]; objects: string[] }> => {
+      const { oldUnion, newUnion } = await helloAt(target);
+      const state = async (): Promise<{ events: string[]; objects: string[] }> => {
         const { vault: check } = await reopen(h, target, c.now);
         try {
           assertEqual(await check.vault.events.damaged(), [], "no damage");
@@ -746,9 +671,9 @@ export const importCases: ImportCase[] = [
       let statements = 0;
       for (let n = 1; ; n++) {
         const { vault: failing } = await vaultOver(failingAt(await h.open(target, "readwrite"), n), c.now);
-        let outcome: Imported | undefined;
+        let outcome: Omit<Imported, "range"> | undefined;
         try {
-          outcome = await importVault(failing, snapshot, { retainedRoots: retainedOf });
+          outcome = await counted(failing, snapshot, retainedOf);
         } catch (err) {
           assert(err instanceof SqliteError, `statement ${n}: ${String(err)}`);
         } finally {
@@ -766,20 +691,19 @@ export const importCases: ImportCase[] = [
       // a COMMIT that fails: reported unknown, and on reopen the old or the new whole
       for (const landed of [false, true]) {
         const fresh = h.fresh();
-        await h.importFile(fresh, pristine);
+        const unions = await helloAt(fresh);
         const { vault: uncertain } = await vaultOver(new Connection(rawOver(await h.open(fresh, "readwrite"), { failCommit: () => true, landed }), "readwrite"), c.now);
-        await assertRejects(() => importVault(uncertain, snapshot, { retainedRoots: retainedOf }), "UncertainCommit", `landed ${landed}: the import`);
+        await assertRejects(() => importSnapshot(uncertain, snapshot, { retainedRoots: retainedOf }), "UncertainCommit", `landed ${landed}: the import`);
         assertEqual(uncertain.stopped?.name, "UncertainCommit", `landed ${landed}: stopped`);
         await uncertain.close();
         const { vault: check } = await reopen(h, fresh, c.now);
         try {
           const events = ids(await all(check.vault.events.scan()));
-          assertEqual(events, landed ? newUnion.events : [e1?.cid], `landed ${landed}: the union after`);
+          assertEqual(events, landed ? unions.newUnion.events : unions.oldUnion.events, `landed ${landed}: the union after`);
         } finally {
           await check.close();
         }
       }
-      snapshot.close();
     },
   },
   {
@@ -793,9 +717,9 @@ export const importCases: ImportCase[] = [
       const [ps] = await s.vault.vault.commit([{ cid: RS_CID, source: RS }], [pack("S", [RS_CID])]);
       const [rs] = await s.vault.vault.commit([], [release(ps as Event)]);
       assertEqual(await s.vault.collect(contestableHeld), { removed: [RS_CID] }, "s released its package");
-      const fromS = await snapshotOf(h, s.vault, contestableHeld);
+      const fromS = await snapshotOf(s.vault, contestableHeld);
       await s.vault.close();
-      assertEqual(await all(fromS.snapshot.vault.objects.list()), [], "the snapshot carries no object");
+      assertEqual(await all(fromS.vault.objects.list()), [], "the snapshot carries no object");
       for (const state of ["damaged", "absent"] as const) {
         const target = await make(h, h.fresh(), c.now);
         const [own] = await target.vault.vault.commit([{ cid: RS_CID, source: RS }], [draft([RS_CID], { from: "target" })]);
@@ -807,7 +731,7 @@ export const importCases: ImportCase[] = [
           exec(target.driver, "DELETE FROM objects WHERE cid = ?", RS_CID);
         }
         assertEqual(
-          await importVault(target.vault, fromS.snapshot, { retainedRoots: contestable }),
+          await counted(target.vault, fromS, contestable),
           { added: 2, duplicates: 0, objects: 0, repaired: 0 },
           `${state}: the import goes through: the new package's reference is released, and the root was held before by the target's own event`
         );
@@ -816,7 +740,6 @@ export const importCases: ImportCase[] = [
         else assertEqual(await target.vault.vault.objects.has(RS_CID), false, "the absence stays");
         await target.vault.close();
       }
-      fromS.snapshot.close();
     },
   },
   {
@@ -836,7 +759,7 @@ export const importCases: ImportCase[] = [
         ],
         [draft([X_CID, Y_CID], { both: true })]
       );
-      const { snapshot } = await snapshotOf(h, source.vault);
+      const snapshot = await snapshotOf(source.vault);
       await source.vault.close();
       const target = await make(h, h.fresh(), c.now);
       const [own] = await target.vault.vault.commit([{ cid: X_CID, source: X }], [draft([X_CID], { from: "target" })]);
@@ -844,7 +767,7 @@ export const importCases: ImportCase[] = [
       const reader = (await target.vault.vault.objects.open(X_CID)) as ReadableStream<Uint8Array>;
       assertEqual(await target.vault.vault.objects.has(X_CID), true, "nothing has looked yet");
       const waiting = gated(snapshot, Y_CID);
-      const importing = importVault(target.vault, waiting.source, { retainedRoots: retainedOf });
+      const importing = counted(target.vault, waiting.source, retainedOf);
       await waiting.arrived;
       assert(target.vault.lock.held, "the import holds the lock, waiting on the source");
       await assertRejects(() => drained(reader), "DamagedObject", "the read finds the damage meanwhile");
@@ -856,7 +779,6 @@ export const importCases: ImportCase[] = [
       assertBytes((await target.vault.vault.objects.read(Y_CID, 96)) as Uint8Array, Y, "the new object");
       assertEqual(await target.vault.stores.objects.damaged(), [], "no damage known");
       assertEqual(rows(target.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "nothing staged after");
-      snapshot.close();
       await target.vault.close();
       // the union requires the object and the source lacks it: a's package, released, retains its envelope again once b's intent contests the subject
       const RM = bytesOf(64, 43);
@@ -869,9 +791,9 @@ export const importCases: ImportCase[] = [
       await a.vault.vault.commit([], [release(p1 as Event)]);
       const b = await make(h, h.fresh(), c.now);
       await b.vault.vault.commit([{ cid: RM_CID, source: RM }], [message("M", "recall", [RM_CID])]);
-      const fromB = await snapshotOf(h, b.vault, contestableHeld);
+      const fromB = await snapshotOf(b.vault, contestableHeld);
       await b.vault.close();
-      assertEqual(await all(fromB.snapshot.vault.objects.list()), [RM_CID], "b's snapshot carries the message's root, not the envelope");
+      assertEqual(await all(fromB.vault.objects.list()), [RM_CID], "b's snapshot carries the message's root, not the envelope");
       // the message's root known damaged, so the source's bytes are staged — at the gate; the envelope corrupt, unread
       corruptChunk(a.driver, RM_CID);
       await assertRejects(() => a.vault.vault.objects.read(RM_CID, 64), "DamagedObject", "the message's root known damaged");
@@ -879,8 +801,8 @@ export const importCases: ImportCase[] = [
       const envelope = (await a.vault.vault.objects.open(RE_CID)) as ReadableStream<Uint8Array>;
       const before = tables(a.driver);
       const events = ids(await all(a.vault.vault.events.scan()));
-      const held = gated(fromB.snapshot, RM_CID);
-      const refused = importVault(a.vault, held.source, { retainedRoots: contestable });
+      const held = gated(fromB, RM_CID);
+      const refused = importSnapshot(a.vault, held.source, { retainedRoots: contestable });
       await held.arrived;
       await assertRejects(() => drained(envelope), "DamagedObject", "the envelope's read finds the damage meanwhile");
       held.release();
@@ -890,7 +812,6 @@ export const importCases: ImportCase[] = [
       assertEqual(ids(await all(a.vault.vault.events.scan())), events, "the events as they were");
       await assertRejects(() => a.vault.vault.objects.read(RM_CID, 64), "DamagedObject", "the repair the source had was not published on its own");
       assertEqual(rows(a.driver, "SELECT count(*) AS n FROM temp.staging_chunks"), [{ n: 0 }], "nothing staged after");
-      fromB.snapshot.close();
       await a.vault.close();
     },
   },

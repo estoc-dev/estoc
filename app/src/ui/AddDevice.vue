@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import { heldNow, publishSnapshotLink, revokeSnapshotLink, snapshotLinkOf, snapshotLinks } from "../core/store.js";
-import type { SnapshotLinkRecord, SnapshotSelection } from "../core/types.js";
+import type { SnapshotLinkRecord, SnapshotPart } from "../core/types.js";
 import { qrSvgOf } from "./qr.js";
 import Sheet from "./Sheet.vue";
 import { dateOf, timeOf } from "./util.js";
@@ -30,18 +30,18 @@ async function load(held: () => boolean) {
 
 onMounted(() => void load(heldNow()));
 
-const making = ref<SnapshotSelection | null>(null);
+const making = ref<SnapshotPart | null>(null);
 const shownHash = ref<string | null>(null);
 
 // A publish or revoke that fails can still have changed what the
 // mediator holds (an upload cut short leaves its pending link behind):
 // the list is read again whatever came of it.
-async function make(selection: SnapshotSelection) {
-  making.value = selection;
+async function make(part: SnapshotPart) {
+  making.value = part;
   error.value = null;
   const held = heldNow();
   try {
-    const made = await publishSnapshotLink(selection);
+    const made = await publishSnapshotLink(part);
     if (held()) shownHash.value = made.hash;
   } catch (err) {
     if (held()) error.value = reasonOf(err);
@@ -50,7 +50,7 @@ async function make(selection: SnapshotSelection) {
   making.value = null;
 }
 
-const NAMES: Record<SnapshotSelection, string> = { enrollment: "A link for a new device", all: "A copy of this vault" };
+const NAMES: Record<SnapshotPart, string> = { seed: "A link for a new device", content: "A copy of this vault" };
 
 const revoking = ref<string | null>(null);
 
@@ -115,14 +115,11 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <button class="btn" type="button" :title="shownUrl" data-snapshot-url @click="copy(shownUrl)">{{ copied ? "Copied" : "Copy the link" }}</button>
       <input v-if="readable" class="field mono" readonly :value="shownUrl" aria-label="The link" data-snapshot-text @focus="selectAll" />
       <p v-if="readable" class="note">It could not be copied from here: select the link above and copy it yourself.</p>
-      <p v-if="shown.selection === 'enrollment'" class="note" data-shown-selection="enrollment">
+      <p v-if="shown.part === 'seed'" class="note" data-shown-part="seed">
         On the new device, open this link or scan the code, then type this vault's passphrase. It joins as one more device of yours and receives from then on. Once
         it has, it shows up under You › Your devices here: send it your conversations so far from there.
       </p>
-      <p v-else class="note" data-shown-selection="all">
-        On a device of yours, open this link or scan the code: what the copy holds is merged into the vault there. On a device with no vault yet, it restores this
-        vault as it is now, with the passphrase.
-      </p>
+      <p v-else class="note" data-shown-part="content">On a device of yours, open this link or scan the code: what the copy holds is merged into the vault there.</p>
       <p class="note">
         It works until {{ dateOf(shown.retainUntil) }}<template v-if="shown.revocable">, or until you revoke it</template>.
       </p>
@@ -133,8 +130,8 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <p class="note">
         A link a new device joins with: your name and your mediator, not your conversations. It registers at the mediator and receives from then on.
       </p>
-      <button class="btn" type="button" :disabled="making !== null" data-make-snapshot-link @click="make('enrollment')">
-        {{ making === "enrollment" ? "Sealing and uploading…" : "Make a link" }}
+      <button class="btn" type="button" :disabled="making !== null" data-make-snapshot-link @click="make('seed')">
+        {{ making === "seed" ? "Sealing and uploading…" : "Make a link" }}
       </button>
       <p class="note">Your keys stay sealed under the passphrase.</p>
 
@@ -144,8 +141,8 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
           Once the new device has joined, send it your conversations from You › Your devices. A copy of this vault on a link does the same by hand: open it there, or
           paste it under You › Import from a link.
         </p>
-        <button class="btn-quiet" type="button" :disabled="making !== null" data-make-copy-link @click="make('all')">
-          {{ making === "all" ? "Sealing and uploading…" : "Back up to a link" }}
+        <button class="btn-quiet" type="button" :disabled="making !== null" data-make-copy-link @click="make('content')">
+          {{ making === "content" ? "Sealing and uploading…" : "Back up to a link" }}
         </button>
         <p class="note">Whoever holds a copy's link can read your messages until it expires or you revoke it.</p>
       </div>
@@ -157,9 +154,9 @@ const selectAll = (event: Event) => (event.target as HTMLInputElement).select();
       <div v-else-if="links && links.length" class="section" data-snapshot-links>
         <div class="eyebrow">Links made here</div>
         <div class="group">
-          <div v-for="link in links" :key="link.hash" class="row" :data-snapshot-link="link.status" :data-snapshot-selection="link.selection">
+          <div v-for="link in links" :key="link.hash" class="row" :data-snapshot-link="link.status" :data-snapshot-part="link.part">
             <span class="row-main">
-              <span>{{ NAMES[link.selection] }}{{ link.status === "pending" ? ", unfinished" : "" }}</span>
+              <span>{{ NAMES[link.part] }}{{ link.status === "pending" ? ", unfinished" : "" }}</span>
               <span v-if="link.status === 'pending'" class="row-sub">started {{ madeAt(link.placedAt) }}: revoke it to free what the mediator holds of it</span>
               <span v-else class="row-sub">
                 made {{ madeAt(link.placedAt) }} · works until {{ dateOf(link.retainUntil)

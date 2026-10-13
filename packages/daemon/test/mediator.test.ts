@@ -179,7 +179,7 @@ test(
 );
 
 test(
-  "a second runtime of one person, restored from the snapshot link her first runtime put at the mediator, is a replica of its own that reads what is written to her from then on, and once the link is revoked nothing is at its address",
+  "a second runtime of one person, restored from the seed link her first runtime put at the mediator and given her history from a content link, is a replica of its own that reads what is written to her from then on, and once the seed link is revoked nothing is at its address",
   async () => {
     const at = await mediator();
     const alice = await person(at, "Alice");
@@ -190,13 +190,16 @@ test(
     const accepted = await bob.daemon.acceptInvitation(invitation, "Alice");
     await until("alice holds bob's Ping", () => holdsPing(alice));
 
-    const { link } = await alice.daemon.publishSnapshotLink("all");
+    const { link } = await alice.daemon.publishSnapshotLink("seed");
     const elsewhere = daemonAt(at, await folder());
     await elsewhere.daemon.boot();
-    await elsewhere.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES);
+    await elsewhere.daemon.restoreFromLink(link, PASSPHRASE);
     await until("the restored runtime's line is live", () => live(elsewhere));
     expect(at.enrolled.get(hers)?.size).toBe(2);
     expect(elsewhere.snapshot().anchor).toBe(alice.snapshot().anchor);
+    expect(holdsPing(elsewhere)).toBe(false);
+    const history = await alice.daemon.publishSnapshotLink("content");
+    expect(await elsewhere.daemon.importFromLink(history.link, DEFAULT_MAX_BACKUP_BYTES)).toMatchObject({ renewed: false });
     expect(holdsPing(elsewhere)).toBe(true);
 
     expect(await bob.daemon.send({ contactId: accepted.contactId }, { type: BASIC_MESSAGE, body: { content: "to both" } })).toMatchObject({ outcome: "submitted" });
@@ -206,7 +209,7 @@ test(
     expect((await at.fetch(link.url)).status).toBe(404);
     const late = daemonAt(at, await folder());
     await late.daemon.boot();
-    await expect(late.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES)).rejects.toThrow("no snapshot is at that link any more: it was revoked, or the mediator has let it go");
+    await expect(late.daemon.restoreFromLink(link, PASSPHRASE)).rejects.toThrow("no snapshot is at that link any more: it was revoked, or the mediator has let it go");
   },
   120_000
 );
@@ -224,10 +227,10 @@ test(
     await until("alice holds bob's Ping", () => holdsPing(alice));
     await until("bob's Ping is acknowledged", () => bob.snapshot().messages.some((message) => message.messageId === (accepted.messageId as string) && message.acknowledged));
 
-    const { link } = await alice.daemon.publishSnapshotLink("enrollment");
+    const { link } = await alice.daemon.publishSnapshotLink("seed");
     const elsewhere = daemonAt(at, await folder());
     await elsewhere.daemon.boot();
-    await elsewhere.daemon.restoreFromLink(link, PASSPHRASE, DEFAULT_MAX_BACKUP_BYTES);
+    await elsewhere.daemon.restoreFromLink(link, PASSPHRASE);
     await until("the mediator holds the new device as her replica", () => at.enrolled.get(hers)?.size === 2);
     await until("the new device's line is live", () => live(elsewhere));
     expect(elsewhere.snapshot().anchor).toBe(alice.snapshot().anchor);

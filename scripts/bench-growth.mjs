@@ -537,7 +537,7 @@ async function kept(alice, bob, { fromAlice, fromBob }, directory) {
   await settled(alice, bob);
 
   await mkdir(directory, { recursive: true });
-  const file = path.join(directory, "vault.sqlite");
+  const file = path.join(directory, "vault.car");
   await writeFile(file, (await alice.daemon.exportBackup()).bytes);
   const read = await readCorpus(file, PASSPHRASE);
   await writeFile(path.join(directory, "fold.sha256"), hashOf(foldText(read.fold)));

@@ -1,14 +1,14 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { openNodeSqlite } from "@estoc/event-store/node";
-import { AnchorMismatch, NotAVault, ReadOnlyVault, SnapshotTooLarge, exportVault, openPortable, restoreVault, type OpenMode } from "@estoc/event-store";
+import { AnchorMismatch, ReadOnlyVault, Snapshot, exportSnapshot, restoreSnapshot, type OpenMode } from "@estoc/event-store";
 import { createSeedKeystore, type SeedKey } from "@estoc/keystore";
 import { Keys, vaultDraft, vaultHeldRoots } from "@estoc/vault";
 
-import { createVault, inspectRuntime, inspectSnapshot, openRestoredVault, openVault } from "../src/index.js";
+import { createVault, inspectRuntime, openRestoredVault, openVault } from "../src/index.js";
 import { PASSPHRASE, freshVault, memoryDriver, opened, seedOf, ticking } from "./helpers.js";
 
 let dir: string;
@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 const fresh = (): string => path.join(dir, `vault-${n++}.sqlite`);
-const open = (file: string, mode: OpenMode) => openNodeSqlite(file, mode === "create" ? { mode, journal: "delete" } : { mode });
+const open = (file: string, mode: OpenMode) => openNodeSqlite(file, { mode });
 
 describe("the vault opened with the seed", () => {
   it("creates under the seed's anchor with its label, and reopens as the same identity with the seed or the passphrase", async () => {
@@ -80,13 +80,11 @@ describe("an open that fails once the database is in hand", () => {
     await reopens(file, seedKey);
 
     const source = await openVault(open(file, "readwrite"), seedKey);
-    const snapshot = fresh();
-    await exportVault(source.runtime, (mode) => open(snapshot, mode), { heldRoots: source.heldRoots() });
+    const bytes = await exportSnapshot(source.runtime, { parts: "both", heldRoots: source.heldRoots() });
     await source.runtime.close();
-    const portable = openPortable(open(snapshot, "readonly"));
+    const snapshot = await Snapshot.read(bytes, { heldRoots: vaultHeldRoots(null) });
     const restoredFile = fresh();
-    const { runtime: restored } = await restoreVault(portable, (mode) => open(restoredFile, mode), { heldRoots: vaultHeldRoots(null), anchor: await Keys.anchorOf(seedKey) });
-    portable.close();
+    const { runtime: restored } = await restoreSnapshot(snapshot, () => open(restoredFile, "create"), { anchor: await Keys.anchorOf(seedKey) });
     await expect(openRestoredVault(restored, seedKey, lookupFailed())).rejects.toThrow("effect-type lookup failed");
     await reopens(restoredFile, seedKey);
   });
@@ -123,37 +121,6 @@ describe("the runtime inspected without the seed", () => {
     const reopened = await openVault(open(file, "readwrite"), made.seedKey);
     expect((await reopened.fold()).label).toBe("Alice");
     await reopened.runtime.close();
-  });
-});
-
-describe("a snapshot inspected", () => {
-  it("validates the snapshot against its own fold's retention and reads its fold; a runtime file is not a snapshot", async () => {
-    const made = await freshVault(1, "Alice");
-    const snapshot = fresh();
-    const exported = await exportVault(made.runtime, (mode) => open(snapshot, mode), { heldRoots: vaultHeldRoots(made.keys) });
-    expect(exported.events).toBe(1);
-    await made.runtime.close();
-
-    const inspected = await inspectSnapshot(open(snapshot, "readonly"));
-    expect(inspected.validated).toEqual(exported);
-    expect(inspected.fold.label).toBe("Alice");
-    expect(inspected.snapshot.metadata.anchor).toBe(made.runtime.metadata.anchor);
-    inspected.snapshot.close();
-
-    const runtimeFile = fresh();
-    const other = await freshVault(2, "Bob", open(runtimeFile, "create"));
-    await other.runtime.close();
-    await expect(inspectSnapshot(open(runtimeFile, "readonly"))).rejects.toBeInstanceOf(NotAVault);
-    const reopened = await openVault(open(runtimeFile, "readwrite"), other.seedKey);
-    await reopened.runtime.close();
-  });
-
-  test("a snapshot's file bound is enforced before anything is read", async () => {
-    const made = await freshVault(1, "Alice");
-    const snapshot = fresh();
-    await exportVault(made.runtime, (mode) => open(snapshot, mode), { heldRoots: vaultHeldRoots(made.keys) });
-    await made.runtime.close();
-    await expect(inspectSnapshot(open(snapshot, "readonly"), { maxFileBytes: 1 })).rejects.toBeInstanceOf(SnapshotTooLarge);
   });
 });
 

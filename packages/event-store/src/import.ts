@@ -1,28 +1,23 @@
 /**
- * A snapshot of the same vault imported into a runtime that is open —
- * a portable one, validated here, or the content part of a CAR, which
- * was validated as it was read: the union of the two event sets, and the objects that
- * union holds, published in one transaction or not at all. Everything
- * the source alone decides is checked before the target's lock is
- * taken; everything that depends on the target — what is new, what
- * is a fork, which roots the union holds and which of them must have
- * bytes — is decided under it, and nothing is written until all of
- * it has passed. Any runtime is a target, the vault in memory too,
- * since the import works through the interfaces every runtime
- * presents.
+ * The content part of a snapshot of the same vault imported into a
+ * runtime that is open: the union of the two event sets, and the
+ * objects that union holds, published in one transaction or not at
+ * all. The snapshot was validated as it was read; everything that
+ * depends on the target — what is new, what is a fork, which roots the
+ * union holds and which of them must have bytes — is decided under the
+ * target's lock, and nothing is written until all of it has passed.
+ * Any runtime is a target, the vault in memory too, since the import
+ * works through the interfaces every runtime presents.
  */
 
-import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, InvalidSnapshot, MissingPart, ReadOnlyVault, UnsupportedOperation } from "../errors.js";
-import type { Cid, Event, EventCid } from "../event.js";
-import type { VaultMetadata } from "../keystore.js";
-import { rawCidOf, sortCids } from "../objects.js";
-import { Snapshot, type SnapshotRange } from "../snapshot.js";
-import { MemoryVault, heldRootsOf, type Held, type Retained, type RetainedRoots, type Vault, type VaultObjects, type VaultRuntime } from "../vault.js";
-import type { PortableDatabase } from "./open.js";
-import { validatePortable } from "./portable.js";
+import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, MissingPart, ReadOnlyVault, UnsupportedOperation } from "./errors.js";
+import type { Cid, Event, EventCid } from "./event.js";
+import { rawCidOf, sortCids } from "./objects.js";
+import { Snapshot, type SnapshotRange } from "./snapshot.js";
+import { MemoryVault, type Held, type Retained, type RetainedRoots, type Vault, type VaultObjects, type VaultRuntime } from "./vault.js";
 
 export interface ImportOptions {
-  /** The retention the events of a vault hold, folded by the caller: run on a portable snapshot for its validation, on the target before the import and on the prospective union, each through the vault it is handed. */
+  /** The retention the events of a vault hold, folded by the caller: run on the target before the import and on the prospective union, each through the vault it is handed. */
   retainedRoots: RetainedRoots;
 }
 
@@ -35,92 +30,63 @@ export interface Imported {
   objects: number;
   /** objects the union holds that the target knew damaged, replaced whole from the source's verified bytes */
   repaired: number;
-}
-
-export interface ImportedSnapshot extends Imported {
   /** The content part's range, as the snapshot labels it: the exporting replica's positions, which the target takes for none of its own. */
   range: SnapshotRange;
 }
 
 /**
- * Imports `source`, a portable snapshot open read-only, into
- * `target`. Outside the lock: an inspector is refused (`ReadOnlyVault`)
- * before a byte of the source is read; the snapshot is validated in
- * full, its anchor compared with the target's (`AnchorMismatch` for
- * another vault's), and its events and object listing read into
- * memory. Under the lock: a damaged target history refuses the import
- * (`DamagedHistory`); each source event is classified against what
- * the target holds — a duplicate or new, by CID — and a new event
- * under the target's own author is a fork that refuses the whole
- * import with nothing written
- * (`ForkedAuthor`); the caller's fold is run on the target as it is
- * and on the prospective union; every root a new event retains in the
- * union, and every root the union holds that the target did not, must
- * have verified bytes in the source or sound accepted bytes in the
- * target, else `IncompleteImport` names each and nothing is written;
- * and every union-held object the target lacks or knows damaged,
- * whose bytes the source has, is staged — verified as it streams, the
- * source's bytes awaited under the lock but outside any transaction —
- * even when no event is new. A union-held root outside those
- * requirements that the source lacks is left as it is, absent or
- * damaged. Then one transaction publishes the staged objects and
- * repairs with every new event and its position. A target object
- * reused is not rehashed, but it is checked once more in that
- * transaction: a read outside the lock may have found it damaged
- * while the source streamed, and the import then plans again with
- * that damage known — staging the repair when the source has the
- * bytes, refusing as `IncompleteImport` when the root is required and
- * it does not — rather than accept an event over bytes known
- * damaged. The target's identity, wrapper and local state stay.
- * Importing the same snapshot again adds nothing and, when nothing is
- * to be repaired, writes nothing.
+ * Imports the content part of `snapshot` into `target`, and hands back
+ * the range the content part is labelled with. An inspector is refused
+ * (`ReadOnlyVault`), then a snapshot without the content part
+ * (`MissingPart`), then another vault's snapshot (`AnchorMismatch`),
+ * before anything is read or written. Under the lock: a damaged target
+ * history refuses the import (`DamagedHistory`); each source event is
+ * classified against what the target holds — a duplicate or new, by
+ * CID — and a new event under the target's own author is a fork that
+ * refuses the whole import with nothing written (`ForkedAuthor`); the
+ * caller's fold is run on the target as it is and on the prospective
+ * union; every root a new event retains in the union, and every root
+ * the union holds that the target did not, must have bytes in the
+ * snapshot or sound accepted bytes in the target, else
+ * `IncompleteImport` names each and nothing is written; and every
+ * union-held object the target lacks or knows damaged, whose bytes the
+ * snapshot has, is staged — verified as it streams, the snapshot's
+ * bytes awaited under the lock but outside any transaction — even when
+ * no event is new. A union-held root outside those requirements that
+ * the snapshot lacks is left as it is, absent or damaged. Then one
+ * transaction publishes the staged objects and repairs with every new
+ * event and its position. A target object reused is not rehashed, but
+ * it is checked once more in that transaction: a read outside the lock
+ * may have found it damaged while the snapshot streamed, and the
+ * import then plans again with that damage known — staging the repair
+ * when the snapshot has the bytes, refusing as `IncompleteImport` when
+ * the root is required and it does not — rather than accept an event
+ * over bytes known damaged. The target's identity, wrapper and local
+ * state stay. Importing the same snapshot again adds nothing and, when
+ * nothing is to be repaired, writes nothing. A snapshot is read once
+ * and imported as often as asked: after an identity reset, say, the
+ * same snapshot imports again.
  */
-export async function importVault(target: VaultRuntime, source: PortableDatabase, options: ImportOptions): Promise<Imported> {
-  checkOptions(options);
-  if (!target.writable) throw new ReadOnlyVault("import");
-  await validatePortable(source, { heldRoots: heldRootsOf(options.retainedRoots) });
-  return imported(target, source, options);
-}
-
-/**
- * Imports the content part of `snapshot` into `target`, as
- * `importVault` imports a portable snapshot once it has validated it,
- * and hands back the range the content part is labelled with. An
- * inspector is refused (`ReadOnlyVault`), then a snapshot without the
- * content part (`MissingPart`), before anything is read or written. A
- * snapshot is read once and imported as often as asked: after an
- * identity reset, say, the same snapshot imports again.
- */
-export async function importSnapshot(target: VaultRuntime, snapshot: Snapshot, options: ImportOptions): Promise<ImportedSnapshot> {
-  checkOptions(options);
+export async function importSnapshot(target: VaultRuntime, snapshot: Snapshot, options: ImportOptions): Promise<Imported> {
+  if (typeof options.retainedRoots !== "function") throw new TypeError("an import takes `retainedRoots`, the caller's fold of the retention edge by edge");
   if (!(snapshot instanceof Snapshot)) throw new TypeError("an import takes a Snapshot that Snapshot.read made");
   if (!target.writable) throw new ReadOnlyVault("import");
   const range = snapshot.content;
   if (range === undefined) throw new MissingPart("content");
-  return { ...(await imported(target, snapshot, options)), range };
+  if (snapshot.metadata.anchor !== target.metadata.anchor) throw new AnchorMismatch(target.metadata.anchor, snapshot.metadata.anchor, "source");
+  return { ...(await imported(target, snapshot.vault, options)), range };
 }
 
-function checkOptions(options: ImportOptions): void {
-  if (typeof options.retainedRoots !== "function") throw new TypeError("an import takes `retainedRoots`, the caller's fold of the retention edge by edge");
-}
-
-/** A validated snapshot as an import reads it: the identity it states, and its events and objects. */
-interface Source {
-  metadata: VaultMetadata;
-  vault: Vault;
-}
-
-async function imported(target: VaultRuntime, source: Source, options: ImportOptions): Promise<Imported> {
-  if (source.metadata.anchor !== target.metadata.anchor) throw new AnchorMismatch(target.metadata.anchor, source.metadata.anchor, "source");
+async function imported(target: VaultRuntime, source: Vault, options: ImportOptions): Promise<Omit<Imported, "range">> {
   const incoming: Event[] = [];
-  for await (const event of source.vault.events.scan()) incoming.push(event);
+  for await (const event of source.events.scan()) incoming.push(event);
   const offered = new Set<Cid>();
-  for await (const cid of source.vault.objects.list()) offered.add(cid);
+  for await (const cid of source.objects.list()) offered.add(cid);
   return target.locked(async (held) => {
     const [damage] = await held.events.damaged();
     if (damage !== undefined) throw new DamagedHistory(damage);
     for (;;) {
-      const plan = await planned(target, held, incoming, offered, source.vault.objects, options.retainedRoots);
+      const plan = await planned(target, held, incoming, offered, source.objects, options.retainedRoots);
       const objects = plan.staged.filter((object) => !object.repair).length;
       const repaired = plan.staged.length - objects;
       if (plan.fresh.length === 0 && plan.staged.length === 0) return { added: 0, duplicates: plan.duplicates, objects, repaired };
@@ -128,8 +94,8 @@ async function imported(target: VaultRuntime, source: Source, options: ImportOpt
       try {
         const outcome = await held.ingest(incoming, async (prepared) => {
           for (const { cid } of plan.staged) {
-            const stream = await source.vault.objects.open(cid);
-            if (stream === null) throw new InvalidSnapshot([{ where: `objects/${cid}`, error: "gone between the snapshot's listing and its reading" }]);
+            const stream = await source.objects.open(cid);
+            if (stream === null) throw new Error(`${cid} is listed by the snapshot but has no bytes`);
             await prepared.putObject(cid, stream);
           }
           sourceRead = true;

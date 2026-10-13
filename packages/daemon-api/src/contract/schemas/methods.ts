@@ -6,7 +6,7 @@ import { OOB_INVITATION, PLAIN_TYP, TRACE_LEVELS, type Invitation } from "../pro
 import { linesState } from "./lines.js";
 import { messageContent } from "./records.js";
 import { mergeResult } from "./replicas.js";
-import { publishedSnapshotLink, snapshotLink, snapshotLinkRecord, snapshotSelection } from "./snapshot-links.js";
+import { publishedSnapshotLink, snapshotLink, snapshotLinkRecord, snapshotPart } from "./snapshot-links.js";
 import { revisionMarker, state } from "./state.js";
 import { bytes, channelId, contactId, didId, eventCid, executionId, hold, mediationId, messageId, replicaId } from "./values.js";
 
@@ -80,7 +80,7 @@ export const methods: { readonly [Name in MethodName]: MethodSchema<Name> } = {
   exportBackup: { input: empty, result: z.object({ name: z.string(), bytes }), errors: lifecycle, bytes: { input: [], result: ["bytes"] } },
   mergeBackup: { input: z.object({ backup: bytes }), result: mergeResult, errors: lifecycle, bytes: { input: ["backup"], result: [] } },
   explainedRestore: { input: empty, result: nothing, errors: lifecycle, bytes: noBytes },
-  publishSnapshotLink: { input: z.object({ selection: snapshotSelection }), result: publishedSnapshotLink, errors: lifecycle, bytes: noBytes },
+  publishSnapshotLink: { input: z.object({ part: snapshotPart }), result: publishedSnapshotLink, errors: lifecycle, bytes: noBytes },
   revokeSnapshotLink: { input: z.object({ hash: z.string().min(1) }), result: nothing, errors: lifecycle, bytes: noBytes },
   snapshotLinks: { input: empty, result: z.object({ links: z.array(snapshotLinkRecord) }), errors: lifecycle, bytes: noBytes },
   restoreFromLink: { input: z.object({ link: snapshotLink, passphrase }), result: nothing, errors: lifecycle, bytes: noBytes },

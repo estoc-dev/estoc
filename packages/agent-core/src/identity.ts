@@ -12,23 +12,9 @@
  * lock.
  */
 
-import {
-  SqliteVault,
-  VAULT_VERSION,
-  createRuntime,
-  openInspector,
-  openPortable,
-  openRuntime,
-  validatePortable,
-  type PortableDatabase,
-  type RuntimeDatabase,
-  type SqliteDriver,
-  type SqliteVaultOptions,
-  type Validated,
-  type WrappedSeed,
-} from "@estoc/event-store";
+import { SqliteVault, VAULT_VERSION, createRuntime, openInspector, openRuntime, type RuntimeDatabase, type SqliteDriver, type SqliteVaultOptions, type WrappedSeed } from "@estoc/event-store";
 import { unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
-import { Keys, scanVault, vaultDraft, vaultHeldRoots, type ScanOptions, type VaultFold } from "@estoc/vault";
+import { Keys, scanVault, vaultDraft, type ScanOptions, type VaultFold } from "@estoc/vault";
 
 import { Session, type VaultSession } from "./session.js";
 
@@ -136,26 +122,3 @@ export async function inspectRuntime(driver: SqliteDriver, options: VaultOptions
   return owned(openInspector(driver), options, async (runtime) => ({ runtime, wrapped: await runtime.keystore.read(), fold: await scanVault(runtime.vault, null, options) }));
 }
 
-/** A portable snapshot looked at: validated whole against its own fold's retention, then folded without key verdicts. */
-export interface InspectedSnapshot {
-  snapshot: PortableDatabase;
-  validated: Validated;
-  fold: VaultFold;
-}
-
-export interface InspectSnapshotOptions extends ScanOptions {
-  /** the most bytes the file may hold; unbounded when left out */
-  maxFileBytes?: number;
-}
-
-/** The snapshot in `driver`, opened `readonly`: its headers and metadata checked, its events and objects validated, its fold read. An invalid snapshot closes the driver. */
-export async function inspectSnapshot(driver: SqliteDriver, options: InspectSnapshotOptions = {}): Promise<InspectedSnapshot> {
-  const snapshot = openPortable(driver, options.maxFileBytes === undefined ? {} : { maxFileBytes: options.maxFileBytes });
-  try {
-    const validated = await validatePortable(snapshot, { heldRoots: vaultHeldRoots(null, options) });
-    return { snapshot, validated, fold: await scanVault(snapshot.vault, null, options) };
-  } catch (err) {
-    snapshot.close();
-    throw err;
-  }
-}

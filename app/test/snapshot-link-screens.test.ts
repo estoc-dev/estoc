@@ -121,12 +121,12 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
     it("are made for a new device to join with, or as a copy of the whole vault, and each says which it is", async () => {
       await mount("add-device");
       await tab.click("[data-make-snapshot-link]");
-      await tab.locator('[data-snapshot-selection="enrollment"]').waitFor();
+      await tab.locator('[data-snapshot-part="seed"]').waitFor();
       await tab.click("[data-make-copy-link]");
-      await tab.locator('[data-snapshot-selection="all"]').waitFor();
-      expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "publishSnapshotLink").map((call) => call.args))).toEqual([["enrollment"], ["all"]]);
-      expect(await tab.locator('[data-snapshot-selection="enrollment"] .row-main > span').first().textContent()).toBe("A link for a new device, unfinished");
-      expect(await tab.locator('[data-snapshot-selection="all"] .row-main > span').first().textContent()).toBe("A copy of this vault, unfinished");
+      await tab.locator('[data-snapshot-part="content"]').waitFor();
+      expect(await tab.evaluate(() => window.snapshotFixture.daemon.calls.filter((call) => call.name === "publishSnapshotLink").map((call) => call.args))).toEqual([["seed"], ["content"]]);
+      expect(await tab.locator('[data-snapshot-part="seed"] .row-main > span').first().textContent()).toBe("A link for a new device, unfinished");
+      expect(await tab.locator('[data-snapshot-part="content"] .row-main > span').first().textContent()).toBe("A copy of this vault, unfinished");
     });
 
     it("say when they could not be read, and are read again when asked", async () => {
@@ -135,7 +135,7 @@ describe.skipIf(browserPath === undefined)("snapshot links on screen", () => {
 
       await tab.evaluate(() => {
         window.snapshotFixture.daemon.unlistable = null;
-        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", selection: "all", placedAt: "2026-10-10T12:00:00.000Z" as DisplayTime, retainUntil: null }];
+        window.snapshotFixture.daemon.links = [{ status: "pending", hash: "bciqleft", part: "content", placedAt: "2026-10-10T12:00:00.000Z" as DisplayTime, retainUntil: null }];
       });
       await tab.click("[data-reload-snapshot-links]");
       await tab.locator('[data-snapshot-link="pending"]').waitFor();

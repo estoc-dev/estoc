@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { SNAPSHOT_SELECTIONS, type PublishedSnapshotLink, type SnapshotLink, type SnapshotLinkRecord, type SnapshotSelection } from "../snapshot-links.js";
+import { SNAPSHOT_PARTS, type PublishedSnapshotLink, type SnapshotLink, type SnapshotLinkRecord, type SnapshotPart } from "../snapshot-links.js";
 import { displayTime } from "./values.js";
 
 const isHttpUrl = (text: string): boolean => URL.canParse(text) && ["http:", "https:"].includes(new URL(text).protocol);
@@ -12,11 +12,11 @@ export const snapshotLink: z.ZodType<SnapshotLink> = z.object({
   key: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/, { message: "expected 32 bytes of base64url without padding" }),
 });
 
-export const snapshotSelection: z.ZodType<SnapshotSelection> = z.enum(SNAPSHOT_SELECTIONS);
+export const snapshotPart: z.ZodType<SnapshotPart> = z.enum(SNAPSHOT_PARTS);
 
 const hash = z.string().min(1);
-const pending = z.object({ status: z.literal("pending"), hash, selection: snapshotSelection, placedAt: displayTime, retainUntil: displayTime.nullable() });
-const published = z.object({ status: z.literal("published"), hash, selection: snapshotSelection, placedAt: displayTime, retainUntil: displayTime, revocable: z.boolean(), link: snapshotLink });
+const pending = z.object({ status: z.literal("pending"), hash, part: snapshotPart, placedAt: displayTime, retainUntil: displayTime.nullable() });
+const published = z.object({ status: z.literal("published"), hash, part: snapshotPart, placedAt: displayTime, retainUntil: displayTime, revocable: z.boolean(), link: snapshotLink });
 
 export const publishedSnapshotLink: z.ZodType<PublishedSnapshotLink> = published;
 

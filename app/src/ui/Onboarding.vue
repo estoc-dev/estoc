@@ -147,7 +147,7 @@ function cameraFailed() {
 
       <form v-else class="form" @submit.prevent="restore">
         <label class="note" for="backup-file">From a backup file</label>
-        <input id="backup-file" class="field" type="file" accept=".sqlite,application/vnd.sqlite3" data-backup-file @change="pickBackup" />
+        <input id="backup-file" class="field" type="file" accept=".car,application/vnd.ipld.car" data-backup-file @change="pickBackup" />
         <label class="note" for="snapshot-link">Or from a link your other device made (You › Add a device)</label>
         <input id="snapshot-link" v-model="snapshotLink" class="field" placeholder="The link" autocomplete="off" data-snapshot-link-input />
         <template v-if="canScanQr">

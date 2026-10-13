@@ -237,25 +237,26 @@ describe("snapshot links", () => {
     expect(ok("importFromLink", "result", null)).toBe(false);
   });
 
-  it("are published of the events a new replica enrolls from, or of the whole vault", () => {
-    expect(ok("publishSnapshotLink", "input", { selection: "enrollment" })).toBe(true);
-    expect(ok("publishSnapshotLink", "input", { selection: "all" })).toBe(true);
+  it("are published of one part, the seed or the content", () => {
+    expect(ok("publishSnapshotLink", "input", { part: "seed" })).toBe(true);
+    expect(ok("publishSnapshotLink", "input", { part: "content" })).toBe(true);
     expect(ok("publishSnapshotLink", "input", {})).toBe(false);
-    expect(ok("publishSnapshotLink", "input", { selection: "history" })).toBe(false);
+    expect(ok("publishSnapshotLink", "input", { part: "both" })).toBe(false);
+    expect(ok("publishSnapshotLink", "input", { selection: "all" })).toBe(false);
   });
 
   it("are listed pending with no link, answered or not, and published with the link, what each carries, when the mediator lets it go and whether the daemon can still revoke it", () => {
     const records = [
-      { status: "pending", hash: "b1", selection: "enrollment", placedAt, retainUntil: null },
-      { status: "pending", hash: "b2", selection: "all", placedAt, retainUntil },
-      { status: "published", hash: link.hash, selection: "enrollment", placedAt, retainUntil, revocable: true, link },
-      { status: "published", hash: "b3", selection: "all", placedAt, retainUntil, revocable: false, link: { ...link, hash: "b3" } },
+      { status: "pending", hash: "b1", part: "seed", placedAt, retainUntil: null },
+      { status: "pending", hash: "b2", part: "content", placedAt, retainUntil },
+      { status: "published", hash: link.hash, part: "seed", placedAt, retainUntil, revocable: true, link },
+      { status: "published", hash: "b3", part: "content", placedAt, retainUntil, revocable: false, link: { ...link, hash: "b3" } },
     ];
     expect(ok("snapshotLinks", "result", { links: records })).toBe(true);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, selection: "all", placedAt, retainUntil: null, revocable: true, link }] })).toBe(false);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, selection: "all", placedAt, retainUntil, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, part: "content", placedAt, retainUntil: null, revocable: true, link }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, part: "content", placedAt, retainUntil, link }] })).toBe(false);
     expect(ok("snapshotLinks", "result", { links: [{ status: "published", hash: link.hash, placedAt, retainUntil, revocable: true, link }] })).toBe(false);
-    expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, selection: "all", placedAt, retainUntil }] })).toBe(false);
+    expect(ok("snapshotLinks", "result", { links: [{ status: "revoked", hash: link.hash, part: "content", placedAt, retainUntil }] })).toBe(false);
     expect(ok("publishSnapshotLink", "result", records[2])).toBe(true);
     expect(ok("publishSnapshotLink", "result", records[1])).toBe(false);
     expect(ok("publishSnapshotLink", "result", { ...records[2], placedAt: "2026-10-10" })).toBe(false);

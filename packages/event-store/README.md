@@ -7,11 +7,11 @@ and object identity, commit durability, versioning. What is here
 is the model, its reference in memory, the SQLite driver the
 persistent stores are written against, the vault's schema and opening
 over it, the event store and the object store over that, the SQLite
-vault over both, the portable snapshot: export, its validation
-and its inspection, restore and import, and the snapshot as a CAR of
-a seed part and a content part — the whole of it run in a Chromium
-Worker as it is on Node, one snapshot exchanged between the two. No event type is known here: what an event means, and the folds
-that read it, are `@estoc/vault`'s.
+vault over both, and the snapshot, a CAR of a seed part and a content
+part: its export, its read, restore and import — the whole of it run
+in a Chromium Worker as it is on Node, one snapshot exchanged between
+the two. No event type is known here: what an event means, and the
+folds that read it, are `@estoc/vault`'s.
 
 The event model: RFC 8785 canonical JSON and a strict parser; the
 five-field envelope `at`/`author`/`type`/`roots`/`data` and its
@@ -80,7 +80,7 @@ on the read that meets it, never rounded. Stored text that is not text
 — a NUL inside, invalid UTF-8, which only a foreign file or a cast in
 SQL puts in a TEXT column — is `InvalidSqlValue` where the adapter can
 see the bytes (wasm); `node:sqlite` hands text over already cut at a
-NUL and repaired, so text of a file another party wrote is read as
+NUL and repaired, so text a reader checks is read as
 `CAST(column AS BLOB)` and decoded with `decodeText`, which refuses
 exactly that, on either platform. What SQLite itself refuses is
 `SqliteError` with its result code on either platform. An open is
@@ -101,8 +101,8 @@ page is written before the vault is validated, and met by any other
 connection as `SQLITE_BUSY` at its first statement; a create leaves the
 file in WAL with `synchronous=NORMAL`, the runtime's configuration, or
 with `journal: "delete"` in a rollback journal with `synchronous=FULL`,
-the portable snapshot's, whose file must stand alone with
-rollback-format headers; a read-only open forbids writes through
+for a file that keeps nothing beside it between transactions; a
+read-only open forbids writes through
 `query_only` and keeps the lock its first read leaves it with — on a
 rollback-journal file the shared lock, so writers are excluded while
 other readers are not; on a WAL file the exclusive lock, since a WAL
@@ -114,9 +114,8 @@ process's locks on the file with it.
 `@sqlite.org/sqlite-wasm` over its OPFS access-handle pool, in a Worker
 only: the pool owns one OPFS directory, `open(name, mode)` a database
 in it (each stored as `<name>.sqlite`, so no name can spell the journal
-SQLite keeps beside another; the pool grows as databases, their
-journals and imports need handles), `exportFile`/`importFile` deliver
-and take a complete database file, and ownership of the directory is a
+SQLite keeps beside another; the pool grows as databases and their
+journals need handles), and ownership of the directory is a
 Web Lock taken before the pool is installed and held until `close`, so
 a second Worker of the origin is refused before it touches the
 directory; the directory's one normalized spelling names both the lock
@@ -134,9 +133,9 @@ on disk, whose storage quota follows the disk; an ephemeral context's
 follows memory and runs out under the large cases' databases at once.
 
 Over the driver, the vault's schema and its opening. `createTables`
-makes the five common tables — `vault_meta`, `keystore`, `events`,
-`objects`, `object_chunks`, all `STRICT` — and, for a runtime, the two
-control tables `store_state` and `event_positions`; `checkSchema`
+makes the runtime's seven tables, all `STRICT` — `vault_meta`,
+`keystore`, `events`, `objects`, `object_chunks` and the two control
+tables `store_state` and `event_positions`; `checkSchema`
 checks a database holds exactly that, structurally, through SQLite's
 own pragmas — names, columns, types, primary and unique keys with their
 collation and direction, references with both their actions, no table
@@ -144,45 +143,31 @@ collation and direction, references with both their actions, no table
 since no pragma reports a column's collation, by comparing through
 each text column that it collates byte for byte; the SQL the tables
 were spelled with is not what is checked, and the schema's names are
-read as their stored bytes and decoded, since a snapshot is a file
-another party wrote. A portable snapshot may have nothing beside the
-five tables and the indexes their constraints made; a runtime may add
-indexes, `local_*` tables and `ANALYZE` statistics; a view or a
-trigger is refused in either, and a table named like an inherited
-property of an object is an extra table like any other.
+read as their stored bytes and decoded. A runtime may add indexes,
+`local_*` tables and `ANALYZE` statistics beside them; a view or a
+trigger is refused, and a table named like an inherited property of
+an object is an extra table like any other.
 `createRuntime(driver, { metadata, wrapped })` fills the empty database
 a `create` opened — application ID `ESTC`, schema version 2, the
 tables, the metadata, the wrapped seed as the UTF-8 of its compact JWE,
 fresh `replica_id` and `store_generation` — in one transaction,
 published ready, and hands the runtime back open. `openRuntime(driver,
 { anchor })` checks a `readwrite` driver's database in order — the
-file's application ID, text encoding and schema version; the metadata,
-so a snapshot or an unready file is told apart before its tables are;
+file's application ID and schema version; the metadata, so an unready
+file is told apart before its tables are;
 the schema; the wrapped seed; then the anchor, given outright or
 derived by a function that unlocks the wrapper the vault holds,
 against the vault's (`AnchorMismatch`); then the control, whose row is
 the one keyed 1, whose replica ID and generation are canonical
 UUIDv7s, and whose `last_seq` and positions, all positive, account for
 every event (`DamagedControl` otherwise, and nothing is made up in
-their place) — and writes nothing. The text encoding is read from
-`PRAGMA encoding` where SQLite was built with UTF-16 support and from
-the file's header through `sqlite_dbpage` where it was not, as the
-wasm build is — every schema name is first read as bytes and refused
-where it has a NUL, is not UTF-8 or is `sqlite_dbpage` in any case,
-which only `writable_schema` allows, before that read and on every
-platform; a platform with neither is refused a file it did not
-write. The metadata and keystore rows are likewise the one keyed 1
+their place) — and writes nothing. The metadata and keystore rows are likewise the one keyed 1
 each: the file's own constraints are not trusted to have kept it so.
 `openInspector(driver)` applies the same checks without the seed on a
 connection set to refuse every write; it takes only a `readwrite`
 driver, the one mode that owns the file outright on every platform,
 since a `readonly` driver may share a rollback-journal file with other
-readers and a runtime's inspector must not. `openPortable(driver)`
-takes a `readonly` driver — no writes, no extensions, an untrusted
-schema — and checks the file's identity and its rollback-format
-headers, then the schema, then the two rows that say what it is,
-reading nothing else; whether its events and objects are what they
-claim is the validation to come. The wrapped seed is checked against
+readers and a runtime's inspector must not. The wrapped seed is checked against
 the keystore package's profile as far as it can be without the
 passphrase — `PBES2-HS512+A256KW` over `A256GCM`, an iteration count
 the package would accept, a salt of at least 8 bytes, nothing else in
@@ -197,7 +182,7 @@ reason, closes the driver it was given, so ownership never stays with
 a handle nobody can use. Everything a file must show is a `NotAVault`
 naming what it did not. The open cases in
 `test/sqlite/open-cases.ts` run over both platforms, Node on files
-and Chromium in a Worker, a UTF-16 file among their inputs.
+and Chromium in a Worker.
 
 Over an open runtime, the event store: `SqliteEventStore(db, { now })`
 over the connection, author, generation and writability an open handed
@@ -377,255 +362,168 @@ that commits through the vault and kills itself right after each of
 the commit's statements in turn, reopening the file after each to
 find the batch whole or not at all.
 
-The portable snapshot. `exportVault(runtime, open, { heldRoots,
-types, maxBytes })` builds one from any runtime — the SQLite vault, an
-inspector's, the vault in memory — through the interfaces every
-runtime presents, into the destination `open` gives: a function of
-the platform's, `(mode) => openNodeSqlite(path, { mode })` or `(mode)
-=> pool.open(name, mode)`, called once to `create` the target and
-once, after the writer has closed, to reopen the file `readonly`.
-The cut is every event, or with `types` the events of those types
-alone; either way the objects it carries are exactly those its own
-events hold, so a selection leaves out an object only other events
-hold, and the file validates as any snapshot does.
-Under the operation lock the cut is selected — first the events'
-tally, their count and canonical bytes from what the store keeps
-beside them, refused as `SnapshotTooLarge` past `maxBytes` before an
-event is read; a selection, which no tally weighs, is weighed once its
-events are read, before the fold runs; then the wrapper, every event of
-the cut in canonical order, and `heldRoots`, the caller's fold of the
-roots those events hold — through the held view, or for a selection
-through a vault in memory of the selected events alone that reads
-objects through the held view and refuses a commit — each
-root's presence and size checked, refused as `IncompleteSnapshot`
-when the history has damage or a held root is absent or known
-damaged, and as `SnapshotTooLarge` when the events' bytes and the
-held objects' sizes together pass `maxBytes`, before a chunk is read
-— nothing made in any of these cases. A conflict on record is a local
+The snapshot, a DASL CAR (`src/snapshot.ts`) of two parts a snapshot
+carries one or both of. The seed part is the wrapper; alone, it brings
+only the events of the types its exporter selects and the objects they
+hold on their own. The content part is every event and every object
+they hold, with its range: `{ replica, generation, after, through }`,
+the positions the exporting replica accepted them at, what `changes`
+from a token at `after` gives. A whole export starts at 0 and ends at
+`EventTally.lastSeq`, read in the lock that fixes the cut; the range is
+a label of the exporter's, which no importer takes for a position or a
+token of its own, and a range that does not start at 0 is refused for
+now. The header is `{ version: 1, roots, estoc }`, `estoc` being `{
+snapshot: 1, vault_version: 5, anchor, seed?, content? }`; the roots
+are the events, each the CID of its envelope's canonical bytes; every
+other block is an object the events hold, written once whatever holds
+it, a block that is an event too included.
+
+`exportSnapshot(runtime, { parts, types, heldRoots, maxBytes })` builds
+one from any runtime — the SQLite vault, an inspector's, the vault in
+memory — through the interfaces every runtime presents, and hands back
+its bytes. `parts` is `"seed"` with `types`, `"content"` or `"both"`;
+the objects a part carries are exactly those its own events hold, so a
+seed alone leaves out an object only other events hold. Everything is
+done under the writer lock: with content, the tally weighed against
+`maxBytes` before an event is read; then the events' bytes before the
+fold runs; then `heldRoots`, the caller's fold of the roots the events
+hold — through the held view, or for a seed alone through a vault in
+memory of the selected events alone that reads objects through the
+held view and refuses a commit — each root's presence and size
+checked; then the CAR's whole length, `carLength` of the header and the
+block sizes, before an object is read. Past `maxBytes` at any of these
+is `SnapshotTooLarge`; history damage or a held root absent or known
+damaged is `IncompleteSnapshot`. A conflict on record is a local
 diagnostic, not damage: the accepted value is exported and the
-diagnostic is not. Then the destination is created, switched to a
-rollback journal with `synchronous=FULL`, laid in one transaction as
-a portable database with `ready = 0` — the five tables, the metadata,
-the wrapper's bytes, every event of the cut — and filled object by object, each
-streamed through the vault's own read, hashed again, cut into the
-format's 1 MiB chunks and written 8 MiB at a time in transactions of
-its own, then checked against the cut and set ready in one
-transaction, and closed; the lock is released only then. Outside the
-lock the file is reopened read-only and validated as a restore would
-validate it — with no file bound: the file is the one the export just
-built and closed, and its event and object payload is within
-`maxBytes` when one was given — and what the export returns is what
-validation found:
-the events and their bytes, the objects and theirs. The file is a new
-one, so no page of it ever held what is not in it: no control, no
-position, no local table, no unheld object. A source that fails while
-its bytes are copied is `IncompleteSnapshot` too, the destination
-left unready for the caller to remove; the file's delivery — a path,
-or `pool.exportFile(name)` — is the caller's, once the export has
-returned, and a check for sidecars beside a path is the caller's too.
-`openPortable(driver, { maxFileBytes })` bounds its input before
-anything else is read: the file's size as its header states it, the
-page count times the page size, which is all SQLite will read of it,
-refused as `SnapshotTooLarge` past the bound, so every row, column,
-chunk and check after it, the validation included, lies within what
-the caller allowed. It now hands back, beside the metadata and the
-wrapper, `vault`: the snapshot as a read-only `Vault` —
-`PortableVault` — scanning the immutable event set in canonical order
-from the five tables alone, its damage reported — `damaged()` hashes
-every row against its CID, as validation does; an ordinary scan hands
-back the stored CID — and a row met damaged, by a scan or by the
-survey, left out of every scan after, an exact CID filter included,
-for as long as the snapshot is open; its objects under the ordinary
-read and damage rules, and `changes` and `commit` refused
-with `UnsupportedOperation`, neither consuming a source nor minting
-anything; a closed snapshot refuses every read with `VaultClosed`.
-A CHECK the file declares is SQL the file supplied: the handle runs
-none of them, `integrity_check` included, and every value they would
-have constrained is checked by the reader. `validatePortable(portable,
-{ heldRoots })` is what a restore or an import runs on an open
-snapshot before trusting a byte of it, in order: SQLite's
-`foreign_key_check`; the chunks holding no more bytes than the
-objects declare, read from record headers alone, before a chunk is
-loaded; SQLite's `integrity_check`, which nothing is read past when
-it fails; every
-event row decoding to the event its columns name; every `objects` row
-keyed by a CID with a size that is a count; the object set equal to
-`heldRoots` folded from the snapshot's own events; and every object's
-chunks read through — each chunk's length asked before its bytes, so
-one longer than the layout gives it is refused unloaded — contiguous,
-of the format's lengths, hashing to the CID, through a store of the
-call's own, so what was wrong with an object is what is reported;
-what SQLite itself cannot read is a problem like the others. Every
-problem found is in `InvalidSnapshot.problems`. Whether the events'
-known payloads are valid is the fold's to decide, in the layer that
-knows them: what `heldRoots` throws is what the export or the
-validation fails with. `test/sqlite/export-cases.ts` runs on
-`node:sqlite` and in a Chromium Worker: what a snapshot holds and
-what never enters it, checked in the file's raw bytes; the refusals
-before and after the destination is made, and the conflict that is
-none; a commit, a collection pass and a rewrap waiting on the
-export's lock and landing after without touching the file; the vault
-in memory exporting into the same file; an export of some types,
-its events, its objects, its restore and its bound; every way a snapshot that
-opens still fails validation; a file past the bound refused as it is opened; the bound
-counting the events, tallied before one is read; a chunk longer than
-its layout never loaded; and a file whose own CHECK every row
-violates, validated on its values. `test/sqlite/export.test.ts`
-adds what only a path shows: no sidecar beside the file whatever
-journal the destination was created with, two readers holding it at
-once, an inspector's export, a destination that is not fresh, and a
-file torn under its schema.
+diagnostic is not. Then one buffer of that length is filled through
+`CarWriter`, the events in canonical order and the objects in CID
+order, each streamed through the vault's own read, which rehashes it,
+and not checked again; a source that fails while its bytes are written
+is `IncompleteSnapshot` too. What the runtime keeps for itself — the
+control, the positions, local state, an object no event holds — is in
+no part.
 
-Restore and import, both from a snapshot the caller has opened with
-`openPortable` — bounding the file with `maxFileBytes` where it
-should be — and closes afterwards. `restoreVault(source, open, {
-heldRoots, anchor })` builds a new runtime from the snapshot's
-values: the snapshot is validated in full and the credential's anchor
-— given outright, or as the function that unlocks the snapshot's
-wrapper and derives it — compared with the snapshot's own, nothing
-made on a failure of either; then `open("create")` makes the
-destination, laid in one transaction as a runtime with `ready = 0` —
-the schema, the metadata, the wrapper adopted, a fresh replica ID and
-store generation, every event under a fresh position in canonical
-order — and filled object by object through the snapshot's own read,
-rehashed and chunked as an export writes them; checked against what
-validation counted and set ready in one transaction; and handed back
-open, `{ runtime, events, eventBytes, objects, objectBytes }`, for
-the host to build a `SqliteVault` over and reconstruct what the
-events say is unfinished before it runs. No page of the source is
-copied and no SQL of it run. A failure once the destination is made
-closes it and leaves it unready, opening as nothing, for the caller
-to remove; no seed is minted. `importVault(target, source, {
-retainedRoots })` merges a snapshot of the same vault into any open
-runtime — the SQLite vault, or the vault in memory, since it works
-through `VaultRuntime` and `Held` — and returns `{ added, duplicates,
-objects, repaired }`. Its fold is a `RetainedRoots`, the
-retention edge by edge — each event, each root of its own it still
-retains — rather than the `HeldRoots` an export takes, because the
-roots an import requires bytes for are those the *new* events retain
-in the union, and a root one event released may be held by another
-under the same CID: only the edge tells which event holds it;
-`heldRootsOf(retainedRoots)` is the same fold as a `HeldRoots`, for
-the export, the validation and the collection pass. Outside the
-target's lock: an inspector is refused with `ReadOnlyVault` before
-the source is read (`VaultRuntime.writable` is new for it); the
-snapshot is validated in full; its anchor is compared with the
-target's, `AnchorMismatch` for another vault's; and its events and
-object listing are read into memory. Under the lock: a damaged
-target history is `DamagedHistory`; each source event is classified
-against what the target holds, by CID — a duplicate or new — and a new
-event under the target's own author is `ForkedAuthor`, the whole import refused with
-nothing written, the recovery being an identity reset; the fold runs
-on the target as it is and on the prospective union, held as a vault
-in memory that refuses a commit; every root a new event retains in the union, and every
-root the union holds that the target did not, must have bytes in the
-source or bytes the target holds sound as far as it knows — nothing
-is rehashed — else `IncompleteImport` names each and nothing is
-written; every union-held object the target lacks or knows damaged,
-whose bytes the source has, is staged through the target's
-preparation, verified as it streams — the source's bytes awaited
-under the lock, but outside any transaction — even when no event is
-new; a union-held root outside those requirements that the source
-lacks stays as it is, absent or damaged. Then `Held.ingest(events,
-stage)` — the `stage` callback is new, and `Stores.ingestion` with
-it, the ingest counterpart of `transaction` — publishes the staged
-objects and repairs with every new event and its position in one
-transaction, dropping `local_cache` when anything landed. Every
-target object the import reuses that the source could replace or the
-union requires is declared `reuse`d to the preparation, so the
-transaction checks it once more: a read outside the lock may have
-found it damaged while the source streamed, and the publication then
-refuses, the staging dropped, and the import plans again with that
-damage known — the repair among the staged when the source has the
-bytes, `IncompleteImport` when the root is required and it does not
-— rather than accept an event over bytes known damaged. The target's
-identity, wrapper, options and trace stay. The same snapshot again
-adds nothing and, with nothing to repair and no conflict to record,
-writes nothing. `test/sqlite/import-cases.ts` runs on
-`node:sqlite` and in a Chromium Worker: a restore's runtime checked
-row by row and run on; its refusals before and after the destination
-is made; an import's union, what it reports and keeps, the repeat
-that writes nothing, and the vault in memory as a target; a fork from
-a cloned runtime file, and the import after the identity reset; the
-roots the union requires bytes for, crossed in both directions by a
-fold with a contestable release, the root held before and after that
-needs none, and the root a new event names but the fold released
-beside the target's own reference to it, absent or damaged; what an
-import fills and repairs, damage forgotten by a reopen and found
-again, and the released root it does not revive; a reused object
-found damaged while the source streams, repaired by the import
-planned again or refusing it with nothing written; the source
-validated before the lock, another vault's snapshot and an inspector
-refused; and an import interrupted at every statement of its
-transaction, or at its `COMMIT`, leaving the whole old union or the
-whole new. `test/sqlite/import.test.ts` adds a restore into a
-destination of either journal.
+`Snapshot.read(bytes, { heldRoots })` validates the whole CAR before
+anything is handed out: a CAR that does not decode is
+`InvalidSnapshot`; a header that is not this format's — a member beside
+`estoc`, a member of it missing or unknown, another format or vault
+version, an anchor that is no DID, a seed outside the keystore's
+profile, a range that is no range or does not start at 0, neither part
+— is `NotAVault`; then a block that does not hash to its CID, at any of
+its occurrences, a root named twice, not raw, without a block or whose
+block is not an envelope's canonical bytes, a block that is not raw, a
+held root without a block and a block neither an event nor held are
+`InvalidSnapshot`, every one found named. Whether the events' known
+payloads are valid is the fold's to decide, in the layer that knows
+them: what `heldRoots` throws is what the export or the read fails
+with. The `Snapshot` is the only thing a restore or an import takes:
+its `seed` and `content`, `undefined` for a part it lacks, its counts,
+and `vault`, a read-only `Vault` that refuses `commit` and `changes`.
+It owns its bytes: a view spanning its whole buffer has the buffer
+transferred (`ArrayBuffer.prototype.transferToFixedLength`), the
+caller's view detached, and any other input — part of a larger buffer,
+a shared buffer, one that cannot be detached — is copied once; every
+block is a view of that buffer, and what the snapshot hands out — a
+`read`, a stream's pieces — is a copy.
 
-The snapshot as a DASL CAR (`src/snapshot.ts`), in two parts a
-snapshot carries one or both of. The seed part is the wrapper; alone,
-it brings only the events of the types its exporter selects and the
-objects they hold on their own. The content part is every event and
-every object they hold, with its range: `{ replica, generation,
-after, through }`, the positions the exporting replica accepted them
-at, what `changes` from a token at `after` gives. A whole export
-starts at 0 and ends at `EventTally.lastSeq`, read in the lock that
-fixes the cut; the range is a label of the exporter's, which no
-importer takes for a position or a token of its own, and a range that
-does not start at 0 is refused for now. The header is `{ version: 1,
-roots, estoc }`, `estoc` being `{ snapshot: 1, vault_version: 5,
-anchor, seed?, content? }`; the roots are the events, each the CID of
-its envelope's canonical bytes; every other block is an object the
-events hold, written once whatever holds it, a block that is an event
-too included. `exportSnapshot(runtime, { parts, types, heldRoots,
-maxBytes })` takes `parts: "seed"` with `types`, `"content"` or
-`"both"`, and does everything under the writer lock: with content,
-the tally weighed against `maxBytes` before an event is read; then
-the events' bytes before the fold runs; then the CAR's whole length — `carLength`
-of the header and the block sizes — before an object is read; each
-`SnapshotTooLarge` past it; history damage or a held root absent or
-known damaged is `IncompleteSnapshot`. Then one buffer of that
-length is filled through `CarWriter`, the events in canonical order
-and the objects in CID order, each streamed through the vault's own
-read, which rehashes it, and not checked again. `Snapshot.read(bytes,
-{ heldRoots })` validates the whole CAR before anything is handed
-out: a CAR that does not decode is `InvalidSnapshot`; a header that is
-not this format's — a member beside `estoc`, a member of it missing or
-unknown, another format or vault version, an anchor that is no DID, a
-seed outside the keystore's profile, a range that is no range or does
-not start at 0, neither part — is `NotAVault`; then a block that does
-not hash to its CID, at any of its occurrences, a root named twice,
-not raw, without a block or whose block is not an envelope's
-canonical bytes, a block that is not raw, a held root without a block
-and a block neither an event nor held are `InvalidSnapshot`, every
-one found named. The `Snapshot` is the only thing a restore or an
-import takes from a CAR: its `seed` and `content`, `undefined` for a
-part it lacks, its counts, and `vault`, a read-only `Vault` that
-refuses `commit` and `changes`. It owns its bytes: a view spanning
-its whole buffer has the buffer transferred
-(`ArrayBuffer.prototype.transferToFixedLength`), the caller's view
-detached, and any other input — part of a larger buffer, a shared
-buffer, one that cannot be detached — is copied once; every block is
-a view of that buffer, and what the snapshot hands out — a `read`, a
-stream's pieces — is a copy. `restoreSnapshot(snapshot, open, {
-anchor })` needs the seed part and `importSnapshot(target, snapshot,
-{ retainedRoots })` the content part, each refusing a snapshot
-without it as `MissingPart` before anything is written; past that,
-they lay and merge as `restoreVault` and `importVault` do once a
-portable snapshot is validated, the same code, and the import hands
-back the range beside what it added. Restoring both parts holds what
-restoring the seed and importing the content holds, and what
-restoring a portable snapshot of the same vault holds.
+`restoreSnapshot(snapshot, create, { anchor })` builds a new runtime
+from a snapshot with the seed part — `MissingPart` before the
+credential is asked otherwise. The credential's anchor — given
+outright, or as the function that unlocks the snapshot's wrapper and
+derives it — is compared with the snapshot's own, nothing made when it
+differs; then `create()`, a function of the platform's, `() =>
+openNodeSqlite(path, { mode: "create" })` or `() => pool.open(name,
+"create")`, makes the destination, laid in one transaction as a
+runtime with `ready = 0` — the schema, the metadata, the wrapper
+adopted, a fresh replica ID and store generation, every event under a
+fresh position in canonical order — and filled object by object, a
+batch of 8 MiB of chunks to a transaction, from the bytes the read
+already checked; checked against what the snapshot counted and set
+ready in one transaction; and handed back open, `{ runtime, events,
+eventBytes, objects, objectBytes }`, for the host to build a
+`SqliteVault` over and reconstruct what the events say is unfinished
+before it runs. A failure once the destination is made closes it and
+leaves it unready, opening as nothing, for the caller to remove; no
+seed is minted. Restoring both parts holds what restoring the seed and
+importing the content holds.
+
+`importSnapshot(target, snapshot, { retainedRoots })` merges the
+content part of a snapshot of the same vault into any open runtime —
+the SQLite vault, or the vault in memory, since it works through
+`VaultRuntime` and `Held` — and returns `{ added, duplicates, objects,
+repaired, range }`. Its fold is a `RetainedRoots`, the retention edge
+by edge — each event, each root of its own it still retains — rather
+than the `HeldRoots` an export takes, because the roots an import
+requires bytes for are those the *new* events retain in the union, and
+a root one event released may be held by another under the same CID:
+only the edge tells which event holds it; `heldRootsOf(retainedRoots)`
+is the same fold as a `HeldRoots`, for the export, the read and the
+collection pass. Before the lock: an inspector is refused with
+`ReadOnlyVault`, a snapshot without the content part with
+`MissingPart` and another vault's with `AnchorMismatch`. Under the
+lock: a damaged target history is `DamagedHistory`; each source event
+is classified against what the target holds, by CID — a duplicate or
+new — and a new event under the target's own author is `ForkedAuthor`,
+the whole import refused with nothing written, the recovery being an
+identity reset, after which the same snapshot imports again; the fold
+runs on the target as it is and on the prospective union, held as a
+vault in memory that refuses a commit; every root a new event retains
+in the union, and every root the union holds that the target did not,
+must have bytes in the snapshot or bytes the target holds sound as far
+as it knows — nothing is rehashed — else `IncompleteImport` names each
+and nothing is written; every union-held object the target lacks or
+knows damaged, whose bytes the snapshot has, is staged through the
+target's preparation, verified as it streams — the snapshot's bytes
+awaited under the lock, but outside any transaction — even when no
+event is new; a union-held root outside those requirements that the
+snapshot lacks stays as it is, absent or damaged. Then `Held.ingest(
+events, stage)` — with `Stores.ingestion`, the ingest counterpart of
+`transaction` — publishes the staged objects and repairs with every new
+event and its position in one transaction, dropping `local_cache` when
+anything landed. Every target object the import reuses that the
+snapshot could replace or the union requires is declared `reuse`d to
+the preparation, so the transaction checks it once more: a read
+outside the lock may have found it damaged while the snapshot
+streamed, and the publication then refuses, the staging dropped, and
+the import plans again with that damage known — the repair among the
+staged when the snapshot has the bytes, `IncompleteImport` when the
+root is required and it does not — rather than accept an event over
+bytes known damaged. The target's identity, wrapper, options and trace
+stay. The same snapshot again adds nothing and, with nothing to repair
+and no conflict to record, writes nothing.
+
 `test/snapshot.test.ts` runs the three exports over vaults in memory,
 their headers, roots and block order, every header and block a read
-refuses, and an import into a vault in memory;
+refuses, and an import into a vault in memory.
 `test/sqlite/snapshot-cases.ts` runs on `node:sqlite` and in a
 Chromium Worker: the range read in the export's lock, an inspector's
 export, the three restores and the import agreeing, the restored
 replica's own positions and the import's placing of what it adds, a
 block both an event and an object, a part missing, a restore failing
 at each statement, an export over damage, the bound met before an
-object is read, a portable file refused, and the snapshot owning its
-bytes. The portable snapshot stays beside it for now.
+object is read, a SQLite file refused as no CAR, and the snapshot
+owning its bytes. `test/sqlite/export-cases.ts`, on both too: what
+the runtime keeps for itself in no part, a commit, a collection pass
+and a rewrap waiting on the export's lock and landing after without
+changing what it wrote, a seed part restored and exported again byte
+for byte, and the 64 MiB object below. `test/sqlite/import-cases.ts`,
+on both: a restore's runtime checked row by row and run on; its
+refusals before and after the destination is made; an import's union,
+what it reports and keeps, the repeat that writes nothing, and the
+vault in memory as a target; a fork from a copy of the runtime, and
+the import after the identity reset; the roots the union requires
+bytes for, crossed in both directions by a fold with a contestable
+release, the root held before and after that needs none, and the root
+a new event names but the fold released beside the target's own
+reference to it, absent or damaged; what an import fills and repairs,
+damage forgotten by a reopen and found again, and the released root it
+does not revive; a reused object found damaged while the snapshot
+streams, repaired by the import planned again or refusing it with
+nothing written; another vault's snapshot, a snapshot without content
+and an inspector refused before the lock; and an import interrupted at
+every statement of its transaction, or at its `COMMIT`, leaving the
+whole old union or the whole new. `test/sqlite/import.test.ts` adds a
+restore into a destination of either journal.
 
 The two platforms, side by side. The three conformance suites —
 `eventStoreSuite`, `objectStoreSuite`, `vaultSuite` — run over the
@@ -637,16 +535,16 @@ whose `describe` and `it` collect the tests for the Worker to run one
 at a time and whose `expect` is vitest's own matchers over chai, so a
 suite asserts in the Worker exactly what it asserts under vitest, and
 `test/sqlite/browser-driver.test.ts` reports each collected test
-as a case of its own. One portable snapshot crosses between them
+as a case of its own. One snapshot crosses between them
 (`test/sqlite/exchange.ts`): a sample vault — text with control
 characters and numbers of every JSON kind in the events' data, a
 type outside ASCII, a second author's event, the empty object, one
 across a chunk boundary and one of bytes that are no text — is
 exported on Node, inspected there, sent to the Worker, and inspected
-there to the same values: the metadata, the wrapper, what validation
-counted, every event as scanned and every object's key, codec, size
-and bytes as read; the Worker restores it, commits one more event
-over one more object and exports again, and that file, sent back,
+there to the same values: the metadata, the seed, the range, what the
+read counted, every event as scanned and every object's key, codec,
+size and bytes as read; the Worker restores it, commits one more event
+over one more object and exports again, and that CAR, sent back,
 inspects on Node as it did in the Worker and imports into the sample
 vault as exactly the one event and the one object. An object of 64
 MiB streams through a commit, a read, an export and a restore on
@@ -667,24 +565,25 @@ measure is taken. The resident set is not measured, since glibc
 keeps what the transient mebibyte buffers were freed into. While
 the export and the restore copy, their source is watched from the
 test's side and what is held sampled every mebibyte read, the most of
-those the copy's sample: the batch an export gathers before a
-transaction, seen while it is held. The bounds are on growth, one
-table for each measure (`test/sqlite/export-cases.ts`). For
-JavaScript: none across the second half of the commit or of the
-read, a batch's worth at most while a copy runs, none from the
-commit to the restore, and less than half the object in all. For
-SQLite: none across the second half of the commit, whose staging
-spills to the temporary file, or of the read; a connection's page
-cache — 16 MiB, the wasm build's default — while the export copies
-into its destination, two while the restore reads its snapshot and
-writes its destination, both freed when they close; and in all the
-vault's own cache the commit fills, its staging cache, and little
+those the copy's sample: the CAR an export fills as it reads, and the
+batch a restore gathers before a transaction, seen while they are
+held. The bounds are on growth, one table for each measure
+(`test/sqlite/export-cases.ts`). For JavaScript: none across the
+second half of the commit or of the read; the CAR and a chunk at most
+while the export copies, the snapshot and a batch of chunks while the
+restore does; none from the commit to the end of the restore, once the
+snapshot is let go; and less than half the object in all. For SQLite:
+none across the second half of the commit, whose staging spills to the
+temporary file, or of the read, nor while the export reads the object;
+a connection's page cache — 16 MiB, the wasm build's default — while
+the restore writes its destination, freed when it closes; and in all
+the vault's own cache the commit fills, its staging cache, and little
 else. Two cases turn the measures on themselves: with a copy of
 every chunk kept as it passes through, every JavaScript bound breaks
 on both platforms and no SQLite bound, and once the copies are let
 go what is held falls back; with every connection's cache enlarged
-to the object, the export's, the restore's and the vault's own
-SQLite bounds break and no JavaScript bound, and closing frees it.
+to the object, the restore's and the vault's own SQLite bounds break
+and no JavaScript bound, and closing frees it.
 The staging case does the same for the temporary cache: told to
 cache the staging, SQLite is seen to hold it.
 
@@ -693,13 +592,13 @@ driver case that checks it. On `node:sqlite`, foreign keys are
 enforced by the binding's default, a created runtime runs in WAL
 with `synchronous=NORMAL` — durable against a crash of the process,
 consistent after a loss of power, the last transactions possibly
-lost — and a portable snapshot is built in a rollback journal
-(`journal_mode=DELETE`) with `synchronous=FULL`, so the file stands
+lost — and a file created with `journal: "delete"` in a rollback
+journal (`journal_mode=DELETE`) with `synchronous=FULL`, so it stands
 alone; a restore's destination is a created runtime and runs as one.
 In the Worker, foreign keys are enabled on every connection, and the
 pool's databases run in a rollback journal with `synchronous=FULL`,
 the wasm build's defaults over the access-handle pool, whose sync is
-the handle's flush; a snapshot built there is in the same journal.
+the handle's flush.
 On both, the temporary database is on a file (`temp_store=FILE`),
 and `journal_mode=OFF` or `MEMORY` and `synchronous=OFF` are never
 set.

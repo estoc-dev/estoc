@@ -1,6 +1,6 @@
 import type { Channel, ContactId, Did, DidId, EventReference, ExecutionId, MediationId, MessageId, ReplicaId } from "@estoc/vault";
 import type { Called, Cancelled, Content, Invitation, Selected, TraceLevel } from "@estoc/agent-core";
-import type { Hold, SnapshotSelection } from "@estoc/daemon-api/contract";
+import type { Hold, SnapshotPart } from "@estoc/daemon-api/contract";
 
 import type { PublishedSnapshot, PutSnapshot, SnapshotLink } from "./snapshot-links.js";
 
@@ -67,7 +67,12 @@ export interface Daemon {
    * that finds one there is refused and removes nothing.
    */
   createIdentity(name: string, passphrase: string): Promise<void>;
-  /** A portable snapshot's file restored as this daemon's vault, under the passphrase that opens the snapshot's own wrapped seed. */
+  /**
+   * A snapshot's bytes restored as this daemon's vault, under the
+   * passphrase that opens the snapshot's own wrapped seed: one with no
+   * seed is refused. The bytes are the daemon's from then on: a view of
+   * a whole buffer is left detached.
+   */
   restoreIdentity(snapshot: Uint8Array, passphrase: string): Promise<void>;
   /** The person was shown what a restore cannot bring back: sends and manual dispatch are open from here on. */
   explainedRestore(): Promise<void>;
@@ -76,20 +81,27 @@ export interface Daemon {
   lock(): Promise<void>;
   /** The vault this daemon holds, removed for good: the one named, and refused when another has taken its place. */
   forgetIdentity(hold: Hold): Promise<void>;
-  /** A portable snapshot of the vault, refused whole when its events and objects, or the file they make, come to more than `maxBytes`. */
+  /** The vault's snapshot with both parts, the seed and the content, as a CAR file, refused whole when it comes to more than `maxBytes`. */
   exportBackup(maxBytes?: number): Promise<{ name: string; bytes: Uint8Array }>;
-  /** A portable snapshot's file merged into the vault open when it is asked; refused, with nothing written, when it is another vault's or that vault is let go of before its turn. */
+  /**
+   * A snapshot's content merged into the vault open when it is asked;
+   * refused, with nothing written, when it has no content, is another
+   * vault's or that vault is let go of before its turn. The bytes are
+   * taken over as `restoreIdentity` takes them.
+   */
   mergeBackup(snapshot: Uint8Array): Promise<Merged>;
   /**
-   * The vault's snapshot of `selection` sealed under a key of its own
+   * The vault's snapshot of `part` sealed under a key of its own
    * and put at the selected mediator as this replica's blob, and the
-   * link that restores or imports it; refused whole when the snapshot
-   * comes to more than a blob there holds once sealed. The export takes
+   * link that restores (the seed) or imports (the content) it; refused
+   * whole when the snapshot comes to more than a blob there holds once
+   * sealed, or a seed to more than a link to add a device holds, which
+   * the daemon was made with. The export takes
    * its turn with the calls on the daemon's files. What is put is kept
    * in this runtime's local state before the put, so that a snapshot
    * whose upload failed is still listed, and revocable.
    */
-  publishSnapshotLink(selection: SnapshotSelection): Promise<PublishedSnapshot>;
+  publishSnapshotLink(part: SnapshotPart): Promise<PublishedSnapshot>;
   /**
    * A snapshot put from here, pending or published, deleted at the
    * mediator and forgotten once a publish of it under way has settled:
@@ -101,19 +113,21 @@ export interface Daemon {
   /** The snapshots put from here that the mediator keeps or may keep, by when they were put. */
   snapshotLinks(): Promise<PutSnapshot[]>;
   /**
-   * A vault restored from a link as `restoreIdentity` restores one
-   * from a snapshot's bytes: the sealed snapshot read first, at most
-   * `maxBytes` of plaintext and the sealing beside it, checked against
-   * its name and opened. Refused before anything is read where no vault
-   * could be made, and with nothing written when the read or the
-   * opening fails.
+   * A vault restored from a seed link as `restoreIdentity` restores
+   * one from a snapshot's bytes: the sealed snapshot read first, no
+   * further than a seed may come to, which the daemon was made with,
+   * then checked against its name and opened. Refused before anything
+   * is read where no vault could be made, and with nothing written when
+   * the read or the opening fails, or the snapshot is content.
    */
-  restoreFromLink(link: SnapshotLink, passphrase: string, maxBytes: number): Promise<void>;
+  restoreFromLink(link: SnapshotLink, passphrase: string): Promise<void>;
   /**
-   * A link's snapshot merged into the open vault as `mergeBackup`
-   * merges one, read as `restoreFromLink` reads it. Refused before
+   * A content link's snapshot merged into the open vault as
+   * `mergeBackup` merges one, read and opened as `restoreFromLink`
+   * reads it but at most `maxBytes` of plaintext. Refused before
    * anything is read where no vault is open, and with nothing written
-   * where the vault is let go of while it is read.
+   * where the snapshot is a seed or the vault is let go of while it is
+   * read.
    */
   importFromLink(link: SnapshotLink, maxBytes: number): Promise<Merged>;
   /** The replicas of the preferred arrangement asked of its mediator again, and kept for the records to show. */

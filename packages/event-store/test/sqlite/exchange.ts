@@ -1,17 +1,16 @@
 /**
- * A portable snapshot crossing platforms, in the parts either side
- * runs: a sample vault filled with what the format carries — text
- * with control characters and numbers of every JSON kind in the
- * events' data, a type outside ASCII, an event of a second author, the
- * empty object, one across a chunk boundary and one of bytes that are
- * no text — to be exported; the inspection of a snapshot, every
- * logical value in it as the vault reads them, which the two platforms
- * must agree on for one file; and the continuation, a restore of the
- * snapshot with one more commit, exported again to travel back the way
- * it came.
+ * A CAR snapshot crossing platforms, in the parts either side runs: a
+ * sample vault filled with what the format carries — text with control
+ * characters and numbers of every JSON kind in the events' data, a
+ * type outside ASCII, an event of a second author, the empty object,
+ * one across a chunk boundary and one of bytes that are no text — to
+ * be exported; the inspection of a snapshot, every logical value in it
+ * as it reads, which the two platforms must agree on for one CAR; and
+ * the continuation, a restore of the snapshot into SQLite with one
+ * more commit, exported again to travel back the way it came.
  */
 
-import { MemoryVault, SqliteVault, exportVault, restoreVault, validatePortable, type Cid, type Draft, type Event, type Exported, type OpenDestination, type PortableDatabase, type Validated, type VaultMetadata, type VaultRuntime, type WrappedSeed } from "../../src/index.js";
+import { MemoryVault, Snapshot, SqliteVault, exportSnapshot, restoreSnapshot, type Cid, type CreateDestination, type Draft, type Event, type SnapshotRange, type VaultMetadata, type VaultRuntime, type WrappedSeed } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
 import { authorN } from "../suite/helpers.js";
 import { HELLO, HELLO_CID, MIB, all, bytesOf, cidOf, drain, rootsOf } from "./vault-cases.js";
@@ -65,38 +64,41 @@ export interface InspectedObject {
   bytes: number[];
 }
 
-/** Every logical value of a snapshot, as the vault over it reads them: what one file must inspect as on either platform. */
+/** Every logical value of a snapshot, as it reads: what one CAR must inspect as on either platform. */
 export interface Inspection {
   metadata: VaultMetadata;
-  wrapped: WrappedSeed;
-  validated: Validated;
+  seed: WrappedSeed | undefined;
+  content: SnapshotRange | undefined;
+  counts: { events: number; eventBytes: number; objects: number; objectBytes: number };
   events: Event[];
   objects: InspectedObject[];
 }
 
-export async function inspectPortable(portable: PortableDatabase): Promise<Inspection> {
-  const validated = await validatePortable(portable, { heldRoots: rootsOf });
-  const events = await all(portable.vault.events.scan());
+/** `bytes` read as a snapshot and inspected; the bytes are copied first, so the caller keeps them. */
+export async function inspect(bytes: Uint8Array): Promise<Inspection> {
+  const snapshot = await Snapshot.read(new Uint8Array(bytes), { heldRoots: rootsOf });
+  const events = await all(snapshot.vault.events.scan());
   const objects: InspectedObject[] = [];
-  for await (const cid of portable.vault.objects.list()) {
-    const info = await portable.vault.objects.stat(cid);
-    const stream = await portable.vault.objects.open(cid);
+  for await (const cid of snapshot.vault.objects.list()) {
+    const info = await snapshot.vault.objects.stat(cid);
+    const stream = await snapshot.vault.objects.open(cid);
     if (info === null || stream === null) throw new Error(`${cid} is listed but not there`);
     objects.push({ cid, codec: info.codec, size: info.size, bytes: Array.from(await drain(stream)) });
   }
-  objects.sort((a, b) => (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
-  return { metadata: portable.metadata, wrapped: portable.wrapped, validated, events, objects };
+  const { metadata, seed, content } = snapshot;
+  const counts = { events: snapshot.events, eventBytes: snapshot.eventBytes, objects: snapshot.objects, objectBytes: snapshot.objectBytes };
+  return { metadata, seed, content, counts, events, objects };
 }
 
 const reply: Draft = { type: "test.reply", roots: [REPLY_CID], data: { from: "the other platform" } };
 
-/** Restores `snapshot` into the runtime `restoreTo` creates, commits one more event over one more object there, and exports that runtime to `exportTo`. */
-export async function continued(snapshot: PortableDatabase, restoreTo: OpenDestination, exportTo: OpenDestination, now: () => number): Promise<Exported> {
-  const { runtime } = await restoreVault(snapshot, restoreTo, { heldRoots: rootsOf, anchor: ANCHOR });
+/** Restores the snapshot `bytes` into the runtime `restoreTo` creates, commits one more event over one more object there, and exports both parts of that runtime. */
+export async function continued(bytes: Uint8Array, restoreTo: CreateDestination, now: () => number): Promise<Uint8Array> {
+  const { runtime } = await restoreSnapshot(await Snapshot.read(new Uint8Array(bytes), { heldRoots: rootsOf }), restoreTo, { anchor: ANCHOR });
   const vault = new SqliteVault(runtime, { now });
   try {
     await vault.vault.commit([{ cid: REPLY_CID, source: REPLY }], [reply]);
-    return await exportVault(vault, exportTo, { heldRoots: rootsOf });
+    return await exportSnapshot(vault, { parts: "both", heldRoots: rootsOf });
   } finally {
     await vault.close();
   }

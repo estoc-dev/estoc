@@ -7,22 +7,14 @@
  * counterexamples run there alone.
  */
 
-import { VAULT_VERSION, createRuntime, createTables, openInspector, openPortable, openRuntime, type OpenMode, type SqliteDriver } from "../../src/index.js";
+import { VAULT_VERSION, createRuntime, openInspector, openRuntime, type OpenMode, type SqliteDriver } from "../../src/index.js";
 import { ANCHOR, META, WRAPPED } from "../fixtures.js";
-import { type Case, assert, assertBytes, assertEqual, assertRejects, assertThrows } from "./driver-cases.js";
+import { type Case, assert, assertEqual, assertRejects, assertThrows } from "./driver-cases.js";
 
 export interface OpenHarness {
   /** A target no database exists at yet. */
   fresh(): string;
   open(target: string, mode: OpenMode): Promise<SqliteDriver>;
-  /** Puts `bytes`, a complete database file, at `target`. */
-  importFile(target: string, bytes: Uint8Array): Promise<void>;
-  /** The bytes of the closed database file at `target`. */
-  fileBytes(target: string): Promise<Uint8Array>;
-  /** Runs `sql` on the database at `target` with `writable_schema` on, over a connection that allows it: Node's SQLite refuses it by default. */
-  writeSchema(target: string, sql: string): Promise<void>;
-  /** Files declared UTF-16, which only Node's SQLite can make: a snapshot written in UTF-16, and a UTF-8 one whose header alone claims it. */
-  utf16: { snapshot: Uint8Array; forged: Uint8Array };
 }
 
 export interface OpenCase extends Case {
@@ -30,22 +22,24 @@ export interface OpenCase extends Case {
   run(harness: OpenHarness): Promise<string | void>;
 }
 
-/** The rows and tables of a ready portable snapshot, in the empty database `db`. */
-export function fillPortable(db: SqliteDriver): void {
-  db.exec("PRAGMA application_id = 1163088963; PRAGMA user_version = 2");
-  createTables(db, "portable");
-  db.prepare("INSERT INTO vault_meta VALUES (1, 'estoc-sqlite', ?, 'portable', 1, ?)").run(VAULT_VERSION, ANCHOR);
-  db.prepare("INSERT INTO keystore VALUES (1, 3, ?)").run(new TextEncoder().encode(WRAPPED.seedJwe));
-}
-
-async function snapshot(h: OpenHarness, extra?: (db: SqliteDriver) => void): Promise<string> {
-  const target = h.fresh();
-  const db = await h.open(target, "create");
+/** The metadata, wrapper and control rows of the database at `target`, read as they are stored. */
+async function control(h: OpenHarness, target: string): Promise<unknown[]> {
+  const db = await h.open(target, "readwrite");
   try {
-    fillPortable(db);
-    extra?.(db);
+    return ["vault_meta", "keystore", "store_state"].map((table) => db.prepare(`SELECT * FROM ${table}`).all());
   } finally {
     db.close();
+  }
+}
+
+/** A runtime created at a fresh target, `sql` run on it, closed. */
+async function altered(h: OpenHarness, sql: string): Promise<string> {
+  const target = h.fresh();
+  const made = createRuntime(await h.open(target, "create"), { metadata: META, wrapped: WRAPPED });
+  try {
+    made.driver.exec(sql);
+  } finally {
+    made.close();
   }
   return target;
 }
@@ -77,135 +71,40 @@ export const openCases: OpenCase[] = [
     },
   },
   {
-    name: "a snapshot made here opens as portable",
+    name: "a runtime of the earlier vault version is refused before the seed is asked for, and is left as it was",
     run: async (h) => {
-      const target = await snapshot(h);
-      const opened = openPortable(await h.open(target, "readonly"));
-      try {
-        assertEqual(opened.metadata, META, "metadata");
-        assertEqual(opened.wrapped, WRAPPED, "the wrapper");
-      } finally {
-        opened.close();
-      }
-    },
-  },
-  {
-    name: "a runtime or a snapshot of the earlier vault version is refused before the seed is asked for, and its file is left as it was",
-    run: async (h) => {
-      const earlier = "PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4";
-      const runtime = h.fresh();
-      createRuntime(await h.open(runtime, "create"), { metadata: META, wrapped: WRAPPED }).close();
-      const db = await h.open(runtime, "readwrite");
-      try {
-        db.exec(earlier);
-      } finally {
-        db.close();
-      }
-      const portable = await snapshot(h, (db) => db.exec(earlier));
-      const seedAsked = () => {
-        throw new Error("the seed was asked for");
-      };
-      for (const [what, target, attempt] of [
-        ["runtime", runtime, async () => openRuntime(await h.open(runtime, "readwrite"), { anchor: seedAsked })],
-        ["snapshot", portable, async () => openPortable(await h.open(portable, "readonly"))],
-      ] as const) {
-        const before = await h.fileBytes(target);
-        const refused = await assertRejects(attempt, "NotAVault", what);
-        assert(refused.message.includes(`vault version 4 is not ${VAULT_VERSION}`), `${what}: refused with ${refused.message}`);
-        assertBytes(await h.fileBytes(target), before, `${what}: the file after the refusal`);
-      }
-    },
-  },
-  {
-    name: "a file declared UTF-16 is refused by every open before its schema is read",
-    run: async (h) => {
-      const notes: string[] = [];
-      for (const [what, bytes] of [
-        ["written in UTF-16", h.utf16.snapshot],
-        ["claiming UTF-16 in its header", h.utf16.forged],
-      ] as const) {
-        const target = h.fresh();
-        await h.importFile(target, bytes);
-        const refusals: string[] = [];
-        for (const [how, attempt] of [
-          ["portable", async () => openPortable(await h.open(target, "readonly"))],
-          ["runtime", async () => openRuntime(await h.open(target, "readwrite"), { anchor: ANCHOR })],
-          ["inspector", async () => openInspector(await h.open(target, "readwrite"))],
-        ] as const) {
-          try {
-            (await attempt()).close();
-          } catch (err) {
-            assert(err instanceof Error, `${what}, ${how}: threw ${String(err)}`);
-            if (err.name === "SqliteError") refusals.push("the driver could not read it");
-            else if (err.name === "NotAVault" && /encoded UTF-16le/.test(err.message)) refusals.push("the open refused it");
-            else throw new Error(`${what}, ${how}: refused with ${err.name}: ${err.message}`);
-            continue;
-          }
-          throw new Error(`${what}, ${how}: opened`);
-        }
-        notes.push(`${what}: ${refusals.join(", ")}`);
-      }
-      return notes.join("; ");
-    },
-  },
-  {
-    name: "a schema object bearing the name of SQLite's page table, or one SQLite would resolve to it, is refused before SQLite's page table is queried",
-    run: async (h) => {
-      const rename = (as: "TEXT" | "BLOB", suffix: string): string =>
-        `UPDATE sqlite_master SET name = CAST(CAST(name AS BLOB) || x'${suffix}' AS ${as}), tbl_name = CAST(CAST(tbl_name AS BLOB) || x'${suffix}' AS ${as}) WHERE name = 'sqlite_dbpage'`;
-      const namesake = (name = "sqlite_dbpage"): string => `the schema has an object named ${name}: a name reserved for SQLite's own`;
-      const nul = "column sqlite_master.name: the stored text has a NUL and cannot cross a SQLite text boundary intact";
-      const table = "CREATE TABLE sqlite_dbpage (pgno INTEGER, data BLOB); INSERT INTO sqlite_dbpage VALUES (1, zeroblob(56) || x'00000001')";
-      const view = "CREATE VIEW sqlite_dbpage AS SELECT 1 AS pgno, abs(-9223372036854775808) AS data";
-      for (const [what, ddl, refusal] of [
-        ["a table", table, namesake()],
-        ["a table in capitals", "CREATE TABLE SQLITE_DBPAGE (pgno INTEGER, data BLOB)", namesake("SQLITE_DBPAGE")],
-        ["a view whose SQL cannot be run", view, namesake()],
-        ["a table whose name is stored as a blob", `${table}; ${rename("BLOB", "")}`, namesake()],
-        ["a table whose stored name runs past a NUL", `${table}; ${rename("TEXT", "0078")}`, nul],
-        ["a table whose stored name ends in a NUL", `${table}; ${rename("TEXT", "00")}`, nul],
-        ["a view whose stored name runs past a NUL", `${view}; ${rename("TEXT", "0078")}`, nul],
-        ["a view whose blob name runs past a NUL", `${view}; ${rename("BLOB", "0078")}`, nul],
-      ] as const) {
-        const target = await snapshot(h);
-        await h.writeSchema(target, ddl);
-        for (const [how, attempt] of [
-          ["portable", async () => openPortable(await h.open(target, "readonly"))],
-          ["runtime", async () => openRuntime(await h.open(target, "readwrite"), { anchor: ANCHOR })],
-          ["inspector", async () => openInspector(await h.open(target, "readwrite"))],
-        ] as const) {
-          try {
-            (await attempt()).close();
-          } catch (err) {
-            assert(err instanceof Error && err.name === "NotAVault", `${what}, ${how}: threw ${String(err)}`);
-            assert(err.message === refusal, `${what}, ${how}: refused with ${err.message}`);
-            continue;
-          }
-          throw new Error(`${what}, ${how}: opened`);
-        }
-      }
+      const target = await altered(h, "PRAGMA ignore_check_constraints = ON; UPDATE vault_meta SET vault_version = 4");
+      const before = await control(h, target);
+      const refused = await assertRejects(
+        async () =>
+          openRuntime(await h.open(target, "readwrite"), {
+            anchor: () => {
+              throw new Error("the seed was asked for");
+            },
+          }),
+        "NotAVault",
+        "runtime"
+      );
+      assert(refused.message.includes(`vault version 4 is not ${VAULT_VERSION}`), `refused with ${refused.message}`);
+      assertEqual(await control(h, target), before, "the metadata and control after the refusal");
     },
   },
   {
     name: "a table named like an object's inherited property is an extra table like any other",
     run: async (h) => {
       for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
-        const target = await snapshot(h, (db) => db.exec(`CREATE TABLE "${name}" (secret BLOB) STRICT`));
-        const driver = await h.open(target, "readonly");
-        const refused = assertThrows(() => openPortable(driver), "NotAVault", name);
-        assert(refused.message === `table ${name} is not in the portable schema`, `${name}: ${refused.message}`);
+        const target = await altered(h, `CREATE TABLE "${name}" (secret BLOB) STRICT`);
+        const driver = await h.open(target, "readwrite");
+        const refused = assertThrows(() => openInspector(driver), "NotAVault", name);
+        assert(refused.message === `table ${name} is not in the runtime schema`, `${name}: ${refused.message}`);
       }
     },
   },
   {
-    name: "a table made WITHOUT ROWID is not the schema's, in either kind: refused before any write, the target released",
+    name: "a table made WITHOUT ROWID is not the schema's: refused before any write, the target released",
     run: async (h) => {
-      const ddl = "DROP TABLE events; CREATE TABLE events (cid TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, author TEXT NOT NULL, type TEXT NOT NULL, canonical BLOB NOT NULL) STRICT, WITHOUT ROWID";
       const expected = "table events is WITHOUT ROWID: a vault's tables keep their rowid";
-      const target = h.fresh();
-      const made = createRuntime(await h.open(target, "create"), { metadata: META, wrapped: WRAPPED });
-      made.driver.exec(ddl);
-      made.close();
+      const target = await altered(h, "DROP TABLE events; CREATE TABLE events (cid TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, author TEXT NOT NULL, type TEXT NOT NULL, canonical BLOB NOT NULL) STRICT, WITHOUT ROWID");
       const runtime = await assertRejects(async () => openRuntime(await h.open(target, "readwrite"), { anchor: ANCHOR }), "NotAVault", "runtime");
       assert(runtime.message === expected, runtime.message);
       const inspectorDriver = await h.open(target, "readwrite");
@@ -213,20 +112,14 @@ export const openCases: OpenCase[] = [
       assert(inspector.message === expected, inspector.message);
       const released = await h.open(target, "readwrite");
       released.close();
-      const portable = await snapshot(h, (db) => db.exec(ddl));
-      const portableDriver = await h.open(portable, "readonly");
-      const refused = assertThrows(() => openPortable(portableDriver), "NotAVault", "portable");
-      assert(refused.message === expected, refused.message);
     },
   },
   {
-    name: "a column that compares other than byte for byte is not the schema's, in either kind",
+    name: "a column that compares other than byte for byte is not the schema's",
     run: async (h) => {
-      const nocase = await snapshot(h, (db) =>
-        db.exec("DROP TABLE events; CREATE TABLE events (cid TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, author TEXT NOT NULL, type TEXT COLLATE NOCASE NOT NULL, canonical BLOB NOT NULL) STRICT")
-      );
-      const driver = await h.open(nocase, "readonly");
-      const refused = assertThrows(() => openPortable(driver), "NotAVault", "NOCASE");
+      const target = await altered(h, "DROP TABLE events; CREATE TABLE events (cid TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, author TEXT NOT NULL, type TEXT COLLATE NOCASE NOT NULL, canonical BLOB NOT NULL) STRICT");
+      const driver = await h.open(target, "readwrite");
+      const refused = assertThrows(() => openInspector(driver), "NotAVault", "NOCASE");
       assert(refused.message === "table events: column type does not compare as BINARY", refused.message);
     },
   },

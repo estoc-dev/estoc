@@ -142,19 +142,19 @@ describe("a link made here", () => {
   });
 
   it("is asked of the daemon with what it carries", async () => {
-    const published = { status: "published", hash: link.hash, selection: "enrollment", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z", revocable: true, link };
+    const published = { status: "published", hash: link.hash, part: "seed", placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z", revocable: true, link };
     fake.answers.set("publishSnapshotLink", () => Promise.resolve(published));
-    expect(await publishSnapshotLink("enrollment")).toEqual(published);
-    expect(fake.calls.at(-1)).toEqual({ method: "publishSnapshotLink", input: { selection: "enrollment" } });
+    expect(await publishSnapshotLink("seed")).toEqual(published);
+    expect(fake.calls.at(-1)).toEqual({ method: "publishSnapshotLink", input: { part: "seed" } });
   });
 
   it("points to a backup file when the vault is too large for one", async () => {
-    fake.answers.set("publishSnapshotLink", () => Promise.reject(refused("ResourceLimit", "the snapshot's events and objects come to 120 bytes, over the 100 a blob at the mediator holds once sealed")));
-    await expect(publishSnapshotLink("all")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
+    fake.answers.set("publishSnapshotLink", () => Promise.reject(refused("ResourceLimit", "the snapshot comes to at least 120 bytes, over the 100 a blob at the mediator holds once sealed")));
+    await expect(publishSnapshotLink("content")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
   });
 
   it("is listed newest first", async () => {
-    const made = (hash: string, placedAt: string): SnapshotLinkRecord => ({ status: "pending", hash, selection: "all", placedAt, retainUntil: null }) as SnapshotLinkRecord;
+    const made = (hash: string, placedAt: string): SnapshotLinkRecord => ({ status: "pending", hash, part: "content", placedAt, retainUntil: null }) as SnapshotLinkRecord;
     fake.answers.set("snapshotLinks", () => Promise.resolve({ links: [made("older", "2026-10-01T00:00:00Z"), made("newer", "2026-10-02T00:00:00Z")] }));
     expect((await snapshotLinks()).map((record) => record.hash)).toEqual(["newer", "older"]);
   });
@@ -170,7 +170,7 @@ describe("history sent to the vault's other devices", () => {
   });
 
   it("points to a backup file when the vault is too large for a link", async () => {
-    fake.answers.set("sync", () => Promise.reject(refused("ResourceLimit", "the snapshot's events and objects come to 120 bytes, over the 100 a blob at the mediator holds once sealed")));
+    fake.answers.set("sync", () => Promise.reject(refused("ResourceLimit", "the snapshot comes to at least 120 bytes, over the 100 a blob at the mediator holds once sealed")));
     await expect(sendHistory()).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
   });
 

@@ -4,10 +4,11 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, test } from "vitest";
 
-import { schemas, type ApiError, type Hold, type MethodInput, type MethodName, type PublishedSnapshotLink, type ReplicaRecord, type Snapshot } from "@estoc/daemon-api/contract";
+import { schemas, type ApiError, type Hold, type MethodInput, type MethodName, type PublishedSnapshotLink, type ReplicaRecord, type Snapshot, type SnapshotLinkRecord } from "@estoc/daemon-api/contract";
 import { Refusal, type Session } from "@estoc/daemon-api/wire";
-import type { JsonValue, LocalOptions } from "@estoc/event-store";
-import { PING_TYPE, type Channel, type MediationId, type ReplicaId } from "@estoc/vault";
+import { Snapshot as CarSnapshot, type JsonValue, type LocalOptions } from "@estoc/event-store";
+import { PING_TYPE, vaultHeldRoots, type Channel, type MediationId, type ReplicaId } from "@estoc/vault";
+import { openBlob } from "@estoc/agent-core";
 import { v7 as uuidv7 } from "uuid";
 
 import { newMediator } from "../../agent-core/test/helpers.js";
@@ -15,6 +16,7 @@ import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { createDaemon, limitsOf, methodsOf, type DaemonCore } from "../src/index.js";
 import { nodeHost } from "../src/node/index.js";
 import { Receipts, ReplicaRecords } from "../src/replicas.js";
+import { keyBytes } from "../src/snapshot-links.js";
 
 const PASSPHRASE = "alice-passes-the-salt";
 const LONG = 60_000;
@@ -77,7 +79,7 @@ async function person(mediator: FakeMediator, name: string, wrap?: Wrap): Promis
 /** A second device of `of`'s vault, restored from the link a new device enrolls from, once the mediator holds it. */
 async function newDevice(mediator: FakeMediator, of: Over, wrap?: Wrap): Promise<Over> {
   const before = mediator.replicas.size;
-  const { link } = (await of.call("publishSnapshotLink", { selection: "enrollment" })) as PublishedSnapshotLink;
+  const { link } = (await of.call("publishSnapshotLink", { part: "seed" })) as PublishedSnapshotLink;
   const device = await daemonOver(mediator, wrap);
   await device.call("restoreFromLink", { link, passphrase: PASSPHRASE });
   await until("the new device is a replica at the mediator", () => mediator.replicas.size === before + 1);
@@ -261,6 +263,13 @@ describe("history sent to another replica", () => {
       const to = other(a.daemon).replicaId;
       expect(await a.call("sync", { replicaId: to })).toEqual({ told: [to] });
       expect(other(a.daemon).sent).toEqual({ at: expect.any(String) as string, outcome: "sent" });
+      const { links } = (await a.call("snapshotLinks", {})) as { links: SnapshotLinkRecord[] };
+      expect(links.map((record) => record.part)).toEqual(["seed", "content"]);
+      const put = links.find((record): record is PublishedSnapshotLink => record.status === "published" && record.part === "content")!;
+      const sealed = [...mediator.blobs.values()].find((blob) => blob.hash === put.hash)!.bytes!;
+      const sent = await CarSnapshot.read(await openBlob(sealed, { hash: put.hash, key: keyBytes(put.link.key) }), { heldRoots: vaultHeldRoots(null) });
+      expect(sent.seed).toBeUndefined();
+      expect(sent.content?.replica).toBe(replicasOf(a.daemon).find((replica) => replica.self)!.replicaId);
       await until("the new device imported the history", () => shown(b.daemon).historyReceived?.status === "imported");
       const first = shown(b.daemon).historyReceived!;
       expect(first).toMatchObject({ from: replicasOf(b.daemon).find((replica) => !replica.self)!.replicaId, status: "imported", merged: { renewed: false } });

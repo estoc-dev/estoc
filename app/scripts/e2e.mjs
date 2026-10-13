@@ -402,8 +402,8 @@ try {
   // the download lives with Alice's context; keep a copy that outlives it
   const backupPath = join(await mkdtemp(join(tmpdir(), "estoc-e2e-")), backupName);
   await copyFile(await download.path(), backupPath);
-  if (!backupName.endsWith(".estoc.sqlite")) {
-    fail(`backup is named ${backupName}, expected *.estoc.sqlite`);
+  if (!backupName.endsWith(".estoc.car")) {
+    fail(`backup is named ${backupName}, expected *.estoc.car`);
   }
   await alice.waitForSelector('[data-export]:has-text("last:")', { timeout: 5000 });
   ok(`Alice exported ${backupName}`);
@@ -425,7 +425,7 @@ try {
   const snapshotLink = await alice.getAttribute("[data-snapshot-url]", "title");
   if (snapshotLink === null || !snapshotLink.startsWith(`${new URL(APP_URL).origin}/#snapshot=`)) fail(`the link should open this Estoc with the snapshot in its fragment, not ${snapshotLink}`);
   await alice.click("[data-snapshot-done]");
-  const enrollmentLink = '[data-snapshot-link][data-snapshot-selection="enrollment"]';
+  const enrollmentLink = '[data-snapshot-link][data-snapshot-part="seed"]';
   await alice.waitForSelector(`${enrollmentLink}[data-snapshot-link="published"]`, { timeout: 15000 });
   ok("Alice made a link for a new device, shown as a QR code and listed");
   const restoreAt = async (name) => {

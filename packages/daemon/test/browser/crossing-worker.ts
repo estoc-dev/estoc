@@ -1,43 +1,38 @@
 /**
  * The Chromium half of the crossing, in a dedicated Worker, where the
- * app runs its daemon: the kept vault is imported into the SQLite pool
- * and read there, each event and object hashed again, then restored
- * into a runtime and exported; the didcomm build the app loads opens
- * what Node sealed and seals the same plaintext in turn.
+ * app runs its daemon: the kept vault's snapshot is read there, each
+ * event and object hashed again, then restored into a runtime in the
+ * SQLite pool and exported; the didcomm build the app loads opens what
+ * Node sealed and seals the same plaintext in turn.
  */
 
 import { secretsResolverFor, unpack, type DidcommApi } from "@estoc/agent-core";
 import * as glue from "@estoc/didcomm/index_bg.js";
-import { SqliteVault, eventCidOf, exportVault, openPortable, restoreVault } from "@estoc/event-store";
+import { SqliteVault, eventCidOf, exportSnapshot, restoreSnapshot } from "@estoc/event-store";
 import { openSqlitePool, type SqlitePool } from "@estoc/event-store/browser";
-import { Keys, rawCidOfBytes, vaultHeldRoots } from "@estoc/vault";
+import { rawCidOfBytes, vaultHeldRoots } from "@estoc/vault";
 
-import { SCAN, foldText, readPortable, snapshotText } from "../corpus-read.js";
+import { SCAN, foldText, keptVault, readKept, snapshotText } from "../corpus-read.js";
 import { openedOf, resolverOf, type CrossingInput, type CrossingOutput, type WorkerReply } from "./crossing.js";
 
 async function corpusIn(pool: SqlitePool, { bytes, passphrase }: CrossingInput["corpus"]): Promise<CrossingOutput["corpus"]> {
-  await pool.importFile("kept", new Uint8Array(bytes));
-  const source = openPortable(await pool.open("kept", "readonly"));
+  const kept = await keptVault(new Uint8Array(bytes), passphrase);
+  const { vault, metadata } = kept.snapshot;
+  const { fold, snapshot } = await readKept(kept);
+  const events: string[] = [];
+  for await (const event of vault.events.scan()) events.push(eventCidOf(event));
+  const objects: string[] = [];
+  for await (const cid of vault.objects.list()) {
+    const object = await vault.objects.read(cid, Number.MAX_SAFE_INTEGER);
+    if (object === null) throw new Error(`the snapshot lists ${cid} and holds no bytes for it`);
+    objects.push(rawCidOfBytes(object));
+  }
+  const restored = new SqliteVault((await restoreSnapshot(kept.snapshot, () => pool.open("restored", "create"), { anchor: metadata.anchor })).runtime);
   try {
-    const keys = await Keys.unlock(source.wrapped, passphrase, source.metadata.anchor);
-    const { fold, snapshot } = await readPortable(source, keys);
-    const events: string[] = [];
-    for await (const event of source.vault.events.scan()) events.push(eventCidOf(event));
-    const objects: string[] = [];
-    for await (const cid of source.vault.objects.list()) {
-      const object = await source.vault.objects.read(cid, Number.MAX_SAFE_INTEGER);
-      if (object === null) throw new Error(`the vault lists ${cid} and holds no bytes for it`);
-      objects.push(rawCidOfBytes(object));
-    }
-    const restored = new SqliteVault((await restoreVault(source, (mode) => pool.open("restored", mode), { heldRoots: vaultHeldRoots(null, SCAN), anchor: source.metadata.anchor })).runtime);
-    try {
-      await exportVault(restored, (mode) => pool.open("exported", mode), { heldRoots: vaultHeldRoots(keys, SCAN) });
-    } finally {
-      await restored.close();
-    }
-    return { fold: foldText(fold), snapshot: snapshotText(snapshot), events, objects, exported: Array.from(await pool.exportFile("exported")) };
+    const exported = await exportSnapshot(restored, { parts: "both", heldRoots: vaultHeldRoots(kept.keys, SCAN) });
+    return { fold: foldText(fold), snapshot: snapshotText(snapshot), events, objects, exported: Array.from(exported) };
   } finally {
-    source.close();
+    await restored.close();
   }
 }
 

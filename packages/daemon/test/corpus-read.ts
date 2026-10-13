@@ -6,8 +6,8 @@
 
 import { BUILT_IN_HANDLERS, MAX_CONTENT_BYTES, effectTypesOf, recorder } from "@estoc/agent-core";
 import type { Snapshot } from "@estoc/daemon-api/contract";
-import type { PortableDatabase } from "@estoc/event-store";
-import { VaultEventSet, objectReader, scanVault, type Keys, type VaultFold } from "@estoc/vault";
+import { Snapshot as CarSnapshot } from "@estoc/event-store";
+import { Keys, VaultEventSet, objectReader, scanVault, vaultHeldRoots, type VaultFold } from "@estoc/vault";
 
 import { localDidRecords, mediationRecords, project } from "../src/projection.js";
 
@@ -59,11 +59,24 @@ export interface CorpusRead {
   snapshot: Snapshot;
 }
 
-/** The vault `source` holds, unlocked by `keys`, read from nothing as the daemon reads one for a state. */
-export async function readPortable(source: PortableDatabase, keys: Keys): Promise<CorpusRead> {
-  const fold = await scanVault(source.vault, keys, SCAN);
-  const snapshot = await project(await recorder(fold, objectReader(source.vault.objects, MAX_CONTENT_BYTES)), {
-    anchor: source.metadata.anchor,
+/** The kept vault: its snapshot, and the keys its seed unlocks to. */
+export interface KeptVault {
+  snapshot: CarSnapshot;
+  keys: Keys;
+}
+
+/** The kept vault read from `bytes`, which it takes over, and unlocked by `passphrase`. */
+export async function keptVault(bytes: Uint8Array, passphrase: string): Promise<KeptVault> {
+  const snapshot = await CarSnapshot.read(bytes, { heldRoots: vaultHeldRoots(null, SCAN) });
+  if (snapshot.seed === undefined) throw new Error("the kept vault carries no seed");
+  return { snapshot, keys: await Keys.unlock(snapshot.seed, passphrase, snapshot.metadata.anchor) };
+}
+
+/** The kept vault read from nothing as the daemon reads one for a state. */
+export async function readKept({ snapshot: { vault, metadata }, keys }: KeptVault): Promise<CorpusRead> {
+  const fold = await scanVault(vault, keys, SCAN);
+  const snapshot = await project(await recorder(fold, objectReader(vault.objects, MAX_CONTENT_BYTES)), {
+    anchor: metadata.anchor,
     label: fold.label ?? "",
     restoreUnexplained: false,
     mediations: mediationRecords(fold.mediations),

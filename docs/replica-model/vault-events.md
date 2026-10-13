@@ -132,12 +132,13 @@ by the reference alone.
 - TLS private keys, DNS credentials, ACME account keys and web deployment
   credentials are not vault communication keys and MUST NOT be derived from
   vault key names.
-- Runtime and portable SQLite databases contain plaintext retained message
+- Runtime SQLite databases and snapshots contain plaintext retained message
   content and attachments unless surrounding storage encrypts them. The
-  passphrase seals only the seed wrapper, not the history, and applications
-  MUST say so.
-- A full runtime, a hosted one included, MUST offer a complete portable
-  export, and recovering from it MUST NOT depend on the running service.
+  passphrase seals only the seed wrapper, not the history, and a content part
+  without the seed part carries no wrapper at all; applications MUST say so.
+- A full runtime, a hosted one included, MUST offer a complete export, a
+  snapshot of both parts, and recovering from it MUST NOT depend on the
+  running service.
 - A rendezvous DID is intentionally disclosed and correlatable within its
   audience. Its Peer long form avoids DNS resolution for that DID; resolving
   a mediator may still involve a network resolver.

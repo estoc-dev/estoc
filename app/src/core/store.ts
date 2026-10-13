@@ -12,7 +12,7 @@ import { explained } from "./failure.js";
 import { isInstalled, setupPwa } from "./pwa.js";
 import { markExported } from "./seen.js";
 import { fileSystemRefused, isStoragePersisted, persistStorage } from "./storage.js";
-import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, ReplicaId, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, SnapshotSelection, TraceLevel } from "./types.js";
+import type { ChannelId, ContactId, ConversationId, EventCid, ExecutionId, Hold, Invitation, InvitationRecord, Lines, MergeResult, MessageId, PublishedSnapshotLink, ReplicaId, SendTarget, Snapshot, SnapshotIndex, SnapshotLink, SnapshotLinkRecord, SnapshotPart, TraceLevel } from "./types.js";
 
 export type VaultViewState = Exclude<StateValue, { phase: "open" }> | { phase: "open"; hold: Hold; index: SnapshotIndex };
 /** A `#snapshot=` this page was opened with: the link as it came, or why it is not one. */
@@ -332,9 +332,9 @@ export function snapshotLinkOf(link: SnapshotLink): string {
  * device joins with, or of the whole vault, for a device of this vault's
  * to import or a new one to restore from.
  */
-export async function publishSnapshotLink(selection: SnapshotSelection): Promise<PublishedSnapshotLink> {
-  const made = await call((daemon) => daemon.publishSnapshotLink({ selection }), "A link cannot carry this vault: export a backup and take the file to the other device instead.");
-  log(`put ${selection === "all" ? "a copy of this vault" : "a link for a new device"}, kept until ${made.retainUntil}`);
+export async function publishSnapshotLink(part: SnapshotPart): Promise<PublishedSnapshotLink> {
+  const made = await call((daemon) => daemon.publishSnapshotLink({ part }), "A link cannot carry this vault: export a backup and take the file to the other device instead.");
+  log(`put ${part === "content" ? "a copy of this vault" : "a link for a new device"}, kept until ${made.retainUntil}`);
   return made;
 }
 

@@ -8,7 +8,7 @@
 
 import { base64urlnopad } from "@scure/base";
 import type { BlobKey } from "@estoc/agent-core";
-import { SNAPSHOT_SELECTIONS, type SnapshotSelection } from "@estoc/daemon-api/contract";
+import { SNAPSHOT_PARTS, type SnapshotPart } from "@estoc/daemon-api/contract";
 import { isAuthorId, type AuthorId, type JsonValue, type LocalOptions } from "@estoc/event-store";
 import type { MediationId } from "@estoc/vault";
 
@@ -21,8 +21,8 @@ export interface SnapshotLink extends BlobKey {
 
 /** A snapshot put, as a view is told of it. Times are milliseconds since the epoch. */
 export type PutSnapshot =
-  | { status: "pending"; hash: string; selection: SnapshotSelection; placedAt: number; retainUntil: number | null }
-  | { status: "published"; hash: string; selection: SnapshotSelection; placedAt: number; retainUntil: number; revocable: boolean; link: SnapshotLink };
+  | { status: "pending"; hash: string; part: SnapshotPart; placedAt: number; retainUntil: number | null }
+  | { status: "published"; hash: string; part: SnapshotPart; placedAt: number; retainUntil: number; revocable: boolean; link: SnapshotLink };
 
 /** Whose blob a put is at the mediator: the replica this runtime was under `author`, in the arrangement `mediationId`. Only that replica may delete it there. */
 interface Owner {
@@ -32,7 +32,7 @@ interface Owner {
 
 interface Asked extends BlobKey {
   owner: Owner;
-  selection: SnapshotSelection;
+  part: SnapshotPart;
   placedAt: number;
 }
 
@@ -54,20 +54,20 @@ export const keyBytes = (text: string): Uint8Array => base64urlnopad.decode(text
 
 const isTime = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 
-const isSelection = (value: unknown): value is SnapshotSelection => (SNAPSHOT_SELECTIONS as readonly unknown[]).includes(value);
+const isPart = (value: unknown): value is SnapshotPart => (SNAPSHOT_PARTS as readonly unknown[]).includes(value);
 
 /** A value under the prefix in another shape is none this daemon wrote: no snapshot it can say anything of. */
 function putOf(hash: string, value: JsonValue | undefined): Put | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const { key, selection, placedAt, author, mediationId, stage, url, retainUntil } = value;
-  if (typeof key !== "string" || !isSelection(selection) || !isTime(placedAt) || !isAuthorId(author) || typeof mediationId !== "string") return null;
+  const { key, part, placedAt, author, mediationId, stage, url, retainUntil } = value;
+  if (typeof key !== "string" || !isPart(part) || !isTime(placedAt) || !isAuthorId(author) || typeof mediationId !== "string") return null;
   let bytes: Uint8Array;
   try {
     bytes = keyBytes(key);
   } catch {
     return null;
   }
-  const asked: Asked = { hash, key: bytes, owner: { author, mediationId: mediationId as MediationId }, selection, placedAt };
+  const asked: Asked = { hash, key: bytes, owner: { author, mediationId: mediationId as MediationId }, part, placedAt };
   if (stage === "asked") return { ...asked, stage };
   if ((stage === "placed" || stage === "uploaded") && typeof url === "string" && isTime(retainUntil)) return { ...asked, stage, url, retainUntil };
   return null;
@@ -80,8 +80,8 @@ export class SnapshotLinks {
   ) {}
 
   keep(put: Put): Promise<void> {
-    const { hash, key, owner, selection, placedAt, stage } = put;
-    const asked = { key: keyText(key), selection, placedAt, author: owner.author, mediationId: owner.mediationId, stage };
+    const { hash, key, owner, part, placedAt, stage } = put;
+    const asked = { key: keyText(key), part, placedAt, author: owner.author, mediationId: owner.mediationId, stage };
     return this.options.set(PREFIX + hash, stage === "asked" ? asked : { ...asked, url: put.url, retainUntil: put.retainUntil });
   }
 
@@ -99,13 +99,13 @@ export class SnapshotLinks {
   }
 
   published(put: Uploaded): PublishedSnapshot {
-    const { hash, key, selection, placedAt, url, retainUntil } = put;
-    return { status: "published", hash, selection, placedAt, retainUntil, revocable: this.owns(put), link: { url, hash, key } };
+    const { hash, key, part, placedAt, url, retainUntil } = put;
+    return { status: "published", hash, part, placedAt, retainUntil, revocable: this.owns(put), link: { url, hash, key } };
   }
 
   private shown(put: Put): PutSnapshot {
     if (put.stage === "uploaded") return this.published(put);
-    return { status: "pending", hash: put.hash, selection: put.selection, placedAt: put.placedAt, retainUntil: put.stage === "asked" ? null : put.retainUntil };
+    return { status: "pending", hash: put.hash, part: put.part, placedAt: put.placedAt, retainUntil: put.stage === "asked" ? null : put.retainUntil };
   }
 
   /** Every snapshot put that the mediator keeps or may keep at `now`, and that still matters to someone here, by when it was put. */

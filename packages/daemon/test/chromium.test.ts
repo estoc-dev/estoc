@@ -20,14 +20,14 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { secretsResolverFor, unpack, type IMessage } from "@estoc/agent-core";
 import { Message } from "@estoc/didcomm-node";
-import { VAULT_VERSION, openPortable } from "@estoc/event-store";
-import { openNodeSqlite } from "@estoc/event-store/node";
+import { VAULT_VERSION } from "@estoc/event-store";
 import { deriveIdentity, importSeed } from "@estoc/keystore";
 import { envelopeOf, intentOf, plaintextCidOf, storeMessage, wirePlaintext, type Cid, type Did } from "@estoc/vault";
 
 import { findChromium } from "../../event-store/test/browser/chromium.js";
 import { openedOf, resolverOf, type CrossingInput, type CrossingOutput, type Document, type Parties, type Secrets, type WorkerReply } from "./browser/crossing.js";
-import { CORPUS_PASSPHRASE, CORPUS_VAULT, expected, foldText, hashOf, readCorpus, snapshotText } from "./corpus.js";
+import { readKept } from "./corpus-read.js";
+import { CORPUS_PASSPHRASE, CORPUS_VAULT, expected, foldText, hashOf, keptIn, snapshotText } from "./corpus.js";
 
 const browserPath = findChromium();
 if (browserPath === null) {
@@ -150,29 +150,21 @@ describe.skipIf(output === undefined)("the kept vault, crossing to Chromium", ()
   });
 
   it("has, hashed there, each event and object under the CID it is kept under", async () => {
-    const source = openPortable(openNodeSqlite(CORPUS_VAULT, { mode: "readonly" }));
-    try {
-      const events: string[] = [];
-      for await (const event of source.vault.events.scan()) events.push(event.cid);
-      const objects: string[] = [];
-      for await (const cid of source.vault.objects.list()) objects.push(cid);
-      expect(corpus().events).toEqual(events);
-      expect(corpus().objects).toEqual(objects);
-    } finally {
-      source.close();
-    }
+    const { vault } = (await keptIn()).snapshot;
+    const events: string[] = [];
+    for await (const event of vault.events.scan()) events.push(event.cid);
+    const objects: string[] = [];
+    for await (const cid of vault.objects.list()) objects.push(cid);
+    expect(corpus().events).toEqual(events);
+    expect(corpus().objects).toEqual(objects);
   });
 
   it("restored and exported there, comes back a snapshot of this vault version that reads here as the vault it was", async () => {
-    const file = path.join(dir, "exported.sqlite");
+    const file = path.join(dir, "exported.car");
     await writeFile(file, new Uint8Array(corpus().exported));
-    const source = openPortable(openNodeSqlite(file, { mode: "readonly" }));
-    try {
-      expect(source.metadata.version).toBe(VAULT_VERSION);
-    } finally {
-      source.close();
-    }
-    const read = await readCorpus(file);
+    const kept = await keptIn(file);
+    expect(kept.snapshot.metadata.version).toBe(VAULT_VERSION);
+    const read = await readKept(kept);
     expect(hashOf(foldText(read.fold))).toBe(await expected("fold.sha256"));
     expect(snapshotText(read.snapshot)).toBe(await expected("snapshot.json"));
   });

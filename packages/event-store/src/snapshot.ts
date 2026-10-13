@@ -157,7 +157,7 @@ async function selected(held: Held, types: ReadonlySet<string>): Promise<Event[]
 }
 
 /** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as a read folds them from the snapshot's own events. Read only, as a snapshot is: a commit is refused. */
-export async function selection(metadata: VaultMetadata, held: Held, events: Event[]): Promise<Vault> {
+async function selection(metadata: VaultMetadata, held: Held, events: Event[]): Promise<Vault> {
   const selected = new MemoryVault({ metadata });
   await selected.ingest(events);
   return {

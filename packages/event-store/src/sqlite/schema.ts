@@ -3,8 +3,8 @@
  * holds exactly it. The check is structural — what the tables are, not
  * the SQL they were spelled with — through SQLite's own pragmas, plus a
  * probe for what the pragmas do not tell: a column's collation. Every
- * name read out of the schema is read as its stored bytes and decoded,
- * since a portable snapshot is a file another party wrote.
+ * name read out of the schema is read as its stored bytes and decoded:
+ * the file is checked before anything in it is trusted.
  */
 
 import { NotAVault, SqliteError } from "../errors.js";
@@ -16,14 +16,12 @@ export const APPLICATION_ID = 0x45535443;
 /** `PRAGMA user_version`: the SQLite schema this module makes and accepts. */
 export const SCHEMA_VERSION = 2;
 
-export type DatabaseKind = "runtime" | "portable";
-
-const COMMON_DDL = [
+const DDL = [
   `CREATE TABLE vault_meta (
     singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
     format        TEXT NOT NULL CHECK (format = 'estoc-sqlite'),
     vault_version INTEGER NOT NULL CHECK (vault_version = ${VAULT_VERSION}),
-    kind          TEXT NOT NULL CHECK (kind IN ('runtime', 'portable')),
+    kind          TEXT NOT NULL CHECK (kind = 'runtime'),
     ready         INTEGER NOT NULL CHECK (ready IN (0, 1)),
     anchor        TEXT NOT NULL
   ) STRICT`,
@@ -49,9 +47,6 @@ const COMMON_DDL = [
     bytes    BLOB NOT NULL CHECK (length(bytes) BETWEEN 1 AND 1048576),
     PRIMARY KEY (cid, chunk_no)
   ) STRICT`,
-];
-
-const CONTROL_DDL = [
   `CREATE TABLE store_state (
     singleton        INTEGER PRIMARY KEY CHECK (singleton = 1),
     replica_id       TEXT NOT NULL,
@@ -64,9 +59,9 @@ const CONTROL_DDL = [
   ) STRICT`,
 ];
 
-/** Creates the tables of `kind` in an empty database: the common five, and for a runtime the two control tables. */
-export function createTables(driver: SqliteDriver, kind: DatabaseKind): void {
-  for (const sql of kind === "runtime" ? [...COMMON_DDL, ...CONTROL_DDL] : COMMON_DDL) driver.exec(sql);
+/** Creates the runtime's tables in an empty database. */
+export function createTables(driver: SqliteDriver): void {
+  for (const sql of DDL) driver.exec(sql);
 }
 
 /** The rows of `sql` with `params` bound, from a statement prepared for this call and finalized after it. */
@@ -132,7 +127,7 @@ const column = (name: string, type: ColumnType, notNull = true, pk = 0): Column 
 const key = (...names: string[]): Keyed[] => names.map((name) => ({ name, collation: "BINARY", descending: false }));
 const reference = (from: string, table: string, to: string, onDelete = "NO ACTION"): ForeignKey => ({ from, table, to, onUpdate: "NO ACTION", onDelete, match: "NONE" });
 
-const COMMON_TABLES = new Map<string, TableShape>([
+const TABLES = new Map<string, TableShape>([
   [
     "vault_meta",
     {
@@ -159,45 +154,38 @@ const COMMON_TABLES = new Map<string, TableShape>([
       foreignKeys: [reference("cid", "objects", "cid", "CASCADE")],
     },
   ],
-]);
-
-const CONTROL_TABLES = new Map<string, TableShape>([
   ["store_state", { columns: [column("singleton", "INTEGER", false, 1), column("replica_id", "TEXT"), column("store_generation", "TEXT"), column("last_seq", "INTEGER")], keys: [], foreignKeys: [] }],
   ["event_positions", { columns: [column("accepted_seq", "INTEGER", false, 1), column("cid", "TEXT")], keys: [key("cid")], foreignKeys: [reference("cid", "events", "cid")] }],
 ]);
 
 /** A table a runtime may keep beside the schema's: its own local state, or the statistics `ANALYZE` leaves. */
-const RUNTIME_EXTRA_TABLE = /^(local_[a-z0-9_]+|sqlite_stat[1-4])$/;
+const EXTRA_TABLE = /^(local_[a-z0-9_]+|sqlite_stat[1-4])$/;
 
 /**
- * Checks that the database holds exactly the schema of `kind` — every
+ * Checks that the database holds exactly the runtime's schema — every
  * table of it with the columns, types, collations, keys and references
  * of schema version 2, all `STRICT` — and nothing that is not allowed
- * beside it: a portable snapshot has the five common tables and the
- * indexes their constraints made, no more; a runtime has the control
- * tables too and may add indexes, `local_*` tables and `ANALYZE`
- * statistics. A view or a trigger is refused in either. `NotAVault`
- * names the first thing that does not fit; no row of any table is read.
+ * beside it: further indexes, `local_*` tables and `ANALYZE`
+ * statistics. A view or a trigger is refused. `NotAVault` names the
+ * first thing that does not fit; no row of any table is read.
  */
-export function checkSchema(driver: SqliteDriver, kind: DatabaseKind): void {
-  const expected = kind === "runtime" ? new Map([...COMMON_TABLES, ...CONTROL_TABLES]) : COMMON_TABLES;
+export function checkSchema(driver: SqliteDriver): void {
   const objects = query(driver, "SELECT type, CAST(name AS BLOB) AS name FROM sqlite_master ORDER BY type, name").map((row) => ({ type: String(row["type"]), name: text(row["name"], "sqlite_master.name") }));
   for (const object of objects) {
     if (object.type !== "table" && object.type !== "index") throw new NotAVault(`the schema has a ${object.type}, ${object.name}: a vault has tables and their indexes only`);
   }
   const tables = new Set(objects.filter((object) => object.type === "table").map((object) => object.name));
-  for (const name of expected.keys()) {
+  for (const name of TABLES.keys()) {
     if (!tables.has(name)) throw new NotAVault(`table ${name} is missing`);
   }
   for (const name of tables) {
-    if (expected.has(name)) continue;
-    if (kind === "runtime" && RUNTIME_EXTRA_TABLE.test(name)) continue;
-    throw new NotAVault(`table ${name} is not in the ${kind} schema`);
+    if (TABLES.has(name) || EXTRA_TABLE.test(name)) continue;
+    throw new NotAVault(`table ${name} is not in the runtime schema`);
   }
-  for (const [name, shape] of expected) checkTable(driver, name, shape, kind);
+  for (const [name, shape] of TABLES) checkTable(driver, name, shape);
 }
 
-function checkTable(driver: SqliteDriver, name: string, expected: TableShape, kind: DatabaseKind): void {
+function checkTable(driver: SqliteDriver, name: string, expected: TableShape): void {
   const [listed] = query(driver, "SELECT strict, wr FROM pragma_table_list(?) WHERE schema = 'main'", name);
   if (listed?.["strict"] !== 1) throw new NotAVault(`table ${name} is not STRICT`);
   if (listed["wr"] !== 0) throw new NotAVault(`table ${name} is WITHOUT ROWID: a vault's tables keep their rowid`);
@@ -212,10 +200,7 @@ function checkTable(driver: SqliteDriver, name: string, expected: TableShape, ki
   if (hidden !== undefined) throw new NotAVault(`table ${name}: column ${hidden.name} is generated or hidden`);
   const keys: Keyed[][] = [];
   for (const index of query(driver, "SELECT CAST(name AS BLOB) AS name, origin FROM pragma_index_list(?) ORDER BY seq", name)) {
-    if (String(index["origin"]) === "c") {
-      if (kind === "portable") throw new NotAVault(`table ${name} has an index a constraint did not make: a portable snapshot has none`);
-      continue;
-    }
+    if (String(index["origin"]) === "c") continue;
     const indexName = text(index["name"], `${name} index`);
     keys.push(
       query(driver, 'SELECT CAST(name AS BLOB) AS name, coll, "desc" AS descending FROM pragma_index_xinfo(?) WHERE key = 1 ORDER BY seqno', indexName).map((row) => ({

@@ -1,30 +1,31 @@
 /**
- * A vault's snapshot put sealed at its mediator, for a new device to
- * restore from or a replica to import. The daemon that put it keeps
- * what it put, the key among it, in its own local state and not in the
- * vault; the mediator keeps the blob until `retainUntil`, or until it
- * is revoked.
+ * A part of a vault's snapshot put sealed at its mediator, for a new
+ * device to restore from or a replica to import. The daemon that put
+ * it keeps what it put, the key among it, in its own local state and
+ * not in the vault; the mediator keeps the blob until `retainUntil`,
+ * or until it is revoked.
  */
 
 import type { DisplayTime } from "./ids.js";
 
-export const SNAPSHOT_SELECTIONS = ["enrollment", "all"] as const;
+export const SNAPSHOT_PARTS = ["seed", "content"] as const;
 
 /**
- * What a snapshot carries. `enrollment` is the events a new replica
- * enrolls from: the vault's name, its arrangements and its replicas,
- * which name no object when well formed. A device restored from it
- * registers at the mediator and receives from then on; the history
- * comes later, by importing a snapshot of `all`, the whole vault. A
- * restore is the same either way.
+ * The part of a snapshot a link carries. `seed` is the seed sealed
+ * under the passphrase, with the events a new replica enrolls from:
+ * the vault's name, its arrangements and its replicas, which name no
+ * object when well formed. A device restores from it, registers at the
+ * mediator and receives from then on. `content` is every event and
+ * every object the events hold, with no seed: a vault that is open
+ * imports it, and no device is made from it. A backup carries both.
  */
-export type SnapshotSelection = (typeof SNAPSHOT_SELECTIONS)[number];
+export type SnapshotPart = (typeof SNAPSHOT_PARTS)[number];
 
 /**
  * What a new device restores from, or an open vault imports: where the
  * sealed snapshot is, the name its bytes have, and the key that opens
  * them. Whoever holds it reads every event and object the snapshot
- * carries in the clear for as long as the mediator keeps the blob; the
+ * carries in the clear for as long as the mediator keeps the blob; a
  * seed stays sealed under the passphrase, which a link does not carry.
  */
 export interface SnapshotLink {
@@ -37,7 +38,7 @@ export interface SnapshotLink {
 }
 
 /**
- * A snapshot this daemon put, and what it carries. `pending` until its
+ * A snapshot this daemon put, and the part it carries. `pending` until its
  * bytes are uploaded: there is no link yet, and revoking it frees
  * whatever the mediator holds of it; its `retainUntil` is null while
  * the mediator has not answered the put. `published` once uploaded,
@@ -51,7 +52,7 @@ export interface SnapshotLink {
  * having gone to no one.
  */
 export type SnapshotLinkRecord =
-  | { status: "pending"; hash: string; selection: SnapshotSelection; placedAt: DisplayTime; retainUntil: DisplayTime | null }
-  | { status: "published"; hash: string; selection: SnapshotSelection; placedAt: DisplayTime; retainUntil: DisplayTime; revocable: boolean; link: SnapshotLink };
+  | { status: "pending"; hash: string; part: SnapshotPart; placedAt: DisplayTime; retainUntil: DisplayTime | null }
+  | { status: "published"; hash: string; part: SnapshotPart; placedAt: DisplayTime; retainUntil: DisplayTime; revocable: boolean; link: SnapshotLink };
 
 export type PublishedSnapshotLink = Extract<SnapshotLinkRecord, { status: "published" }>;

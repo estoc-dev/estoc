@@ -13,9 +13,9 @@ import type { Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { openSqlitePool, type SqlitePool } from "../../src/browser.js";
 import { assert, type DriverHarness, driverCases, type MemoryHeld } from "../sqlite/driver-cases.js";
 import { eventCases } from "../sqlite/event-cases.js";
-import { continued, inspectPortable, type Inspection } from "../sqlite/exchange.js";
-import { destination, exportCases, type ExportHarness, opened } from "../sqlite/export-cases.js";
-import { importCases, type ImportHarness } from "../sqlite/import-cases.js";
+import { continued, inspect, type Inspection } from "../sqlite/exchange.js";
+import { destination, exportCases, type ExportHarness } from "../sqlite/export-cases.js";
+import { importCases } from "../sqlite/import-cases.js";
 import { objectCases, type ObjectHarness } from "../sqlite/object-cases.js";
 import { type OpenHarness, openCases } from "../sqlite/open-cases.js";
 import { snapshotCases } from "../sqlite/snapshot-cases.js";
@@ -43,7 +43,7 @@ export interface Exchanged {
 /** The commands the page sends: the cases to run are named, so the page can spread one list over Workers running at once. */
 export type WorkerRequest =
   | { cmd: "cases"; directory: string; names: string[] }
-  | { cmd: "open"; directory: string; utf16: { snapshot: number[]; forged: number[] }; names: string[] }
+  | { cmd: "open"; directory: string; names: string[] }
   | { cmd: "suites"; directory: string }
   | { cmd: "exchange"; directory: string; snapshot: number[] }
   | { cmd: "pool"; names: string[] }
@@ -135,24 +135,13 @@ async function runCases(directory: string, names: string[]): Promise<WorkerCaseR
   return results;
 }
 
-async function runOpenCases(directory: string, utf16: { snapshot: Uint8Array; forged: Uint8Array }, names: string[]): Promise<WorkerCaseResult[]> {
+async function runOpenCases(directory: string, names: string[]): Promise<WorkerCaseResult[]> {
   const pool = await openSqlitePool({ directory });
   let n = 0;
-  const harness: OpenHarness & ObjectHarness & ExportHarness & ImportHarness = {
+  const harness: OpenHarness & ObjectHarness & ExportHarness = {
     fresh: () => `vault-${n++}`,
     open: (target, mode) => pool.open(target, mode),
-    importFile: (target, bytes) => pool.importFile(target, bytes),
-    writeSchema: async (target, sql) => {
-      const db = await pool.open(target, "readwrite");
-      try {
-        db.exec(`PRAGMA writable_schema = ON; ${sql}; PRAGMA writable_schema = OFF`);
-      } finally {
-        db.close();
-      }
-    },
-    fileBytes: (target) => pool.exportFile(target),
     remove: (target) => pool.remove(target),
-    utf16,
     memoryUsed: memoryUsedIn(pool),
   };
   const results: WorkerCaseResult[] = [];
@@ -196,17 +185,10 @@ async function runExchange(directory: string, snapshot: Uint8Array): Promise<Exc
   const harness: ExportHarness = {
     fresh: () => "restored",
     open: (target, mode) => pool.open(target, mode),
-    fileBytes: (target) => pool.exportFile(target),
   };
-  await pool.importFile("from-the-other-platform", snapshot);
-  const arrived = await opened(harness, "from-the-other-platform");
-  const inspected = await inspectPortable(arrived);
-  await continued(arrived, destination(harness, "restored"), destination(harness, "continued"), clock().now);
-  arrived.close();
-  const own = await opened(harness, "continued");
-  const result = { inspected, continued: await inspectPortable(own), bytes: [] as number[] };
-  own.close();
-  result.bytes = Array.from(await pool.exportFile("continued"));
+  const inspected = await inspect(snapshot);
+  const bytes = await continued(snapshot, destination(harness, "restored"), clock().now);
+  const result = { inspected, continued: await inspect(bytes), bytes: Array.from(bytes) };
   await pool.close();
   return result;
 }
@@ -226,7 +208,7 @@ async function handle(command: WorkerCommand): Promise<unknown> {
     case "cases":
       return runCases(command.directory, command.names);
     case "open":
-      return runOpenCases(command.directory, { snapshot: new Uint8Array(command.utf16.snapshot), forged: new Uint8Array(command.utf16.forged) }, command.names);
+      return runOpenCases(command.directory, command.names);
     case "suites":
       return runSuites(command.directory);
     case "exchange":

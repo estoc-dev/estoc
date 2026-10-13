@@ -1,6 +1,21 @@
 import { v7 as uuidv7 } from "uuid";
-import { AnchorMismatch, DamagedHistory, DatabaseBusy, ForkedAuthor, SnapshotTooLarge, exportVault, importVault, openPortable, restoreVault, type SqliteDriver, type SqliteVault } from "@estoc/event-store";
-import type { Hold, Lines, Phase, ReplicaListing, Snapshot, SnapshotSelection } from "@estoc/daemon-api/contract";
+import {
+  AnchorMismatch,
+  DamagedHistory,
+  DatabaseBusy,
+  ForkedAuthor,
+  InvalidSnapshot,
+  NotAVault,
+  Snapshot as CarSnapshot,
+  SnapshotTooLarge,
+  exportSnapshot,
+  importSnapshot,
+  restoreSnapshot,
+  type HeldRoots,
+  type SqliteDriver,
+  type SqliteVault,
+} from "@estoc/event-store";
+import type { Hold, Lines, Phase, ReplicaListing, Snapshot, SnapshotPart } from "@estoc/daemon-api/contract";
 import { createSeedKeystore, unlockSeedKeystore, type SeedKey } from "@estoc/keystore";
 import {
   ENROLLMENT_EVENT_TYPES,
@@ -59,7 +74,7 @@ import {
   type SnapshotLinkReceived,
 } from "@estoc/agent-core";
 
-import type { CompletionWord, Daemon, DispatchWord, Outcome, SendResult } from "./api.js";
+import type { CompletionWord, Daemon, DispatchWord, Merged, Outcome, SendResult } from "./api.js";
 import { InvalidArgument, Refused, RestoreUnexplained, StaleHold, TooLarge, Unmet, WrongPhase } from "./errors.js";
 import { VAULT_FILE, type DaemonHost, type DaemonStorage } from "./host.js";
 import { linesOf } from "./lines.js";
@@ -107,9 +122,22 @@ export const RESTORE_EXPLAINED = "daemon.restoreExplained";
 export const DAMAGE_RECOURSE =
   "The history comes back only by restoring a backup into a new vault: what that backup holds returns, what was recorded after it does not, and with no usable backup none of it does. The seed is in every backup, and the passphrase still unlocks it there.";
 
-const RESTORE_SOURCE = "restore-source.sqlite";
-const MERGE_SOURCE = "merge-source.sqlite";
-const EXPORT_FILE = "export.sqlite";
+/** The most a snapshot of the seed alone comes to unless the host says otherwise: what a link to add a device carries. */
+export const DEFAULT_MAX_SEED_BYTES = 1024 * 1024;
+
+export interface DaemonOptions {
+  /**
+   * The most bytes a snapshot of the seed alone may come to: a seed link
+   * is published within it, and `restoreFromLink` reads no further. The
+   * events a new replica enrolls from only accumulate — every rename,
+   * every change of arrangement, every replica made — and one whose
+   * payload is malformed may hold objects besides, so no count of
+   * devices tells a vault will fit; one that does not is restored from
+   * a backup file instead. `DEFAULT_MAX_SEED_BYTES` when left out.
+   */
+  maxSeedBytes?: number;
+}
+
 const BUSY_RETRY_MS = 2000;
 /** How long reading a snapshot a link names may take, whole: room for one as large as a mediator's blob over a slow line. */
 const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
@@ -117,7 +145,10 @@ const SNAPSHOT_READ_TIMEOUT_MS = 10 * 60_000;
 const PUT_REFUSALS = new Set([BLOB_TOO_LARGE, BLOB_QUOTA, BLOB_REFUSED]);
 /** The queue a runtime's snapshot puts and revocations wait their turns in: a revocation comes after a put under way has settled, so nothing that put writes lands after it. */
 const SNAPSHOT_PUTS = "snapshot-puts";
-const SELECTED_TYPES: Record<SnapshotSelection, ReadonlySet<string> | undefined> = { enrollment: ENROLLMENT_EVENT_TYPES, all: undefined };
+/** Why a snapshot with no seed is not restored from: what a person is told who gave one where a vault would be made. */
+const NO_SEED = "that snapshot is a vault's history and carries no seed to restore a vault from: import it into a vault that is open";
+/** Why a snapshot with no content is not merged: what a person is told who gave a link to add a device to a vault that is open. */
+const NO_CONTENT = "that snapshot is for adding a device and carries no history to import: restore a new device from it";
 const CLOSED = "the daemon is closed";
 const DETACHED = "the agent is closed";
 
@@ -230,9 +261,9 @@ function effectOutcomeOf(effect: EffectOutcome): Outcome<CompletionWord> {
   return effect.dispatched === null ? { outcome: "existing", because: null, messageId: effect.messageId } : outcomeOf(effect.dispatched);
 }
 
-/** Why a link's snapshot did not come to plaintext of at most `maxBytes`, refused: nothing is written before it does. */
-function unread(err: unknown, maxBytes: number): Refused {
-  if (err instanceof BlobTooLarge) return new TooLarge(`the snapshot is over the ${maxBytes} bytes this daemon reads from a link`);
+/** Why a link's snapshot did not come to plaintext of at most `maxBytes`, refused: nothing is written before it does. A snapshot over the bound is what `tooLarge` says. */
+function unread(err: unknown, tooLarge: () => Refused): Refused {
+  if (err instanceof BlobTooLarge) return tooLarge();
   if (err instanceof BlobTransferFailed) return new Unmet(err.status === 404 ? "no snapshot is at that link any more: it was revoked, or the mediator has let it go" : `the snapshot could not be read: its store answered ${err.status}`);
   if (err instanceof BlobMismatch) return new Unmet("the bytes at that link are not the snapshot it names");
   if (err instanceof BlobUnopened) return new Unmet("the link's key does not open the snapshot");
@@ -247,7 +278,8 @@ function unread(err: unknown, maxBytes: number): Refused {
  * reads what the publisher says and asks for things through the
  * `Daemon` methods.
  */
-export function createDaemon(host: DaemonHost): DaemonCore {
+export function createDaemon(host: DaemonHost, options: DaemonOptions = {}): DaemonCore {
+  const maxSeedBytes = options.maxSeedBytes ?? DEFAULT_MAX_SEED_BYTES;
   let storage: DaemonStorage | null = null;
   /** the locked phase's hold on the vault: the file owned, nothing written, the wrapped seed for `unlock` */
   let inspected: InspectedRuntime | null = null;
@@ -350,7 +382,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
   const takeVault = (mode: "create" | "readwrite"): Promise<SqliteDriver> =>
     owned(
-      () => files().open(VAULT_FILE, mode, "runtime"),
+      () => files().open(VAULT_FILE, mode),
       async (driver) => {
         driver.close();
         if (mode === "create") await files().remove(VAULT_FILE);
@@ -682,103 +714,84 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   }
 
   /**
-   * A portable snapshot's bytes as a file of the host's for the length
-   * of `use`, opened read-only. Whatever stands under `name` beforehand
-   * is what a run cut short left behind: the files are this daemon's
-   * alone, and the operations that put one there take turns.
+   * The running vault's snapshot of `parts`, the seed's with the events
+   * a new replica enrolls from, refused whole when it comes to more than
+   * `maxBytes`, as `tooLarge` says.
    */
-  async function withSnapshot<T>(name: string, bytes: Uint8Array, use: (driver: SqliteDriver) => Promise<T>): Promise<T> {
-    const store = files();
-    await store.remove(name);
-    await store.importFile(name, bytes);
+  async function exported({ session }: Open, parts: SnapshotPart | "both", maxBytes: number | undefined, tooLarge: (err: SnapshotTooLarge) => Refused): Promise<Uint8Array> {
+    const heldRoots = session.heldRoots();
+    const bound = maxBytes === undefined ? {} : { maxBytes };
     try {
-      return await use(await store.open(name, "readonly", "portable"));
-    } finally {
-      await store.remove(name);
-    }
-  }
-
-  /**
-   * The running vault's portable snapshot of `selection`, read off the
-   * file it is exported to and refused whole when its events and
-   * objects, or that file, come to more than `maxBytes`: `bound` is
-   * whose bound that is, for the refusal to say. Runs in the files'
-   * turn.
-   */
-  async function exported({ session }: Open, selection: SnapshotSelection, what: string, maxBytes: number | undefined, bound: string): Promise<Uint8Array> {
-    const store = files();
-    await store.remove(EXPORT_FILE);
-    try {
-      await exportVault(session.runtime, (mode) => store.open(EXPORT_FILE, mode, "portable"), { heldRoots: session.heldRoots(), types: SELECTED_TYPES[selection], maxBytes }).catch((err: unknown) => {
-        if (err instanceof SnapshotTooLarge) throw new TooLarge(`the ${what}'s events and objects come to ${err.bytes} bytes, over the ${err.maxBytes} ${bound}`);
-        throw err;
-      });
-      const bytes = await store.exportFile(EXPORT_FILE, maxBytes);
-      // A host that reads the file without minding the bound is still held to it.
-      if (maxBytes !== undefined && bytes.byteLength > maxBytes) throw new TooLarge(`the ${what} file is ${bytes.byteLength} bytes, over the ${maxBytes} ${bound}`);
-      return bytes;
-    } finally {
-      await store.remove(EXPORT_FILE);
+      return await exportSnapshot(session.runtime, parts === "seed" ? { parts, types: ENROLLMENT_EVENT_TYPES, heldRoots, ...bound } : { parts, heldRoots, ...bound });
+    } catch (err) {
+      if (err instanceof SnapshotTooLarge) throw tooLarge(err);
+      throw err;
     }
   }
 
   /**
    * The snapshot a link names, read and opened: at most `maxBytes` of
    * plaintext and the sealing beside it, within ten minutes, and
-   * checked against its name first. The link's URL is the word of
-   * whoever handed it over: no redirect is followed, so the host's
-   * fetch checks the one address it reaches.
+   * checked against its name first; one over the bound is refused as
+   * `tooLarge` says, once the read runs past it. The link's URL is the
+   * word of whoever handed it over: no redirect is followed, so the
+   * host's fetch checks the one address it reaches.
    */
-  async function snapshotAt(link: SnapshotLink, maxBytes: number): Promise<Uint8Array> {
+  async function snapshotAt(link: SnapshotLink, maxBytes: number, tooLarge: () => Refused): Promise<Uint8Array> {
     try {
       const sealed = await readBlob(link.url, { maxBytes: maxBytes + SEAL_OVERHEAD, timeoutMs: SNAPSHOT_READ_TIMEOUT_MS, fetch: (input, init) => hostFetch(input, { ...init, redirect: "error" }) });
       return await openBlob(sealed, link);
     } catch (err) {
-      throw unread(err, maxBytes);
+      throw unread(err, tooLarge);
     }
   }
 
-  /** A portable snapshot's bytes restored as this daemon's vault, under the passphrase that opens the snapshot's own wrapped seed. */
+  /** `bytes` read as a snapshot, which takes them over, its objects exactly the roots `heldRoots` folds from its events; what is no snapshot this version reads is refused. */
+  async function read(bytes: Uint8Array, heldRoots: HeldRoots): Promise<CarSnapshot> {
+    try {
+      return await CarSnapshot.read(bytes, { heldRoots });
+    } catch (err) {
+      if (err instanceof NotAVault || err instanceof InvalidSnapshot) throw new Unmet(`that is no snapshot this version reads: ${err.message}`);
+      throw err;
+    }
+  }
+
+  /** A snapshot's bytes restored as this daemon's vault, under the passphrase that opens the snapshot's own wrapped seed: one with no seed is refused before anything is made. */
   const restore = (bytes: Uint8Array, passphrase: string): Promise<void> =>
     exclusively(async () => {
       const store = await refuseOccupied();
+      const snapshot = await read(bytes, vaultHeldRoots(null));
+      if (snapshot.seed === undefined) throw new Unmet(NO_SEED);
       let made = false;
       let session: VaultSession;
       let seedKey: SeedKey;
       try {
-        ({ session, seedKey } = await withSnapshot(RESTORE_SOURCE, bytes, async (driver) => {
-          const source = openPortable(driver);
-          try {
-            let unlocked: SeedKey | null = null;
-            const restored = await restoreVault(
-              source,
-              async (mode) => {
-                const destination = await store.open(VAULT_FILE, mode, "runtime");
-                made = true;
-                held = uuidv7() as Hold;
-                return destination;
-              },
-              {
-                heldRoots: vaultHeldRoots(null),
-                anchor: async (wrapped) => {
-                  try {
-                    unlocked = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
-                  } catch {
-                    throw new Unmet("that passphrase does not open this backup");
-                  }
-                  return Keys.anchorOf(unlocked);
-                },
+        let unlocked: SeedKey | null = null;
+        const restored = await restoreSnapshot(
+          snapshot,
+          async () => {
+            const destination = await store.open(VAULT_FILE, "create");
+            made = true;
+            held = uuidv7() as Hold;
+            return destination;
+          },
+          {
+            anchor: async (wrapped) => {
+              try {
+                unlocked = await unlockSeedKeystore({ version: 3, seedJwe: wrapped.seedJwe }, passphrase);
+              } catch {
+                throw new Unmet("that passphrase does not open this backup");
               }
-            );
-            if (unlocked === null) {
-              restored.runtime.close();
-              throw new Error("the restore did not ask for the passphrase");
-            }
-            return { session: await openRestoredVault(restored.runtime, unlocked, { changed }), seedKey: unlocked };
-          } finally {
-            source.close();
+              return Keys.anchorOf(unlocked);
+            },
           }
-        }));
+        );
+        if (unlocked === null) {
+          restored.runtime.close();
+          throw new Error("the restore did not ask for the passphrase");
+        }
+        session = await openRestoredVault(restored.runtime, unlocked, { changed });
+        seedKey = unlocked;
       } catch (err) {
         // A destination the restore made and failed on is closed and unready: it opens as nothing, and the next try starts from no file.
         if (made) {
@@ -792,27 +805,28 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     });
 
   /**
-   * A portable snapshot's bytes merged into the vault open when they were
-   * asked for; the agent goes on over the merged vault. A vault let go of
-   * meanwhile takes nothing, though by then the same file, or one restored
-   * from the same backup, may be open again: the anchor cannot tell those
-   * apart from the vault the merge was asked into.
+   * The content of a snapshot's bytes merged into the vault open when
+   * they were asked for; the agent goes on over the merged vault. The
+   * bytes are read once, before the merge takes its turn: one with no
+   * content, or of another vault, is refused with nothing written. A
+   * vault let go of meanwhile takes nothing, though by then the same
+   * file, or one restored from the same backup, may be open again: the
+   * anchor cannot tell those apart from the vault the merge was asked
+   * into.
    */
-  const mergeSnapshot = (running: Open, bytes: Uint8Array) =>
-    exclusively(async () => {
+  const mergeSnapshot = async (running: Open, bytes: Uint8Array): Promise<Merged> => {
+    const snapshot = await read(bytes, running.session.heldRoots());
+    if (snapshot.content === undefined) throw new Unmet(NO_CONTENT);
+    return exclusively(async () => {
       if (open !== running) throw new WrongPhase("the vault was let go of before the snapshot could be merged into it");
-      const merge = (session: VaultSession) =>
-        withSnapshot(MERGE_SOURCE, bytes, async (driver) => {
-          const source = openPortable(driver);
-          try {
-            return await importVault(session.runtime, source, { retainedRoots: session.retainedRoots() });
-          } catch (err) {
-            if (err instanceof AnchorMismatch) throw new Unmet("that snapshot is of another vault, and is not merged into this one");
-            throw err;
-          } finally {
-            source.close();
-          }
-        });
+      const merge = async (session: VaultSession) => {
+        try {
+          return await importSnapshot(session.runtime, snapshot, { retainedRoots: session.retainedRoots() });
+        } catch (err) {
+          if (err instanceof AnchorMismatch) throw new Unmet("that snapshot is of another vault, and is not merged into this one");
+          throw err;
+        }
+      };
       const counted = ({ added, duplicates, objects, repaired }: Awaited<ReturnType<typeof merge>>, renewed: boolean) => ({ added, duplicates, objects, repaired, renewed });
       const imported = await merge(running.session).catch((err: unknown) => {
         if (err instanceof ForkedAuthor) return null;
@@ -846,6 +860,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         });
       }
     });
+  };
 
   /** The most a snapshot put as a blob at `membership`'s mediator comes to before it is sealed. */
   async function blobBound({ blobs }: Membership): Promise<number> {
@@ -855,20 +870,25 @@ export function createDaemon(host: DaemonHost): DaemonCore {
   }
 
   /**
-   * The running vault's snapshot of `selection` sealed under a key of its
+   * The running vault's snapshot of `part` sealed under a key of its
    * own and put as the blob of `membership`'s replica, kept in the local
    * state before the put so that one whose upload fails is still listed,
-   * and revocable.
+   * and revocable. A seed is held to `maxSeedBytes` as well as to what a
+   * blob holds.
    */
-  async function publish(running: Open, membership: Membership, selection: SnapshotSelection): Promise<PublishedSnapshot> {
+  async function publish(running: Open, membership: Membership, part: SnapshotPart): Promise<PublishedSnapshot> {
     const { attached, session } = running;
     const { runtime } = session;
     const { blobs, mediationId } = membership;
-    const maxBytes = await during(attached, () => blobBound(membership));
+    const blobBytes = await during(attached, () => blobBound(membership));
+    const overBlob = (err: SnapshotTooLarge) => new TooLarge(`the snapshot comes to at least ${err.bytes} bytes, over the ${err.maxBytes} a blob at the mediator holds once sealed`);
+    const overSeed = (err: SnapshotTooLarge) =>
+      new Unmet(`the seed and the events a new device enrolls from come to at least ${err.bytes} bytes, over the ${err.maxBytes} a link to add a device holds: export a backup, and restore the new device from that file`);
     // Only the export takes the files' turn: a lock or a removal in the turn waits for every call over the agent, so a call over it made from within the turn would wait on itself.
     const snapshot = await exclusively(() => {
       if (open !== running) throw new WrongPhase("the vault was let go of while its snapshot was asked for");
-      return exported(running, selection, "snapshot", maxBytes, "a blob at the mediator holds once sealed");
+      if (part === "content") return exported(running, part, blobBytes, overBlob);
+      return exported(running, part, Math.min(maxSeedBytes, blobBytes), maxSeedBytes <= blobBytes ? overSeed : overBlob);
     });
     const sealed = await sealBlob(snapshot);
     return during(attached, () =>
@@ -876,7 +896,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         const links = new SnapshotLinks(runtime.local.options, runtime.author);
         const placedAt = Date.now();
         await links.prune(placedAt);
-        const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, selection, placedAt };
+        const asked: Put = { stage: "asked", hash: sealed.hash, key: sealed.key, owner: { author: runtime.author, mediationId }, part, placedAt };
         await links.keep(asked);
         let placement: Awaited<ReturnType<typeof blobs.put>>;
         try {
@@ -932,7 +952,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     let ended: Ended;
     try {
       const maxBytes = await during(running.attached, async (agent) => blobBound(await (await agent.arrangement(mediationId)).membership()));
-      ended = { status: "imported", merged: await mergeSnapshot(running, await snapshotAt(link, maxBytes)) };
+      ended = { status: "imported", merged: await mergeSnapshot(running, await snapshotAt(link, maxBytes, () => new TooLarge(`the snapshot is over the ${maxBytes} bytes a blob at the mediator holds`))) };
     } catch (err) {
       ended = { status: "failed", because: failure(err) };
     }
@@ -1025,15 +1045,17 @@ export function createDaemon(host: DaemonHost): DaemonCore {
 
     restoreIdentity: restore,
 
-    async restoreFromLink(link, passphrase, maxBytes) {
+    async restoreFromLink(link, passphrase) {
       // Nothing is read for a daemon that could not restore it; the restore looks again once the snapshot is in.
       await exclusively(refuseOccupied);
-      await restore(await snapshotAt(link, maxBytes), passphrase);
+      // Read no further than a seed comes to, the snapshot still sealed: whether it is a larger seed or content cannot be told yet.
+      const bytes = await snapshotAt(link, maxSeedBytes, () => new Unmet(`the snapshot at that link is over the ${maxSeedBytes} bytes this device takes from a link to add a device: restore from a backup file exported from the vault instead`));
+      await restore(bytes, passphrase);
     },
 
     async importFromLink(link, maxBytes) {
       const into = vault();
-      return mergeSnapshot(into, await snapshotAt(link, maxBytes));
+      return mergeSnapshot(into, await snapshotAt(link, maxBytes, () => new TooLarge(`the snapshot is over the ${maxBytes} bytes this daemon reads from a link`)));
     },
 
     async explainedRestore() {
@@ -1093,15 +1115,15 @@ export function createDaemon(host: DaemonHost): DaemonCore {
     exportBackup: (maxBytes) =>
       exclusively(async () => {
         const running = vault();
-        const bytes = await exported(running, "all", "backup", maxBytes, "this daemon delivers");
+        const bytes = await exported(running, "both", maxBytes, (err) => new TooLarge(`the backup comes to at least ${err.bytes} bytes, over the ${err.maxBytes} this daemon delivers`));
         const label = (await running.session.fold()).label ?? "";
         const stem = label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "vault";
-        return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.sqlite`, bytes };
+        return { name: `${stem}-${new Date().toISOString().slice(0, 10)}.estoc.car`, bytes };
       }),
 
-    async publishSnapshotLink(selection) {
+    async publishSnapshotLink(part) {
       const running = vault();
-      return publish(running, await during(running.attached, (agent) => membershipOf(running, agent)), selection);
+      return publish(running, await during(running.attached, (agent) => membershipOf(running, agent)), part);
     },
 
     revokeSnapshotLink(hash) {
@@ -1143,7 +1165,7 @@ export function createDaemon(host: DaemonHost): DaemonCore {
         if (others.length === 0) throw new Unmet(replicaId === undefined ? "the mediator holds no other replica of this vault" : `the mediator holds no other replica ${replicaId} of this vault`);
         return { membership, to: others };
       });
-      const { link } = await publish(running, membership, "all");
+      const { link } = await publish(running, membership, "content");
       const told = await during(attached, async () => {
         const kept = new ReplicaRecords(session.runtime.local.options);
         const told: ReplicaId[] = [];

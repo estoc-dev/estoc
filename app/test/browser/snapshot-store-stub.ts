@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 
 import type { OpenedSnapshotLink } from "../../src/core/store.js";
-import type { MergeResult, Phase, ReplicaId, ReplicaRecord, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotSelection } from "../../src/core/types.js";
+import type { MergeResult, Phase, ReplicaId, ReplicaRecord, Snapshot, SnapshotLink, SnapshotLinkRecord, SnapshotPart } from "../../src/core/types.js";
 
 /**
  * Stands in for the app's store where a vault is restored from a link,
@@ -61,9 +61,9 @@ export async function snapshotLinks(): Promise<SnapshotLinkRecord[]> {
   return [...daemon.links];
 }
 
-export async function publishSnapshotLink(selection: SnapshotSelection): Promise<never> {
-  daemon.calls.push({ name: "publishSnapshotLink", args: [selection] });
-  daemon.links.unshift({ status: "pending", hash: `bciqcutshort${daemon.links.length}`, selection, placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z" } as SnapshotLinkRecord);
+export async function publishSnapshotLink(part: SnapshotPart): Promise<never> {
+  daemon.calls.push({ name: "publishSnapshotLink", args: [part] });
+  daemon.links.unshift({ status: "pending", hash: `bciqcutshort${daemon.links.length}`, part, placedAt: "2026-10-10T12:00:00.000Z", retainUntil: "2026-11-09T12:00:00.000Z" } as SnapshotLinkRecord);
   throw new Error("the upload was cut short");
 }
 

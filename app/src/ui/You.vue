@@ -235,7 +235,7 @@ function forget() {
               <span>{{ importing ? "Merging…" : "Import a backup" }}</span>
               <span class="row-sub">what it holds is merged in</span>
             </span>
-            <input ref="importInput" type="file" accept=".sqlite,application/vnd.sqlite3" :disabled="importing" data-import @change="importBackup" />
+            <input ref="importInput" type="file" accept=".car,application/vnd.ipld.car" :disabled="importing" data-import @change="importBackup" />
           </label>
           <p v-if="importNote" class="note" style="padding: 0 16px 12px" data-import-note>{{ importNote }}</p>
           <ImportLink />

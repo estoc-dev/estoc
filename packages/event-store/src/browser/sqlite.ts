@@ -21,7 +21,6 @@ import {
   Connection,
   decodeText,
   exactInteger,
-  ownBytes,
   type OpenMode,
   type RawConnection,
   type RawStatement,
@@ -78,21 +77,10 @@ export interface SqlitePool {
    * handles the other open connections may still take are not spare:
    * a writable connection creates its rollback journal, its temporary
    * database, that database's journal, a statement journal and a
-   * sort's spill file as it works, and no open or import in between
-   * may take the handles they will need.
+   * sort's spill file as it works, and no other open in between may
+   * take the handles they will need.
    */
   open(name: string, mode: OpenMode): Promise<SqliteDriver>;
-  /** The complete bytes of the database file `name`, which no connection may hold open: what a portable snapshot is delivered as. */
-  exportFile(name: string): Promise<Uint8Array>;
-  /**
-   * Puts `bytes`, a complete SQLite database file, into the pool as
-   * `name`, which must not exist yet; the pool grows first when it has
-   * no handle to spare. The bytes are the caller's to validate before
-   * they come here: they are stored as they are except the two file
-   * format version bytes, which the pool sets to the rollback journal's,
-   * so whatever the source's headers were is not visible afterwards.
-   */
-  importFile(name: string, bytes: Uint8Array): Promise<void>;
   /** Deletes the database `name`, which no connection may hold open. */
   remove(name: string): void;
   /** Releases the pool's handles so another Worker may install over the directory. Every connection must be closed first. Afterwards every call is refused: the directory is the next owner's. */
@@ -224,23 +212,6 @@ class Pool implements SqlitePool {
     });
   }
 
-  async exportFile(name: string): Promise<Uint8Array> {
-    const path = pathOf(name);
-    this.live();
-    this.requireClosed(name);
-    if (!this.has(path)) throw new DatabaseMissing(`${this.directory}/${name}`);
-    return ownBytes(await this.util.exportFile(path));
-  }
-
-  async importFile(name: string, bytes: Uint8Array): Promise<void> {
-    const path = pathOf(name);
-    return this.inTurn(async () => {
-      if (this.has(path)) throw new DatabaseExists(`${this.directory}/${name}`);
-      await this.reserve(1);
-      await this.util.importDb(path, bytes);
-    });
-  }
-
   remove(name: string): void {
     const path = pathOf(name);
     this.live();
@@ -251,17 +222,17 @@ class Pool implements SqlitePool {
   async close(): Promise<void> {
     if (this.closed) return;
     if (this.writableByName.size > 0) throw new Error(`the pool still has ${this.writableByName.size} connection(s) open: close them before the pool`);
-    if (this.pending > 0) throw new Error(`the pool still has ${this.pending} open or import in progress: let it finish before closing the pool`);
+    if (this.pending > 0) throw new Error(`the pool still has ${this.pending} open in progress: let it finish before closing the pool`);
     this.util.pauseVfs();
     this.closed = true;
     this.releaseLock();
   }
 
   /**
-   * Runs `body` once every open and import started before it has
-   * finished: each looks at the names and the spare handles before it
-   * takes a name and a handle, and two that looked together would both
-   * find a name free or both count one spare handle as theirs.
+   * Runs `body` once every open started before it has finished: each
+   * looks at the names and the spare handles before it takes a name
+   * and a handle, and two that looked together would both find a name
+   * free or both count one spare handle as theirs.
    */
   private inTurn<T>(body: () => Promise<T>): Promise<T> {
     this.live();

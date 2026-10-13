@@ -16,6 +16,16 @@ export interface PoolCase extends Case {
   run(open: OpenPool): Promise<string | void>;
 }
 
+/** A database `name` created in `pool` with one marker row holding `v`, closed. */
+async function marked(pool: SqlitePool, name: string, v: number): Promise<void> {
+  const db = await pool.open(name, "create");
+  try {
+    db.exec(`CREATE TABLE marker (v INTEGER NOT NULL) STRICT; INSERT INTO marker VALUES (${v})`);
+  } finally {
+    db.close();
+  }
+}
+
 export const poolCases: PoolCase[] = [
   {
     name: "names are the databases: one that spells another's journal is its own, and the journal SQLite keeps beside a database is not listed",
@@ -73,8 +83,6 @@ export const poolCases: PoolCase[] = [
       await assertRejects(() => first.open("vault", "readwrite"), "Error", "open after close");
       assertThrows(() => first.names(), "Error", "names after close");
       assertThrows(() => first.remove("vault"), "Error", "remove after close");
-      await assertRejects(() => first.exportFile("vault"), "Error", "export after close");
-      await assertRejects(() => first.importFile("copy", new Uint8Array(512)), "Error", "import after close");
       const next = await open({ directory: "/lifecycle" });
       const current = await next.open("vault", "readwrite");
       await assertRejects(() => first.open("vault", "readwrite"), "Error", "the old pool while the new owner works");
@@ -97,62 +105,43 @@ export const poolCases: PoolCase[] = [
     },
   },
   {
-    name: "importing more databases than the pool has handles for grows it",
+    name: "creating more databases than the pool has handles for grows it",
     run: async (open) => {
-      const pool = await open({ directory: "/import-capacity" });
-      const db = await pool.open("origin", "create");
-      db.exec("CREATE TABLE marker (v INTEGER NOT NULL) STRICT; INSERT INTO marker VALUES (7)");
-      db.close();
-      const bytes = await pool.exportFile("origin");
-      const copies = Array.from({ length: 8 }, (_, i) => `copy-${i}`);
-      for (const name of copies) await pool.importFile(name, bytes);
-      assertEqual(pool.names(), [...copies, "origin"].sort(), "every copy landed");
-      const last = await pool.open("copy-7", "readonly");
+      const pool = await open({ directory: "/create-capacity" });
+      const names = Array.from({ length: 8 }, (_, i) => `vault-${i}`);
+      for (const name of names) await marked(pool, name, 7);
+      assertEqual(pool.names(), names, "every database landed");
+      const last = await pool.open("vault-7", "readonly");
       assertEqual(last.prepare("SELECT v FROM marker").all(), [{ v: 7 }], "and reads");
       last.close();
       await pool.close();
-      return `${copies.length} copies of ${bytes.byteLength} bytes`;
     },
   },
   {
-    name: "imports started together all land, past the handles the pool had",
+    name: "creates started together all land, past the handles the pool had",
     run: async (open) => {
-      const pool = await open({ directory: "/import-together" });
-      const db = await pool.open("origin", "create");
-      db.exec("CREATE TABLE marker (v INTEGER NOT NULL) STRICT; INSERT INTO marker VALUES (3)");
-      db.close();
-      const bytes = await pool.exportFile("origin");
-      const copies = Array.from({ length: 8 }, (_, i) => `copy-${i}`);
-      await Promise.all(copies.map((name) => pool.importFile(name, bytes)));
-      assertEqual(pool.names(), [...copies, "origin"].sort(), "every copy landed");
-      for (const name of copies) {
-        const copy = await pool.open(name, "readonly");
-        assertEqual(copy.prepare("SELECT v FROM marker").all(), [{ v: 3 }], `${name} reads`);
-        copy.close();
+      const pool = await open({ directory: "/create-together" });
+      const names = Array.from({ length: 8 }, (_, i) => `vault-${i}`);
+      await Promise.all(names.map((name) => marked(pool, name, 3)));
+      assertEqual(pool.names(), names, "every database landed");
+      for (const name of names) {
+        const db = await pool.open(name, "readonly");
+        assertEqual(db.prepare("SELECT v FROM marker").all(), [{ v: 3 }], `${name} reads`);
+        db.close();
       }
       await pool.close();
     },
   },
   {
-    name: "an import and a create of one name started together: one lands, the other is refused, whichever is first",
+    name: "two creates of one name started together: the first lands, the second is refused as taken",
     run: async (open) => {
-      const pool = await open({ directory: "/import-or-create" });
-      const db = await pool.open("origin", "create");
-      db.exec("CREATE TABLE marker (v TEXT NOT NULL) STRICT; INSERT INTO marker VALUES ('imported')");
-      db.close();
-      const bytes = await pool.exportFile("origin");
-      const outcomes = await Promise.allSettled([pool.importFile("target", bytes), pool.open("target", "create").then((created) => created.close())]);
-      const refused = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
-      assertEqual(refused.length, 1, "exactly one refused");
-      assertEqual((refused[0]?.reason as Error).name, "DatabaseExists", "and refused as taken");
+      const pool = await open({ directory: "/create-twice" });
+      const outcomes = await Promise.allSettled([marked(pool, "target", 1), marked(pool, "target", 2)]);
+      assertEqual(outcomes.map((outcome) => outcome.status), ["fulfilled", "rejected"], "the first lands");
+      assertEqual(((outcomes[1] as PromiseRejectedResult).reason as Error).name, "DatabaseExists", "the second is refused as taken");
       const target = await pool.open("target", "readonly");
-      const rows = target.prepare("SELECT name FROM sqlite_master WHERE name = 'marker'").all();
-      assertEqual(rows.length, outcomes[0]?.status === "fulfilled" ? 1 : 0, "the import's content, when the import was the one that landed");
-      if (outcomes[0]?.status === "fulfilled") assertEqual(target.prepare("SELECT v FROM marker").all(), [{ v: "imported" }], "intact");
+      assertEqual(target.prepare("SELECT v FROM marker").all(), [{ v: 1 }], "the first one's content");
       target.close();
-      const backwards = await Promise.allSettled([pool.open("target-2", "create").then((created) => created.close()), pool.importFile("target-2", bytes)]);
-      assertEqual(backwards.map((outcome) => outcome.status), ["fulfilled", "rejected"], "started the other way round, the create lands and the import is refused");
-      assertEqual(((backwards[1] as PromiseRejectedResult).reason as Error).name, "DatabaseExists", "as taken");
       await pool.close();
     },
   },
@@ -185,16 +174,12 @@ export const poolCases: PoolCase[] = [
     },
   },
   {
-    name: "a repair whose statement journal outgrows memory finds its handle: with the pool's spare handles taken by imports beside the open connection, a damaged 32 MiB object is put again with its bytes, read back whole and no longer damaged",
+    name: "a repair whose statement journal outgrows memory finds its handle: with the pool's spare handles taken by databases created beside the open connection, a damaged 32 MiB object is put again with its bytes, read back whole and no longer damaged",
     large: true,
     run: async (open) => {
       const pool = await open({ directory: "/capacity-repair" });
-      const template = await pool.open("template", "create");
-      template.exec("CREATE TABLE marker (v INTEGER NOT NULL) STRICT");
-      template.close();
-      const bytes = await pool.exportFile("template");
       const vault = createRuntime(await pool.open("vault", "create"), { metadata: META, wrapped: WRAPPED });
-      for (let i = 0; i < 3; i++) await pool.importFile(`copy-${i}`, bytes);
+      for (let i = 0; i < 3; i++) await marked(pool, `copy-${i}`, i);
       const store = new SqliteObjectStore(vault);
       const size = 32 * 1024 * 1024;
       const object = pattern(size, 31);
@@ -213,7 +198,7 @@ export const poolCases: PoolCase[] = [
       assertBytes(back, object, "the bytes back");
       assertEqual(await store.has(info.cid), true, "sound again");
       vault.close();
-      assertEqual(pool.names(), ["copy-0", "copy-1", "copy-2", "template", "vault"], "the databases");
+      assertEqual(pool.names(), ["copy-0", "copy-1", "copy-2", "vault"], "the databases");
       await pool.close();
     },
   },
@@ -232,33 +217,6 @@ export const poolCases: PoolCase[] = [
       assertEqual(db.prepare("SELECT typeof(s) AS t FROM t WHERE k = 1").get(), { t: "text" }, "the stored value is left as it is");
       db.close();
       await pool.close();
-    },
-  },
-  {
-    name: "a database exports as a standalone file and imports back",
-    run: async (open) => {
-      const pool = await open({ directory: "/exchange" });
-      const db = await pool.open("origin", "create");
-      db.exec("PRAGMA application_id = 1163088963; CREATE TABLE t (k INTEGER PRIMARY KEY, b BLOB NOT NULL) STRICT");
-      db.prepare("INSERT INTO t VALUES (?, ?)").run(1, pattern(3000, 9));
-      await assertRejects(() => pool.exportFile("origin"), "DatabaseBusy", "export while open");
-      db.close();
-      await assertRejects(() => pool.exportFile("nothing"), "DatabaseMissing", "export of a name not there");
-      const bytes = await pool.exportFile("origin");
-      assertEqual(new TextDecoder().decode(bytes.subarray(0, 15)), "SQLite format 3", "a database file");
-      assertEqual([bytes[18], bytes[19]], [1, 1], "rollback-format headers");
-      assertEqual(bytes.byteLength % 4096, 0, "whole pages");
-      await pool.importFile("copy", bytes);
-      await assertRejects(() => pool.importFile("copy", bytes), "DatabaseExists", "import over an existing name");
-      assertEqual(pool.names(), ["copy", "origin"], "both in the pool");
-      const copy = await pool.open("copy", "readonly");
-      assertEqual(copy.prepare("PRAGMA application_id").get(), { application_id: 1163088963 }, "the header travelled");
-      assertBytes(copy.prepare("SELECT b FROM t WHERE k = 1").get()?.["b"] as Uint8Array, pattern(3000, 9), "the bytes travelled");
-      copy.close();
-      pool.remove("copy");
-      assertEqual(pool.names(), ["origin"], "removed");
-      await pool.close();
-      return `${bytes.byteLength} bytes`;
     },
   },
 ];

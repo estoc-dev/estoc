@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Snapshot parts** (breaking): a snapshot link carries one part of the
+  CAR snapshot, `SnapshotPart` `seed` (the sealed seed, with the events
+  a new replica enrolls from) or `content` (every event and object, no
+  seed), in place of `SnapshotSelection`: `publishSnapshotLink` takes
+  `{ part }`, and a `SnapshotLinkRecord` names its `part`. A backup is
+  a `.car` carrying both; `restoreIdentity` and `restoreFromLink` need
+  the seed, `mergeBackup` and `importFromLink` the content.
+  `restoreFromLink` reads no further than the bound a seed link is held
+  to, which the daemon sets, rather than `maxBackupBytes`.
+
 - Snapshot links: the methods `publishSnapshotLink` (`{ selection }`,
   answering a `PublishedSnapshotLink`), `revokeSnapshotLink`
   (`{ hash }`), `snapshotLinks` (`{ links: SnapshotLinkRecord[] }`,

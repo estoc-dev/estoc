@@ -39,7 +39,7 @@ are assembled from stay inside the package. The index exports:
 - The objects and how a host gets them: `VaultSession` from `createVault`,
   `openVault` and `openRestoredVault`; `Agent` over it (and the
   `Arrangement` it hands out, and the `Membership` an arrangement hands
-  out); `AgentTrace`, `LocalRecords`, `inspectRuntime`, `inspectSnapshot`.
+  out); `AgentTrace`, `LocalRecords`, `inspectRuntime`.
 - The errors, so that a host can catch what those objects throw.
 - The wire vocabulary of `protocol/`, whole: the type URIs, reading and
   writing bodies, `unpack`, `parseInvitation`, `secretsResolverFor`. These
@@ -70,7 +70,7 @@ peer.
 
 | Question | Module | Entry points |
 | --- | --- | --- |
-| How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `openRestoredVault`, `inspectRuntime`, `inspectSnapshot` |
+| How is the vault opened, and with whose keys? | `identity.ts` | `createVault`, `openVault`, `openRestoredVault`, `inspectRuntime` |
 | What is the vault as this runtime runs it, and what does a host do with it? | `session.ts` | `VaultSession`, `LockedVault`; `Session`, `Locked` for the package |
 | What is a vault running? | `agent.ts` | `Agent.open`, `Agent.start`; `connect`, `arrangement`, `send`, `receive`, `localStateChanged`, `records`, `pending`, `manual`, `close` |
 | What still happens once an agent, or a part of it, closed? | `lifetime.ts` | `GLOBAL_TIMERS`, `Timers` |
