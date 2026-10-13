@@ -127,6 +127,13 @@ export function compareCids(a: Cid, b: Cid): number {
   return compareBytes(parseCid(a).bytes, parseCid(b).bytes);
 }
 
+/** Each of `cids` checked as a canonical raw CID: what a caller's fold returns, before it is trusted. */
+export function checkedCids(cids: Iterable<Cid>): Cid[] {
+  const out: Cid[] = [];
+  for (const cid of cids) out.push(rawCidOf(cid).text as Cid);
+  return out;
+}
+
 /** `cids` unique and in binary-CID byte order. */
 export function sortCids(cids: Iterable<Cid>): Cid[] {
   return [...new Set(cids)].sort(compareCids);

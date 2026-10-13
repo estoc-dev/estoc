@@ -1,6 +1,7 @@
 /**
- * A portable snapshot of the same vault imported into a runtime that
- * is open: the union of the two event sets, and the objects that
+ * A snapshot of the same vault imported into a runtime that is open —
+ * a portable one, validated here, or the content part of a CAR, which
+ * was validated as it was read: the union of the two event sets, and the objects that
  * union holds, published in one transaction or not at all. Everything
  * the source alone decides is checked before the target's lock is
  * taken; everything that depends on the target — what is new, what
@@ -11,15 +12,17 @@
  * presents.
  */
 
-import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, InvalidSnapshot, ReadOnlyVault, UnsupportedOperation } from "../errors.js";
+import { AnchorMismatch, DamagedHistory, DamagedObject, ForkedAuthor, IncompleteImport, InvalidSnapshot, MissingPart, ReadOnlyVault, UnsupportedOperation } from "../errors.js";
 import type { Cid, Event, EventCid } from "../event.js";
+import type { VaultMetadata } from "../keystore.js";
 import { rawCidOf, sortCids } from "../objects.js";
+import { Snapshot, type SnapshotRange } from "../snapshot.js";
 import { MemoryVault, heldRootsOf, type Held, type Retained, type RetainedRoots, type Vault, type VaultObjects, type VaultRuntime } from "../vault.js";
 import type { PortableDatabase } from "./open.js";
 import { validatePortable } from "./portable.js";
 
 export interface ImportOptions {
-  /** The retention the events of a vault hold, folded by the caller: run on the snapshot for its validation, on the target before the import and on the prospective union, each through the vault it is handed. */
+  /** The retention the events of a vault hold, folded by the caller: run on a portable snapshot for its validation, on the target before the import and on the prospective union, each through the vault it is handed. */
   retainedRoots: RetainedRoots;
 }
 
@@ -32,6 +35,11 @@ export interface Imported {
   objects: number;
   /** objects the union holds that the target knew damaged, replaced whole from the source's verified bytes */
   repaired: number;
+}
+
+export interface ImportedSnapshot extends Imported {
+  /** The content part's range, as the snapshot labels it: the exporting replica's positions, which the target takes for none of its own. */
+  range: SnapshotRange;
 }
 
 /**
@@ -68,9 +76,41 @@ export interface Imported {
  * to be repaired, writes nothing.
  */
 export async function importVault(target: VaultRuntime, source: PortableDatabase, options: ImportOptions): Promise<Imported> {
-  if (typeof options.retainedRoots !== "function") throw new TypeError("an import takes `retainedRoots`, the caller's fold of the retention edge by edge");
+  checkOptions(options);
   if (!target.writable) throw new ReadOnlyVault("import");
   await validatePortable(source, { heldRoots: heldRootsOf(options.retainedRoots) });
+  return imported(target, source, options);
+}
+
+/**
+ * Imports the content part of `snapshot` into `target`, as
+ * `importVault` imports a portable snapshot once it has validated it,
+ * and hands back the range the content part is labelled with. An
+ * inspector is refused (`ReadOnlyVault`), then a snapshot without the
+ * content part (`MissingPart`), before anything is read or written. A
+ * snapshot is read once and imported as often as asked: after an
+ * identity reset, say, the same snapshot imports again.
+ */
+export async function importSnapshot(target: VaultRuntime, snapshot: Snapshot, options: ImportOptions): Promise<ImportedSnapshot> {
+  checkOptions(options);
+  if (!(snapshot instanceof Snapshot)) throw new TypeError("an import takes a Snapshot that Snapshot.read made");
+  if (!target.writable) throw new ReadOnlyVault("import");
+  const range = snapshot.content;
+  if (range === undefined) throw new MissingPart("content");
+  return { ...(await imported(target, snapshot, options)), range };
+}
+
+function checkOptions(options: ImportOptions): void {
+  if (typeof options.retainedRoots !== "function") throw new TypeError("an import takes `retainedRoots`, the caller's fold of the retention edge by edge");
+}
+
+/** A validated snapshot as an import reads it: the identity it states, and its events and objects. */
+interface Source {
+  metadata: VaultMetadata;
+  vault: Vault;
+}
+
+async function imported(target: VaultRuntime, source: Source, options: ImportOptions): Promise<Imported> {
   if (source.metadata.anchor !== target.metadata.anchor) throw new AnchorMismatch(target.metadata.anchor, source.metadata.anchor, "source");
   const incoming: Event[] = [];
   for await (const event of source.vault.events.scan()) incoming.push(event);

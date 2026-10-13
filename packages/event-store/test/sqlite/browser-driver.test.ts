@@ -3,8 +3,8 @@
  * script are bundled with esbuild and served, with `sqlite3.wasm`, to a
  * headless Chromium over localhost (a secure context, which OPFS
  * needs); the page drives the Workers, running at once, and the results come back — one
- * vitest case per driver, open, event, object, vault, export, import
- * and pool case, per test of the three conformance suites, and per
+ * vitest case per driver, open, event, object, vault, export, import,
+ * snapshot and pool case, per test of the three conformance suites, and per
  * case of the page's own. The Worker's bundle gets the suites' `vitest`
  * from `test/browser/vitest-stand-in.ts`, which collects the tests for
  * the Worker to run. What the Worker cannot make for itself is made
@@ -41,6 +41,7 @@ import { destination, exportCases, type ExportHarness, opened } from "./export-c
 import { importCases } from "./import-cases.js";
 import { objectCases } from "./object-cases.js";
 import { openCases } from "./open-cases.js";
+import { snapshotCases } from "./snapshot-cases.js";
 import { utf16Forged, utf16Snapshot } from "./utf16.js";
 import { clock, make, retainedOf, rootsOf, vaultCases, vaultOver } from "./vault-cases.js";
 
@@ -177,7 +178,7 @@ describe.skipIf(outcome === undefined)("sqlite-wasm driver (in a Chromium Worker
     if (result.error !== undefined) throw new Error(result.error);
   }
 
-  for (const c of [...driverCases, ...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases, ...poolCases]) {
+  for (const c of [...driverCases, ...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases, ...snapshotCases, ...poolCases]) {
     test(c.name, () => report(results.get(c.name)));
   }
   for (const name of PAGE_CASES) {

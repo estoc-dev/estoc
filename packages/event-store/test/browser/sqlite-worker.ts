@@ -18,6 +18,7 @@ import { destination, exportCases, type ExportHarness, opened } from "../sqlite/
 import { importCases, type ImportHarness } from "../sqlite/import-cases.js";
 import { objectCases, type ObjectHarness } from "../sqlite/object-cases.js";
 import { type OpenHarness, openCases } from "../sqlite/open-cases.js";
+import { snapshotCases } from "../sqlite/snapshot-cases.js";
 import { eventStoreOpener, objectStoreOpener, type SuiteHarness, vaultOpener } from "../sqlite/suite-openers.js";
 import { clock, vaultCases } from "../sqlite/vault-cases.js";
 import { eventStoreSuite } from "../suite/event-store-suite.js";
@@ -155,7 +156,7 @@ async function runOpenCases(directory: string, utf16: { snapshot: Uint8Array; fo
     memoryUsed: memoryUsedIn(pool),
   };
   const results: WorkerCaseResult[] = [];
-  for (const c of named([...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases], names)) await attempt(results, c.name, () => c.run(harness));
+  for (const c of named([...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases, ...snapshotCases], names)) await attempt(results, c.name, () => c.run(harness));
   await closing(pool, results, "open cases");
   return results;
 }

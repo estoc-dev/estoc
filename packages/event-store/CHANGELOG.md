@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **The snapshot as a CAR.** `exportSnapshot(runtime, { parts,
+  types, heldRoots, maxBytes })` writes a DASL CAR of the seed part
+  (the wrapper, with the events of `types` when it travels alone),
+  the content part (every event, with its `SnapshotRange`: the
+  exporting replica, its generation and the positions `(0,
+  lastSeq]`) or both, under the writer lock, into one buffer sized by
+  `carLength`, each object streamed through the vault's read; past
+  `maxBytes` it is `SnapshotTooLarge` before an object is read.
+  `Snapshot.read(bytes, { heldRoots })` takes the bytes over —
+  transferring the buffer when the view spans it, copying otherwise —
+  and validates the header (`NotAVault`) and every block
+  (`InvalidSnapshot`) before handing out a read-only `Vault`, copies
+  of its objects, `seed` and `content`. `restoreSnapshot` needs the
+  seed part and `importSnapshot` the content part, `MissingPart`
+  otherwise before anything is written; the import hands back the
+  range. The portable snapshot is unchanged beside it.
+- **`EventTally.lastSeq`**: the position accepted last, where a
+  change token issued now stands; what a content part's range ends
+  at.
+- `restoreVault` and `importVault` share their laying and merging
+  with the snapshot's restore and import; nothing changes for their
+  callers.
+
 - **Vault version 5** (breaking): `VAULT_VERSION` is exported and is 5.
   `VaultMetadata.version` is `typeof VAULT_VERSION`, and the SQLite
   `vault_version` check, creation, open, export, import and restore all

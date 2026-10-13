@@ -212,7 +212,7 @@ export class MemoryEventStore implements EventStore {
   }
 
   async tally(): Promise<EventTally> {
-    return { events: this.held.size, bytes: this.bytes };
+    return { events: this.held.size, bytes: this.bytes, lastSeq: this.accepted.length };
   }
 }
 

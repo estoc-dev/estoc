@@ -7,10 +7,10 @@ and object identity, commit durability, versioning. What is here
 is the model, its reference in memory, the SQLite driver the
 persistent stores are written against, the vault's schema and opening
 over it, the event store and the object store over that, the SQLite
-vault over both, and the portable snapshot: export, its validation
-and its inspection, restore and import — the whole of it run in a
-Chromium Worker as it is on Node, one snapshot exchanged between the
-two. No event type is known here: what an event means, and the folds
+vault over both, the portable snapshot: export, its validation
+and its inspection, restore and import, and the snapshot as a CAR of
+a seed part and a content part — the whole of it run in a Chromium
+Worker as it is on Node, one snapshot exchanged between the two. No event type is known here: what an event means, and the folds
 that read it, are `@estoc/vault`'s.
 
 The event model: RFC 8785 canonical JSON and a strict parser; the
@@ -560,6 +560,72 @@ refused; and an import interrupted at every statement of its
 transaction, or at its `COMMIT`, leaving the whole old union or the
 whole new. `test/sqlite/import.test.ts` adds a restore into a
 destination of either journal.
+
+The snapshot as a DASL CAR (`src/snapshot.ts`), in two parts a
+snapshot carries one or both of. The seed part is the wrapper; alone,
+it brings only the events of the types its exporter selects and the
+objects they hold on their own. The content part is every event and
+every object they hold, with its range: `{ replica, generation,
+after, through }`, the positions the exporting replica accepted them
+at, what `changes` from a token at `after` gives. A whole export
+starts at 0 and ends at `EventTally.lastSeq`, read in the lock that
+fixes the cut; the range is a label of the exporter's, which no
+importer takes for a position or a token of its own, and a range that
+does not start at 0 is refused for now. The header is `{ version: 1,
+roots, estoc }`, `estoc` being `{ snapshot: 1, vault_version: 5,
+anchor, seed?, content? }`; the roots are the events, each the CID of
+its envelope's canonical bytes; every other block is an object the
+events hold, written once whatever holds it, a block that is an event
+too included. `exportSnapshot(runtime, { parts, types, heldRoots,
+maxBytes })` takes `parts: "seed"` with `types`, `"content"` or
+`"both"`, and does everything under the writer lock: with content,
+the tally weighed against `maxBytes` before an event is read; then
+the events' bytes before the fold runs; then the CAR's whole length — `carLength`
+of the header and the block sizes — before an object is read; each
+`SnapshotTooLarge` past it; history damage or a held root absent or
+known damaged is `IncompleteSnapshot`. Then one buffer of that
+length is filled through `CarWriter`, the events in canonical order
+and the objects in CID order, each streamed through the vault's own
+read, which rehashes it, and not checked again. `Snapshot.read(bytes,
+{ heldRoots })` validates the whole CAR before anything is handed
+out: a CAR that does not decode is `InvalidSnapshot`; a header that is
+not this format's — a member beside `estoc`, a member of it missing or
+unknown, another format or vault version, an anchor that is no DID, a
+seed outside the keystore's profile, a range that is no range or does
+not start at 0, neither part — is `NotAVault`; then a block that does
+not hash to its CID, at any of its occurrences, a root named twice,
+not raw, without a block or whose block is not an envelope's
+canonical bytes, a block that is not raw, a held root without a block
+and a block neither an event nor held are `InvalidSnapshot`, every
+one found named. The `Snapshot` is the only thing a restore or an
+import takes from a CAR: its `seed` and `content`, `undefined` for a
+part it lacks, its counts, and `vault`, a read-only `Vault` that
+refuses `commit` and `changes`. It owns its bytes: a view spanning
+its whole buffer has the buffer transferred
+(`ArrayBuffer.prototype.transferToFixedLength`), the caller's view
+detached, and any other input — part of a larger buffer, a shared
+buffer, one that cannot be detached — is copied once; every block is
+a view of that buffer, and what the snapshot hands out — a `read`, a
+stream's pieces — is a copy. `restoreSnapshot(snapshot, open, {
+anchor })` needs the seed part and `importSnapshot(target, snapshot,
+{ retainedRoots })` the content part, each refusing a snapshot
+without it as `MissingPart` before anything is written; past that,
+they lay and merge as `restoreVault` and `importVault` do once a
+portable snapshot is validated, the same code, and the import hands
+back the range beside what it added. Restoring both parts holds what
+restoring the seed and importing the content holds, and what
+restoring a portable snapshot of the same vault holds.
+`test/snapshot.test.ts` runs the three exports over vaults in memory,
+their headers, roots and block order, every header and block a read
+refuses, and an import into a vault in memory;
+`test/sqlite/snapshot-cases.ts` runs on `node:sqlite` and in a
+Chromium Worker: the range read in the export's lock, an inspector's
+export, the three restores and the import agreeing, the restored
+replica's own positions and the import's placing of what it adds, a
+block both an event and an object, a part missing, a restore failing
+at each statement, an export over damage, the bound met before an
+object is read, a portable file refused, and the snapshot owning its
+bytes. The portable snapshot stays beside it for now.
 
 The two platforms, side by side. The three conformance suites —
 `eventStoreSuite`, `objectStoreSuite`, `vaultSuite` — run over the

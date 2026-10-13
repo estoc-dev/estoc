@@ -303,7 +303,7 @@ export class IncompleteSnapshot extends Error {
   }
 }
 
-/** A snapshot past the bound the caller set: on the file a portable open reads, or on the events and objects an export copies; refused before what the bound covers is read. */
+/** A snapshot past the bound the caller set: on the file a portable open reads, on the events and objects a portable export copies, or on the CAR an export writes; refused before what the bound covers is read. */
 export class SnapshotTooLarge extends Error {
   constructor(
     readonly maxBytes: number,
@@ -319,6 +319,22 @@ export class InvalidSnapshot extends Error {
   constructor(readonly problems: { where: string; error: string }[]) {
     super(`not a valid snapshot: ${describe(problems)}`);
     this.name = "InvalidSnapshot";
+  }
+}
+
+/**
+ * A snapshot without the part an operation needs, refused before
+ * anything is written: a restore needs the seed part, an import the
+ * content part.
+ */
+export class MissingPart extends Error {
+  constructor(readonly part: "seed" | "content") {
+    super(
+      part === "seed"
+        ? "a restore needs the snapshot's seed part, and this one carries content alone: content is imported into a vault that already exists"
+        : "an import needs the snapshot's content part, and this one carries the seed alone: a seed restores a new vault"
+    );
+    this.name = "MissingPart";
   }
 }
 
