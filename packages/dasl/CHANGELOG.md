@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- CAR header metadata: `encodeCar({ roots, metadata }, blocks)` writes
+  the header's members beside `version` and `roots`, and `decodeCar`
+  hands them back as `metadata`, a map with no prototype. `encodeCar`
+  takes a header in place of the roots alone.
+- `CarWriter` and `carLength`: a CAR written into one buffer whose length
+  is fixed before the first block, each block declared by its CID and
+  size and filled a chunk at a time. A block that does not fit, a chunk
+  past its block, a block begun before the last is full and a close
+  short of the length are refused. `encodeCar` is this writer over whole
+  blocks, and `@ipld/car` is only a test dependency now, a byte-for-byte
+  cross-check of a header with no metadata: its writer encodes no member
+  but `version` and `roots` and takes each block whole.
+- `decodeCar` checks every occurrence of a block against its CID. A
+  repeat used to be skipped unread; one whose bytes do not match is now
+  named in `bad`, as a first occurrence is.
 - `cidFromDigest(code, digest)`: the CID of a sha-256 digest already
   taken, for a hash computed incrementally. `cidOf` is now the same
   constructor over `multiformats`' digest; no CID header is assembled by

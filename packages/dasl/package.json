@@ -30,12 +30,12 @@
     "dev": "tsc --watch --preserveWatchOutput"
   },
   "dependencies": {
-    "@ipld/car": "^5.4.7",
     "multiformats": "^14.0.5"
   },
   "devDependencies": {
     "@atcute/cbor": "^2.3.6",
     "@atcute/cid": "^2.4.2",
+    "@ipld/car": "^5.4.7",
     "@ipld/dag-cbor": "10.0.2",
     "@types/node": "^26.6.2",
     "typescript": "~5.8.0",

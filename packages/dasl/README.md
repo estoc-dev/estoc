@@ -1,11 +1,11 @@
 # @estoc/dasl
 
-[DASL](https://dasl.ing/) — CIDs, DRISL, CAR. CIDs, multihashes, base32, sha-256 and varints come from [multiformats](https://github.com/multiformats/js-multiformats), and a CAR is written by [@ipld/car](https://github.com/ipld/js-car), the two dependencies; the DASL profile over them and the DRISL codec (a few hundred lines of CBOR) are this package's. Pure functions, runs in Node (≥ 20), workerd and the browser.
+[DASL](https://dasl.ing/) — CIDs, DRISL, CAR. CIDs, multihashes, base32, sha-256 and varints come from [multiformats](https://github.com/multiformats/js-multiformats), the one dependency; the DASL profile over them, the DRISL codec (a few hundred lines of CBOR) and the CAR container are this package's. Pure functions, runs in Node (≥ 20), workerd and the browser.
 
 - **CID** — a DASL CID is CIDv1, sha-256, codec `raw` (0x55, bare bytes) or `drisl` (0x71, a DRISL document), always 36 bytes, written in base32 lower (`b…`, 59 characters) and nothing else: no CIDv0, no dag-pb, no other hash, no other base, no uppercase, no padding. multiformats decodes, encodes and hashes; `parseCid` takes the one canonical spelling and refuses the rest; `rawCid` / `drislCid` name bytes; `checkCid` proves bytes against a name under its own codec.
 - **DRISL** — deterministic CBOR with CIDs as tag 42 (the CBOR/c-42 profile). `encodeDrisl` writes the one byte string a value has; `decodeDrisl` refuses every other form — non-shortest integers and lengths, indefinite lengths, keys out of bytewise order, tags other than 42, links that are not DASL CIDs, floats narrower than 64 bits, NaN, infinities, negative zero, invalid UTF-8, trailing bytes — so a block that decodes is a block whose bytes are the only bytes its value can have, and its CID is a function of its content. What it decodes to reserializes to the same bytes: a float whose value is a safe integer — `1.0` — comes back as a `Float`, not as the integer `1` (CBOR/c-42 §2.2 keeps the two types distinct; any other finite float is a plain `number`, which encodes 64-bit anyway), an integer outside the safe range (±2^53 included) comes back as a `bigint`, and a leading U+FEFF is text, not a byte-order mark. A decoded map has no prototype: every key DRISL allows is a plain own property.
 The codec is this package's rather than [cborg](https://github.com/rvagg/cborg)'s (which `@ipld/car` brings in): cborg's decoder does not check key order, hands `1.0` back as the number `1`, and builds maps with a prototype, and its encoder passes lone surrogates, `undefined` and unbounded nesting, so a DRISL layer over it would be a second codec of the same size that only tests could keep in step with the first.
-- **CAR** — a DASL CAR is CARv1 whose header is a DRISL map with `version: 1`, `roots` and any other metadata, and whose blocks are named by exactly the 36 bytes of a DASL CID, with every length a minimally encoded unsigned varint. `encodeCar` writes roots and blocks in the order given, through `@ipld/car`. `decodeCar` reads the header with the DRISL codec and a block's name as its first 36 bytes, checks every block against its name and keeps only what matches (`bad` lists the rest); it does not read through `@ipld/car`, whose reader refuses a header with metadata beyond `roots` and `version`, lets a `__proto__` entry in it become a prototype, and takes a block's CID by structure rather than by the 36 bytes the profile fixes.
+- **CAR** — a DASL CAR is CARv1 whose header is a DRISL map with `version: 1`, `roots` and any other metadata, and whose blocks are named by exactly the 36 bytes of a DASL CID, with every length a minimally encoded unsigned varint. `encodeCar` writes the header — roots and metadata — and the blocks in the order given. `CarWriter` writes the same bytes into one buffer whose length, `carLength` of the header and the block sizes, is fixed before the first block; each block is declared by its CID and size and then filled a chunk at a time, and a block that does not fit, a chunk past its block, a block begun before the last is full or a close short of the length is refused. `decodeCar` reads the header with the DRISL codec, hands back its other members as `metadata` (a map with no prototype), takes a block's name as its first 36 bytes, checks every occurrence of every block against its name and keeps only what matches (`bad` lists each occurrence dropped). Neither direction goes through [@ipld/car](https://github.com/ipld/js-car): its writer encodes no header member but `roots` and `version` and takes a block whole, and its reader refuses a header with metadata beyond them, lets a `__proto__` entry in it become a prototype, and takes a block's CID by structure rather than by the 36 bytes the profile fixes. The tests compare `encodeCar` with it byte for byte on a header with no metadata.
 
 ```sh
 npm install @estoc/dasl
@@ -14,7 +14,7 @@ npm install @estoc/dasl
 ## API
 
 ```ts
-import { rawCid, drislCid, parseCid, checkCid, encodeDrisl, decodeDrisl, Link, encodeCar, decodeCar } from "@estoc/dasl";
+import { rawCid, drislCid, parseCid, checkCid, encodeDrisl, decodeDrisl, Link, encodeCar, decodeCar, CarWriter, carLength } from "@estoc/dasl";
 
 const leaf = await rawCid(bytes);                              // bafkrei…
 const doc = encodeDrisl({ resources: { "/a": { src: new Link(parseCid(leaf)), size: bytes.length } } });
@@ -22,8 +22,13 @@ const root = await drislCid(doc);                              // bafyrei…
 decodeDrisl(doc);                                              // the value back, or a throw on any non-canonical byte
 await checkCid(leaf, bytes);                                   // throws unless bytes hash to leaf
 
-const car = encodeCar([root], new Map([[root, doc], [leaf, bytes]]));
-const { roots, blocks, bad } = await decodeCar(car);           // blocks: only what hashes to its name
+const car = encodeCar({ roots: [root], metadata: { note: "hi" } }, new Map([[root, doc], [leaf, bytes]]));
+const { roots, metadata, blocks, bad } = await decodeCar(car); // blocks: only what hashes to its name
+
+const writer = new CarWriter({ roots: [leaf] }, carLength({ roots: [leaf] }, [bytes.length]));
+writer.block(leaf, bytes.length);
+for (const chunk of chunks) writer.write(chunk);               // the block's bytes, in pieces
+writer.close();                                                // the CAR, once every byte declared is written
 ```
 
-The tests pin the raw CIDs of the empty bytes and of `hello`, and RFC 8949 vectors, refuse some forty non-canonical encodings, and cross-check the DRISL encoder byte for byte against `@ipld/dag-cbor` and `@atcute/cbor` (dev dependencies, for the tests only). What a DRISL document *means* is the business of whoever reads it, not this package's; the vault ([event store contracts](../../docs/replica-model/event-store.md)) takes raw objects only and defers DRISL and CAR to a later profile.
+The tests pin the raw CIDs of the empty bytes and of `hello`, and RFC 8949 vectors, refuse some forty non-canonical encodings, and cross-check the DRISL encoder byte for byte against `@ipld/dag-cbor` and `@atcute/cbor` (dev dependencies, for the tests only). What a DRISL document *means* is the business of whoever reads it, not this package's. The vault ([event store contracts](../../docs/replica-model/event-store.md)) takes raw objects only.
