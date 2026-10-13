@@ -168,7 +168,7 @@ export interface Methods {
   /** The replicas of the arrangement this daemon's replica is in, asked of its mediator again; the snapshot shows them. */
   refreshReplicas: Method<Empty, null>;
   /**
-   * The whole vault's snapshot published as `publishSnapshotLink` publishes one, and its link mailed to `replicaId`, or to every
+   * The vault's content part published as `publishSnapshotLink` publishes one, and its link mailed to `replicaId`, or to every
    * other replica the mediator lists active when it is left out; each imports it as the link arrives. Refused before anything is
    * put when there is no such replica. `told` is those the mediator took the mail for; why another was not is in the snapshot.
    */

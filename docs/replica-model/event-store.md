@@ -78,10 +78,12 @@ stored column, a server or an HTTP digest claims, and object content is not
 executed.
 
 Only explicit event roots retain objects; a CID merely mentioned in a payload
-or inside an object retains nothing and is not fetched. Local IDs, change
-tokens and caches never travel in a snapshot, and positions travel only as
-the range a content part is labelled with, which no importer takes for a
-position of its own; losing them cannot lose a committed decision or message
+or inside an object retains nothing and is not fetched. Change tokens and
+caches never travel in a snapshot. A content part is labelled with the range
+it was exported as: the exporting replica, its store generation and the
+positions it accepted the events at. The label stays the exporter's: no
+restore or import takes it for a replica ID, a generation, a position or a
+token of its own, and losing it cannot lose a committed decision or message
 body.
 
 <a id="commit-and-durability-terminology"></a>

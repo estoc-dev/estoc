@@ -133,7 +133,7 @@ export interface Daemon {
   /** The replicas of the preferred arrangement asked of its mediator again, and kept for the records to show. */
   refreshReplicas(): Promise<void>;
   /**
-   * The whole vault's snapshot published as `publishSnapshotLink`
+   * The vault's content part published as `publishSnapshotLink`
    * publishes one, and its link mailed to `replicaId`, or to every other
    * replica the mediator holds when it is left out, as the mediator
    * lists them now; each imports it as the link arrives. Refused before

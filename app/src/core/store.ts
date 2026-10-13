@@ -328,9 +328,9 @@ export function snapshotLinkOf(link: SnapshotLink): string {
 }
 
 /**
- * A snapshot of this vault sealed and put at its mediator: of what a new
- * device joins with, or of the whole vault, for a device of this vault's
- * to import or a new one to restore from.
+ * A snapshot of this vault sealed and put at its mediator: the seed part,
+ * for a new device to restore from, or the content part, for a device of
+ * this vault's to import.
  */
 export async function publishSnapshotLink(part: SnapshotPart): Promise<PublishedSnapshotLink> {
   const made = await call((daemon) => daemon.publishSnapshotLink({ part }), "A link cannot carry this vault: export a backup and take the file to the other device instead.");

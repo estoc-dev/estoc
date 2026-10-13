@@ -54,7 +54,7 @@ export async function openVault(driver: SqliteDriver, unlock: Unlock, { resetIde
 
 export interface CreateVaultOptions extends VaultOptions {
   seedKey: SeedKey;
-  /** the seed sealed under the passphrase, as `@estoc/keystore` version 3 seals it: what the vault keeps and every snapshot carries */
+  /** the seed sealed under the passphrase, as `@estoc/keystore` version 3 seals it: what the vault keeps and a snapshot's seed part carries */
   wrapped: WrappedSeed;
   /** what the identity calls itself: the first `identity.label` */
   label: string;

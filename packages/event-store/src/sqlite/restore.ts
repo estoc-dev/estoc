@@ -50,7 +50,6 @@ const FORMAT = "estoc-sqlite";
 /** How many bytes of chunks are gathered from an object before a transaction writes them: the memory a restore holds beyond the chunk in hand. */
 const BATCH_BYTES = 8 * CHUNK_BYTES;
 
-/** An object to write: its CID and its size. */
 type CopiedObject = { cid: Cid; size: number };
 
 /**
