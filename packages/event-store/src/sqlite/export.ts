@@ -7,15 +7,16 @@
  * through the interfaces every runtime presents.
  */
 
-import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge, UnsupportedOperation } from "../errors.js";
+import { DamagedObject, IncompleteSnapshot, SnapshotTooLarge } from "../errors.js";
 import { canonicalEventBytes, compareEvents, type Cid, type Event } from "../event.js";
 import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
-import { Packer, hashSource, sortCids } from "../objects.js";
-import { MemoryVault, type Held, type HeldRoots, type Vault, type VaultRuntime } from "../vault.js";
+import { Packer, checkedCids, hashSource, sortCids } from "../objects.js";
+import { selection } from "../snapshot.js";
+import type { Held, HeldRoots, Vault, VaultRuntime } from "../vault.js";
 import type { SqliteDriver } from "./driver.js";
 import { CHUNK_BYTES } from "./objects.js";
 import { openPortable } from "./open.js";
-import { checkedCids, validatePortable, type Validated } from "./portable.js";
+import { validatePortable, type Validated } from "./portable.js";
 import { APPLICATION_ID, SCHEMA_VERSION, createTables, query, run } from "./schema.js";
 
 /**
@@ -107,7 +108,7 @@ async function select(runtime: VaultRuntime, held: Held, options: ExportOptions)
   if (maxBytes !== undefined && eventBytes > maxBytes) throw new SnapshotTooLarge(maxBytes, eventBytes);
   const roots: Cut["roots"] = [];
   let objectBytes = 0;
-  for (const cid of sortCids(checkedCids(await options.heldRoots(types === undefined ? held : await selection(runtime, held, events))))) {
+  for (const cid of sortCids(checkedCids(await options.heldRoots(types === undefined ? held : await selection(runtime.metadata, held, events))))) {
     let info;
     try {
       info = await held.objects.stat(cid);
@@ -136,18 +137,6 @@ async function eventsOf(held: Held, types: ReadonlySet<string> | undefined): Pro
   }
   for (const type of types) for await (const event of held.events.scan({ type })) events.push(event);
   return events.sort(compareEvents);
-}
-
-/** The selected events as a vault of their own, reading objects through the held view: what a selection's held roots are folded from, as the snapshot's validation folds them from its own events. Read only, as the snapshot is: a commit is refused. */
-async function selection(runtime: VaultRuntime, held: Held, events: Event[]): Promise<Vault> {
-  const selected = new MemoryVault({ metadata: runtime.metadata });
-  await selected.ingest(events);
-  return {
-    metadata: runtime.metadata,
-    events: selected.vault.events,
-    objects: held.objects,
-    commit: () => Promise.reject(new UnsupportedOperation("a commit to the selection an export folds")),
-  };
 }
 
 /** The destination as a portable database, not yet ready: the schema, the metadata, the wrapper and every event, in one transaction. */

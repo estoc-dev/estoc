@@ -6,7 +6,7 @@
 import { DamagedObject, InvalidSnapshot, InvalidSqlValue, SqliteError, UnsupportedOperation } from "../errors.js";
 import { matches, type Cid, type Damaged, type Event, type Filter } from "../event.js";
 import type { VaultMetadata } from "../keystore.js";
-import { chunksOf, rawCidOf, sortCids } from "../objects.js";
+import { checkedCids, chunksOf, rawCidOf, sortCids } from "../objects.js";
 import type { HeldRoots, Vault, VaultEvents, VaultObjects } from "../vault.js";
 import { decodeText, type SqliteDriver } from "./driver.js";
 import { EVENT_COLUMNS, eventFilterSql, readEventRows } from "./events.js";
@@ -208,10 +208,4 @@ function declaredBytes(driver: SqliteDriver): { events: number; objects: number;
     return value;
   };
   return { events: counted("events"), objects: counted("objects"), chunks: counted("chunks") };
-}
-
-export function checkedCids(cids: Iterable<Cid>): Cid[] {
-  const out: Cid[] = [];
-  for (const cid of cids) out.push(rawCidOf(cid).text as Cid);
-  return out;
 }

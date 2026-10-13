@@ -1,16 +1,18 @@
 /**
- * A portable snapshot restored into a new runtime: a fresh database
- * laid with the runtime's own schema and filled with the snapshot's
- * validated values — never its pages, never its SQL — under a fresh
- * replica identity, and opened.
+ * A snapshot restored into a new runtime: a fresh database laid with
+ * the runtime's own schema and filled with the snapshot's validated
+ * values — never a page or a statement of a portable snapshot's —
+ * under a fresh replica identity, and opened. A portable snapshot is
+ * validated here; a CAR snapshot was validated as it was read.
  */
 
 import { v7 } from "uuid";
 
-import { AnchorMismatch, InvalidSnapshot } from "../errors.js";
+import { AnchorMismatch, InvalidSnapshot, MissingPart } from "../errors.js";
 import { canonicalEventBytes, type AuthorId, type Cid, type Event } from "../event.js";
-import { VAULT_VERSION, type WrappedSeed } from "../keystore.js";
-import type { HeldRoots } from "../vault.js";
+import { VAULT_VERSION, type VaultMetadata, type WrappedSeed } from "../keystore.js";
+import { Snapshot } from "../snapshot.js";
+import type { HeldRoots, Vault } from "../vault.js";
 import type { SqliteDriver } from "./driver.js";
 import { copyObjects, type CopiedObject, type OpenDestination } from "./export.js";
 import { CHUNK_BYTES } from "./objects.js";
@@ -18,9 +20,7 @@ import { publishedRuntime, type PortableDatabase, type RuntimeDatabase } from ".
 import { validatePortable, type Validated } from "./portable.js";
 import { APPLICATION_ID, SCHEMA_VERSION, createTables, query, run } from "./schema.js";
 
-export interface RestoreOptions {
-  /** The roots the snapshot's events hold, folded by the caller from the snapshot's own `vault`: what validation requires the object set to be exactly. */
-  heldRoots: HeldRoots;
+export interface RestoreSnapshotOptions {
   /**
    * The anchor DID the recovery credential derives: given outright when
    * the seed is in hand, or as the function that unlocks the snapshot's
@@ -29,6 +29,11 @@ export interface RestoreOptions {
    * `AnchorMismatch` otherwise. Asked only of a snapshot found complete.
    */
   anchor: string | ((wrapped: WrappedSeed) => string | Promise<string>);
+}
+
+export interface RestoreOptions extends RestoreSnapshotOptions {
+  /** The roots the snapshot's events hold, folded by the caller from the snapshot's own `vault`: what validation requires the object set to be exactly. */
+  heldRoots: HeldRoots;
 }
 
 /** What a restore made: the runtime, open on the destination, and what the snapshot held. */
@@ -58,12 +63,39 @@ const FORMAT = "estoc-sqlite";
  */
 export async function restoreVault(source: PortableDatabase, open: OpenDestination, options: RestoreOptions): Promise<Restored> {
   const validated = await validatePortable(source, { heldRoots: options.heldRoots });
+  return restored(source, validated, open, options);
+}
+
+/**
+ * Restores `snapshot`, which must carry the seed part — `MissingPart`
+ * otherwise, before the credential is asked — into the runtime `open`
+ * creates, as `restoreVault` restores a portable snapshot once it has
+ * validated it: the anchor compared, then the destination laid with
+ * the snapshot's wrapper and every event it carries — the selection a
+ * seed alone brings, or with content every event — and the objects
+ * they hold. A snapshot with both parts restores what restoring the
+ * seed alone and importing the content would.
+ */
+export async function restoreSnapshot(snapshot: Snapshot, open: OpenDestination, options: RestoreSnapshotOptions): Promise<Restored> {
+  if (!(snapshot instanceof Snapshot)) throw new TypeError("a restore takes a Snapshot that Snapshot.read made");
+  if (snapshot.seed === undefined) throw new MissingPart("seed");
+  return restored({ metadata: snapshot.metadata, wrapped: snapshot.seed, vault: snapshot.vault }, snapshot, open, options);
+}
+
+/** A validated snapshot as a restore reads it: the identity, the wrapper, and its events and objects. */
+interface Source {
+  metadata: VaultMetadata;
+  wrapped: WrappedSeed;
+  vault: Vault;
+}
+
+async function restored(source: Source, validated: Validated, open: OpenDestination, options: RestoreSnapshotOptions): Promise<Restored> {
   const derived = typeof options.anchor === "string" ? options.anchor : await options.anchor(source.wrapped);
   if (derived !== source.metadata.anchor) throw new AnchorMismatch(source.metadata.anchor, derived);
   const events: Event[] = [];
   for await (const event of source.vault.events.scan()) events.push(event);
   const objects: CopiedObject[] = [];
-  for await (const cid of source.vault.objects.list()) objects.push({ cid, size: await sizeOf(source, cid) });
+  for await (const cid of source.vault.objects.list()) objects.push({ cid, size: await sizeOf(source.vault, cid) });
   const writer = await open("create");
   try {
     if (writer.mode !== "create") throw new TypeError(`the destination was opened ${writer.mode}, not to create`);
@@ -71,22 +103,23 @@ export async function restoreVault(source: PortableDatabase, open: OpenDestinati
     const control = { author: v7() as AuthorId, generation: v7() };
     lay(writer, source, control, events);
     await copyObjects(writer, source.vault, objects, (problem) => new InvalidSnapshot([problem]));
-    publish(writer, validated, objects);
-    return { runtime: publishedRuntime(writer, source.metadata, control), ...validated };
+    const counts = { events: validated.events, eventBytes: validated.eventBytes, objects: validated.objects, objectBytes: validated.objectBytes };
+    publish(writer, counts, objects);
+    return { runtime: publishedRuntime(writer, source.metadata, control), ...counts };
   } catch (err) {
     writer.close();
     throw err;
   }
 }
 
-async function sizeOf(source: PortableDatabase, cid: Cid): Promise<number> {
-  const info = await source.vault.objects.stat(cid);
+async function sizeOf(vault: Vault, cid: Cid): Promise<number> {
+  const info = await vault.objects.stat(cid);
   if (info === null) throw new InvalidSnapshot([{ where: `objects/${cid}`, error: "gone between the snapshot's listing and its reading" }]);
   return info.size;
 }
 
 /** The destination as a runtime, not yet ready: the schema, the metadata, the wrapper, fresh control, and every event under a fresh position in canonical order, in one transaction. */
-function lay(writer: SqliteDriver, source: PortableDatabase, control: { author: AuthorId; generation: string }, events: Event[]): void {
+function lay(writer: SqliteDriver, source: Source, control: { author: AuthorId; generation: string }, events: Event[]): void {
   writer.transaction("immediate", () => {
     writer.exec(`PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = ${SCHEMA_VERSION}`);
     createTables(writer, "runtime");

@@ -136,7 +136,7 @@ export interface Held extends Vault {
   collect(keep: KeepUnderLock): Promise<Collected>;
   /** Run `op` under the lock already held: nested, shares it. */
   locked<T>(op: (held: Held) => Promise<T>): Promise<T>;
-  /** The store's `tally`: what an export bounds itself by before it reads an event. */
+  /** The store's `tally`: what an export bounds itself by before it reads an event, and where its content ends. */
   tally(): Promise<EventTally>;
 }
 

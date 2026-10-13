@@ -109,13 +109,15 @@ export interface EventStore {
   changes(filter?: Filter, since?: ChangeToken): Promise<{ token: ChangeToken; events: AsyncIterable<Event> }>;
   /** Storage material that could not be read as an event, or does not hash to the CID it is held under; for the caller to surface. */
   damaged(): Promise<Damaged[]>;
-  /** How much the store holds — every row counted, its canonical bytes summed — from what it keeps beside the events, no event loaded. */
+  /** How much the store holds — every row counted, its canonical bytes summed — and how far its positions run, from what it keeps beside the events, no event loaded. */
   tally(): Promise<EventTally>;
 }
 
 export interface EventTally {
   events: number;
   bytes: number;
+  /** The position accepted last, 0 for none: where a change token issued now stands. */
+  lastSeq: number;
 }
 
 // ---- identity -----------------------------------------------------------

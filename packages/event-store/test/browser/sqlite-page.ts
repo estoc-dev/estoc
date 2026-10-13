@@ -18,6 +18,7 @@ import { exportCases } from "../sqlite/export-cases.js";
 import { importCases } from "../sqlite/import-cases.js";
 import { objectCases } from "../sqlite/object-cases.js";
 import { openCases } from "../sqlite/open-cases.js";
+import { snapshotCases } from "../sqlite/snapshot-cases.js";
 import { vaultCases } from "../sqlite/vault-cases.js";
 import { poolCases } from "./pool-cases.js";
 import type { Exchanged, PageAnswer, WorkerAsk, WorkerCaseResult, WorkerReply, WorkerRequest } from "./sqlite-worker.js";
@@ -177,7 +178,7 @@ async function attempt(name: string, body: () => Promise<string | void>): Promis
   }
 }
 
-const OPEN_CASES = [...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases];
+const OPEN_CASES = [...openCases, ...eventCases, ...objectCases, ...vaultCases, ...exportCases, ...importCases, ...snapshotCases];
 
 /** The names one Worker each is given: the list's small cases together, then every large one alone. */
 function shares(cases: Case[]): string[][] {

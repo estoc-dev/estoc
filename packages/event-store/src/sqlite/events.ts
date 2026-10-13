@@ -298,7 +298,7 @@ export class SqliteEventStore implements EventStore {
 
   async tally(): Promise<EventTally> {
     const [row] = query(this.driver, "SELECT count(*) AS n, coalesce(sum(length(canonical)), 0) AS bytes FROM events");
-    return { events: Number(row?.["n"]), bytes: Number(row?.["bytes"]) };
+    return { events: Number(row?.["n"]), bytes: Number(row?.["bytes"]), lastSeq: this.lastSeq() };
   }
 
   private noteDamage(decoded: DecodedEventRow, place = "damage" in decoded ? decoded.damage.where : ""): DecodedEventRow {

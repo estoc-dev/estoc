@@ -4,8 +4,10 @@
  * and theirs, the vault over both, and, for what persists, the SQLite
  * driver contract, the runtime's schema, opening, stores, local
  * state and vault, and the portable snapshot's export, validation,
- * reader, restore and import. The platform adapters live under `./node` and
- * `./browser`. No event type is defined here.
+ * reader, restore and import; the snapshot as a CAR of a seed part and
+ * a content part, its export and its read, its restore and its
+ * import. The platform adapters live under `./node` and `./browser`.
+ * No event type is defined here.
  */
 
 export type { JsonPrimitive, JsonValue, JsonObject } from "./json.js";
@@ -86,9 +88,11 @@ export { PortableVault, validatePortable, type ValidateOptions, type Validated }
 
 export { exportVault, type OpenDestination, type ExportOptions, type Exported } from "./sqlite/export.js";
 
-export { restoreVault, type RestoreOptions, type Restored } from "./sqlite/restore.js";
+export { restoreVault, restoreSnapshot, type RestoreOptions, type RestoreSnapshotOptions, type Restored } from "./sqlite/restore.js";
 
-export { importVault, type ImportOptions, type Imported } from "./sqlite/import.js";
+export { importVault, importSnapshot, type ImportOptions, type Imported, type ImportedSnapshot } from "./sqlite/import.js";
+
+export { Snapshot, exportSnapshot, SNAPSHOT_VERSION, type SnapshotRange, type SnapshotParts, type ExportSnapshotOptions, type ReadSnapshotOptions } from "./snapshot.js";
 
 export {
   InvalidJson,
@@ -120,5 +124,6 @@ export {
   IncompleteSnapshot,
   SnapshotTooLarge,
   InvalidSnapshot,
+  MissingPart,
   IncompleteImport,
 } from "./errors.js";
