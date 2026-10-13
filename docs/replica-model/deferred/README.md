@@ -12,7 +12,7 @@ with the current profile; they must be reconsidered before a feature is adopted.
 
 The current profile implements immutable `did:peer:4` application channels,
 concurrent writable full runtimes as distinct replicas of one replica-mediation
-arrangement, and portable SQLite recovery. Mediator and routing-service DID
+arrangement, and recovery from snapshots. Mediator and routing-service DID
 resolution remains independent of the channel method restriction. The drafts
 above will be revisited when their features are adopted, together with the
 owning specifications.
@@ -27,7 +27,7 @@ protocol's wire contract, and
 with its account-signed grant. A full replica has its own DID and event author;
 the vault seed and communication DIDs are shared. The mediator delivers mail to
 the replicas enrolled when it accepts that mail, so a new replica obtains
-earlier history through portable restore or import, from a backup file or a
+earlier history by importing a snapshot's content part, from a backup file or a
 snapshot link; another replica of the seed can mail it such a link through the
 mediator, and it imports the link as it arrives.
 
@@ -57,16 +57,25 @@ profile:
 ### Deferred: vault synchronization
 
 Continuous history synchronization between replicas remains deferred. History
-moves between replicas as whole snapshots: a replica seals its portable SQLite
-snapshot under a random key and puts it at its mediator as a
-[blob](../../blob-store.md) of its own; the link carries the blob's URL, name
-and key, not the passphrase. A new device restores from a link that carries
-only the events a replica enrolls from, registers, and takes the history by
-importing a link of the whole vault, which another replica mails it through the
-mediator when asked to by hand. An import is a merge: it brings what the
-importing replica lacks, the mail it discarded before it held the vault's DIDs
-among it, and the same history imported again brings nothing. What one replica
-commits after a snapshot reaches another with the next snapshot sent to it.
+moves between replicas as whole snapshots. A snapshot is a CAR of up to two
+parts: the seed part, the wrapped seed with the events a replica enrolls from,
+and the content part, every event with the objects the events hold; a backup
+file carries both. A replica seals one part under a random key and puts it at
+its mediator as a [blob](../../blob-store.md) of its own; the link carries the
+blob's URL, name and key, not the passphrase. A new device restores from a link
+to the seed part, registers, and takes the history by importing a link to the
+content part, which another replica mails it through the mediator when asked to
+by hand. An import is a merge: it brings what the importing replica lacks, the
+mail it discarded before it held the vault's DIDs among it, and the same
+history imported again brings nothing. What one replica commits after a
+snapshot reaches another with the next snapshot sent to it.
+
+The content part already names the range it was exported as: the exporting
+replica, its store generation, and the positions `(after, through]` it accepted
+the events at. That range is the cursor incremental synchronization would send
+from. Today every export starts at position 0, a snapshot starting later is
+refused, and no receiver keeps the range; the first incremental exchange will
+start from a whole export.
 
 <a id="application-concurrency-adoption"></a>
 
@@ -94,7 +103,7 @@ The current rules are:
   not synchronize rotation knowledge, and independent processing cannot promise
   immediate knowledge of every concurrent rotation. The owning admission
   contract states the merge and restore limitations.
-- Current history exchange uses portable restore and import. A future
+- Current history exchange uses snapshot restore and import. A future
   synchronization design must preserve complete-source validation, atomic
   import with required objects, and the merge and retention contracts, under
   which one event set gives contact edits, admission history, erasure and held

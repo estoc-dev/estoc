@@ -148,9 +148,10 @@ describe("a link made here", () => {
     expect(fake.calls.at(-1)).toEqual({ method: "publishSnapshotLink", input: { part: "seed" } });
   });
 
-  it("points to a backup file when the vault is too large for one", async () => {
+  it("points to a backup file when the vault is too large for one, restored on a new device or imported on one of the vault's", async () => {
     fake.answers.set("publishSnapshotLink", () => Promise.reject(refused("ResourceLimit", "the snapshot comes to at least 120 bytes, over the 100 a blob at the mediator holds once sealed")));
-    await expect(publishSnapshotLink("content")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup");
+    await expect(publishSnapshotLink("seed")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup and restore the new device from the file instead.");
+    await expect(publishSnapshotLink("content")).rejects.toThrow("over the 100 a blob at the mediator holds once sealed. A link cannot carry this vault: export a backup and import the file on the other device instead.");
   });
 
   it("is listed newest first", async () => {

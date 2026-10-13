@@ -333,8 +333,9 @@ export function snapshotLinkOf(link: SnapshotLink): string {
  * this vault's to import.
  */
 export async function publishSnapshotLink(part: SnapshotPart): Promise<PublishedSnapshotLink> {
-  const made = await call((daemon) => daemon.publishSnapshotLink({ part }), "A link cannot carry this vault: export a backup and take the file to the other device instead.");
-  log(`put ${part === "content" ? "a copy of this vault" : "a link for a new device"}, kept until ${made.retainUntil}`);
+  const instead = part === "seed" ? "restore the new device from the file" : "import the file on the other device";
+  const made = await call((daemon) => daemon.publishSnapshotLink({ part }), `A link cannot carry this vault: export a backup and ${instead} instead.`);
+  log(`put ${part === "seed" ? "a link for a new device" : "a copy of the history"}, kept until ${made.retainUntil}`);
   return made;
 }
 

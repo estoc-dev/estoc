@@ -44,12 +44,12 @@ async function accept(opened: { link: string }) {
   </div>
 
   <div v-else-if="offered && state.vault.phase === 'locked'" class="update-chip" data-opened-link-locked>
-    <span>That link holds a copy of a vault. Unlock to import what it holds here.</span>
+    <span>This page was opened with a link from another device. Unlock to import the history it holds.</span>
     <button class="link" type="button" @click="dismissPendingSnapshotLink(offered)">Not now</button>
   </div>
 
   <div v-else-if="offered" class="update-chip" data-opened-link>
-    <span>That link holds a copy of a vault. Import what it holds into this one?</span>
+    <span>This page was opened with a link from another device. Import the history it holds into this vault?</span>
     <button class="btn" type="button" data-import-opened-link @click="accept(offered)">Import</button>
     <button class="link" type="button" @click="dismissPendingSnapshotLink(offered)">Not now</button>
   </div>

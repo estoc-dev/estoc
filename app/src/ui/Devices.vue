@@ -135,7 +135,7 @@ function added() {
       <button v-if="reachable.length > 0" class="row" type="button" :disabled="sending !== null" data-sync-now @click="send()">
         <span class="row-main">
           <span>{{ sending === "all" ? "Sending…" : "Sync now" }}</span>
-          <span class="row-sub">a copy of this vault to every other device, which takes in what it lacks</span>
+          <span class="row-sub">your history to every other device, which takes in what it lacks</span>
         </span>
       </button>
       <div class="row">
@@ -149,7 +149,7 @@ function added() {
       <button class="row" type="button" data-add-device @click="addingDevice = true">
         <span class="row-main">
           <span>Add a device</span>
-          <span class="row-sub">links that set it up and bring your history over</span>
+          <span class="row-sub">a link it joins with</span>
         </span>
         <Icon name="chevron" class="chevron" :size="20" />
       </button>

@@ -79,7 +79,10 @@ your data never touches the place the app was served from.
   as a QR code and as text. A fresh install opened at the link, or given
   it pasted or scanned under *Restore*, restores it under the vault's
   passphrase and registers at the mediator as one more device: it receives
-  from then on, with no conversations yet. *Your devices* lists the
+  from then on, with no conversations yet. A vault whose link would come to
+  more than a new device takes from one (1 MiB) gets none: *Export a backup
+  instead* is offered there, and the new device restores from that file,
+  conversations and all. *Your devices* lists the
   vault's devices as the mediator holds them, asked again each time the
   list comes into view and when the sheet closes, one it removed greyed
   out, and the last list while the mediator is out of reach; one that
@@ -88,15 +91,17 @@ your data never touches the place the app was served from.
   every other. Either puts the vault's history, without its seed, at the
   mediator and mails its link to the device, which takes in what it lacks as the link
   arrives, mail it could not open before among it, and says so under its
-  own *Your devices*; sending again brings nothing new. The same copy goes
-  by hand as *Back up to a link* on the same sheet: opened on a device
-  that holds the vault, or pasted or scanned under *Import from a link*,
-  it is merged in as a backup is; a fresh install restores from a backup
-  file or a link for a new device instead. Whoever holds a copy's link
-  reads the messages until the mediator lets it go or it is revoked. The
-  links made are listed, each saying what it
-  carries, with when they expire, to show again or revoke. A vault over
-  what one blob at the mediator holds goes by backup file instead.
+  own *Your devices*; sending again brings nothing new. The same history
+  goes by hand as *Put your history on a link*, under *Your vault*: opened
+  on a device that holds the vault, or pasted or scanned under *Import
+  from a link*, it is merged in as a backup is. Neither link stands in for
+  the other: a fresh install opened at a history link is told it carries
+  no seed, and a link for a new device opened where the vault is held is
+  told it carries no history. Whoever holds a history link reads the
+  messages until the mediator lets it go or it is revoked. *Add a device*
+  lists every link made here, each saying what it carries, with when it
+  expires, to show again or revoke. A vault over what one blob at the
+  mediator holds goes by backup file instead.
 - **Offline.** Installed, Estoc opens with no network at all: the app
   shell and the WASM are cached by a service worker, the vault is on disk.
   Reading history needs nothing. Writing needs nothing either: a message
@@ -173,7 +178,9 @@ link opened before its reader has an identity, history surviving a reload
 with no passphrase, a second tab yielding to the first, lock and unlock
 (a wrong passphrase refused), a backup merged into the live vault with
 nothing new, a link for a new device restoring the vault in a fresh
-browser opened at it and reading nothing once revoked, the same backup
+browser opened at it, the device that joined taking the history sent it
+and then the history put on a link by hand, each link refused where it
+does not belong, the links reading nothing once revoked, the same backup
 restored in a fresh browser where sending waits for the restore to be
 explained, a backup with no conversation in
 it restored and explained before a first invitation, and, when a service
