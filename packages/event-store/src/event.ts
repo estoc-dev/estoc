@@ -207,14 +207,21 @@ export function validateEnvelope(value: unknown): EventEnvelope {
  * check. Returns fresh plain data.
  */
 export function validateEvent(value: unknown): Event {
+  const { envelope, cid } = checkedEvent(value);
+  return { ...envelope, cid };
+}
+
+/** What `validateEvent` checks, with the canonical bytes the CID was checked against. */
+function checkedEvent(value: unknown): { envelope: EventEnvelope; bytes: Uint8Array; cid: EventCid } {
   if (!isJsonObject(value)) throw new InvalidEvent("an event is a JSON object");
   exactly(value, EVENT_FIELDS);
   const envelope = checkedEnvelope(value);
   const cid: unknown = value["cid"];
   if (!isEventCid(cid)) throw new InvalidEvent("cid is not a canonical raw DASL CID");
-  const computed = eventCidOf(envelope);
+  const bytes = canonicalEventBytes(envelope);
+  const computed = eventCidOfBytes(bytes);
   if (cid !== computed) throw new InvalidEvent(`cid ${cid} is not the envelope's, ${computed}`);
-  return { ...envelope, cid };
+  return { envelope, bytes, cid };
 }
 
 function exactly(value: JsonObject, fields: readonly string[]): void {
@@ -325,7 +332,7 @@ export function eventCidOf(envelope: EventEnvelope): EventCid {
  */
 export function canonicalEnvelope(value: unknown): { event: Event; bytes: Uint8Array } {
   const bytes = canonicalEventBytes(validateEnvelope(value));
-  return { event: withCid(bytes), bytes };
+  return { event: withCid(bytes, eventCidOfBytes(bytes)), bytes };
 }
 
 /**
@@ -336,13 +343,13 @@ export function canonicalEnvelope(value: unknown): { event: Event; bytes: Uint8A
  * Throws `InvalidEvent` or `InvalidJson`.
  */
 export function canonicalEvent(value: unknown): { event: Event; bytes: Uint8Array } {
-  const bytes = canonicalEventBytes(validateEvent(value));
-  return { event: withCid(bytes), bytes };
+  const { bytes, cid } = checkedEvent(value);
+  return { event: withCid(bytes, cid), bytes };
 }
 
-/** The event `bytes` — an envelope's canonical bytes — spell, with the CID they hash to. */
-function withCid(bytes: Uint8Array): Event {
-  return { ...(parseStrict(bytes) as EventEnvelope), cid: eventCidOfBytes(bytes) };
+/** The event `bytes` — an envelope's canonical bytes — spell, with `cid`, the CID they hash to. */
+function withCid(bytes: Uint8Array, cid: EventCid): Event {
+  return { ...(parseStrict(bytes) as EventEnvelope), cid };
 }
 
 /** The canonical text of an envelope: `canonicalEventBytes` as a string. */
