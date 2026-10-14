@@ -9,8 +9,8 @@ import { RAW_CODE, codecOf } from "@estoc/dasl";
 import { sha256 } from "@noble/hashes/sha2";
 
 import { InvalidEvent, InvalidJson } from "./errors.js";
-import { canonicalText, canonicalize, parseStrict, plainJson } from "./jcs.js";
-import { isJsonObject, isJsonPrimitive, type JsonObject, type JsonPrimitive, type JsonValue } from "./json.js";
+import { canonicalText, canonicalize, plainJson } from "./jcs.js";
+import { isJsonObject, isJsonPrimitive, type JsonObject, type JsonPrimitive } from "./json.js";
 import { rawCidFromDigest } from "./objects.js";
 
 /** A validated canonical raw DASL CID string: the brand says it was checked. */
@@ -194,9 +194,7 @@ const EVENT_FIELDS = [...ENVELOPE_FIELDS, "cid"] as const;
  * broken. Validates no payload field — `data` is opaque here.
  */
 export function validateEnvelope(value: unknown): EventEnvelope {
-  if (!isJsonObject(value)) throw new InvalidEvent("an event envelope is a JSON object");
-  exactly(value, ENVELOPE_FIELDS);
-  return checkedEnvelope(value);
+  return eventJson(plainJson, envelopeFields(value)) as EventEnvelope;
 }
 
 /**
@@ -204,24 +202,16 @@ export function validateEnvelope(value: unknown): EventEnvelope {
  * `cid`, nothing else, the envelope validated and `cid` a canonical raw
  * CID equal to the one the envelope's canonical bytes hash to. A
  * well-formed CID for other bytes is refused before any duplicate
- * check. Returns fresh plain data.
+ * check. Returns the event as a store holds it, as fresh plain data.
  */
 export function validateEvent(value: unknown): Event {
-  const { envelope, cid } = checkedEvent(value);
-  return { ...envelope, cid };
+  return canonicalEvent(value).event;
 }
 
-/** What `validateEvent` checks, with the canonical bytes the CID was checked against. */
-function checkedEvent(value: unknown): { envelope: EventEnvelope; bytes: Uint8Array; cid: EventCid } {
-  if (!isJsonObject(value)) throw new InvalidEvent("an event is a JSON object");
-  exactly(value, EVENT_FIELDS);
-  const envelope = checkedEnvelope(value);
-  const cid: unknown = value["cid"];
-  if (!isEventCid(cid)) throw new InvalidEvent("cid is not a canonical raw DASL CID");
-  const bytes = canonicalEventBytes(envelope);
-  const computed = eventCidOfBytes(bytes);
-  if (cid !== computed) throw new InvalidEvent(`cid ${cid} is not the envelope's, ${computed}`);
-  return { envelope, bytes, cid };
+function envelopeFields(value: unknown): EventEnvelope {
+  if (!isJsonObject(value)) throw new InvalidEvent("an event envelope is a JSON object");
+  exactly(value, ENVELOPE_FIELDS);
+  return checkedFields(value);
 }
 
 function exactly(value: JsonObject, fields: readonly string[]): void {
@@ -235,14 +225,19 @@ function exactly(value: JsonObject, fields: readonly string[]): void {
   }
 }
 
-function checkedEnvelope(value: JsonObject): EventEnvelope {
+/**
+ * The five envelope fields of `value`, each read once and checked, `roots`
+ * copied. Whether they are I-JSON is left to the one walk that copies or
+ * writes them.
+ */
+function checkedFields(value: JsonObject): EventEnvelope {
   const { at, author, type, roots, data } = value as Record<(typeof ENVELOPE_FIELDS)[number], unknown>;
   if (!isCanonicalAt(at)) throw new InvalidEvent("at is not a canonical RFC 3339 UTC millisecond");
   if (!isAuthorId(author)) throw new InvalidEvent("author is not a canonical UUIDv7");
   checkType(type);
   const checked = checkedRoots(roots);
   if (!isJsonObject(data)) throw new InvalidEvent("data is not a JSON object");
-  return plain({ at, author, data, roots: checked, type }) as EventEnvelope;
+  return { at, author, data, roots: checked, type };
 }
 
 /** What the store supplies: a draft that carries one is refused, never silently re-derived. */
@@ -270,7 +265,7 @@ export function validateDraft(draft: unknown): Required<Draft> {
   checkType(type);
   const checked = roots === undefined ? [] : checkedRoots(roots);
   if (!isJsonObject(data)) throw new InvalidEvent("data is not a JSON object");
-  return plain({ type, roots: checked, data }) as Required<Draft>;
+  return eventJson(plainJson, { type, roots: checked, data }) as Required<Draft>;
 }
 
 function checkType(type: unknown): asserts type is string {
@@ -294,9 +289,10 @@ function checkedRoots(roots: unknown): Cid[] {
   return checked;
 }
 
-function plain(value: unknown): JsonValue {
+/** `read(value)`, with a value that is not I-JSON refused as an `InvalidEvent`. */
+function eventJson<T>(read: (value: unknown) => T, value: unknown): T {
   try {
-    return plainJson(value);
+    return read(value);
   } catch (err) {
     if (err instanceof InvalidJson) throw new InvalidEvent(`not I-JSON: ${err.message}`);
     throw err;
@@ -335,23 +331,36 @@ export type CanonicalEvent = { readonly event: Event; readonly bytes: Uint8Array
 
 /**
  * An envelope as an accepted event is held: what a local append makes
- * of a draft once `at` and `author` are set. Throws `InvalidEvent` or
- * `InvalidJson`.
+ * of a draft once `at` and `author` are set. Throws `InvalidEvent`.
  */
 export function canonicalEnvelope(value: unknown): CanonicalEvent {
-  const bytes = canonicalEventBytes(validateEnvelope(value));
-  return held(bytes, eventCidOfBytes(bytes));
+  return held(envelopeFields(value));
 }
 
-/** A value as an accepted event is held, validated with its CID. Throws `InvalidEvent` or `InvalidJson`. */
+/** A value as an accepted event is held, validated with its CID. Throws `InvalidEvent`. */
 export function canonicalEvent(value: unknown): CanonicalEvent {
-  const { bytes, cid } = checkedEvent(value);
-  return held(bytes, cid);
+  if (!isJsonObject(value)) throw new InvalidEvent("an event is a JSON object");
+  exactly(value, EVENT_FIELDS);
+  const fields = checkedFields(value);
+  const cid: unknown = value["cid"];
+  if (!isEventCid(cid)) throw new InvalidEvent("cid is not a canonical raw DASL CID");
+  const canonical = held(fields);
+  if (cid !== canonical.event.cid) throw new InvalidEvent(`cid ${cid} is not the envelope's, ${canonical.event.cid}`);
+  return canonical;
 }
 
-/** The event `bytes` — an envelope's canonical bytes — spell, under `cid`, the CID they hash to. */
-function held(bytes: Uint8Array, cid: EventCid): CanonicalEvent {
-  return { event: { ...(parseStrict(bytes) as EventEnvelope), cid }, bytes } as CanonicalEvent;
+const utf8 = new TextEncoder();
+
+/**
+ * The event `fields`, as `checkedFields` returns them, make: writing the
+ * canonical text is the walk that checks they are I-JSON. The text is the
+ * serializer's own output, so `JSON.parse` reads it back as `parseStrict`
+ * would.
+ */
+function held(fields: EventEnvelope): CanonicalEvent {
+  const text = eventJson(canonicalText, fields);
+  const bytes = utf8.encode(text);
+  return { event: { ...(JSON.parse(text) as EventEnvelope), cid: eventCidOfBytes(bytes) }, bytes } as CanonicalEvent;
 }
 
 /** The input of an `ingest`, read whole: the events fixed in canonical form, and the inputs that were not events, with why. */
