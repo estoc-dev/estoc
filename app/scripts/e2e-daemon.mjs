@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { ownFrame, readFrame, writeFrame } from "@estoc/daemon-api/wire";
 
 const APP_URL = process.argv[2] ?? "http://localhost:4173";
 const MEDIATOR_LABEL = "mediator.estoc.dev";
@@ -55,6 +56,9 @@ async function until(page, condition, what, timeout = 30000) {
     await page.waitForTimeout(50);
   }
 }
+
+/** A frame a page and its daemon exchanged, read; null for a message that is none. */
+const wireOf = (message) => (typeof message === "string" ? null : readFrame(message));
 
 const waitLive = (page) => page.waitForSelector('[data-status]:has-text("live"), [data-status-sentence]:has-text("live delivery on")', { timeout: 30000 });
 
@@ -288,12 +292,12 @@ try {
   await lost.routeWebSocket(/./, (ws) => {
     const server = ws.connectToServer();
     ws.onMessage((message) => {
-      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      const wire = wireOf(message);
       if (wire?.kind === "call" && wire.method === "forgetIdentity") removing = wire.id;
       server.send(message);
     });
     server.onMessage((message) => {
-      const wire = typeof message === "string" ? JSON.parse(message) : null;
+      const wire = wireOf(message);
       if (removing !== null && wire?.id === removing && (wire.kind === "result" || wire.kind === "error")) {
         removing = null;
         ws.close();
@@ -325,8 +329,6 @@ try {
   await alice.click("[data-create]");
   await alice.waitForSelector('[data-status]:has-text("no mediator")', { timeout: 30000 });
 
-  const wireOf = (message) => (typeof message === "string" ? JSON.parse(message) : null);
-
   // a refusal the daemon answers with is shown where it was asked: the export's, under its button
   const refused = await aliceCtx.newPage();
   watch(refused, "alice@refused");
@@ -342,7 +344,7 @@ try {
       const wire = wireOf(message);
       if (exporting !== null && wire?.id === exporting && wire.kind === "result") {
         exporting = null;
-        ws.send(JSON.stringify({ kind: "error", id: wire.id, error: { code: "ResourceLimit", message: "the backup is larger than this daemon hands out", effect: "none", messageId: null } }));
+        ws.send(Buffer.from(writeFrame(ownFrame({ kind: "error", id: wire.id, error: { code: "ResourceLimit", message: "the backup is larger than this daemon hands out", effect: "none", messageId: null } }))));
         return;
       }
       ws.send(message);
@@ -419,7 +421,7 @@ try {
   const called = [];
   cut.on("websocket", (socket) =>
     socket.on("framesent", ({ payload }) => {
-      const frame = wireOf(String(payload));
+      const frame = wireOf(payload);
       if (frame?.kind === "call") called.push(frame.method);
     })
   );
@@ -587,7 +589,7 @@ try {
   const pendCalled = [];
   pend.on("websocket", (socket) =>
     socket.on("framesent", ({ payload }) => {
-      const frame = wireOf(String(payload));
+      const frame = wireOf(payload);
       if (frame?.kind === "call") pendCalled.push(frame.method);
     })
   );

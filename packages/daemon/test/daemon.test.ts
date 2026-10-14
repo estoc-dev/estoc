@@ -12,14 +12,14 @@ import { EMPTY_MESSAGE_TYPE, Keys, PING_TYPE, PURE_ACK_EFFECT, canonicalDidOf, v
 
 import { ACCOUNT_REGISTER, PROFILE, RECIPIENT_ADD, STATUS_REQUEST, openRestoredVault, type VaultSession } from "@estoc/agent-core";
 import { connect, type Client } from "@estoc/daemon-api/client";
-import type { Hold, Lines, Phase, Snapshot, State } from "@estoc/daemon-api/contract";
+import { API_VERSION, WIRE_VERSION, type Hold, type Lines, type Phase, type Snapshot, type State } from "@estoc/daemon-api/contract";
 import { indexSnapshot } from "@estoc/daemon-api/views";
-import { webSocketOf } from "@estoc/daemon-api/wire";
+import { ownFrame, readBootstrap, readFrame, webSocketOf, writeBootstrap, writeFrame } from "@estoc/daemon-api/wire";
 import { FORWARD } from "../../agent-core/src/protocol/spec.js";
 import { issuerRecovered, newMediator, peerSealer, proofOfSuccession, sealed, type Addressed, type DirectParty } from "../../agent-core/test/helpers.js";
 import type { FakeMediator } from "../../agent-core/test/fake-mediator.js";
 import { channelOf, forwarded, run, stopAll } from "../../agent-core/test/e2e/running.js";
-import { createDaemon, type DaemonCore, type DaemonHost } from "../src/index.js";
+import { createDaemon, limitsOf, type DaemonCore, type DaemonHost } from "../src/index.js";
 import { nodeHost, serveDaemon } from "../src/node/index.js";
 import { channelIdOf, channelOf as pairOf } from "../src/channels.js";
 import { published } from "./snapshots.js";
@@ -157,12 +157,12 @@ async function view(url: string): Promise<View> {
   };
 }
 
-async function frameClient(url: string): Promise<{ say(text: string): void; next(): Promise<unknown>; closed: Promise<number> }> {
+async function frameClient(url: string): Promise<{ say(data: string | Uint8Array): void; next(): Promise<unknown>; closed: Promise<number> }> {
   const ws = new WebSocket(url);
   const received: unknown[] = [];
   const waiting: ((frame: unknown) => void)[] = [];
   ws.on("message", (data) => {
-    const frame: unknown = JSON.parse(data.toString());
+    const frame: unknown = readFrame(data) ?? readBootstrap(data);
     const waiter = waiting.shift();
     if (waiter === undefined) received.push(frame);
     else waiter(frame);
@@ -173,14 +173,14 @@ async function frameClient(url: string): Promise<{ say(text: string): void; next
     ws.once("error", reject);
   });
   return {
-    say: (text) => ws.send(text),
+    say: (data) => ws.send(data),
     next: () => (received.length > 0 ? Promise.resolve(received.shift()) : new Promise((resolve) => waiting.push(resolve))),
     closed,
   };
 }
 
-const HELLO = JSON.stringify({ kind: "hello", wire: 1, apis: [1] });
-const call = (id: number, method: string, input: unknown = {}) => JSON.stringify({ kind: "call", id, method, input });
+const HELLO = writeBootstrap({ kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] });
+const call = (id: number, method: string, input: Record<string, unknown> = {}) => writeFrame(ownFrame({ kind: "call", id, method, input }));
 
 describe("the daemon over a folder", () => {
   it("lands on the screen the folder dictates, keeps the vault to itself while it holds it, and hands every record over a socket as it is", async () => {
@@ -223,11 +223,11 @@ describe("the daemon over a folder", () => {
     expect(other.phases().at(-1)).toBe("locked");
   });
 
-  it("closes a socket whose first frame is no hello, answers a call of what is no method of the API as none, and goes on serving", async () => {
+  it("closes a socket whose first frame is no hello, a hello of the text frames of wire 1 among them, answers a call of what is no method of the API as none, and goes on serving", async () => {
     const served = await serveDaemon({ host: nodeHost(await folder()), port: 0, token: "t0k3n" });
     try {
       await served.daemon.boot();
-      for (const first of ['{"kind":"call","id":1,"method":"send","args":[{"$bytes":"not base64!"}]}', "junk", '{"kind":"hello","wire":2,"apis":[1]}', '{"kind":"welcome","wire":1,"api":1}']) {
+      for (const first of ['{"kind":"hello","wire":1,"apis":[1]}', "junk", new TextEncoder().encode("junk"), call(1, "attach"), writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "", limits: limitsOf() })]) {
         const raw = await frameClient(served.url);
         raw.say(first);
         await raw.closed;
@@ -235,7 +235,7 @@ describe("the daemon over a folder", () => {
 
       const raw = await frameClient(served.url);
       raw.say(HELLO);
-      expect(await raw.next()).toMatchObject({ kind: "welcome", wire: 1, api: 1, implementation: expect.stringMatching(/^estoc-daemon \d/) });
+      expect(await raw.next()).toMatchObject({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: expect.stringMatching(/^estoc-daemon \d/) });
       raw.say(call(1, "attach"));
       expect(await raw.next()).toMatchObject({ kind: "result", id: 1, value: { state: { value: { phase: "onboarding" } } } });
       let id = 1;
@@ -245,7 +245,7 @@ describe("the daemon over a folder", () => {
       }
       raw.say(call(++id, "send", { target: { contactId: "c" }, content: { type: BASIC_MESSAGE } }));
       expect(await raw.next()).toMatchObject({ kind: "error", id, error: { code: "InvalidArgument", effect: "none", messageId: null } });
-      raw.say(JSON.stringify({ kind: "result", id: 99, value: null }));
+      raw.say(writeFrame(ownFrame({ kind: "result", id: 99, value: null })));
       await raw.closed;
 
       const ui = await view(served.url);

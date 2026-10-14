@@ -39,6 +39,9 @@ const MAX_PENDING = 16;
 /** The WebSocket close code for an endpoint that is over what it takes on for now (RFC 6455 §7.4.1). */
 const TRY_AGAIN_LATER = 1013;
 
+/** The WebSocket close code for a message of a type the endpoint does not take (RFC 6455 §7.4.1): a frame is binary. */
+const UNSUPPORTED_DATA = 1003;
+
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
 /**
@@ -57,7 +60,7 @@ const { version } = createRequire(import.meta.url)("../../package.json") as { ve
  * (DNS rebinding) and reach us; it gets nothing, socket or file.
  */
 export async function serveOver(options: SocketOptions, daemon: DaemonCore): Promise<ServedOver> {
-  const limits = limitsOf("text", options.maxBackupBytes);
+  const limits = limitsOf(options.maxBackupBytes);
   const failed = options.failed ?? (() => undefined);
   const methods = methodsOf(daemon, limits, { failed });
   const pending = new Set<Session>();
@@ -82,7 +85,7 @@ export async function serveOver(options: SocketOptions, daemon: DaemonCore): Pro
       res.end();
     });
   });
-  const wss = new WebSocketServer({ noServer: true, maxPayload: limits.maxFrameBytes ?? undefined });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: limits.maxFrameBytes });
   http.on("upgrade", (req, socket, head) => {
     if (!hostAllowed(req) || !tokenMatches(req, options.token)) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -165,21 +168,26 @@ function tokenMatches(req: IncomingMessage, token: string): boolean {
 }
 
 /**
- * A socket of the server's as a text port. A send resolves once the
- * frame is written out, so a reader that takes its time is felt by the
- * session's queue and nowhere else; a binary frame is handed over as
- * the bytes it is, which no session reads as a frame.
+ * A socket of the server's as a port of binary messages; a text message
+ * closes it. A send resolves once the frame is written out, so a reader
+ * that takes its time is felt by the session's queue and nowhere else.
  */
 function socketPort(ws: WebSocket): Port {
+  ws.binaryType = "arraybuffer";
   return {
-    transport: "text",
     send: (data) =>
       new Promise<void>((resolve, reject) => {
         if (ws.readyState !== ws.OPEN) return resolve();
-        ws.send(data as string, (error) => (error ? reject(error) : resolve()));
+        ws.send(data, (error) => (error ? reject(error) : resolve()));
       }),
     listen(handlers) {
-      ws.on("message", (data, isBinary) => handlers.message(isBinary ? data : data.toString()));
+      let refused = false;
+      ws.on("message", (data, isBinary) => {
+        if (refused) return;
+        if (isBinary) return handlers.message(new Uint8Array(data as ArrayBuffer));
+        refused = true;
+        ws.close(UNSUPPORTED_DATA, "frames are binary");
+      });
       ws.on("close", () => handlers.close());
     },
     close() {

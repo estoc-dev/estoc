@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ChannelId, ContactId, ConversationId, DidId, DisplayTime, Epoch, EventCid, ExecutionId, Hold, MediationId, MessageId, ReplicaId, Revision } from "../ids.js";
 import type { ApiObject, ApiValue, JsonObject, JsonValue } from "../values.js";
 
-/** A finite number; negative zero reads as zero, since the two transports carry it as one value. */
+/** A finite number; negative zero reads as zero, as the wire reads it. */
 export const finite: z.ZodType<number> = z.number().transform((value) => (value === 0 ? 0 : value));
 
 /** A positive safe integer: what counts, correlates and measures. */

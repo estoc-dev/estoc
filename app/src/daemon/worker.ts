@@ -53,7 +53,7 @@ const host: DaemonHost = {
 };
 
 const daemon = createDaemon(host);
-const limits = limitsOf("clone");
+const limits = limitsOf();
 const failed = (error: unknown) => console.error("estoc daemon:", error);
 const methods = methodsOf(daemon, limits, { failed });
 

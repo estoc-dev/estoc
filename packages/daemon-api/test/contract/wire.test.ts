@@ -9,31 +9,32 @@ const limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 500_000, maxValueByte
 
 describe("the bootstrap exchange", () => {
   it("reads a hello, a welcome and an incompatible", () => {
-    expect(hello.parse({ kind: "hello", wire: 1, apis: [1] })).toEqual({ kind: "hello", wire: 1, apis: [1] });
-    const welcomed = { kind: "welcome", wire: 1, api: 1, implementation: "estoc-daemon 0.4.0", limits };
+    expect(hello.parse({ kind: "hello", wire: 2, apis: [1] })).toEqual({ kind: "hello", wire: 2, apis: [1] });
+    const welcomed = { kind: "welcome", wire: 2, api: 1, implementation: "estoc-daemon 0.4.0", limits };
     expect(welcome.parse(welcomed)).toEqual(welcomed);
-    const refused = { kind: "incompatible", wire: 1, supported: [1], message: "update estoc-daemon" };
+    const refused = { kind: "incompatible", wire: 2, supported: [1], message: "update estoc-daemon" };
     expect(incompatible.parse(refused)).toEqual(refused);
     expect(bootstrap.parse(refused)).toEqual(refused);
   });
 
-  it("speaks wire version 1 only", () => {
-    expect(WIRE_VERSION).toBe(1);
+  it("speaks wire version 2 only", () => {
+    expect(WIRE_VERSION).toBe(2);
     expect(API_VERSION).toBe(1);
-    expect(hello.safeParse({ kind: "hello", wire: 2, apis: [1] }).success).toBe(false);
-    expect(hello.safeParse({ kind: "hello", wire: "1", apis: [1] }).success).toBe(false);
+    expect(hello.safeParse({ kind: "hello", wire: 1, apis: [1] }).success).toBe(false);
+    expect(hello.safeParse({ kind: "hello", wire: "2", apis: [1] }).success).toBe(false);
   });
 
   it("lists API versions as positive integers", () => {
-    expect(hello.safeParse({ kind: "hello", wire: 1, apis: [0] }).success).toBe(false);
-    expect(hello.safeParse({ kind: "hello", wire: 1, apis: [1.5] }).success).toBe(false);
-    expect(hello.safeParse({ kind: "hello", wire: 1, apis: [] }).success).toBe(true);
+    expect(hello.safeParse({ kind: "hello", wire: 2, apis: [0] }).success).toBe(false);
+    expect(hello.safeParse({ kind: "hello", wire: 2, apis: [1.5] }).success).toBe(false);
+    expect(hello.safeParse({ kind: "hello", wire: 2, apis: [] }).success).toBe(true);
   });
 
-  it("lets a structured-clone port advertise no frame limit and requires the other bounds", () => {
-    expect(welcome.safeParse({ kind: "welcome", wire: 1, api: 1, implementation: "", limits: { ...limits, maxFrameBytes: null } }).success).toBe(true);
-    expect(welcome.safeParse({ kind: "welcome", wire: 1, api: 1, implementation: "", limits: { ...limits, maxBackupBytes: null } }).success).toBe(false);
-    expect(welcome.safeParse({ kind: "welcome", wire: 1, api: 1, implementation: "", limits: { ...limits, maxDepth: 0 } }).success).toBe(false);
+  it("requires every bound, the frame bound included", () => {
+    for (const bound of ["maxFrameBytes", "maxBackupBytes", "maxValueBytes", "maxDepth"]) {
+      expect(welcome.safeParse({ kind: "welcome", wire: 2, api: 1, implementation: "", limits: { ...limits, [bound]: null } }).success).toBe(false);
+      expect(welcome.safeParse({ kind: "welcome", wire: 2, api: 1, implementation: "", limits: { ...limits, [bound]: 0 } }).success).toBe(false);
+    }
   });
 
   it("does not take an application frame for a bootstrap record", () => {

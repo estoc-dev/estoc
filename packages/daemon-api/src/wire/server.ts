@@ -9,7 +9,6 @@
 import { API_VERSION, WIRE_VERSION, schemas, type ApiError, type Baseline, type CallId, type Incompatible, type Welcome, type EventName, type Events, type Limits, type MessageId, type MethodInput, type MethodName, type MethodResult } from "../contract/index.js";
 import { ownFrame, readBootstrap, readFrame, readPayload, requestBudget, writeBootstrap, writeFrame, type RawFrame } from "./frames.js";
 import type { Port } from "./port.js";
-import { utf8Length } from "./values.js";
 
 export type ServedMethod = Exclude<MethodName, "attach">;
 
@@ -57,7 +56,7 @@ export interface Session {
 }
 
 interface Queued {
-  write(): unknown;
+  write(): Uint8Array;
   /** a reply's call: what it is answered under when it cannot be written */
   id: CallId | null;
   /** state of the daemon's own, the attachment baseline included: the session ends when it cannot be written */
@@ -99,7 +98,7 @@ class Served implements Session {
     if (!this.attached) return;
     const frame: RawFrame = { kind: "event", name, value };
     const replaces = name === "log" ? null : { name: name as "state" | "lines", epoch: (value as Events["state" | "lines"]).epoch };
-    this.enqueue({ write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: true, replaces, droppable: name === "log", terminal: false });
+    this.enqueue({ write: () => writeFrame(ownFrame(frame)), id: null, publication: true, replaces, droppable: name === "log", terminal: false });
   }
 
   fault(error: ApiError): void {
@@ -126,19 +125,19 @@ class Served implements Session {
     for (const listener of this.closeListeners.splice(0)) listener();
   }
 
-  private receive(data: unknown): void {
+  private receive(data: Uint8Array): void {
     if (this.closed || this.ending) return;
     if (!this.negotiated) {
       this.negotiate(data);
       return;
     }
     const { maxFrameBytes } = this.options.limits;
-    // A text frame over the bound is not read for the call it might be: it is refused whole, uncorrelated, and the session ends.
-    if (this.port.transport === "text" && maxFrameBytes !== null && typeof data === "string" && (data.length > maxFrameBytes || utf8Length(data) > maxFrameBytes)) {
+    // A frame over the bound is not decoded for the call it might be: it is refused whole, uncorrelated, and the session ends.
+    if (data.byteLength > maxFrameBytes) {
       this.fault({ code: "ResourceLimit", message: `a frame is larger than ${maxFrameBytes} bytes`, effect: "none", messageId: null });
       return;
     }
-    const frame = readFrame(data, this.port.transport);
+    const frame = readFrame(data);
     if (frame === null || frame.kind !== "call" || this.inFlight.has(frame.id)) {
       this.close();
       return;
@@ -147,8 +146,8 @@ class Served implements Session {
     this.serve(frame);
   }
 
-  private negotiate(data: unknown): void {
-    const hello = readBootstrap(data, this.port.transport);
+  private negotiate(data: Uint8Array): void {
+    const hello = readBootstrap(data);
     if (hello === null || hello.kind !== "hello") {
       this.close();
       return;
@@ -157,11 +156,11 @@ class Served implements Session {
     this.negotiated = true;
     if (!hello.apis.includes(API_VERSION)) {
       const refused: Incompatible = { kind: "incompatible", wire: WIRE_VERSION, supported: [API_VERSION], message: `this daemon speaks API ${API_VERSION}; update the view or the daemon` };
-      this.endWith({ write: () => writeBootstrap(refused, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true });
+      this.endWith({ write: () => writeBootstrap(refused), id: null, publication: false, replaces: null, droppable: false, terminal: true });
       return;
     }
     const welcome: Welcome = { kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: this.options.implementation, limits: this.options.limits };
-    this.enqueue({ write: () => writeBootstrap(welcome, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
+    this.enqueue({ write: () => writeBootstrap(welcome), id: null, publication: false, replaces: null, droppable: false, terminal: false });
   }
 
   private serve(call: Extract<RawFrame, { kind: "call" }>): void {
@@ -173,7 +172,7 @@ class Served implements Session {
     const schema = schemas.methods[method];
     const budget = requestBudget(this.options.limits, call);
     if (!budget.ok) return refuse(budget.code, budget.message);
-    const read = readPayload(call.input, this.port.transport, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes, budget: budget.value });
+    const read = readPayload(call.input, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes, budget: budget.value });
     if (!read.ok) return refuse(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return refuse("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
@@ -210,7 +209,7 @@ class Served implements Session {
 
   private reply(frame: Extract<RawFrame, { kind: "result" | "error" }>, bytesAt: readonly string[] = [], publication = false): void {
     this.inFlight.delete(frame.id);
-    this.enqueue({ write: () => writeFrame(ownFrame(frame, bytesAt), this.port.transport), id: frame.id, publication, replaces: null, droppable: false, terminal: false });
+    this.enqueue({ write: () => writeFrame(ownFrame(frame, bytesAt)), id: frame.id, publication, replaces: null, droppable: false, terminal: false });
   }
 
   private enqueue(entry: Queued): void {
@@ -234,7 +233,7 @@ class Served implements Session {
     if (this.writing || this.closed) return;
     const next = this.queue.shift();
     if (next === undefined) return;
-    let data: unknown;
+    let data: Uint8Array;
     try {
       data = next.write();
     } catch (error) {
@@ -260,7 +259,7 @@ class Served implements Session {
       this.endWith(this.faultEntry(unpublishable));
     } else if (entry.id !== null) {
       const frame: RawFrame = { kind: "error", id: entry.id, error: unexpected };
-      this.queue.unshift({ write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
+      this.queue.unshift({ write: () => writeFrame(ownFrame(frame)), id: null, publication: false, replaces: null, droppable: false, terminal: false });
       this.pump();
     } else {
       this.close();
@@ -269,7 +268,7 @@ class Served implements Session {
 
   private faultEntry(error: ApiError): Queued {
     const frame: RawFrame = { kind: "fault", error };
-    return { write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true };
+    return { write: () => writeFrame(ownFrame(frame)), id: null, publication: false, replaces: null, droppable: false, terminal: true };
   }
 
   private endWith(entry: Queued): void {

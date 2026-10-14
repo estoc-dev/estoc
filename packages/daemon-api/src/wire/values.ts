@@ -1,8 +1,8 @@
 /**
- * One reading of every value that crosses a port, on both transports:
- * what is wire data is copied into a plain, normalized tree, with its
- * logical size and depth charged against a budget as it goes, so that
- * a request over the bounds is refused before all of it is read.
+ * One reading of every value that crosses a port: what is wire data is
+ * copied into a plain, normalized tree, with its logical size and depth
+ * charged against a budget as it goes, so that a request over the
+ * bounds is refused before all of it is read.
  */
 
 import type { ApiValue } from "../contract/index.js";
@@ -50,6 +50,9 @@ export function utf8Length(text: string): number {
   return length;
 }
 
+/** A lone surrogate has no UTF-8 encoding: written out, it would turn into another character. */
+const LONE_SURROGATE = /\p{Cs}/u;
+
 const isPlainRecord = (value: object): boolean => {
   const prototype: unknown = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
@@ -85,6 +88,7 @@ class Walk {
       case "string":
         // The shorter UTF-16 length first, so that a string far over the budget is refused unmeasured.
         this.charge(value.length);
+        if (LONE_SURROGATE.test(value)) throw new Refused("InvalidArgument", "a string is not well-formed Unicode");
         this.charge(utf8Length(value) - value.length);
         return value;
       case "number":
@@ -130,6 +134,7 @@ class Walk {
       if (descriptor === undefined) continue;
       const member = held(descriptor);
       if (member === undefined) continue;
+      if (LONE_SURROGATE.test(key)) throw new Refused("InvalidArgument", "a key is not well-formed Unicode");
       this.charge(VALUE_CHARGE + utf8Length(key));
       entries.push([key, this.read(member, depth + 1, depth === 1 && this.bytesAt.has(key))]);
     }

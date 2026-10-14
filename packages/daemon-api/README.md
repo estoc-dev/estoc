@@ -10,7 +10,7 @@ operation when it executes.
 | --- | --- |
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
 | `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
-| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, bytes on a text port, frame reading and writing, port adapters, and the daemon's side of a session |
+| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, frames as CBOR read and written, port adapters, and the daemon's side of a session |
 | `@estoc/daemon-api/views` | What a view computes with no daemon in reach: the snapshot read by ID with each conversation's records assembled, a conversation followed across snapshots, invitations as links and back, the message contents a view composes, a mediator named by a person read as far as text goes |
 
 The types and JSDoc of the entry point define the API. The `schemas`
@@ -29,12 +29,20 @@ refuses what it does not know. Error codes stay open: an unknown code
 is a failure with the effect it states. The bootstrap's wire version
 moves on its own, apart from the application API version.
 
-The wire reads every value the same way on both transports: a plain,
-finite, acyclic tree, negative zero as zero, an undefined member left
-out, bytes only where a method's schema places them and copied to the
-view selected. A request is charged as it is read and refused at the
-advertised bound before the rest is read, the whole frame counted,
-the attachment request like any other. `serveApi` answers calls from
+Every frame, the bootstrap records included, is one CBOR data item in
+a byte array of its own: a binary message on a WebSocket, a
+transferred `Uint8Array` on a message port. A text message, or a
+message that is no byte array, closes the port. A frame is decoded
+with `cbor2` as plain data only: definite lengths, each integer and
+length in its shortest form, no key twice, no simple value but the
+booleans and null, and a tag left as a tag for the reading to refuse.
+The wire then reads every value the same way: a plain, finite, acyclic
+tree whose strings are well-formed Unicode, negative zero as zero, an
+undefined member left out, bytes only where a method's schema places
+them and copied out of the frame. A frame over the advertised byte
+bound is refused before it is decoded; a request is charged as it is
+read and refused at the advertised bound before the rest is read, the
+whole frame counted, the attachment request like any other. `serveApi` answers calls from
 the method table alone, puts the attachment baseline ahead of every
 later publication, and replaces, drops or ends what a slow port cannot
 take: a newer state or lines of the same epoch takes the place of an

@@ -10,7 +10,7 @@
 
 import { NoTarget, Unusable, type Content, type Invitation as DomainInvitation } from "@estoc/agent-core";
 import type { ApiError, Baseline, ChannelId, CompletionOutcome, DispatchOutcome, DisplayTime, Limits, Lines, MessageId, ReplicaId as ApiReplicaId, Snapshot, SnapshotLink, SnapshotLinkRecord } from "@estoc/daemon-api/contract";
-import { Refusal, type MethodHandlers, type Session, type Transport } from "@estoc/daemon-api/wire";
+import { Refusal, type MethodHandlers, type Session } from "@estoc/daemon-api/wire";
 import { DamagedHistory } from "@estoc/event-store";
 import { canonicalDidOf, channelOf as pairOf, type Channel, type Did, type EventReference, type ReplicaId } from "@estoc/vault";
 
@@ -26,10 +26,10 @@ export const DEFAULT_MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 /** Room beside a backup for its request's other members and the envelope. */
 const HEADROOM = 64 * 1024;
 
-/** The bounds a daemon advertises when it takes a backup of at most `maxBackupBytes`: room for one, for what a request carries beside it and, on a text port, for its base64 spelling. */
-export function limitsOf(transport: Transport, maxBackupBytes = DEFAULT_MAX_BACKUP_BYTES): Limits {
+/** The bounds a daemon advertises when it takes a backup of at most `maxBackupBytes`: room for one, and for what a request carries beside it. */
+export function limitsOf(maxBackupBytes = DEFAULT_MAX_BACKUP_BYTES): Limits {
   return {
-    maxFrameBytes: transport === "text" ? Math.ceil((maxBackupBytes * 4) / 3) + HEADROOM : null,
+    maxFrameBytes: maxBackupBytes + HEADROOM,
     maxBackupBytes,
     maxValueBytes: maxBackupBytes + HEADROOM,
     maxDepth: 64,

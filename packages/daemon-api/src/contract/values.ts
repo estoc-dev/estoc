@@ -1,8 +1,9 @@
 /**
- * The data both transports carry: finite, acyclic JSON trees, plus
- * byte arrays at the few schema locations a backup crosses. Object
- * identity, key order and shared references mean nothing; an optional
- * member set to `undefined` is the member omitted.
+ * The data a port carries: finite, acyclic JSON trees whose strings
+ * are well-formed Unicode, plus byte arrays at the few schema locations
+ * a backup crosses. Object identity, key order and shared references
+ * mean nothing; an optional member set to `undefined` is the member
+ * omitted.
  */
 
 export type JsonPrimitive = null | boolean | number | string;

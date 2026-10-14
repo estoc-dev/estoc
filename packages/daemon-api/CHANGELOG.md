@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Frames are CBOR** (breaking, wire version 2): every frame, the
+  bootstrap records included, is one CBOR data item in a `Uint8Array`,
+  written and read with `cbor2`. A WebSocket carries binary messages and
+  closes on a text one; a message port transfers each frame's buffer and
+  closes on a message that is no byte array. Bytes are CBOR byte
+  strings, so `Transport`, `Port.transport` and the base64 helpers
+  (`ByteWrapper`, `base64Length`, `fromBase64`, `toBase64`,
+  `isByteWrapper`, `wrapBytes`) are gone, and `readBootstrap`,
+  `writeBootstrap`, `readFrame`, `writeFrame` and `readPayload` take no
+  transport. `Limits.maxFrameBytes` is always a number, the byte length
+  of one client-to-daemon frame, which every port checks before the
+  frame is decoded. A string or a key holding a lone surrogate is not
+  wire data. A peer of wire version 1 sees the connection closed.
+
 - **A call's input is read once** (breaking, `./wire`): `readValue` and
   `readPayload` give a `WireValue`, which only that reading makes, and
   `writeFrame` takes a `WireFrame`, a frame whose payload is one, and

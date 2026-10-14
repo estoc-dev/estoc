@@ -7,7 +7,7 @@ const wire = z.literal(WIRE_VERSION);
 const versions = z.array(count);
 
 export const limits: z.ZodType<Limits> = z.object({
-  maxFrameBytes: count.nullable(),
+  maxFrameBytes: count,
   maxBackupBytes: count,
   maxValueBytes: count,
   maxDepth: count,

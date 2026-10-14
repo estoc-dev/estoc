@@ -1,10 +1,9 @@
 import { API_VERSION, WIRE_VERSION, schemas, type Baseline, type Bootstrap, type Limits, type LinesState, type State } from "../../src/contract/index.js";
-import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type Port, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
+import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type Port, type RawFrame, type ServeOptions, type Session } from "../../src/wire/index.js";
 import { as, linesState, openState } from "../contract/fixtures.js";
 import { pair, settle, type Pair } from "../wire/ports.js";
 
 export const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000, maxDepth: 6 };
-export const transports: Transport[] = ["text", "clone"];
 export const baseline: Baseline = { state: openState, lines: linesState };
 
 export const at = (revision: number, epoch = "epoch-1"): State => ({ ...openState, epoch: as(epoch), revision });
@@ -32,8 +31,8 @@ export interface Served {
 }
 
 /** A real daemon side on the right end of a link; the left end is the view's. */
-export function served(transport: Transport, options: Partial<ServeOptions> = {}): Served {
-  const link = pair(transport);
+export function served(options: Partial<ServeOptions> = {}): Served {
+  const link = pair();
   const session = serveApi(link.right, { methods: handlers(), limits, implementation: "test daemon", attach: () => baseline, ...options });
   return { link, session, port: link.left };
 }
@@ -44,7 +43,7 @@ export interface Scripted {
   /** what the view sent, read as frames or bootstrap records */
   received(): (RawFrame | Bootstrap | null)[];
   calls(): Extract<RawFrame, { kind: "call" }>[];
-  say(data: unknown): Promise<void>;
+  say(data: Uint8Array): Promise<void>;
   frame(frame: RawFrame, bytesAt?: readonly string[]): Promise<void>;
   welcome(own?: Partial<Limits>): Promise<void>;
   /** answers the attachment, whose call ID is 1 */
@@ -57,8 +56,8 @@ export interface Scripted {
 }
 
 /** A daemon side the test speaks for, frame by frame, on the right end of a link. */
-export function scripted(transport: Transport): Scripted {
-  const link = pair(transport);
+export function scripted(): Scripted {
+  const link = pair();
   let closed = false;
   link.right.listen({
     message() {},
@@ -69,14 +68,14 @@ export function scripted(transport: Transport): Scripted {
   const s: Scripted = {
     link,
     port: link.left,
-    received: () => link.toRight.map((data) => readFrame(data, transport) ?? readBootstrap(data, transport)),
+    received: () => link.toRight.map((data) => readFrame(data) ?? readBootstrap(data)),
     calls: () => s.received().filter((frame): frame is Extract<RawFrame, { kind: "call" }> => frame?.kind === "call"),
     say: async (data) => {
       if (!closed) await link.right.send(data);
       await settle();
     },
-    frame: (frame, bytesAt) => s.say(writeFrame(ownFrame(frame, bytesAt), transport)),
-    welcome: (own = {}) => s.say(writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "scripted", limits: { ...limits, ...own } }, transport)),
+    frame: (frame, bytesAt) => s.say(writeFrame(ownFrame(frame, bytesAt))),
+    welcome: (own = {}) => s.say(writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "scripted", limits: { ...limits, ...own } })),
     attach: (value = baseline) => s.frame({ kind: "result", id: 1, value }),
     greet: async () => {
       await s.welcome();

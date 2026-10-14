@@ -51,7 +51,7 @@ async function daemonOver(mediator: FakeMediator, wrap: Wrap = (fetch) => fetch,
   const daemon = createDaemon(nodeHost(root, { fetch: wrap(mediator.fetch), WebSocket: mediator.WebSocket }));
   daemons.push(daemon);
   await daemon.boot();
-  const methods = methodsOf(daemon, limitsOf("clone")) as unknown as Record<string, (input: unknown, session: Session) => Promise<unknown>>;
+  const methods = methodsOf(daemon, limitsOf()) as unknown as Record<string, (input: unknown, session: Session) => Promise<unknown>>;
   const call = (name: string, input: unknown) => methods[name]!(input, {} as Session);
   return {
     root,

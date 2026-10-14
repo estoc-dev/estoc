@@ -17,13 +17,13 @@ Two hosts ship:
   SQLite database in a pool of access handles over OPFS
   (`openSqlitePool` from `@estoc/event-store/browser`), the seed in
   IndexedDB, the DIDComm WASM as Vite loads it. Each message port the page
-  hands the worker is one view's session, over structured clone.
+  hands the worker is one view's session, its frames CBOR.
 - **A Node process** (`@estoc/daemon/node`; the `estoc-daemon` command):
   `nodeHost(root)`, whose vault is `<root>/.estoc/vault.sqlite`
   (`openNodeSqlite` from `@estoc/event-store/node`), the seed in memory
   only (every start is locked until a view types the passphrase),
   `@estoc/didcomm-node`, and one HTTP server that serves the app and takes
-  the app's WebSocket on the same origin, each socket a session over text
+  the app's WebSocket on the same origin, each socket a session over binary
   frames. The app is `@estoc/app` (the built files), an optional peer:
   `estoc serve` from `@estoc/cli` brings both together; `estoc-daemon`
   alone serves the app if `@estoc/app` is installed beside it (or

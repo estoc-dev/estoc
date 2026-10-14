@@ -37,6 +37,13 @@ describe("a value read as wire data", () => {
     for (const n of [NaN, Infinity, -Infinity]) expect(refused([n]).code).toBe("InvalidArgument");
   });
 
+  it("refuses a string or a key holding a lone surrogate, which no UTF-8 spells, and keeps a pair and the replacement character", () => {
+    for (const value of ["\ud800", "a\udc00", "\ude00\ud83d", { "\ud83d": 1 }, { ok: "\ufffd", ["\udfff"]: 1 }, ["fine", "\ud83dx"]]) {
+      expect(refused(value)).toEqual({ ok: false, code: "InvalidArgument", message: expect.stringMatching(/well-formed/) as string });
+    }
+    expect(read({ "😀": "😀", "\ufffd": "\ufffd" }).value).toEqual({ "😀": "😀", "\ufffd": "\ufffd" });
+  });
+
   it("leaves out a record member that is undefined and refuses an undefined element or root", () => {
     expect(read({ a: 1, b: undefined }).value).toEqual({ a: 1 });
     expect("b" in (read({ a: 1, b: undefined }).value as object)).toBe(false);

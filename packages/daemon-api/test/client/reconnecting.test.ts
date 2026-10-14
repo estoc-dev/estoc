@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { reconnecting, type ConnectionState } from "../../src/client/index.js";
-import type { CallError, State } from "../../src/contract/index.js";
-import type { Port, PortHandlers } from "../../src/wire/index.js";
+import { API_VERSION, WIRE_VERSION, type CallError, type State } from "../../src/contract/index.js";
+import { ownFrame, writeBootstrap, writeFrame, type Port, type PortHandlers } from "../../src/wire/index.js";
 import { as, openState } from "../contract/fixtures.js";
 import { settle } from "../wire/ports.js";
 import { at, baseline, limits, linesAt, scripted, type Scripted } from "./daemons.js";
@@ -34,8 +34,8 @@ afterEach(() => vi.useRealTimers());
 
 describe("a reconnecting client", () => {
   it("opens another connection after the delay when one ends, attaches afresh, and shows the new baseline in place of the old", async () => {
-    const first = scripted("clone");
-    const second = scripted("clone");
+    const first = scripted();
+    const second = scripted();
     const { view, states, connections, opened } = series(first, second);
     await first.greet();
     expect(view.connection.state).toBe("connected");
@@ -62,8 +62,8 @@ describe("a reconnecting client", () => {
   });
 
   it("has each connection's baseline in place when it announces connected, so that a call made there carries the new hold", async () => {
-    const first = scripted("clone");
-    const second = scripted("clone");
+    const first = scripted();
+    const second = scripted();
     const { view, states } = series(first, second);
     const lines: string[] = [];
     view.onLines((update) => lines.push(update.epoch));
@@ -89,8 +89,8 @@ describe("a reconnecting client", () => {
   });
 
   it("never resends a call the old connection lost: it is rejected as lost, and the new connection carries only hello and attach", async () => {
-    const first = scripted("text");
-    const second = scripted("text");
+    const first = scripted();
+    const second = scripted();
     const { view } = series(first, second);
     await first.greet();
     const lock = view.daemon.lock({});
@@ -103,27 +103,27 @@ describe("a reconnecting client", () => {
     expect(await outcome(view.daemon.lock({}))).toMatchObject({ origin: "client", code: "NotConnected", effect: "none" });
     await vi.advanceTimersByTimeAsync(500);
     await second.greet();
-    expect(second.received()).toEqual([{ kind: "hello", wire: 1, apis: [1] }, { kind: "call", id: 1, method: "attach", input: {} }]);
+    expect(second.received()).toEqual([{ kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] }, { kind: "call", id: 1, method: "attach", input: {} }]);
     expect(view.connection.state).toBe("connected");
   });
 
   it("ignores what an old connection says once it has ended", async () => {
     const stale: PortHandlers[] = [];
-    const manual = (): Port => ({ transport: "clone", async send() {}, listen: (handlers) => stale.push(handlers), close() {} });
-    const second = scripted("clone");
+    const manual = (): Port => ({ async send() {}, listen: (handlers) => stale.push(handlers), close() {} });
+    const second = scripted();
     const { view, states } = series(manual, second);
     await settle();
     const old = stale[0]!;
-    old.message({ kind: "welcome", wire: 1, api: 1, implementation: "manual", limits });
-    old.message({ kind: "result", id: 1, value: baseline });
+    old.message(writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "manual", limits }));
+    old.message(writeFrame(ownFrame({ kind: "result", id: 1, value: baseline })));
     expect(view.state).toEqual(openState);
     old.close();
     await vi.advanceTimersByTimeAsync(500);
     await second.welcome();
     await second.attach({ state: at(1, "epoch-2"), lines: linesAt(1, "epoch-2") });
     expect(view.state?.epoch).toBe("epoch-2");
-    old.message({ kind: "event", name: "state", value: at(9) });
-    old.message({ kind: "result", id: 1, value: baseline });
+    old.message(writeFrame(ownFrame({ kind: "event", name: "state", value: at(9) })));
+    old.message(writeFrame(ownFrame({ kind: "result", id: 1, value: baseline })));
     old.close();
     expect(view.state).toEqual(at(1, "epoch-2"));
     expect(view.connection.state).toBe("connected");
@@ -134,10 +134,10 @@ describe("a reconnecting client", () => {
   });
 
   it("stops at a daemon that cannot speak this API", async () => {
-    const first = scripted("clone");
-    const { view, opened } = series(first, scripted("clone"));
+    const first = scripted();
+    const { view, opened } = series(first, scripted());
     const attached = view.connected();
-    await first.say({ kind: "incompatible", wire: 1, supported: [2], message: "update the view" });
+    await first.say(writeBootstrap({ kind: "incompatible", wire: WIRE_VERSION, supported: [2], message: "update the view" }));
     expect(view.connection).toEqual({ state: "incompatible", supported: [2], message: "update the view" });
     expect(await outcome(attached)).toMatchObject({ origin: "client", code: "Incompatible", message: "update the view" });
     await vi.advanceTimersByTimeAsync(10_000);
@@ -148,7 +148,7 @@ describe("a reconnecting client", () => {
   });
 
   it("tries again after the delay when no port could be opened", async () => {
-    const daemon = scripted("clone");
+    const daemon = scripted();
     const { view, opened } = series(
       () => {
         throw new Error("no socket");
@@ -168,8 +168,8 @@ describe("a reconnecting client", () => {
   });
 
   it("closes the current connection and stops when the view closes, and closes a port opened after that", async () => {
-    const first = scripted("clone");
-    const { view, opened, connections } = series(first, scripted("clone"));
+    const first = scripted();
+    const { view, opened, connections } = series(first, scripted());
     await first.greet();
     const lock = view.daemon.lock({});
     await settle();
@@ -185,7 +185,7 @@ describe("a reconnecting client", () => {
     expect(connections.map((connection) => connection.state)).toEqual(["connected", "disconnected"]);
 
     let release: (port: Port) => void = () => {};
-    const late = scripted("clone");
+    const late = scripted();
     const waiting = series(() => new Promise<Port>((resolve) => (release = resolve)));
     await settle();
     waiting.view.close();
@@ -196,7 +196,7 @@ describe("a reconnecting client", () => {
   });
 
   it("forwards the lines and logs of the current connection", async () => {
-    const first = scripted("clone");
+    const first = scripted();
     const { view } = series(first);
     const lines: number[] = [];
     const logs: string[] = [];
