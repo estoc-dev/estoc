@@ -56,21 +56,6 @@ export function plainJson(value: unknown): JsonValue {
   return admit(value, [], "$");
 }
 
-/** How many bytes `encoder.encode(text)` would be, counted without encoding it: a lone surrogate counts as the U+FFFD it would become. */
-export function utf8Length(text: string): number {
-  let bytes = 0;
-  for (let i = 0; i < text.length; i++) {
-    const unit = text.charCodeAt(i);
-    if (unit < 0x80) bytes += 1;
-    else if (unit < 0x800) bytes += 2;
-    else if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
-      bytes += 4;
-      i += 1;
-    } else bytes += 3;
-  }
-  return bytes;
-}
-
 // The serializer is handed this copy, never the caller's value: it drops an
 // undefined member, writes an undefined element as null, and calls `toJSON`, each
 // of which would let two different values share one canonical form.

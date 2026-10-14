@@ -1,7 +1,6 @@
 import { describe, expect, it, test } from "vitest";
 
 import { InvalidJson, MAX_DEPTH, canonicalText, canonicalize, forbiddenIn, parseStrict } from "../src/index.js";
-import { utf8Length } from "../src/jcs.js";
 
 const utf8 = new TextEncoder();
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -320,13 +319,5 @@ describe("parseStrict with noncharacters allowed", () => {
     expect(() => parseStrict("{", { noncharacters: true })).toThrow(InvalidJson);
     expect(forbiddenIn("\ufdd0", { noncharacters: true })).toBeNull();
     expect(forbiddenIn("\ufdd0")).toBe("noncharacter U+FDD0");
-  });
-});
-
-describe("utf8Length", () => {
-  it("counts the bytes TextEncoder would produce without producing them: one to four per code point, a lone surrogate as the U+FFFD it becomes", () => {
-    const samples = ["", "abc", "€", "😂", "a€😂z", "\u0000\u007f\u0080\u07ff\u0800\uffff", "\ud83d", "\ude02", "\ud83d\ud83d\ude02", "\ude02\ud83d", "😂".repeat(1000)];
-    for (const text of samples) expect(utf8Length(text), JSON.stringify(text)).toBe(new TextEncoder().encode(text).length);
-    expect(utf8Length("€😂")).toBe(7);
   });
 });

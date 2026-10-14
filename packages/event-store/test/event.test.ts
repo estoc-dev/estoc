@@ -187,6 +187,14 @@ describe("envelope validation", () => {
     expect(validateEvent({ ...EXAMPLE, cid: EXAMPLE_CID })).toEqual({ ...EXAMPLE, cid: EXAMPLE_CID });
   });
 
+  it("returns an API event in the form its canonical bytes parse to: members in canonical order, -0 as 0", () => {
+    const shuffled = { type: EXAMPLE.type, roots: [], data: { z: -0, a: 1 }, author: EXAMPLE.author, at: EXAMPLE.at };
+    const event = validateEvent({ cid: eventCidOf(shuffled), ...shuffled });
+    expect(Object.keys(event)).toEqual(["at", "author", "data", "roots", "type", "cid"]);
+    expect(Object.keys(event.data)).toEqual(["a", "z"]);
+    expect(Object.is(event.data["z"], 0)).toBe(true);
+  });
+
   it("rejects every rule broken, naming the first", () => {
     const cases: [string, unknown, RegExp][] = [
       ["not an object", "event", /JSON object/],

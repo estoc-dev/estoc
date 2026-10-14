@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **An event is checked once on its way to a store.**
+  `canonicalEnvelope` and `canonicalEvent` check the envelope's
+  fields, check and copy the whole once for the canonical serializer
+  instead of twice, and read the event back from that serializer's
+  own text with `JSON.parse` rather than `parseStrict`; they throw
+  `InvalidEvent` only.
+  `validateEvent` returns the event as a store holds it: members in
+  canonical order, `-0` as `0`.
 - **An ingested event is encoded and hashed once.** `canonicalEvent`
   and `canonicalEnvelope` return a `CanonicalEvent`: the event, its
   canonical bytes and its CID, which only they make. The body of
