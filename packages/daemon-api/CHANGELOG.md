@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A call's input is read once** (breaking, `./wire`): `readValue` and
+  `readPayload` give a `WireValue`, which only that reading makes, and
+  `writeFrame` takes a `WireFrame`, a frame whose payload is one, and
+  writes it without reading it again. It no longer takes the byte
+  members: a read value holds bytes only at those it was read with.
+  `ownFrame(frame, bytesAt)` reads a frame of the sender's own and
+  throws on a payload that is not wire data, as `writeFrame` did. The
+  client sends the input it read and checked against the method's
+  schema as it is.
+
 - **Snapshot parts** (breaking): a snapshot link carries one part of the
   CAR snapshot, `SnapshotPart` `seed` (the sealed seed, with the events
   a new replica enrolls from) or `content` (every event and object, no

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { API_VERSION, WIRE_VERSION, schemas, type CallId, type Hello, type Limits, type Welcome } from "../../src/contract/index.js";
-import { MAX_BOOTSTRAP_BYTES, readBootstrap, readFrame, readPayload, requestBudget, toBase64, VALUE_CHARGE, writeBootstrap, writeFrame, type Transport } from "../../src/wire/index.js";
+import { MAX_BOOTSTRAP_BYTES, ownFrame, readBootstrap, readFrame, readPayload, requestBudget, toBase64, VALUE_CHARGE, writeBootstrap, writeFrame, type Transport } from "../../src/wire/index.js";
 import { openState } from "../contract/fixtures.js";
 
 const limits: Limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 1000, maxValueBytes: 5000, maxDepth: 8 };
@@ -49,7 +49,7 @@ describe("an application frame on a port", () => {
       { kind: "fault", error },
     ] as const;
     for (const frame of frames) {
-      const written = writeFrame(frame, transport);
+      const written = writeFrame(ownFrame(frame), transport);
       expect(typeof written).toBe(transport === "text" ? "string" : "object");
       expect(readFrame(written, transport)).toEqual(frame);
     }
@@ -57,7 +57,7 @@ describe("an application frame on a port", () => {
 
   it.each(transports)("reads the same logical frame from either transport", (transport) => {
     const frame = { kind: "result", id: 7, value: JSON.parse('{"n":1.5,"s":"日本","list":[null,true,{"deep":{}}],"__proto__":{"own":1}}') as unknown } as const;
-    const raw = readFrame(writeFrame(frame, transport), transport);
+    const raw = readFrame(writeFrame(ownFrame(frame), transport), transport);
     expect(raw).toEqual(frame);
     const payload = readPayload((raw as { value: unknown }).value, transport, { bytesAt: [], maxBytes: 0 });
     expect(payload).toEqual({ ok: true, value: frame.value, size: expect.any(Number) as number });
@@ -94,9 +94,9 @@ describe("an application frame on a port", () => {
   });
 
   it("throws on a frame of the writer's own that is not wire data, rather than writing something else", () => {
-    expect(() => writeFrame({ kind: "result", id: 1, value: { n: NaN } }, "text")).toThrow(/not wire data/);
-    expect(() => writeFrame({ kind: "event", name: "log", value: { epoch: "e", line: "l", at: new Date(0) } }, "clone")).toThrow(/not wire data/);
-    expect(() => writeFrame({ kind: "result", id: 1, value: { bytes: new Uint8Array(1) } }, "text")).toThrow(/not wire data/);
+    expect(() => ownFrame({ kind: "result", id: 1, value: { n: NaN } })).toThrow(/not wire data/);
+    expect(() => ownFrame({ kind: "event", name: "log", value: { epoch: "e", line: "l", at: new Date(0) } })).toThrow(/not wire data/);
+    expect(() => ownFrame({ kind: "result", id: 1, value: { bytes: new Uint8Array(1) } })).toThrow(/not wire data/);
   });
 });
 
@@ -106,16 +106,16 @@ describe("bytes crossing a port", () => {
 
   it("go as a byte array on a structured-clone port, and as base64 on a text port, and read back the same", () => {
     const frame = { kind: "result", id: 1, value: { name: "ada.estoc", bytes } } as const;
-    const cloned = writeFrame(frame, "clone", slots) as { value: { bytes: Uint8Array } };
+    const cloned = writeFrame(ownFrame(frame, slots), "clone") as { value: { bytes: Uint8Array } };
     expect(cloned.value.bytes).toBeInstanceOf(Uint8Array);
     expect([...cloned.value.bytes]).toEqual([1, 2, 3]);
     expect(cloned.value.bytes.buffer.byteLength).toBe(3);
-    const text = writeFrame(frame, "text", slots) as string;
+    const text = writeFrame(ownFrame(frame, slots), "text") as string;
     expect(JSON.parse(text)).toEqual({ kind: "result", id: 1, value: { name: "ada.estoc", bytes: { encoding: "base64", data: "AQID" } } });
     for (const transport of transports) {
       const raw = readFrame(transport === "text" ? text : cloned, transport) as { value: unknown };
       const read = readPayload(raw.value, transport, { bytesAt: slots, maxBytes: 3 });
-      expect(read.ok && [...(read.value as { bytes: Uint8Array }).bytes]).toEqual([1, 2, 3]);
+      expect(read.ok && read.value).toEqual({ name: "ada.estoc", bytes: new Uint8Array([1, 2, 3]) });
       expect(read.ok && read.size).toBe(VALUE_CHARGE + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 9) + (VALUE_CHARGE + 5) + VALUE_CHARGE + 3);
     }
   });
@@ -189,7 +189,7 @@ describe("a request's budget", () => {
   it("keeps the members the envelope does not know on the frame it reads, for the bound to see", () => {
     const frame = readFrame({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 }, "clone");
     expect(frame).toEqual({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 });
-    expect(writeFrame(frame!, "clone")).toEqual({ kind: "call", id: 1, method: "lock", input: {} });
+    expect(writeFrame(ownFrame(frame!), "clone")).toEqual({ kind: "call", id: 1, method: "lock", input: {} });
   });
 
   it("refuses the frame when the envelope alone is over the bound, and leaves the input exactly the rest", () => {

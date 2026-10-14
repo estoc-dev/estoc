@@ -2,7 +2,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { describe, expect, it } from "vitest";
 
 import { API_VERSION, WIRE_VERSION, type Baseline, type Hello, type Limits, type State } from "../../src/contract/index.js";
-import { messagePortOf, serveApi, webSocketOf, writeBootstrap, writeFrame, type MethodHandlers, type Transport } from "../../src/wire/index.js";
+import { messagePortOf, ownFrame, serveApi, webSocketOf, writeBootstrap, writeFrame, type MethodHandlers, type Transport } from "../../src/wire/index.js";
 import { linesState, openState } from "../contract/fixtures.js";
 
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
@@ -10,7 +10,7 @@ const baseline: Baseline = { state: openState, lines: linesState };
 const limits: Limits = { maxFrameBytes: 100_000, maxBackupBytes: 100, maxValueBytes: 50_000, maxDepth: 8 };
 const noMethods = {} as MethodHandlers;
 
-const attach = (transport: Transport) => writeFrame({ kind: "call", id: 1 as never, method: "attach", input: {} }, transport);
+const attach = (transport: Transport) => writeFrame(ownFrame({ kind: "call", id: 1 as never, method: "attach", input: {} }), transport);
 
 /** What one side of a real port receives, taken one at a time. */
 const inbox = (listen: (listener: (event: { data?: unknown }) => void) => void) => {

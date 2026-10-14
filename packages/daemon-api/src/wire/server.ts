@@ -7,7 +7,7 @@
  */
 
 import { API_VERSION, WIRE_VERSION, schemas, type ApiError, type Baseline, type CallId, type Incompatible, type Welcome, type EventName, type Events, type Limits, type MessageId, type MethodInput, type MethodName, type MethodResult } from "../contract/index.js";
-import { readBootstrap, readFrame, readPayload, requestBudget, writeBootstrap, writeFrame, type RawFrame } from "./frames.js";
+import { ownFrame, readBootstrap, readFrame, readPayload, requestBudget, writeBootstrap, writeFrame, type RawFrame } from "./frames.js";
 import type { Port } from "./port.js";
 import { utf8Length } from "./values.js";
 
@@ -99,7 +99,7 @@ class Served implements Session {
     if (!this.attached) return;
     const frame: RawFrame = { kind: "event", name, value };
     const replaces = name === "log" ? null : { name: name as "state" | "lines", epoch: (value as Events["state" | "lines"]).epoch };
-    this.enqueue({ write: () => writeFrame(frame, this.port.transport), id: null, publication: true, replaces, droppable: name === "log", terminal: false });
+    this.enqueue({ write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: true, replaces, droppable: name === "log", terminal: false });
   }
 
   fault(error: ApiError): void {
@@ -210,7 +210,7 @@ class Served implements Session {
 
   private reply(frame: Extract<RawFrame, { kind: "result" | "error" }>, bytesAt: readonly string[] = [], publication = false): void {
     this.inFlight.delete(frame.id);
-    this.enqueue({ write: () => writeFrame(frame, this.port.transport, bytesAt), id: frame.id, publication, replaces: null, droppable: false, terminal: false });
+    this.enqueue({ write: () => writeFrame(ownFrame(frame, bytesAt), this.port.transport), id: frame.id, publication, replaces: null, droppable: false, terminal: false });
   }
 
   private enqueue(entry: Queued): void {
@@ -260,7 +260,7 @@ class Served implements Session {
       this.endWith(this.faultEntry(unpublishable));
     } else if (entry.id !== null) {
       const frame: RawFrame = { kind: "error", id: entry.id, error: unexpected };
-      this.queue.unshift({ write: () => writeFrame(frame, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
+      this.queue.unshift({ write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: false });
       this.pump();
     } else {
       this.close();
@@ -269,7 +269,7 @@ class Served implements Session {
 
   private faultEntry(error: ApiError): Queued {
     const frame: RawFrame = { kind: "fault", error };
-    return { write: () => writeFrame(frame, this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true };
+    return { write: () => writeFrame(ownFrame(frame), this.port.transport), id: null, publication: false, replaces: null, droppable: false, terminal: true };
   }
 
   private endWith(entry: Queued): void {

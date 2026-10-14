@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { API_VERSION, WIRE_VERSION, schemas, type ApiError, type Baseline, type Hello, type Limits, type State } from "../../src/contract/index.js";
-import { readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
+import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
 import { linesState, openState } from "../contract/fixtures.js";
 import { pair, settle, type Pair } from "./ports.js";
 
@@ -49,7 +49,7 @@ const talk = (transport: Transport, options: Partial<ServeOptions> = {}): Talk =
       await link.left.send(data);
       await settle();
     },
-    call: (id, method, input, bytesAt) => t.say(writeFrame({ kind: "call", id, method, input }, transport, bytesAt)),
+    call: (id, method, input, bytesAt) => t.say(writeFrame(ownFrame({ kind: "call", id, method, input }, bytesAt), transport)),
     greet: () => t.say(writeBootstrap(hello, transport)),
     attach: async (id = 1) => {
       await t.greet();
@@ -172,7 +172,7 @@ describe("attachment", () => {
     });
     await t.greet();
     for (const input of [null, [], "attach"]) {
-      await t.say(writeFrame({ kind: "call", id: 1, method: "attach", input }, transport));
+      await t.say(writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input }), transport));
       seen(t, "InvalidArgument");
     }
     await t.call(2, "attach", { extra: "x".repeat(limits.maxValueBytes) });
@@ -472,7 +472,7 @@ describe("the send queue of a slow port", () => {
     t.session.event("log", line(2));
     t.session.event("log", line(3));
     t.session.event("state", stateAt("epoch-1", 4));
-    void t.link.left.send(writeFrame({ kind: "call", id: 2, method: "lock", input: {} }, "clone"));
+    void t.link.left.send(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} }), "clone"));
     await settle();
     expect(t.session.closed).toBe(false);
     release();
@@ -487,7 +487,7 @@ describe("the send queue of a slow port", () => {
     let closed = 0;
     t.session.onClose(() => closed++);
     const release = t.link.stall();
-    for (const id of [2, 3, 4, 5]) void t.link.left.send(writeFrame({ kind: "call", id, method: "lock", input: {} }, "clone"));
+    for (const id of [2, 3, 4, 5]) void t.link.left.send(writeFrame(ownFrame({ kind: "call", id, method: "lock", input: {} }), "clone"));
     await settle();
     expect(t.session.closed).toBe(true);
     expect(closed).toBe(1);
@@ -565,7 +565,7 @@ describe("the end of a session", () => {
     await t.attach();
     t.link.left.close();
     t.session.event("log", { epoch: "epoch-1" as never, line: "gone" });
-    await t.say(writeFrame({ kind: "call", id: 2, method: "lock", input: {} }, "clone")).catch(() => {});
+    await t.say(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} }), "clone")).catch(() => {});
     expect(t.received()).toHaveLength(2);
   });
 });
