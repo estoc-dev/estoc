@@ -227,8 +227,8 @@ function exactly(value: JsonObject, fields: readonly string[]): void {
 
 /**
  * The five envelope fields of `value`, each read once and checked, `roots`
- * copied. Whether they are I-JSON is left to the one walk that copies or
- * writes them.
+ * copied. Whether they are I-JSON is checked once, by the `plainJson` copy
+ * made of them next.
  */
 function checkedFields(value: JsonObject): EventEnvelope {
   const { at, author, type, roots, data } = value as Record<(typeof ENVELOPE_FIELDS)[number], unknown>;
@@ -352,8 +352,8 @@ export function canonicalEvent(value: unknown): CanonicalEvent {
 const utf8 = new TextEncoder();
 
 /**
- * The event `fields`, as `checkedFields` returns them, make: writing the
- * canonical text is the walk that checks they are I-JSON. The text is the
+ * The event `fields`, as `checkedFields` returns them, make. `canonicalText`
+ * checks and copies them once for the canonical serializer; the text is that
  * serializer's own output, so `JSON.parse` reads it back as `parseStrict`
  * would.
  */

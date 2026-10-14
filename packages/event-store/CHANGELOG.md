@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-- **An event is checked and written once on its way to a store.**
+- **An event is checked once on its way to a store.**
   `canonicalEnvelope` and `canonicalEvent` check the envelope's
-  fields, write its canonical text in the one walk that checks it is
-  I-JSON, and read the event back from that text with `JSON.parse`
-  rather than `parseStrict`; they throw `InvalidEvent` only.
+  fields, check and copy the whole once for the canonical serializer
+  instead of twice, and read the event back from that serializer's
+  own text with `JSON.parse` rather than `parseStrict`; they throw
+  `InvalidEvent` only.
   `validateEvent` returns the event as a store holds it: members in
   canonical order, `-0` as `0`.
 - **An ingested event is encoded and hashed once.** `canonicalEvent`
