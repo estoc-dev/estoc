@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A frame is bounded by its byte length alone** (breaking):
+  `Limits.maxValueBytes` is gone, and with it the logical size of a
+  value: `Budget`, `ReadOptions.budget`, `VALUE_CHARGE`, `utf8Length`,
+  `requestBudget` and `Reading.size`. `maxFrameBytes`, checked before a
+  frame is decoded, and `maxBackupBytes`, on each byte member, are the
+  bounds a request is held to. The client refuses an input over the
+  frame bound once it is encoded.
+
 - **Frames are CBOR** (breaking, wire version 2): every frame, the
   bootstrap records included, is one CBOR data item in a `Uint8Array`,
   written and read with `cbor2`. A WebSocket carries binary messages and

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **No logical size (breaking)**, as `@estoc/daemon-api` no longer has
+  one: `limitsOf` advertises the frame bound and the backup bound only.
+  A `Publisher` takes no `maxRevision`: the revisions of an epoch count
+  on without bound.
+
 - **Frames are CBOR (breaking)**, as `@estoc/daemon-api` now speaks them:
   `limitsOf(maxBackupBytes?)` takes no transport and advertises a frame
   bound of the backup bound and 64 KiB on every port, and no depth

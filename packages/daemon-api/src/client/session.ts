@@ -11,7 +11,7 @@
  */
 
 import { API_VERSION, WIRE_VERSION, schemas, type Baseline, type CallError, type CallId, type Hello, type Limits, type LinesState, type LogLine, type MethodInput, type MethodName, type MethodResult, type RevisionMarker, type State } from "../contract/index.js";
-import { readBootstrap, readFrame, readPayload, readValue, requestBudget, writeBootstrap, writeFrame, type Port, type RawFrame, type Reading } from "../wire/index.js";
+import { readBootstrap, readFrame, readPayload, readValue, writeBootstrap, writeFrame, type Port, type RawFrame, type Reading } from "../wire/index.js";
 import { daemonMethodsOf, isCalledMethod, type CalledMethod, type Client, type ConnectionState, type DaemonMethods } from "./client.js";
 import { clientError } from "./errors.js";
 import { Listeners } from "./listeners.js";
@@ -132,15 +132,12 @@ export class Session implements Client {
     const limits = this.limits;
     if (limits === null) return clientError("NotConnected", NOT_CONNECTED);
     const schema = schemas.methods[name];
-    const id = this.nextId++;
-    const call: RawFrame = { kind: "call", id, method: name, input: null };
-    const budget = requestBudget(limits, call);
-    if (!budget.ok) return clientError(budget.code, budget.message);
-    const read = readPayload(input, { bytesAt: schema.bytes.input, maxBytes: limits.maxBackupBytes, budget: budget.value });
+    const read = readPayload(input, { bytesAt: schema.bytes.input, maxBytes: limits.maxBackupBytes });
     if (!read.ok) return clientError(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return clientError("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
-    const data = writeFrame({ ...call, input: read.value });
+    const id = this.nextId++;
+    const data = writeFrame({ kind: "call", id, method: name, input: read.value });
     if (data.byteLength > limits.maxFrameBytes) return clientError("ResourceLimit", `the frame is larger than ${limits.maxFrameBytes} bytes`);
     this.pending.set(id, answered);
     this.transmit(data);

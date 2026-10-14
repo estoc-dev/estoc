@@ -3,15 +3,15 @@
  * records first and the application envelopes with their payloads
  * after them. Reading is in two steps, the envelope first and its
  * payload once the method or event it belongs to is known, since that
- * is what says where bytes may be and what budget the payload has.
+ * is what says where bytes may be.
  */
 
 import type { DecodeOptions } from "cbor2";
 import { decode } from "cbor2/decoder";
 import { encode } from "cbor2/encoder";
 
-import { schemas, type Bootstrap, type CallId, type EventName, type Limits } from "../contract/index.js";
-import { readValue, VALUE_CHARGE, type Budget, type Reading, type WireValue } from "./values.js";
+import { schemas, type Bootstrap, type CallId, type EventName } from "../contract/index.js";
+import { readValue, type Reading, type WireValue } from "./values.js";
 
 /** Room for a long implementation text or a long list of versions; a bootstrap record is small. */
 export const MAX_BOOTSTRAP_BYTES = 4096;
@@ -80,8 +80,8 @@ const isEventName = (name: unknown): name is EventName => typeof name === "strin
  * The envelope of `data`, or null when it is no frame at all: no single
  * CBOR data item, no record, no such kind, or a member missing or of
  * the wrong type. Members the envelope does not know stay on the
- * frame, unread: they mean nothing, but a bound on the whole frame
- * charges them too.
+ * frame, unread: they mean nothing, and the frame's byte length,
+ * bounded before decoding, already counts them.
  */
 export function readFrame(data: unknown): RawFrame | null {
   const record = decoded(data);
@@ -108,7 +108,6 @@ export interface PayloadOptions {
   bytesAt: readonly string[];
   /** the most bytes one such member may carry */
   maxBytes: number;
-  budget?: Budget;
 }
 
 /** A payload as wire data, each byte member's length checked before the rest is read. */
@@ -120,15 +119,7 @@ export function readPayload(raw: unknown, options: PayloadOptions): Reading<Wire
       if (held instanceof Uint8Array && held.byteLength > options.maxBytes) return { ok: false, code: "ResourceLimit", message: `${member} carries ${held.byteLength} bytes, over ${options.maxBytes}` };
     }
   }
-  return readValue(raw, { bytesAt: options.bytesAt, budget: options.budget });
-}
-
-/** What a call's input may still charge once the rest of its frame has, unknown members included: the bound is on the whole frame. */
-export function requestBudget(limits: Limits, call: Extract<RawFrame, { kind: "call" }>): Reading<Budget> {
-  const envelope = readValue({ ...call, input: null }, { budget: limits });
-  if (!envelope.ok) return envelope;
-  const budget = { maxValueBytes: limits.maxValueBytes - (envelope.size - VALUE_CHARGE) };
-  return { ok: true, value: budget, size: envelope.size };
+  return readValue(raw, { bytesAt: options.bytesAt });
 }
 
 const payloadOf = (frame: RawFrame): unknown => (frame.kind === "call" ? frame.input : frame.kind === "error" || frame.kind === "fault" ? frame.error : frame.value);

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { connect, type ConnectionState } from "../../src/client/index.js";
 import { API_VERSION, BASIC_MESSAGE, WIRE_VERSION, type CallError, type ClientErrorCode, type JsonObject, type LinesState, type LogLine, type State } from "../../src/contract/index.js";
-import { ownFrame, requestBudget, writeBootstrap, writeFrame, type Port, type PortHandlers, type RawFrame } from "../../src/wire/index.js";
+import { ownFrame, writeBootstrap, writeFrame, type Port, type PortHandlers, type RawFrame } from "../../src/wire/index.js";
 import { as, linesState, openState } from "../contract/fixtures.js";
 import { hex, settle } from "../wire/ports.js";
 import { at, baseline, handlers, limits, linesAt, scripted, served, type Scripted } from "./daemons.js";
@@ -216,7 +216,7 @@ describe("a call", () => {
     const petname = (value: unknown) => view.daemon.renameContact({ contactId: as("c-1"), petname: value as string });
     expect(await outcome(petname(NaN))).toEqual(client("InvalidArgument"));
     expect(await outcome(petname(new Date(0)))).toEqual(client("InvalidArgument"));
-    expect(await outcome(petname("x".repeat(3000)))).toEqual(client("ResourceLimit"));
+    expect(await outcome(petname("x".repeat(limits.maxFrameBytes)))).toEqual(client("ResourceLimit"));
     expect(await outcome(view.daemon.restoreIdentity({ backup: new Uint8Array(101), passphrase: "p" }))).toEqual(client("ResourceLimit"));
     expect(s.calls()).toHaveLength(1);
     expect(view.connection.state).toBe("connected");
@@ -245,11 +245,11 @@ describe("a call", () => {
     expect(view.connection.state).toBe("connected");
   });
 
-  it("charges the whole frame against the bounds, the envelope included, as the daemon does", async () => {
+  it("sends a call whose frame is exactly the frame bound, the envelope included, and refuses one a byte longer", async () => {
     const { s, view } = await shown();
-    const envelope = requestBudget(limits, { kind: "call", id: 2, method: "renameContact", input: null });
-    if (!envelope.ok) throw new Error(envelope.message);
-    const room = envelope.value.maxValueBytes - (8 + (8 + 9) + (8 + 3) + (8 + 7) + 8);
+    const written = (length: number) => frame({ kind: "call", id: 2, method: "renameContact", input: { contactId: "c-1", petname: "x".repeat(length) } }).byteLength;
+    const room = 256 + limits.maxFrameBytes - written(256);
+    expect(written(room)).toBe(limits.maxFrameBytes);
     const petname = (length: number) => view.daemon.renameContact({ contactId: as("c-1"), petname: "x".repeat(length) });
     const fitting = petname(room);
     await settle();

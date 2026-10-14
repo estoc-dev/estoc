@@ -108,7 +108,7 @@ describe("the endpoint", () => {
     const server = await serve(nodeHost(root), { maxBackupBytes: 64 });
     await server.daemon.boot();
     const client = await connected(server.url);
-    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 64, maxValueBytes: 64 + 64 * 1024, maxFrameBytes: 64 + 64 * 1024 } });
+    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 64, maxFrameBytes: 64 + 64 * 1024 } });
     await expect(client.daemon.restoreIdentity({ backup: new Uint8Array(65), passphrase: PASSPHRASE })).rejects.toMatchObject({ origin: "client", code: "ResourceLimit", effect: "none" });
 
     const raw = await frameClient(server.url);

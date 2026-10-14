@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { API_VERSION, WIRE_VERSION, schemas, type CallId, type Hello, type Incompatible, type Limits, type Welcome } from "../../src/contract/index.js";
-import { MAX_BOOTSTRAP_BYTES, ownFrame, readBootstrap, readFrame, readPayload, requestBudget, VALUE_CHARGE, writeBootstrap, writeFrame } from "../../src/wire/index.js";
+import { API_VERSION, WIRE_VERSION, schemas, type Hello, type Incompatible, type Limits, type Welcome } from "../../src/contract/index.js";
+import { MAX_BOOTSTRAP_BYTES, ownFrame, readBootstrap, readFrame, readPayload, writeBootstrap, writeFrame } from "../../src/wire/index.js";
 import { openState } from "../contract/fixtures.js";
 import { cbor, concat, hex } from "./ports.js";
 
-const limits: Limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 1000, maxValueBytes: 5000 };
+const limits: Limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 1000 };
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 
 /** A call of `lock` whose input is the data item `input` spells, the envelope written as a wire writer would. */
@@ -70,15 +70,15 @@ describe("an application frame on a port", () => {
     const value = JSON.parse('{"n":1.5,"s":"日本","list":[null,true,{"deep":{}}],"__proto__":{"own":1}}') as unknown;
     const raw = readFrame(writeFrame(ownFrame({ kind: "result", id: 7, value })));
     const payload = readPayload((raw as { value: unknown }).value, { bytesAt: [], maxBytes: 0 });
-    expect(payload).toEqual({ ok: true, value, size: expect.any(Number) as number });
+    expect(payload).toEqual({ ok: true, value });
     const read = (payload.ok ? payload.value : null) as object;
     expect(Object.hasOwn(read, "__proto__")).toBe(true);
     expect(Object.getPrototypeOf(read)).toBe(Object.prototype);
   });
 
   it("reads a number whatever width it was written in, and negative zero as zero", () => {
-    expect(readPayload(inputOf(callWith(hex("a16161fb3ff8000000000000"))), { bytesAt: [], maxBytes: 0 })).toEqual({ ok: true, value: { a: 1.5 }, size: expect.any(Number) as number });
-    expect(readPayload(inputOf(callWith(hex("a16161fa3fc00000"))), { bytesAt: [], maxBytes: 0 })).toEqual({ ok: true, value: { a: 1.5 }, size: expect.any(Number) as number });
+    expect(readPayload(inputOf(callWith(hex("a16161fb3ff8000000000000"))), { bytesAt: [], maxBytes: 0 })).toEqual({ ok: true, value: { a: 1.5 } });
+    expect(readPayload(inputOf(callWith(hex("a16161fa3fc00000"))), { bytesAt: [], maxBytes: 0 })).toEqual({ ok: true, value: { a: 1.5 } });
     const zero = readPayload(inputOf(callWith(hex("a16161f98000"))), { bytesAt: [], maxBytes: 0 });
     expect(zero.ok && Object.is((zero.value as unknown as { a: number }).a, 0)).toBe(true);
   });
@@ -164,8 +164,14 @@ describe("an application frame on a port", () => {
 
   it("reads a call whose input is not a record as an envelope, for the method's schema to refuse", () => {
     const read = readPayload(inputOf(cbor({ kind: "call", id: 1, method: "unlock", input: [1] })), { bytesAt: [], maxBytes: 0 });
-    expect(read).toEqual({ ok: true, value: [1], size: VALUE_CHARGE * 2 });
+    expect(read).toEqual({ ok: true, value: [1] });
     expect(schemas.methods.unlock.input.safeParse(read.ok && read.value).success).toBe(false);
+  });
+
+  it("keeps the members the envelope does not know on the frame it reads, and writes none of them", () => {
+    const frame = readFrame(cbor({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 }));
+    expect(frame).toEqual({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 });
+    expect(readFrame(writeFrame(ownFrame(frame!)))).toEqual({ kind: "call", id: 1, method: "lock", input: {} });
   });
 
   it("throws on a frame of the writer's own that is not wire data, rather than writing something else", () => {
@@ -186,7 +192,6 @@ describe("bytes crossing a port", () => {
     const raw = readFrame(written) as { value: unknown };
     const read = readPayload(raw.value, { bytesAt: slots, maxBytes: 3 });
     expect(read.ok && read.value).toEqual({ name: "ada.estoc", bytes: new Uint8Array([1, 2, 3]) });
-    expect(read.ok && read.size).toBe(VALUE_CHARGE + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 9) + (VALUE_CHARGE + 5) + VALUE_CHARGE + 3);
     const held = (read.ok ? read.value : null) as unknown as { bytes: Uint8Array };
     expect(held.bytes.buffer).not.toBe(written.buffer);
     written.fill(0);
@@ -218,41 +223,5 @@ describe("bytes crossing a port", () => {
     };
     expect(readPayload(input, { bytesAt: ["backup"], maxBytes: 10 })).toEqual({ ok: false, code: "InvalidArgument", message: expect.stringMatching(/accessor/) as string });
     expect(ran).toBe(0);
-  });
-});
-
-describe("a request's budget", () => {
-  const call = (id: number, method: string, rest: Record<string, unknown> = {}) => ({ ...rest, kind: "call" as const, id: id as CallId, method, input: {} });
-
-  it("charges the call's envelope against the frame bound", () => {
-    const budget = requestBudget(limits, call(12, "unlock"));
-    const envelope = VALUE_CHARGE + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 2) + VALUE_CHARGE + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 5);
-    expect(budget).toEqual({ ok: true, value: { maxValueBytes: limits.maxValueBytes - envelope }, size: envelope + VALUE_CHARGE });
-  });
-
-  it("charges the members of the frame the envelope does not know, and refuses the frame at the bound", () => {
-    const plain = requestBudget(limits, call(1, "lock"));
-    const extra = requestBudget(limits, call(1, "lock", { extra: "x".repeat(100) }));
-    expect(plain.ok && extra.ok && plain.value.maxValueBytes - extra.value.maxValueBytes).toBe(VALUE_CHARGE + 5 + VALUE_CHARGE + 100);
-    const over = requestBudget(limits, call(1, "lock", { extra: "x".repeat(limits.maxValueBytes) }));
-    expect(over).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
-    expect(requestBudget(limits, call(1, "lock", { when: new Date(0) }))).toEqual({ ok: false, code: "InvalidArgument", message: expect.any(String) as string });
-  });
-
-  it("keeps the members the envelope does not know on the frame it reads, for the bound to see, and writes none of them", () => {
-    const frame = readFrame(cbor({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 }));
-    expect(frame).toEqual({ kind: "call", id: 1, method: "lock", input: {}, extra: 1 });
-    expect(readFrame(writeFrame(ownFrame(frame!)))).toEqual({ kind: "call", id: 1, method: "lock", input: {} });
-  });
-
-  it("refuses the frame when the envelope alone is over the bound, and leaves the input exactly the rest", () => {
-    const envelope = requestBudget(limits, call(1, "x"));
-    const size = envelope.ok ? envelope.size : 0;
-    expect(requestBudget({ ...limits, maxValueBytes: size - 1 }, call(1, "x"))).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
-    const exact = requestBudget({ ...limits, maxValueBytes: size }, call(1, "x"));
-    expect(exact.ok && exact.value.maxValueBytes).toBe(VALUE_CHARGE);
-    const budget = exact.ok ? exact.value : { maxValueBytes: 0 };
-    expect(readPayload({}, { bytesAt: [], maxBytes: 0, budget }).ok).toBe(true);
-    expect(readPayload({ a: 1 }, { bytesAt: [], maxBytes: 0, budget })).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
   });
 });

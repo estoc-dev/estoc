@@ -85,8 +85,6 @@ export interface PublisherOptions<L> {
   noLines: L;
   /** a read of the open runtime, after its first, that failed; every subscriber is told the same */
   failed(error: unknown): void;
-  /** the largest revision an epoch counts to before a fresh one takes its place; pinned low by tests */
-  maxRevision?: number;
 }
 
 interface Opened<S, L> {
@@ -124,7 +122,6 @@ export class Publisher<S, L> {
   private building = false;
   private waiters: Waiter[] = [];
   private readonly subscribers = new Set<Subscriber<S, L>>();
-  private readonly maxRevision: number;
 
   constructor(
     initial: NonOpenValue,
@@ -133,7 +130,6 @@ export class Publisher<S, L> {
     const epoch = freshEpoch();
     this.state = { epoch, revision: 1, value: initial };
     this.linesState = { epoch, revision: 1, value: options.noLines };
-    this.maxRevision = options.maxRevision ?? Number.MAX_SAFE_INTEGER;
   }
 
   get current(): BaselineOf<S, L> {
@@ -303,13 +299,11 @@ export class Publisher<S, L> {
   }
 
   private publishState(value: StateValueOf<S>): void {
-    if (this.state.revision >= this.maxRevision) return this.renew(value);
     this.state = { epoch: this.state.epoch, revision: this.state.revision + 1, value };
     for (const subscriber of this.subscribers) subscriber.state(this.state);
   }
 
   private publishLines(value: L): void {
-    if (this.linesState.revision >= this.maxRevision) this.renew(this.state.value);
     this.linesState = { epoch: this.state.epoch, revision: this.linesState.revision + 1, value };
     for (const subscriber of this.subscribers) subscriber.lines(this.linesState);
   }

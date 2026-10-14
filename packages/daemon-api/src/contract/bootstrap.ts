@@ -26,8 +26,6 @@ export interface Limits {
   maxFrameBytes: number;
   /** maximum bytes of an inbound backup, and of an export result */
   maxBackupBytes: number;
-  /** maximum logical size of one client-to-daemon frame */
-  maxValueBytes: number;
 }
 
 export interface Welcome {

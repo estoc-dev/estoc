@@ -9,7 +9,6 @@ const versions = z.array(count);
 export const limits: z.ZodType<Limits> = z.object({
   maxFrameBytes: count,
   maxBackupBytes: count,
-  maxValueBytes: count,
 });
 
 const helloRecord = z.object({ kind: z.literal("hello"), wire, apis: versions });

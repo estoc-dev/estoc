@@ -10,7 +10,7 @@ operation when it executes.
 | --- | --- |
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
 | `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
-| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size budget, frames as CBOR read and written, port adapters, and the daemon's side of a session |
+| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data, frames as CBOR read and written, port adapters, and the daemon's side of a session |
 | `@estoc/daemon-api/views` | What a view computes with no daemon in reach: the snapshot read by ID with each conversation's records assembled, a conversation followed across snapshots, invitations as links and back, the message contents a view composes, a mediator named by a person read as far as text goes |
 
 The types and JSDoc of the entry point define the API. The `schemas`
@@ -40,10 +40,12 @@ The wire then reads every value the same way: a plain, finite, acyclic
 tree whose strings are well-formed Unicode, negative zero as zero, an
 undefined member left out, bytes only where a method's schema places
 them and copied out of the frame. A frame over the advertised byte
-bound is refused before it is decoded; a request is charged as it is
-read and refused at the advertised bound before the rest is read, the
-whole frame counted, the attachment request like any other. `serveApi` answers calls from
-the method table alone, puts the attachment baseline ahead of every
+bound is refused before it is decoded, the whole frame counted, the
+members its envelope does not know and the attachment request
+included; the client refuses such a call once it has encoded it, and
+sends nothing. A byte member over `maxBackupBytes` is refused before
+the rest of its payload is read. `serveApi` answers calls from the
+method table alone, puts the attachment baseline ahead of every
 later publication, and replaces, drops or ends what a slow port cannot
 take: a newer state or lines of the same epoch takes the place of an
 unsent one, logs go first, and a port that can no longer take what it
@@ -58,7 +60,7 @@ implementation, attach, failed })`, one session per port it accepts:
 `methods` is the method table, one handler per name of the contract
 taking the validated input and answering the result or throwing a
 `Refusal` with its code and effect; `limits` the bounds the welcome
-advertises, from which the request budget follows; `attach` hands a
+advertises and every request is held to; `attach` hands a
 session its baseline and subscribes it to what is published from then
 on; `failed` is where a throw of the daemon's own goes. `@estoc/daemon`
 is the daemon side of this: `methodsOf` and `attachTo` are that table

@@ -1,53 +1,21 @@
 /**
  * One reading of every value that crosses a port: what is wire data is
- * copied into a plain, normalized tree, with its logical size charged
- * against a budget as it goes, so that a request over the bound is
- * refused before all of it is read.
+ * copied into a plain, normalized tree.
  */
 
 import type { ApiValue } from "../contract/index.js";
 
-/** The bound of one request: its logical size. */
-export interface Budget {
-  maxValueBytes: number;
-}
-
 /** A value as `readValue` copies it out: only that reading makes one, so what takes it needs no second look. */
 export type WireValue = ApiValue & { readonly __wireValue: unique symbol };
 
-export type Reading<T> = { ok: true; value: T; size: number } | { ok: false; code: "InvalidArgument" | "ResourceLimit"; message: string };
+export type Reading<T> = { ok: true; value: T } | { ok: false; code: "InvalidArgument" | "ResourceLimit"; message: string };
 
 export interface ReadOptions {
   /** the members of a top-level record that carry bytes; a byte array anywhere else is not wire data */
   bytesAt?: readonly string[];
-  budget?: Budget;
 }
 
-/** Every value, array and record charges 8; a string its UTF-8 length; a key 8 and its UTF-8 length; bytes their length. */
-export const VALUE_CHARGE = 8;
-
-class Refused extends Error {
-  constructor(
-    readonly code: "InvalidArgument" | "ResourceLimit",
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-const encoder = new TextEncoder();
-const scratch = new Uint8Array(8192);
-
-/** The UTF-8 length of `text` as the platform encoder writes it, a lone surrogate as the replacement character; measured through a small buffer, never encoded whole. */
-export function utf8Length(text: string): number {
-  let length = 0;
-  for (let from = 0; from < text.length; ) {
-    const { read, written } = encoder.encodeInto(from === 0 ? text : text.slice(from), scratch);
-    from += read;
-    length += written;
-  }
-  return length;
-}
+class Refused extends Error {}
 
 /** A lone surrogate has no UTF-8 encoding: written out, it would turn into another character. */
 const LONE_SURROGATE = /\p{Cs}/u;
@@ -59,7 +27,7 @@ const isPlainRecord = (value: object): boolean => {
 
 /** What an own property holds, read from its descriptor: an accessor is not wire data, whatever it would return, and is never run. */
 const held = (descriptor: PropertyDescriptor): unknown => {
-  if (!("value" in descriptor)) throw new Refused("InvalidArgument", "an accessor is not wire data");
+  if (!("value" in descriptor)) throw new Refused("an accessor is not wire data");
   return descriptor.value;
 };
 
@@ -70,36 +38,27 @@ export function exactBytes(view: Uint8Array): Uint8Array {
 }
 
 class Walk {
-  size = 0;
   private readonly ancestors = new Set<object>();
 
-  constructor(
-    private readonly budget: Budget | null,
-    private readonly bytesAt: ReadonlySet<string>,
-  ) {}
+  constructor(private readonly bytesAt: ReadonlySet<string>) {}
 
   read(value: unknown, slot: boolean, root = false): ApiValue {
-    this.charge(VALUE_CHARGE);
     switch (typeof value) {
       case "boolean":
         return value;
       case "string":
-        // The shorter UTF-16 length first, so that a string far over the budget is refused unmeasured.
-        this.charge(value.length);
-        if (LONE_SURROGATE.test(value)) throw new Refused("InvalidArgument", "a string is not well-formed Unicode");
-        this.charge(utf8Length(value) - value.length);
+        if (LONE_SURROGATE.test(value)) throw new Refused("a string is not well-formed Unicode");
         return value;
       case "number":
-        if (!Number.isFinite(value)) throw new Refused("InvalidArgument", "a number is not finite");
+        if (!Number.isFinite(value)) throw new Refused("a number is not finite");
         return value === 0 ? 0 : value;
       case "object":
         if (value === null) return null;
         if (value instanceof Uint8Array) {
-          if (!slot) throw new Refused("InvalidArgument", "bytes are not wire data here");
-          this.charge(value.byteLength);
+          if (!slot) throw new Refused("bytes are not wire data here");
           return exactBytes(value);
         }
-        if (this.ancestors.has(value)) throw new Refused("InvalidArgument", "the value contains itself");
+        if (this.ancestors.has(value)) throw new Refused("the value contains itself");
         this.ancestors.add(value);
         try {
           return Array.isArray(value) ? this.readArray(value) : this.readRecord(value, root);
@@ -107,53 +66,47 @@ class Walk {
           this.ancestors.delete(value);
         }
       default:
-        throw new Refused("InvalidArgument", `a ${typeof value} is not wire data`);
+        throw new Refused(`a ${typeof value} is not wire data`);
     }
   }
 
   private readArray(value: unknown[]): ApiValue[] {
-    if (Object.getPrototypeOf(value) !== Array.prototype) throw new Refused("InvalidArgument", "an array of a class is not wire data");
+    if (Object.getPrototypeOf(value) !== Array.prototype) throw new Refused("an array of a class is not wire data");
     const items: ApiValue[] = [];
     for (let i = 0; i < value.length; i++) {
       const descriptor = Object.getOwnPropertyDescriptor(value, i);
-      if (descriptor === undefined) throw new Refused("InvalidArgument", "an array has a hole");
+      if (descriptor === undefined) throw new Refused("an array has a hole");
       const item = held(descriptor);
-      if (item === undefined) throw new Refused("InvalidArgument", "an array element is undefined");
+      if (item === undefined) throw new Refused("an array element is undefined");
       items.push(this.read(item, false));
     }
     return items;
   }
 
   private readRecord(value: object, root: boolean): ApiValue {
-    if (!isPlainRecord(value)) throw new Refused("InvalidArgument", "an object of a class is not wire data");
+    if (!isPlainRecord(value)) throw new Refused("an object of a class is not wire data");
     const entries: [string, ApiValue][] = [];
     for (const key of Object.keys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (descriptor === undefined) continue;
       const member = held(descriptor);
       if (member === undefined) continue;
-      if (LONE_SURROGATE.test(key)) throw new Refused("InvalidArgument", "a key is not well-formed Unicode");
-      this.charge(VALUE_CHARGE + utf8Length(key));
+      if (LONE_SURROGATE.test(key)) throw new Refused("a key is not well-formed Unicode");
       entries.push([key, this.read(member, root && this.bytesAt.has(key))]);
     }
     return Object.fromEntries(entries);
-  }
-
-  private charge(amount: number): void {
-    this.size += amount;
-    if (this.budget !== null && this.size > this.budget.maxValueBytes) throw new Refused("ResourceLimit", `the value is larger than ${this.budget.maxValueBytes} bytes`);
   }
 }
 
 /** `value` as wire data, or why it is none; `undefined` members are left out, negative zero reads as zero, bytes are copied to their selected view. */
 export function readValue(value: unknown, options: ReadOptions = {}): Reading<WireValue> {
-  const walk = new Walk(options.budget ?? null, new Set(options.bytesAt ?? []));
+  const walk = new Walk(new Set(options.bytesAt ?? []));
   try {
-    if (value === undefined) throw new Refused("InvalidArgument", "the value is undefined");
+    if (value === undefined) throw new Refused("the value is undefined");
     const read = walk.read(value, false, true) as WireValue;
-    return { ok: true, value: read, size: walk.size };
+    return { ok: true, value: read };
   } catch (error) {
-    if (error instanceof Refused) return { ok: false, code: error.code, message: error.message };
+    if (error instanceof Refused) return { ok: false, code: "InvalidArgument", message: error.message };
     throw error;
   }
 }
