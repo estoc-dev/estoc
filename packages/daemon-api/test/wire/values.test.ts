@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { exactBytes, readValue, utf8Length, VALUE_CHARGE } from "../../src/wire/index.js";
+import { exactBytes, readValue } from "../../src/wire/index.js";
 
-const read = (value: unknown, options?: Parameters<typeof readValue>[1]): { value: unknown; size: number } => {
+const read = (value: unknown, options?: Parameters<typeof readValue>[1]): { value: unknown } => {
   const reading = readValue(value, options);
   if (!reading.ok) throw new Error(`${reading.code}: ${reading.message}`);
   return reading;
@@ -103,11 +103,9 @@ describe("a value read as wire data", () => {
     expect(read([1, "two", [3]]).value).toEqual([1, "two", [3]]);
   });
 
-  it("reads a shared reference at each occurrence and charges it each time", () => {
+  it("reads a shared reference at each occurrence", () => {
     const shared = { x: "shared" };
-    const { value, size } = read([shared, shared]);
-    expect(value).toEqual([shared, shared]);
-    expect(size).toBe(VALUE_CHARGE + 2 * (VALUE_CHARGE + (VALUE_CHARGE + 1) + VALUE_CHARGE + 6));
+    expect(read([shared, shared]).value).toEqual([shared, shared]);
   });
 
   it("ignores symbol-keyed and non-enumerable members, as JSON does", () => {
@@ -142,70 +140,5 @@ describe("bytes in a value", () => {
     const tagged = new Tagged([4, 5]);
     expect(exactBytes(tagged)).not.toBe(tagged);
     expect(exactBytes(tagged).constructor).toBe(Uint8Array);
-  });
-
-  it("are one value of their length, not an array of numbers", () => {
-    const { size } = read({ backup: new Uint8Array(100) }, { bytesAt: ["backup"] });
-    expect(size).toBe(VALUE_CHARGE + (VALUE_CHARGE + 6) + VALUE_CHARGE + 100);
-  });
-});
-
-describe("the logical size", () => {
-  it("charges 8 per value, a string's UTF-8 length, and 8 plus the UTF-8 length per key", () => {
-    expect(read(null).size).toBe(8);
-    expect(read(true).size).toBe(8);
-    expect(read(12345).size).toBe(8);
-    expect(read("").size).toBe(8);
-    expect(read("héllo").size).toBe(8 + 6);
-    expect(read("日本").size).toBe(8 + 6);
-    expect(read("😀").size).toBe(8 + 4);
-    expect(read([]).size).toBe(8);
-    expect(read([1, 2]).size).toBe(8 + 8 + 8);
-    expect(read({}).size).toBe(8);
-    expect(read({ ab: "c" }).size).toBe(8 + (8 + 2) + (8 + 1));
-    expect(read({ 日: [{}] }).size).toBe(8 + (8 + 3) + 8 + 8);
-  });
-
-  it("measures UTF-8 as the encoder would, a lone surrogate as three bytes", () => {
-    expect(utf8Length("plain")).toBe(5);
-    expect(utf8Length("€")).toBe(3);
-    expect(utf8Length("𝄞")).toBe(4);
-    expect(utf8Length("\ud83d")).toBe(3);
-    expect(utf8Length("\ud83dx")).toBe(4);
-    expect(utf8Length("a€𝄞\ud83d")).toBe(1 + 3 + 4 + 3);
-    expect(utf8Length("混合 mixed 😀")).toBe(6 + 1 + 5 + 1 + 4);
-  });
-
-  it("stops at the budget without reading the rest", () => {
-    const budget = { maxValueBytes: 100 };
-    expect(read({ small: "x" }, { budget }).size).toBeLessThanOrEqual(100);
-    const reading = refused({ text: "y".repeat(1000) }, { budget });
-    expect(reading.code).toBe("ResourceLimit");
-    let visited = 0;
-    const counting = Array.from(
-      { length: 1000 },
-      () =>
-        new Proxy(
-          { n: 1 },
-          {
-            ownKeys(target) {
-              visited++;
-              return Reflect.ownKeys(target);
-            },
-          },
-        ),
-    );
-    expect(refused(counting, { budget }).code).toBe("ResourceLimit");
-    expect(visited).toBeLessThan(20);
-    const many = Array.from({ length: 1000 }, () => 1);
-    expect(refused(many, { budget }).code).toBe("ResourceLimit");
-  });
-
-  it("counts a long string by its shorter UTF-16 length first, so that a huge one is never scanned", () => {
-    const budget = { maxValueBytes: 64 };
-    const huge = "z".repeat(1 << 24);
-    const start = Date.now();
-    expect(refused(huge, { budget }).code).toBe("ResourceLimit");
-    expect(Date.now() - start).toBeLessThan(50);
   });
 });

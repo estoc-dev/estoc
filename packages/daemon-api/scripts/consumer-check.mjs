@@ -62,7 +62,7 @@ const port: Port = {
 const client: Client = connect(port);
 const failure: unknown = await client.connected().catch((error: unknown) => error);
 if (client.connection.state !== "incompatible" || !isCallError(failure) || failure.code !== "Incompatible" || failure.origin !== "client") throw new Error("the client did not behave");
-console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a backup of \${read.size} logical bytes, an invitation from \${invitation.from}, a client that stops at \${client.connection.message}\`);
+console.log(\`ok: api \${API_VERSION}, \${names.length} methods, a call frame of \${written.byteLength} bytes, an invitation from \${invitation.from}, a client that stops at \${client.connection.message}\`);
 `
   );
   run("pnpm", ["install", "--ignore-workspace", "--no-frozen-lockfile", "--reporter=silent"], consumer);

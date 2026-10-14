@@ -45,9 +45,9 @@ function view(publisher: Publisher<Snap, Lines>): { baseline: BaselineOf<Snap, L
   return { baseline, heard, states: () => heard.filter((said): said is ["state", StateOf<Snap>] => said[0] === "state").map(([, state]) => state) };
 }
 
-function publisher(options: { maxRevision?: number } = {}): { publisher: Publisher<Snap, Lines>; failures: unknown[] } {
+function publisher(): { publisher: Publisher<Snap, Lines>; failures: unknown[] } {
   const failures: unknown[] = [];
-  return { publisher: new Publisher<Snap, Lines>(BOOTING, { noLines: NO_LINES, failed: (error) => failures.push(error), ...options }), failures };
+  return { publisher: new Publisher<Snap, Lines>(BOOTING, { noLines: NO_LINES, failed: (error) => failures.push(error) }), failures };
 }
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -328,33 +328,5 @@ describe("the publisher", () => {
     expect(v.states().at(-1)!.epoch).not.toBe(locked!.epoch);
     p.log("still here");
     expect(v.heard.at(-1)).toEqual(["log", { epoch: v.states().at(-1)!.epoch, line: "still here" }]);
-  });
-
-  it("installs a fresh epoch before the revisions of one run out, for the state and for the lines alike", async () => {
-    const { publisher: p } = publisher({ maxRevision: 2 });
-    const v = view(p);
-    p.set({ ...BOOTING, detail: "one" });
-    p.set({ ...BOOTING, detail: "two" });
-    const states = v.states();
-    expect(states.map(({ revision }) => revision)).toEqual([2, 1]);
-    expect(states[1]!.epoch).not.toBe(states[0]!.epoch);
-
-    const { captures, source } = runtime();
-    const publishing = p.open(HOLD, source);
-    captures[0]!.cut();
-    captures[0]!.resolve({ n: 1 });
-    await publishing.ready;
-    const shownIn = v.states().at(-1)!.epoch;
-    p.lines(["a"]);
-    p.lines(["b"]);
-    const linesHeard = v.heard.filter((said): said is ["lines", LinesStateOf<Lines>] => said[0] === "lines").map(([, lines]) => lines);
-    const renewed = linesHeard.at(-1)!.epoch;
-    expect(renewed).not.toBe(shownIn);
-    expect(linesHeard.slice(-3)).toEqual([
-      { epoch: shownIn, revision: 2, value: ["a"] },
-      { epoch: renewed, revision: 1, value: NO_LINES },
-      { epoch: renewed, revision: 2, value: ["b"] },
-    ]);
-    expect(v.states().at(-1)).toEqual({ epoch: renewed, revision: 1, value: { phase: "open", hold: HOLD, snapshot: { n: 1 } } });
   });
 });

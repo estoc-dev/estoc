@@ -5,7 +5,7 @@ import { ownFrame, readBootstrap, readFrame, readPayload, Refusal, serveApi, wri
 import { linesState, openState } from "../contract/fixtures.js";
 import { cbor, hex, pair, settle, type Pair } from "./ports.js";
 
-const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000 };
+const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100 };
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 const baseline: Baseline = { state: openState, lines: linesState };
 
@@ -174,8 +174,6 @@ describe("attachment", () => {
       await t.say(writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input })));
       seen(t, "InvalidArgument");
     }
-    await t.call(2, "attach", { extra: "x".repeat(limits.maxValueBytes) });
-    seen(t, "ResourceLimit");
     expect(hooked).toBe(0);
     expect(t.session.attached).toBe(false);
     await t.call(3, "attach", {});
@@ -265,43 +263,23 @@ describe("a call", () => {
     expect(ran).toBe(0);
   });
 
-  it("over the advertised bounds is refused with ResourceLimit, unread past the bound", async () => {
+  it("carrying a backup over the advertised bound is refused with ResourceLimit, its handler unrun", async () => {
     let ran = 0;
     const t = talk({
       methods: handlers({
-        renameContact: () => {
+        restoreIdentity: () => {
           ran++;
           return null;
         },
       }),
     });
     await t.attach();
-    await t.call(2, "renameContact", { contactId: "c", petname: "x".repeat(limits.maxValueBytes) });
-    seen(t, "ResourceLimit");
-    await t.call(3, "mergeBackup", { backup: new Uint8Array(limits.maxBackupBytes + 1) }, ["backup"]);
+    await t.call(2, "restoreIdentity", { backup: new Uint8Array(limits.maxBackupBytes + 1), passphrase: "p" }, ["backup"]);
     seen(t, "ResourceLimit");
     expect(ran).toBe(0);
-  });
-
-  it("is charged whole, the members of its frame the envelope does not know included", async () => {
-    let ran = 0;
-    const t = talk({
-      methods: handlers({
-        lock: () => {
-          ran++;
-          return null;
-        },
-      }),
-    });
-    await t.attach();
-    const frame = (rest: Record<string, unknown>) => cbor({ ...rest, kind: "call", id: 2, method: "lock", input: {} });
-    await t.say(frame({ extra: "x".repeat(limits.maxValueBytes) }));
-    seen(t, "ResourceLimit");
-    expect(ran).toBe(0);
-    await t.say(frame({ extra: "ignored" }));
-    expect(last(t)).toEqual({ kind: "result", id: 2, value: null });
+    await t.call(3, "restoreIdentity", { backup: new Uint8Array(limits.maxBackupBytes), passphrase: "p" }, ["backup"]);
+    expect(last(t)).toEqual({ kind: "result", id: 3, value: null });
     expect(ran).toBe(1);
-    expect(t.session.closed).toBe(false);
   });
 
   it("answers a refusal with the handler's own code, effect and message ID", async () => {
@@ -352,7 +330,7 @@ describe("a call", () => {
     expect(restored !== null && (restored as Uint8Array).buffer.byteLength).toBe(3);
     await t.call(3, "exportBackup", {});
     const written = readFrame(t.link.toLeft.at(-1)) as Extract<RawFrame, { kind: "result" }>;
-    expect(readPayload(written.value, { bytesAt: ["bytes"], maxBytes: 3 })).toEqual({ ok: true, value: { name: "ada.estoc", bytes: new Uint8Array([1, 2, 3]) }, size: expect.any(Number) as number });
+    expect(readPayload(written.value, { bytesAt: ["bytes"], maxBytes: 3 })).toEqual({ ok: true, value: { name: "ada.estoc", bytes: new Uint8Array([1, 2, 3]) } });
   });
 
   it("keeps a message body's keys, __proto__ among them, all the way to the handler", async () => {
@@ -408,6 +386,45 @@ describe("a frame", () => {
     await t.attach();
     await t.say(new Uint8Array(limits.maxFrameBytes + 1));
     expect(last(t)).toEqual({ kind: "fault", error: { code: "ResourceLimit", message: expect.stringMatching(/4000/) as string, effect: "none", messageId: null } });
+  });
+
+  /** A call of `lock`, padded to exactly `bytes` by a member the envelope does not know. */
+  const paddedLock = (bytes: number): Uint8Array => {
+    const padded = (length: number) => cbor({ kind: "call", id: 2, method: "lock", input: {}, extra: "x".repeat(length) });
+    const frame = padded(256 + bytes - padded(256).byteLength);
+    expect(frame.byteLength).toBe(bytes);
+    return frame;
+  };
+
+  const counted = () => {
+    const ran = { count: 0 };
+    const t = talk({
+      methods: handlers({
+        lock: () => {
+          ran.count++;
+          return null;
+        },
+      }),
+    });
+    return { t, ran };
+  };
+
+  it("exactly at the frame bound is served, the members the envelope does not know counted in it", async () => {
+    const { t, ran } = counted();
+    await t.attach();
+    await t.say(paddedLock(limits.maxFrameBytes));
+    expect(last(t)).toEqual({ kind: "result", id: 2, value: null });
+    expect(ran.count).toBe(1);
+    expect(t.session.closed).toBe(false);
+  });
+
+  it("taken a byte over the frame bound by a member the envelope does not know ends the session, its call unrun", async () => {
+    const { t, ran } = counted();
+    await t.attach();
+    await t.say(paddedLock(limits.maxFrameBytes + 1));
+    expect(last(t)).toEqual({ kind: "fault", error: { code: "ResourceLimit", message: expect.stringMatching(/4000/) as string, effect: "none", messageId: null } });
+    expect(ran.count).toBe(0);
+    expect(t.session.closed).toBe(true);
   });
 
   it("that is not CBOR, or is not a call, closes the port without a word", async () => {

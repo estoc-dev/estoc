@@ -7,7 +7,7 @@
  */
 
 import { API_VERSION, WIRE_VERSION, schemas, type ApiError, type Baseline, type CallId, type Incompatible, type Welcome, type EventName, type Events, type Limits, type MessageId, type MethodInput, type MethodName, type MethodResult } from "../contract/index.js";
-import { ownFrame, readBootstrap, readFrame, readPayload, requestBudget, writeBootstrap, writeFrame, type RawFrame } from "./frames.js";
+import { ownFrame, readBootstrap, readFrame, readPayload, writeBootstrap, writeFrame, type RawFrame } from "./frames.js";
 import type { Port } from "./port.js";
 
 export type ServedMethod = Exclude<MethodName, "attach">;
@@ -170,9 +170,7 @@ class Served implements Session {
     if (method === "attach" && this.attached) return refuse("AlreadyAttached", "this port is attached");
     if (method !== "attach" && !this.attached) return refuse("NotAttached", "attach first");
     const schema = schemas.methods[method];
-    const budget = requestBudget(this.options.limits, call);
-    if (!budget.ok) return refuse(budget.code, budget.message);
-    const read = readPayload(call.input, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes, budget: budget.value });
+    const read = readPayload(call.input, { bytesAt: schema.bytes.input, maxBytes: this.options.limits.maxBackupBytes });
     if (!read.ok) return refuse(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return refuse("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));

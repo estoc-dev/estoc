@@ -5,7 +5,7 @@ import { linesState, openState } from "./fixtures.js";
 
 const { hello, welcome, incompatible, bootstrap, frame, apiError, events } = schemas;
 
-const limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 500_000, maxValueBytes: 600_000 };
+const limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 500_000 };
 
 describe("the bootstrap exchange", () => {
   it("reads a hello, a welcome and an incompatible", () => {
@@ -31,7 +31,7 @@ describe("the bootstrap exchange", () => {
   });
 
   it("requires every bound, the frame bound included", () => {
-    for (const bound of ["maxFrameBytes", "maxBackupBytes", "maxValueBytes"]) {
+    for (const bound of ["maxFrameBytes", "maxBackupBytes"]) {
       expect(welcome.safeParse({ kind: "welcome", wire: 2, api: 1, implementation: "", limits: { ...limits, [bound]: null } }).success).toBe(false);
       expect(welcome.safeParse({ kind: "welcome", wire: 2, api: 1, implementation: "", limits: { ...limits, [bound]: 0 } }).success).toBe(false);
     }
