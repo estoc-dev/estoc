@@ -5,7 +5,7 @@ import { MAX_BOOTSTRAP_BYTES, ownFrame, readBootstrap, readFrame, readPayload, r
 import { openState } from "../contract/fixtures.js";
 import { cbor, concat, hex } from "./ports.js";
 
-const limits: Limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 1000, maxValueBytes: 5000, maxDepth: 8 };
+const limits: Limits = { maxFrameBytes: 1_000_000, maxBackupBytes: 1000, maxValueBytes: 5000 };
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 
 /** A call of `lock` whose input is the data item `input` spells, the envelope written as a wire writer would. */
@@ -162,10 +162,10 @@ describe("an application frame on a port", () => {
       expect(readFrame(cbor(bad))).toBeNull();
   });
 
-  it("reads a call whose input is not a record as an envelope, for the payload reading to refuse", () => {
-    const raw = readFrame(cbor({ kind: "call", id: 1, method: "unlock", input: [1] }));
-    expect(raw?.kind).toBe("call");
-    expect(schemas.methods.unlock.input.safeParse(readPayload([1], { bytesAt: [], maxBytes: 0 })).success).toBe(false);
+  it("reads a call whose input is not a record as an envelope, for the method's schema to refuse", () => {
+    const read = readPayload(inputOf(cbor({ kind: "call", id: 1, method: "unlock", input: [1] })), { bytesAt: [], maxBytes: 0 });
+    expect(read).toEqual({ ok: true, value: [1], size: VALUE_CHARGE * 2 });
+    expect(schemas.methods.unlock.input.safeParse(read.ok && read.value).success).toBe(false);
   });
 
   it("throws on a frame of the writer's own that is not wire data, rather than writing something else", () => {
@@ -224,10 +224,10 @@ describe("bytes crossing a port", () => {
 describe("a request's budget", () => {
   const call = (id: number, method: string, rest: Record<string, unknown> = {}) => ({ ...rest, kind: "call" as const, id: id as CallId, method, input: {} });
 
-  it("charges the call's envelope against the frame bound and its input at depth 2", () => {
+  it("charges the call's envelope against the frame bound", () => {
     const budget = requestBudget(limits, call(12, "unlock"));
     const envelope = VALUE_CHARGE + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 4) + (VALUE_CHARGE + 2) + VALUE_CHARGE + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 6) + (VALUE_CHARGE + 5);
-    expect(budget).toEqual({ ok: true, value: { maxValueBytes: limits.maxValueBytes - envelope, maxDepth: limits.maxDepth - 1 }, size: envelope + VALUE_CHARGE });
+    expect(budget).toEqual({ ok: true, value: { maxValueBytes: limits.maxValueBytes - envelope }, size: envelope + VALUE_CHARGE });
   });
 
   it("charges the members of the frame the envelope does not know, and refuses the frame at the bound", () => {
@@ -236,9 +236,6 @@ describe("a request's budget", () => {
     expect(plain.ok && extra.ok && plain.value.maxValueBytes - extra.value.maxValueBytes).toBe(VALUE_CHARGE + 5 + VALUE_CHARGE + 100);
     const over = requestBudget(limits, call(1, "lock", { extra: "x".repeat(limits.maxValueBytes) }));
     expect(over).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
-    let deep: unknown = "x";
-    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
-    expect(requestBudget(limits, call(1, "lock", { deep }))).toEqual({ ok: false, code: "ResourceLimit", message: expect.stringMatching(/deeper/) as string });
     expect(requestBudget(limits, call(1, "lock", { when: new Date(0) }))).toEqual({ ok: false, code: "InvalidArgument", message: expect.any(String) as string });
   });
 
@@ -254,15 +251,8 @@ describe("a request's budget", () => {
     expect(requestBudget({ ...limits, maxValueBytes: size - 1 }, call(1, "x"))).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
     const exact = requestBudget({ ...limits, maxValueBytes: size }, call(1, "x"));
     expect(exact.ok && exact.value.maxValueBytes).toBe(VALUE_CHARGE);
-    const budget = exact.ok ? exact.value : { maxValueBytes: 0, maxDepth: 0 };
+    const budget = exact.ok ? exact.value : { maxValueBytes: 0 };
     expect(readPayload({}, { bytesAt: [], maxBytes: 0, budget }).ok).toBe(true);
     expect(readPayload({ a: 1 }, { bytesAt: [], maxBytes: 0, budget })).toEqual({ ok: false, code: "ResourceLimit", message: expect.any(String) as string });
-  });
-
-  it("refuses a payload nested past the advertised depth, as the decoder read it", () => {
-    let deep = "00";
-    for (let i = 0; i < limits.maxDepth; i++) deep = `81${deep}`;
-    const input = inputOf(callWith(hex(`a16161${deep}`)));
-    expect(readPayload(input, { bytesAt: [], maxBytes: 0, budget: { maxValueBytes: limits.maxValueBytes, maxDepth: limits.maxDepth - 1 } })).toEqual({ ok: false, code: "ResourceLimit", message: expect.stringMatching(/deeper/) as string });
   });
 });

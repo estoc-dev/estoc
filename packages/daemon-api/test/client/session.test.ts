@@ -217,7 +217,6 @@ describe("a call", () => {
     expect(await outcome(petname(NaN))).toEqual(client("InvalidArgument"));
     expect(await outcome(petname(new Date(0)))).toEqual(client("InvalidArgument"));
     expect(await outcome(petname("x".repeat(3000)))).toEqual(client("ResourceLimit"));
-    expect(await outcome(petname({ a: { b: { c: { d: { e: { f: {} } } } } } }))).toEqual(client("ResourceLimit"));
     expect(await outcome(view.daemon.restoreIdentity({ backup: new Uint8Array(101), passphrase: "p" }))).toEqual(client("ResourceLimit"));
     expect(s.calls()).toHaveLength(1);
     expect(view.connection.state).toBe("connected");

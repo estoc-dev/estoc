@@ -177,7 +177,7 @@ describe("the logical size", () => {
   });
 
   it("stops at the budget without reading the rest", () => {
-    const budget = { maxValueBytes: 100, maxDepth: 64 };
+    const budget = { maxValueBytes: 100 };
     expect(read({ small: "x" }, { budget }).size).toBeLessThanOrEqual(100);
     const reading = refused({ text: "y".repeat(1000) }, { budget });
     expect(reading.code).toBe("ResourceLimit");
@@ -202,29 +202,10 @@ describe("the logical size", () => {
   });
 
   it("counts a long string by its shorter UTF-16 length first, so that a huge one is never scanned", () => {
-    const budget = { maxValueBytes: 64, maxDepth: 64 };
+    const budget = { maxValueBytes: 64 };
     const huge = "z".repeat(1 << 24);
     const start = Date.now();
     expect(refused(huge, { budget }).code).toBe("ResourceLimit");
     expect(Date.now() - start).toBeLessThan(50);
-  });
-});
-
-describe("the depth", () => {
-  it("has the root at depth 1 and every nesting one deeper, leaves included", () => {
-    const budget = { maxValueBytes: 10_000, maxDepth: 3 };
-    expect(read({ a: { b: 1 } }, { budget }).value).toEqual({ a: { b: 1 } });
-    expect(refused({ a: { b: { c: 1 } } }, { budget }).code).toBe("ResourceLimit");
-    expect(read({ a: { b: [] } }, { budget }).value).toEqual({ a: { b: [] } });
-    expect(refused({ a: { b: [1] } }, { budget }).message).toMatch(/deeper than 3/);
-    expect(refused([[[1]]], { budget }).code).toBe("ResourceLimit");
-    expect(read([[1]], { budget }).value).toEqual([[1]]);
-  });
-
-  it("bounds a nest whose byte charge is small", () => {
-    let nested: unknown = 1;
-    for (let i = 0; i < 100; i++) nested = [nested];
-    expect(refused(nested, { budget: { maxValueBytes: 1_000_000, maxDepth: 64 } }).code).toBe("ResourceLimit");
-    expect(read(nested, { budget: { maxValueBytes: 1_000_000, maxDepth: 101 } }).size).toBe(101 * 8);
   });
 });

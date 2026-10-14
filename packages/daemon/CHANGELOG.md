@@ -4,8 +4,9 @@
 
 - **Frames are CBOR (breaking)**, as `@estoc/daemon-api` now speaks them:
   `limitsOf(maxBackupBytes?)` takes no transport and advertises a frame
-  bound of the backup bound and 64 KiB on every port, and the WebSocket
-  host takes binary messages, closing a socket that sends text with 1003.
+  bound of the backup bound and 64 KiB on every port, and no depth
+  bound; the WebSocket host takes binary messages, closing a socket that
+  sends text with 1003.
 
 - **Snapshots are CAR files (breaking)**: a backup is the event-store
   snapshot with both parts, `<label>-<date>.estoc.car`, built in memory

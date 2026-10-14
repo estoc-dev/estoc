@@ -32,7 +32,6 @@ export function limitsOf(maxBackupBytes = DEFAULT_MAX_BACKUP_BYTES): Limits {
     maxFrameBytes: maxBackupBytes + HEADROOM,
     maxBackupBytes,
     maxValueBytes: maxBackupBytes + HEADROOM,
-    maxDepth: 64,
   };
 }
 

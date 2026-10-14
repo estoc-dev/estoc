@@ -3,7 +3,7 @@ import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, 
 import { as, linesState, openState } from "../contract/fixtures.js";
 import { pair, settle, type Pair } from "../wire/ports.js";
 
-export const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000, maxDepth: 6 };
+export const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000 };
 export const baseline: Baseline = { state: openState, lines: linesState };
 
 export const at = (revision: number, epoch = "epoch-1"): State => ({ ...openState, epoch: as(epoch), revision });

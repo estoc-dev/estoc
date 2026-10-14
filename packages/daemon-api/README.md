@@ -10,7 +10,7 @@ operation when it executes.
 | --- | --- |
 | `@estoc/daemon-api/contract` | Identifiers, the published state, the snapshot's records, runtime lines, the method table, error codes, the bootstrap exchange, the application frames, protocol constants, and a schema for each |
 | `@estoc/daemon-api/client` | The view's side of a session: negotiation and attachment on a port, the daemon's methods typed from the method table, the refresh barrier, local connection state, a `CallError` for every failure with `isCallError` to narrow it, and a client that reconnects |
-| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size and depth budget, frames as CBOR read and written, port adapters, and the daemon's side of a session |
+| `@estoc/daemon-api/wire` | What the client and the daemon share below the API: reading a value as wire data with its size budget, frames as CBOR read and written, port adapters, and the daemon's side of a session |
 | `@estoc/daemon-api/views` | What a view computes with no daemon in reach: the snapshot read by ID with each conversation's records assembled, a conversation followed across snapshots, invitations as links and back, the message contents a view composes, a mediator named by a person read as far as text goes |
 
 The types and JSDoc of the entry point define the API. The `schemas`

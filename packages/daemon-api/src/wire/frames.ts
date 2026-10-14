@@ -21,9 +21,7 @@ export const MAX_BOOTSTRAP_BYTES = 4096;
  * booleans and null, each integer and length in its shortest form, so
  * that a key has one encoding and a repeated key is seen as one. A tag
  * is left a tag, whatever a bundle registered, for the value reading to
- * refuse. The decoder's own depth bound guards its stack only: it counts
- * an array deeper than a map, and the advertised depth is the value
- * reading's to check.
+ * refuse. Nesting is held to the decoder's default depth bound.
  */
 const DECODING: DecodeOptions = {
   rejectDuplicateKeys: true,
@@ -129,7 +127,7 @@ export function readPayload(raw: unknown, options: PayloadOptions): Reading<Wire
 export function requestBudget(limits: Limits, call: Extract<RawFrame, { kind: "call" }>): Reading<Budget> {
   const envelope = readValue({ ...call, input: null }, { budget: limits });
   if (!envelope.ok) return envelope;
-  const budget = { maxValueBytes: limits.maxValueBytes - (envelope.size - VALUE_CHARGE), maxDepth: limits.maxDepth - 1 };
+  const budget = { maxValueBytes: limits.maxValueBytes - (envelope.size - VALUE_CHARGE) };
   return { ok: true, value: budget, size: envelope.size };
 }
 

@@ -13,8 +13,10 @@
   `writeBootstrap`, `readFrame`, `writeFrame` and `readPayload` take no
   transport. `Limits.maxFrameBytes` is always a number, the byte length
   of one client-to-daemon frame, which every port checks before the
-  frame is decoded. A string or a key holding a lone surrogate is not
-  wire data. A peer of wire version 1 sees the connection closed.
+  frame is decoded. `Limits.maxDepth` is gone: nesting is held to the
+  decoder's default bound. A string or a key holding a lone surrogate
+  is not wire data. A peer of wire version 1 sees the connection
+  closed.
 
 - **A call's input is read once** (breaking, `./wire`): `readValue` and
   `readPayload` give a `WireValue`, which only that reading makes, and

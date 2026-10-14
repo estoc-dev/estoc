@@ -28,8 +28,6 @@ export interface Limits {
   maxBackupBytes: number;
   /** maximum logical size of one client-to-daemon frame */
   maxValueBytes: number;
-  /** maximum nesting of one client-to-daemon frame, its root at depth 1 */
-  maxDepth: number;
 }
 
 export interface Welcome {

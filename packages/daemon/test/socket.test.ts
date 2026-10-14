@@ -94,7 +94,7 @@ describe("the endpoint", () => {
     const waiting = other.daemon.boot();
     const client = await connected(other.url);
     await until("the view is shown the wait", () => client.state?.value.phase === "elsewhere");
-    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 512 * 1024 * 1024, maxDepth: 64 } });
+    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 512 * 1024 * 1024 } });
     expect(client.lines).toMatchObject({ value: { connections: [], waiting: [], discarded: [] } });
     await expect(client.daemon.createIdentity({ name: "Mallory", passphrase: PASSPHRASE })).rejects.toMatchObject({ code: "WrongPhase", message: "the vault is held elsewhere", effect: "none" });
     await other.close();

@@ -5,7 +5,7 @@ import { ownFrame, readBootstrap, readFrame, readPayload, Refusal, serveApi, wri
 import { linesState, openState } from "../contract/fixtures.js";
 import { cbor, hex, pair, settle, type Pair } from "./ports.js";
 
-const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000, maxDepth: 6 };
+const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000 };
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 const baseline: Baseline = { state: openState, lines: linesState };
 
@@ -278,11 +278,7 @@ describe("a call", () => {
     await t.attach();
     await t.call(2, "renameContact", { contactId: "c", petname: "x".repeat(limits.maxValueBytes) });
     seen(t, "ResourceLimit");
-    let deep: unknown = "x";
-    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
-    await t.call(3, "renameContact", { contactId: "c", petname: deep });
-    seen(t, "ResourceLimit");
-    await t.call(4, "mergeBackup", { backup: new Uint8Array(limits.maxBackupBytes + 1) }, ["backup"]);
+    await t.call(3, "mergeBackup", { backup: new Uint8Array(limits.maxBackupBytes + 1) }, ["backup"]);
     seen(t, "ResourceLimit");
     expect(ran).toBe(0);
   });
@@ -300,10 +296,6 @@ describe("a call", () => {
     await t.attach();
     const frame = (rest: Record<string, unknown>) => cbor({ ...rest, kind: "call", id: 2, method: "lock", input: {} });
     await t.say(frame({ extra: "x".repeat(limits.maxValueBytes) }));
-    seen(t, "ResourceLimit");
-    let deep: unknown = "x";
-    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
-    await t.say(frame({ deep }));
     seen(t, "ResourceLimit");
     expect(ran).toBe(0);
     await t.say(frame({ extra: "ignored" }));

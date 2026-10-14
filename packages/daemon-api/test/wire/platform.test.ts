@@ -10,7 +10,7 @@ import { cbor } from "./ports.js";
 
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 const baseline: Baseline = { state: openState, lines: linesState };
-const limits: Limits = { maxFrameBytes: 100_000, maxBackupBytes: 100, maxValueBytes: 50_000, maxDepth: 8 };
+const limits: Limits = { maxFrameBytes: 100_000, maxBackupBytes: 100, maxValueBytes: 50_000 };
 const noMethods = {} as MethodHandlers;
 
 const attach = () => writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input: {} }));
@@ -116,7 +116,7 @@ describe("a session over a real WebSocket", () => {
 });
 
 const MiB = 1 << 20;
-const large: Limits = { maxFrameBytes: 8 * MiB + 64 * 1024, maxBackupBytes: 8 * MiB, maxValueBytes: 8 * MiB + 64 * 1024, maxDepth: 64 };
+const large: Limits = { maxFrameBytes: 8 * MiB + 64 * 1024, maxBackupBytes: 8 * MiB, maxValueBytes: 8 * MiB + 64 * 1024 };
 
 const backupOf = (length: number): Uint8Array => {
   const bytes = new Uint8Array(length);
