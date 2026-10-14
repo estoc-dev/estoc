@@ -51,7 +51,7 @@ async function refusalOf(answer: unknown): Promise<ApiError> {
 function methodsOver(host: DaemonHost, maxBackupBytes?: number): { daemon: DaemonCore; call: <Name extends Exclude<MethodName, "attach">>(name: Name, input: MethodInput<Name>) => Promise<unknown>; refused: (name: Exclude<MethodName, "attach">, input: unknown) => Promise<ApiError> } {
   const daemon = createDaemon(host);
   daemons.push(daemon);
-  const methods = methodsOf(daemon, limitsOf("clone", maxBackupBytes));
+  const methods = methodsOf(daemon, limitsOf(maxBackupBytes));
   const call = (name: string, input: unknown) => (methods as Record<string, (input: unknown, session: Session) => Promise<unknown>>)[name]!(input, session);
   return {
     daemon,
@@ -210,7 +210,7 @@ describe("an export", () => {
     expect(await refused("exportBackup", {})).toEqual({ code: "ResourceLimit", message: expect.stringMatching(/^the backup comes to at least \d+ bytes, over the 64 this daemon delivers$/) as string, effect: "none", messageId: null });
     expect(await files()).toEqual(["owner.sqlite", "vault.sqlite"]);
 
-    const { bytes } = (await methodsOf(daemon, limitsOf("clone")).exportBackup({}, session)) as { bytes: Uint8Array };
+    const { bytes } = (await methodsOf(daemon, limitsOf()).exportBackup({}, session)) as { bytes: Uint8Array };
     expect(bytes.byteLength).toBeGreaterThan(64);
     expect(await files()).toEqual(["owner.sqlite", "vault.sqlite"]);
   });
@@ -226,7 +226,7 @@ describe("a call that threw inside the daemon", () => {
       completeResponse: async () => threw(null),
       publisher: { current: { state: { value: { phase: "open", snapshot: { messages: [{ messageId: MESSAGE }] } } } } },
     } as unknown as DaemonCore;
-    const methods = methodsOf(core, limitsOf("clone"), { failed: (error) => failures.push(error instanceof Error ? error.message : String(error)) });
+    const methods = methodsOf(core, limitsOf(), { failed: (error) => failures.push(error instanceof Error ? error.message : String(error)) });
     const failed = (messageId: MessageId | null): ApiError => ({ code: "OperationFailed", message: expect.stringMatching(/threw inside the daemon/) as string, effect: "possible", messageId });
 
     expect(await refusalOf(methods.send({ target: { contactId: CONTACT }, content: CONTENT }, session))).toEqual(failed(MESSAGE));
@@ -240,7 +240,7 @@ describe("a call that threw inside the daemon", () => {
 describe("the methods table", () => {
   it("has every method of the API but attachment, and nothing of the daemon's own", () => {
     const daemon = createDaemon(nodeHost("/nonexistent"));
-    const methods: MethodHandlers = methodsOf(daemon, limitsOf("text"));
+    const methods: MethodHandlers = methodsOf(daemon, limitsOf());
     const names = Object.keys(methods).sort();
     expect(names).not.toContain("attach");
     expect(names).not.toContain("boot");

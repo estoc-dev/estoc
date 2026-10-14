@@ -4,7 +4,7 @@
  * mismatch without interpreting that version's records.
  */
 
-export const WIRE_VERSION = 1;
+export const WIRE_VERSION = 2;
 
 /** The application API version this contract describes. */
 export const API_VERSION = 1;
@@ -22,14 +22,12 @@ export interface Hello {
  * logs and other replies are not subject to them.
  */
 export interface Limits {
-  /** maximum UTF-8 length of one client-to-daemon JSON frame on a text port; null on a structured-clone port */
-  maxFrameBytes: number | null;
-  /** maximum decoded bytes of an inbound backup, and of an export result */
+  /** maximum byte length of one client-to-daemon frame */
+  maxFrameBytes: number;
+  /** maximum bytes of an inbound backup, and of an export result */
   maxBackupBytes: number;
   /** maximum logical size of one client-to-daemon frame */
   maxValueBytes: number;
-  /** maximum nesting of one client-to-daemon frame, its root at depth 1 */
-  maxDepth: number;
 }
 
 export interface Welcome {

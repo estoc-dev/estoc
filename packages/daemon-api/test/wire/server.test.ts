@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { API_VERSION, WIRE_VERSION, schemas, type ApiError, type Baseline, type Hello, type Limits, type State } from "../../src/contract/index.js";
-import { ownFrame, readBootstrap, readFrame, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type RawFrame, type ServeOptions, type Session, type Transport } from "../../src/wire/index.js";
+import { ownFrame, readBootstrap, readFrame, readPayload, Refusal, serveApi, writeBootstrap, writeFrame, type MethodHandlers, type RawFrame, type ServeOptions, type Session } from "../../src/wire/index.js";
 import { linesState, openState } from "../contract/fixtures.js";
-import { pair, settle, type Pair } from "./ports.js";
+import { cbor, hex, pair, settle, type Pair } from "./ports.js";
 
-const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000, maxDepth: 6 };
-const transports: Transport[] = ["text", "clone"];
+const limits: Limits = { maxFrameBytes: 4000, maxBackupBytes: 100, maxValueBytes: 2000 };
 const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
 const baseline: Baseline = { state: openState, lines: linesState };
 
@@ -30,27 +29,27 @@ interface Talk {
   failures: unknown[];
   /** what the view received, bootstrap records and frames read */
   received(): (RawFrame | ReturnType<typeof readBootstrap>)[];
-  say(data: unknown): Promise<void>;
+  say(data: Uint8Array): Promise<void>;
   call(id: number, method: string, input: unknown, bytesAt?: readonly string[]): Promise<void>;
   greet(): Promise<void>;
   attach(id?: number): Promise<void>;
 }
 
-const talk = (transport: Transport, options: Partial<ServeOptions> = {}): Talk => {
-  const link = pair(transport);
+const talk = (options: Partial<ServeOptions> = {}): Talk => {
+  const link = pair();
   const failures: unknown[] = [];
   const session = serveApi(link.right, { methods: handlers(), limits, implementation: "test daemon", attach: () => baseline, failed: (error) => failures.push(error), ...options });
   const t: Talk = {
     link,
     session,
     failures,
-    received: () => link.toLeft.map((data) => readFrame(data, transport) ?? readBootstrap(data, transport)),
+    received: () => link.toLeft.map((data) => readFrame(data) ?? readBootstrap(data)),
     say: async (data) => {
       await link.left.send(data);
       await settle();
     },
-    call: (id, method, input, bytesAt) => t.say(writeFrame(ownFrame({ kind: "call", id, method, input }, bytesAt), transport)),
-    greet: () => t.say(writeBootstrap(hello, transport)),
+    call: (id, method, input, bytesAt) => t.say(writeFrame(ownFrame({ kind: "call", id, method, input }, bytesAt))),
+    greet: () => t.say(writeBootstrap(hello)),
     attach: async (id = 1) => {
       await t.greet();
       await t.call(id, "attach", {});
@@ -68,16 +67,17 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("negotiation", () => {
-  it.each(transports)("answers hello with a welcome carrying the limits on a %s port", async (transport) => {
-    const t = talk(transport);
+  it("answers hello with a welcome carrying the limits", async () => {
+    const t = talk();
     await t.greet();
-    expect(last(t)).toEqual({ kind: "welcome", wire: 1, api: 1, implementation: "test daemon", limits });
+    expect(last(t)).toEqual({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "test daemon", limits });
     expect(t.session.closed).toBe(false);
   });
 
   it("closes the port when the first frame is not a hello, whatever else it is", async () => {
-    for (const first of [writeBootstrap({ kind: "welcome", wire: 1, api: 1, implementation: "", limits }, "text"), '{"kind":"call","id":1,"method":"attach","input":{}}', '{"kind":"hello","wire":2,"apis":[1]}', "junk", new Uint8Array(1)]) {
-      const t = talk("text");
+    const call = writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input: {} }));
+    for (const first of [writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "", limits }), call, cbor({ kind: "hello", wire: 1, apis: [API_VERSION] }), cbor(JSON.stringify(hello)), hex("ff"), new Uint8Array(0)]) {
+      const t = talk();
       await t.say(first);
       expect(t.session.closed).toBe(true);
       expect(t.received()).toEqual([]);
@@ -85,14 +85,14 @@ describe("negotiation", () => {
   });
 
   it("refuses a view that cannot speak this API with the versions it has, then closes", async () => {
-    const t = talk("text");
-    await t.say(writeBootstrap({ kind: "hello", wire: 1, apis: [2, 3] }, "text"));
-    expect(last(t)).toEqual({ kind: "incompatible", wire: 1, supported: [1], message: expect.stringMatching(/API 1/) as string });
+    const t = talk();
+    await t.say(writeBootstrap({ kind: "hello", wire: WIRE_VERSION, apis: [2, 3] }));
+    expect(last(t)).toEqual({ kind: "incompatible", wire: WIRE_VERSION, supported: [1], message: expect.stringMatching(/API 1/) as string });
     expect(t.session.closed).toBe(true);
   });
 
   it("closes a port that says hello twice, and one that sends a frame in the daemon's direction", async () => {
-    const twice = talk("clone");
+    const twice = talk();
     await twice.greet();
     await twice.greet();
     expect(twice.session.closed).toBe(true);
@@ -102,22 +102,21 @@ describe("negotiation", () => {
       { kind: "event", name: "log", value: { epoch: "e", line: "" } },
       { kind: "fault", error: { code: "x", message: "", effect: "none", messageId: null } },
       "not a frame",
-      { kind: "call", id: 1, method: "attach", input: {}, __proto__: { extra: true } },
     ]) {
-      const t = talk("clone");
+      const t = talk();
       await t.greet();
-      await t.say(wrong);
+      await t.say(cbor(wrong));
       expect(t.session.closed).toBe(true);
     }
   });
 
   it("closes a port that does not say hello in time, and keeps one that did", async () => {
-    const silent = talk("text", { bootstrapTimeoutMs: 500 });
+    const silent = talk({ bootstrapTimeoutMs: 500 });
     vi.advanceTimersByTime(499);
     expect(silent.session.closed).toBe(false);
     vi.advanceTimersByTime(1);
     expect(silent.session.closed).toBe(true);
-    const prompt = talk("text", { bootstrapTimeoutMs: 500 });
+    const prompt = talk({ bootstrapTimeoutMs: 500 });
     await prompt.greet();
     vi.advanceTimersByTime(10_000);
     expect(prompt.session.closed).toBe(false);
@@ -125,9 +124,9 @@ describe("negotiation", () => {
 });
 
 describe("attachment", () => {
-  it.each(transports)("answers attach with the baseline, once, and other methods only after it, on a %s port", async (transport) => {
+  it("answers attach with the baseline, once, and other methods only after it", async () => {
     let attachedWith: Session | null = null;
-    const t = talk(transport, {
+    const t = talk({
       attach: (session) => {
         attachedWith = session;
         return baseline;
@@ -147,7 +146,7 @@ describe("attachment", () => {
   });
 
   it("puts the baseline ahead of every publication, one published from inside attach included", async () => {
-    const t = talk("clone", {
+    const t = talk({
       attach: (session) => {
         session.event("log", { epoch: "epoch-1" as never, line: "too early" });
         return baseline;
@@ -162,9 +161,9 @@ describe("attachment", () => {
     ]);
   });
 
-  it.each(transports)("validates the attach request as it does every other, before the hook runs, on a %s port", async (transport) => {
+  it("validates the attach request as it does every other, before the hook runs", async () => {
     let hooked = 0;
-    const t = talk(transport, {
+    const t = talk({
       attach: () => {
         hooked++;
         return baseline;
@@ -172,7 +171,7 @@ describe("attachment", () => {
     });
     await t.greet();
     for (const input of [null, [], "attach"]) {
-      await t.say(writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input }), transport));
+      await t.say(writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input })));
       seen(t, "InvalidArgument");
     }
     await t.call(2, "attach", { extra: "x".repeat(limits.maxValueBytes) });
@@ -188,7 +187,7 @@ describe("attachment", () => {
   it("ends the session with a StateUnavailable fault when the baseline cannot be written, so that no session is left without one", async () => {
     const open = openState.value as Extract<State["value"], { phase: "open" }>;
     const broken: Baseline = { ...baseline, state: { ...openState, value: { ...open, snapshot: { ...open.snapshot, label: NaN as never } } } };
-    const t = talk("text", { attach: () => broken, methods: handlers({ lock: () => null }) });
+    const t = talk({ attach: () => broken, methods: handlers({ lock: () => null }) });
     let closed = 0;
     t.session.onClose(() => closed++);
     await t.attach();
@@ -202,7 +201,7 @@ describe("attachment", () => {
   });
 
   it("answers a failing attach hook as an operation that did nothing, and tells the host", async () => {
-    const t = talk("clone", {
+    const t = talk({
       attach: () => {
         throw new Error("no publisher yet");
       },
@@ -216,7 +215,7 @@ describe("attachment", () => {
 
 describe("a call", () => {
   it("is answered from the method table only: no name the daemon object might have", async () => {
-    const t = talk("clone");
+    const t = talk();
     await t.attach();
     for (const name of ["nothing", "constructor", "toString", "__proto__", "hasOwnProperty", ""]) {
       await t.call(2, name, {});
@@ -226,7 +225,7 @@ describe("a call", () => {
 
   it("reaches its handler with the validated input and answers with its result", async () => {
     const inputs: unknown[] = [];
-    const t = talk("clone", {
+    const t = talk({
       methods: handlers({
         setTraceLevel: (input) => {
           inputs.push(input);
@@ -245,7 +244,7 @@ describe("a call", () => {
 
   it("with invalid input is refused before any handler runs, naming the member", async () => {
     let ran = 0;
-    const t = talk("clone", {
+    const t = talk({
       methods: handlers({
         setTraceLevel: () => {
           ran++;
@@ -261,14 +260,14 @@ describe("a call", () => {
     seen(t, "InvalidArgument");
     await t.call(4, "send", { target: { channelId: "c", contactId: "k" }, content: { type: "t", body: {} } });
     seen(t, "InvalidArgument");
-    await t.say({ kind: "call", id: 5, method: "unlock", input: { passphrase: "p", n: NaN } });
+    await t.say(cbor({ kind: "call", id: 5, method: "unlock", input: { passphrase: "p", n: NaN } }));
     seen(t, "InvalidArgument");
     expect(ran).toBe(0);
   });
 
   it("over the advertised bounds is refused with ResourceLimit, unread past the bound", async () => {
     let ran = 0;
-    const t = talk("clone", {
+    const t = talk({
       methods: handlers({
         renameContact: () => {
           ran++;
@@ -279,18 +278,14 @@ describe("a call", () => {
     await t.attach();
     await t.call(2, "renameContact", { contactId: "c", petname: "x".repeat(limits.maxValueBytes) });
     seen(t, "ResourceLimit");
-    let deep: unknown = "x";
-    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
-    await t.call(3, "renameContact", { contactId: "c", petname: deep });
-    seen(t, "ResourceLimit");
-    await t.call(4, "mergeBackup", { backup: new Uint8Array(limits.maxBackupBytes + 1) }, ["backup"]);
+    await t.call(3, "mergeBackup", { backup: new Uint8Array(limits.maxBackupBytes + 1) }, ["backup"]);
     seen(t, "ResourceLimit");
     expect(ran).toBe(0);
   });
 
-  it.each(transports)("is charged whole, the members of its frame the envelope does not know included, on a %s port", async (transport) => {
+  it("is charged whole, the members of its frame the envelope does not know included", async () => {
     let ran = 0;
-    const t = talk(transport, {
+    const t = talk({
       methods: handlers({
         lock: () => {
           ran++;
@@ -299,15 +294,8 @@ describe("a call", () => {
       }),
     });
     await t.attach();
-    const frame = (rest: Record<string, unknown>) => {
-      const record = { ...rest, kind: "call", id: 2, method: "lock", input: {} };
-      return transport === "text" ? JSON.stringify(record) : record;
-    };
+    const frame = (rest: Record<string, unknown>) => cbor({ ...rest, kind: "call", id: 2, method: "lock", input: {} });
     await t.say(frame({ extra: "x".repeat(limits.maxValueBytes) }));
-    seen(t, "ResourceLimit");
-    let deep: unknown = "x";
-    for (let i = 0; i < limits.maxDepth; i++) deep = [deep];
-    await t.say(frame({ deep }));
     seen(t, "ResourceLimit");
     expect(ran).toBe(0);
     await t.say(frame({ extra: "ignored" }));
@@ -317,7 +305,7 @@ describe("a call", () => {
   });
 
   it("answers a refusal with the handler's own code, effect and message ID", async () => {
-    const t = talk("clone", {
+    const t = talk({
       methods: handlers({
         retry: () => {
           throw new Refusal({ code: "SendClosed", message: "the peer rotated away", effect: "possible", messageId: "m-1" as never });
@@ -332,7 +320,7 @@ describe("a call", () => {
 
   it("answers any other throw as OperationFailed with a possible effect, the throw kept for the host", async () => {
     const boom = new Error("disk on fire: /home/ada/.estoc");
-    const t = talk("clone", {
+    const t = talk({
       methods: handlers({
         send: () => {
           throw boom;
@@ -345,10 +333,10 @@ describe("a call", () => {
     expect(t.failures).toEqual([boom]);
   });
 
-  it.each(transports)("carries a backup in and an export out on a %s port, byte for byte", async (transport) => {
+  it("carries a backup in and an export out, byte for byte", async () => {
     const view = new Uint8Array(new Uint8Array([9, 1, 2, 3, 9]).buffer, 1, 3);
     let restored: Uint8Array | null = null;
-    const t = talk(transport, {
+    const t = talk({
       methods: handlers({
         restoreIdentity: (input) => {
           restored = input.backup;
@@ -363,14 +351,13 @@ describe("a call", () => {
     expect(restored !== null && [...(restored as Uint8Array)]).toEqual([1, 2, 3]);
     expect(restored !== null && (restored as Uint8Array).buffer.byteLength).toBe(3);
     await t.call(3, "exportBackup", {});
-    const written = t.link.toLeft.at(-1);
-    if (transport === "text") expect(JSON.parse(written as string)).toEqual({ kind: "result", id: 3, value: { name: "ada.estoc", bytes: { encoding: "base64", data: "AQID" } } });
-    else expect([...(written as { value: { bytes: Uint8Array } }).value.bytes]).toEqual([1, 2, 3]);
+    const written = readFrame(t.link.toLeft.at(-1)) as Extract<RawFrame, { kind: "result" }>;
+    expect(readPayload(written.value, { bytesAt: ["bytes"], maxBytes: 3 })).toEqual({ ok: true, value: { name: "ada.estoc", bytes: new Uint8Array([1, 2, 3]) }, size: expect.any(Number) as number });
   });
 
   it("keeps a message body's keys, __proto__ among them, all the way to the handler", async () => {
     const bodies: unknown[] = [];
-    const t = talk("text", {
+    const t = talk({
       methods: handlers({
         send: (input) => {
           bodies.push(input.content.body);
@@ -379,7 +366,7 @@ describe("a call", () => {
       }),
     });
     await t.attach();
-    await t.say('{"kind":"call","id":2,"method":"send","input":{"target":{"contactId":"c"},"content":{"type":"t","body":{"__proto__":{"kept":1},"$bytes":"AQID","encoding":"base64","data":"AQID"}}}}');
+    await t.say(cbor(JSON.parse('{"kind":"call","id":2,"method":"send","input":{"target":{"contactId":"c"},"content":{"type":"t","body":{"__proto__":{"kept":1},"$bytes":"AQID","encoding":"base64","data":"AQID"}}}}')));
     expect(bodies).toHaveLength(1);
     expect(Object.hasOwn(bodies[0] as object, "__proto__")).toBe(true);
     expect(bodies[0]).toEqual(JSON.parse('{"__proto__":{"kept":1},"$bytes":"AQID","encoding":"base64","data":"AQID"}'));
@@ -388,7 +375,7 @@ describe("a call", () => {
 
   it("with an ID still in flight ends the session", async () => {
     let finish: (() => void) | null = null;
-    const t = talk("clone", { methods: handlers({ lock: () => new Promise((resolve) => (finish = () => resolve(null))) }) });
+    const t = talk({ methods: handlers({ lock: () => new Promise((resolve) => (finish = () => resolve(null))) }) });
     await t.attach();
     await t.call(2, "lock", {});
     expect(t.session.closed).toBe(false);
@@ -398,7 +385,7 @@ describe("a call", () => {
   });
 
   it("is not held against an ID whose reply is queued: the receiver keeps no settled IDs", async () => {
-    const t = talk("clone", { methods: handlers({ lock: () => null }) });
+    const t = talk({ methods: handlers({ lock: () => null }) });
     await t.attach();
     await t.call(2, "lock", {});
     await t.call(2, "lock", {});
@@ -407,28 +394,25 @@ describe("a call", () => {
   });
 });
 
-describe("a text frame", () => {
+describe("a frame", () => {
   it("over the frame bound ends the session with a ResourceLimit fault, uncorrelated", async () => {
-    const t = talk("text");
+    const t = talk();
     await t.attach();
-    await t.say(`{"kind":"call","id":2,"method":"unlock","input":{"passphrase":"${"p".repeat(limits.maxFrameBytes!)}"}}`);
+    await t.say(cbor({ kind: "call", id: 2, method: "unlock", input: { passphrase: "p".repeat(limits.maxFrameBytes) } }));
     expect(last(t)).toEqual({ kind: "fault", error: { code: "ResourceLimit", message: expect.stringMatching(/4000/) as string, effect: "none", messageId: null } });
     expect(t.session.closed).toBe(true);
   });
 
-  it("is measured in UTF-8 bytes, not string length", async () => {
-    const t = talk("text");
+  it("is measured in bytes before it is decoded", async () => {
+    const t = talk();
     await t.attach();
-    const units = limits.maxFrameBytes! - 100;
-    await t.say(`{"kind":"call","id":2,"method":"unlock","input":{"passphrase":"${"€".repeat(units / 3)}"}}`);
-    expect(t.session.closed).toBe(false);
-    await t.say(`{"kind":"call","id":3,"method":"unlock","input":{"passphrase":"${"€".repeat(units)}"}}`);
-    expect(t.session.closed).toBe(true);
+    await t.say(new Uint8Array(limits.maxFrameBytes + 1));
+    expect(last(t)).toEqual({ kind: "fault", error: { code: "ResourceLimit", message: expect.stringMatching(/4000/) as string, effect: "none", messageId: null } });
   });
 
-  it("that is not JSON, or is not a call, closes the port without a word", async () => {
-    for (const bad of ["{", "[1]", '{"kind":"event","name":"log","value":{}}', new Uint8Array(3)]) {
-      const t = talk("text");
+  it("that is not CBOR, or is not a call, closes the port without a word", async () => {
+    for (const bad of [hex("a1"), hex("ff"), cbor([1]), cbor("call"), cbor({ kind: "event", name: "log", value: {} })]) {
+      const t = talk();
       await t.attach();
       const before = t.received().length;
       await t.say(bad);
@@ -443,7 +427,7 @@ describe("the send queue of a slow port", () => {
   const line = (n: number) => ({ epoch: "epoch-1" as never, line: `log ${n}` });
 
   it("replaces an unsent state or lines with a newer value of the same epoch, and keeps an epoch transition; what the transport took stays", async () => {
-    const t = talk("clone");
+    const t = talk();
     await t.attach();
     const release = t.link.stall();
     t.session.event("state", stateAt("epoch-1", 4));
@@ -465,14 +449,14 @@ describe("the send queue of a slow port", () => {
   });
 
   it("drops logs before anything else when the queue is full, and keeps replies", async () => {
-    const t = talk("clone", { maxQueuedFrames: 3, methods: handlers({ lock: () => null }) });
+    const t = talk({ maxQueuedFrames: 3, methods: handlers({ lock: () => null }) });
     await t.attach();
     const release = t.link.stall();
     t.session.event("log", line(1));
     t.session.event("log", line(2));
     t.session.event("log", line(3));
     t.session.event("state", stateAt("epoch-1", 4));
-    void t.link.left.send(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} }), "clone"));
+    void t.link.left.send(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} })));
     await settle();
     expect(t.session.closed).toBe(false);
     release();
@@ -482,12 +466,12 @@ describe("the send queue of a slow port", () => {
   });
 
   it("closes the port when what it owes no longer fits", async () => {
-    const t = talk("clone", { maxQueuedFrames: 2, methods: handlers({ lock: () => null }) });
+    const t = talk({ maxQueuedFrames: 2, methods: handlers({ lock: () => null }) });
     await t.attach();
     let closed = 0;
     t.session.onClose(() => closed++);
     const release = t.link.stall();
-    for (const id of [2, 3, 4, 5]) void t.link.left.send(writeFrame(ownFrame({ kind: "call", id, method: "lock", input: {} }), "clone"));
+    for (const id of [2, 3, 4, 5]) void t.link.left.send(writeFrame(ownFrame({ kind: "call", id, method: "lock", input: {} })));
     await settle();
     expect(t.session.closed).toBe(true);
     expect(closed).toBe(1);
@@ -495,8 +479,8 @@ describe("the send queue of a slow port", () => {
   });
 
   it("never lets a stalled port hold up another", async () => {
-    const slow = talk("clone");
-    const quick = talk("clone");
+    const slow = talk();
+    const quick = talk();
     await slow.attach();
     await quick.attach();
     slow.link.stall();
@@ -510,7 +494,7 @@ describe("the send queue of a slow port", () => {
 
 describe("the end of a session", () => {
   it("sends a fault last and closes the port behind it; nothing follows", async () => {
-    const t = talk("text", { methods: handlers({ lock: () => null }) });
+    const t = talk({ methods: handlers({ lock: () => null }) });
     await t.attach();
     let closed = 0;
     t.session.onClose(() => closed++);
@@ -526,7 +510,7 @@ describe("the end of a session", () => {
   });
 
   it("is a StateUnavailable fault when a publication of the daemon's own cannot be written", async () => {
-    const t = talk("text");
+    const t = talk();
     await t.attach();
     const open = openState.value as Extract<State["value"], { phase: "open" }>;
     t.session.event("state", { ...openState, value: { ...open, snapshot: { ...open.snapshot, label: NaN as never } } });
@@ -537,7 +521,7 @@ describe("the end of a session", () => {
   });
 
   it("answers a reply that cannot be written as OperationFailed and goes on", async () => {
-    const t = talk("text", { methods: handlers({ traceLevel: () => ({ level: new Date(0) as never }) }) });
+    const t = talk({ methods: handlers({ traceLevel: () => ({ level: new Date(0) as never }) }) });
     await t.attach();
     await t.call(2, "traceLevel", {});
     expect(last(t)).toEqual({ kind: "error", id: 2, error: { code: "OperationFailed", message: expect.any(String) as string, effect: "possible", messageId: null } });
@@ -545,13 +529,13 @@ describe("the end of a session", () => {
   });
 
   it("runs its close listeners once whether the daemon or the port closed it", async () => {
-    const ours = talk("clone");
+    const ours = talk();
     let count = 0;
     ours.session.onClose(() => count++);
     ours.session.close();
     ours.session.close();
     expect(count).toBe(1);
-    const theirs = talk("clone");
+    const theirs = talk();
     theirs.session.onClose(() => count++);
     theirs.link.left.close();
     expect(theirs.session.closed).toBe(true);
@@ -561,11 +545,11 @@ describe("the end of a session", () => {
   });
 
   it("ignores a publication and a call after the port closed", async () => {
-    const t = talk("clone", { methods: handlers({ lock: () => null }) });
+    const t = talk({ methods: handlers({ lock: () => null }) });
     await t.attach();
     t.link.left.close();
     t.session.event("log", { epoch: "epoch-1" as never, line: "gone" });
-    await t.say(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} }), "clone")).catch(() => {});
+    await t.say(writeFrame(ownFrame({ kind: "call", id: 2, method: "lock", input: {} }))).catch(() => {});
     expect(t.received()).toHaveLength(2);
   });
 });

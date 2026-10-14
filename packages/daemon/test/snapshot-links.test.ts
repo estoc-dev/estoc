@@ -55,7 +55,7 @@ function daemonOver(root: string, mediator: FakeMediator, options: { wrap?: (fet
   });
   const daemon = createDaemon(host, options.maxSeedBytes === undefined ? {} : { maxSeedBytes: options.maxSeedBytes });
   daemons.push(daemon);
-  const methods = methodsOf(daemon, limitsOf("clone", options.maxBackupBytes)) as unknown as Record<string, (input: unknown, session: Session) => Promise<unknown>>;
+  const methods = methodsOf(daemon, limitsOf(options.maxBackupBytes)) as unknown as Record<string, (input: unknown, session: Session) => Promise<unknown>>;
   const call = (name: string, input: unknown) => methods[name]!(input, session);
   return {
     daemon,

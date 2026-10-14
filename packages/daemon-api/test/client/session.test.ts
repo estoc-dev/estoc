@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { connect, type ConnectionState } from "../../src/client/index.js";
-import { BASIC_MESSAGE, type CallError, type ClientErrorCode, type JsonObject, type LinesState, type LogLine, type State } from "../../src/contract/index.js";
-import { ownFrame, requestBudget, writeFrame, type Port, type PortHandlers, type Transport } from "../../src/wire/index.js";
+import { API_VERSION, BASIC_MESSAGE, WIRE_VERSION, type CallError, type ClientErrorCode, type JsonObject, type LinesState, type LogLine, type State } from "../../src/contract/index.js";
+import { ownFrame, requestBudget, writeBootstrap, writeFrame, type Port, type PortHandlers, type RawFrame } from "../../src/wire/index.js";
 import { as, linesState, openState } from "../contract/fixtures.js";
-import { settle } from "../wire/ports.js";
-import { at, baseline, handlers, limits, linesAt, scripted, served, transports, type Scripted } from "./daemons.js";
+import { hex, settle } from "../wire/ports.js";
+import { at, baseline, handlers, limits, linesAt, scripted, served, type Scripted } from "./daemons.js";
 
 /** What a promise came to: its value, or the error it was rejected with. */
 const outcome = <T>(promise: Promise<T>): Promise<T | CallError> => promise.then((value) => value, (error: CallError) => error);
@@ -15,8 +15,8 @@ const client = (code: ClientErrorCode, effect: "none" | "possible" = "none"): Ca
 const disconnected = (because: CallError | null): ConnectionState => ({ state: "disconnected", because });
 
 /** A view connected to a scripted daemon, the states, lines, logs and connections it was shown collected. */
-const shown = async (transport: Transport = "clone", greet = true) => {
-  const s = scripted(transport);
+const shown = async (greet = true) => {
+  const s = scripted();
   const view = connect(s.port);
   const states: State[] = [];
   const lines: LinesState[] = [];
@@ -31,6 +31,10 @@ const shown = async (transport: Transport = "clone", greet = true) => {
   return { s, view, states, lines, logs, connections };
 };
 
+const welcome = { kind: "welcome", wire: WIRE_VERSION, api: API_VERSION, implementation: "", limits } as const;
+
+const frame = (raw: RawFrame): Uint8Array => writeFrame(ownFrame(raw));
+
 /** A call made and delivered, its ID in the scripted daemon's hands. */
 const inFlight = async <T>(s: Scripted, promise: Promise<T>) => {
   await settle();
@@ -40,8 +44,8 @@ const inFlight = async <T>(s: Scripted, promise: Promise<T>) => {
 };
 
 describe("connecting", () => {
-  it.each(transports)("says hello, attaches after the welcome, and is connected with the baseline as its first state and lines, on a %s port", async (transport) => {
-    const daemon = served(transport);
+  it("says hello, attaches after the welcome, and is connected with the baseline as its first state and lines", async () => {
+    const daemon = served();
     const view = connect(daemon.port);
     const states: State[] = [];
     const connections: ConnectionState[] = [];
@@ -63,16 +67,16 @@ describe("connecting", () => {
   });
 
   it("offers the API it speaks, and attaches with the first call ID", async () => {
-    const s = scripted("text");
+    const s = scripted();
     connect(s.port);
     await settle();
-    expect(s.received()).toEqual([{ kind: "hello", wire: 1, apis: [1] }]);
+    expect(s.received()).toEqual([{ kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] }]);
     await s.welcome();
     expect(s.calls()).toEqual([{ kind: "call", id: 1, method: "attach", input: {} }]);
   });
 
   it("shows the baseline before any publication, one the daemon queued from inside the attachment included", async () => {
-    const daemon = served("clone", {
+    const daemon = served({
       attach: (session) => {
         queueMicrotask(() => session.event("state", at(4)));
         return baseline;
@@ -87,8 +91,8 @@ describe("connecting", () => {
   });
 
   it("stops at a daemon that cannot speak this API: the connection says which versions it has, and nothing is called", async () => {
-    const { s, view, connections } = await shown("clone", false);
-    await s.say({ kind: "incompatible", wire: 1, supported: [2, 3], message: "update the view" });
+    const { s, view, connections } = await shown(false);
+    await s.say(writeBootstrap({ kind: "incompatible", wire: WIRE_VERSION, supported: [2, 3], message: "update the view" }));
     expect(view.connection).toEqual({ state: "incompatible", supported: [2, 3], message: "update the view" });
     expect(connections).toEqual([view.connection]);
     expect(await outcome(view.connected())).toEqual({ ...client("Incompatible"), message: "update the view" });
@@ -97,7 +101,7 @@ describe("connecting", () => {
   });
 
   it("refuses a call before the attachment and after the connection ends, as NotConnected with no effect, and sends nothing for it", async () => {
-    const { s, view } = await shown("clone", false);
+    const { s, view } = await shown(false);
     expect(await outcome(view.daemon.lock({}))).toEqual(client("NotConnected"));
     expect(await outcome(view.refresh())).toEqual(client("NotConnected"));
     expect(await outcome(view.call("lock", {}))).toEqual(client("NotConnected"));
@@ -117,8 +121,8 @@ describe("connecting", () => {
   });
 
   it("ends as a protocol error when the first frame is no welcome", async () => {
-    for (const first of [writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input: {} }), "text"), '{"kind":"hello","wire":1,"apis":[1]}', "junk"]) {
-      const { s, view } = await shown("text", false);
+    for (const first of [writeFrame(ownFrame({ kind: "call", id: 1, method: "attach", input: {} })), writeBootstrap({ kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] }), hex("ff")]) {
+      const { s, view } = await shown(false);
       await s.say(first);
       expect(view.connection).toEqual(disconnected(client("ProtocolError")));
       expect(await outcome(view.connected())).toEqual(client("ProtocolError"));
@@ -127,15 +131,15 @@ describe("connecting", () => {
   });
 
   it("ends as a protocol error when the daemon selects an API the view did not offer", async () => {
-    const { s, view } = await shown("clone", false);
-    await s.say({ kind: "welcome", wire: 1, api: 2, implementation: "", limits });
+    const { s, view } = await shown(false);
+    await s.say(writeBootstrap({ kind: "welcome", wire: WIRE_VERSION, api: 2, implementation: "", limits }));
     expect(view.connection).toEqual(disconnected(client("ProtocolError")));
     expect(s.calls()).toHaveLength(0);
   });
 
   it("ends as a protocol error when the baseline's state and lines are of different epochs, or the baseline is no baseline", async () => {
     for (const value of [{ state: openState, lines: linesAt(1, "epoch-2") }, { state: openState }, null]) {
-      const { s, view } = await shown("clone", false);
+      const { s, view } = await shown(false);
       await s.welcome();
       await s.attach(value);
       expect(view.connection).toEqual(disconnected(client("ProtocolError")));
@@ -145,7 +149,7 @@ describe("connecting", () => {
   });
 
   it("ends with the daemon's error as the reason when the attachment is refused", async () => {
-    const { s, view, connections } = await shown("clone", false);
+    const { s, view, connections } = await shown(false);
     await s.welcome();
     const error = { code: "OperationFailed", message: "could not attach", effect: "none", messageId: null };
     await s.frame({ kind: "error", id: 1, error });
@@ -157,17 +161,17 @@ describe("connecting", () => {
 
   it("ends once, and once ended hears nothing more from the port", async () => {
     let handlers: PortHandlers | null = null;
-    const port: Port = { transport: "clone", async send() {}, listen: (installed) => (handlers = installed), close() {} };
+    const port: Port = { async send() {}, listen: (installed) => (handlers = installed), close() {} };
     const view = connect(port);
     const connections: ConnectionState[] = [];
     view.onConnection((connection) => connections.push(connection));
-    handlers!.message({ kind: "welcome", wire: 1, api: 1, implementation: "", limits });
-    handlers!.message({ kind: "result", id: 1, value: baseline });
+    handlers!.message(writeBootstrap(welcome));
+    handlers!.message(frame({ kind: "result", id: 1, value: baseline }));
     expect(view.connection.state).toBe("connected");
     handlers!.close();
     expect(view.connection).toEqual(disconnected(client("TransportDisconnected")));
-    handlers!.message({ kind: "event", name: "state", value: at(9) });
-    handlers!.message({ kind: "fault", error: { code: "StateUnavailable", message: "", effect: "none", messageId: null } });
+    handlers!.message(frame({ kind: "event", name: "state", value: at(9) }));
+    handlers!.message(frame({ kind: "fault", error: { code: "StateUnavailable", message: "", effect: "none", messageId: null } }));
     handlers!.close();
     expect(view.state).toEqual(openState);
     expect(connections).toEqual([expect.objectContaining({ state: "connected" }), disconnected(client("TransportDisconnected"))]);
@@ -175,9 +179,9 @@ describe("connecting", () => {
 });
 
 describe("a call", () => {
-  it.each(transports)("reaches the daemon with its input and resolves with the typed result, on a %s port", async (transport) => {
+  it("reaches the daemon with its input and resolves with the typed result", async () => {
     const inputs: unknown[] = [];
-    const daemon = served(transport, {
+    const daemon = served({
       methods: handlers({
         setMediator: (input) => {
           inputs.push(input);
@@ -213,15 +217,14 @@ describe("a call", () => {
     expect(await outcome(petname(NaN))).toEqual(client("InvalidArgument"));
     expect(await outcome(petname(new Date(0)))).toEqual(client("InvalidArgument"));
     expect(await outcome(petname("x".repeat(3000)))).toEqual(client("ResourceLimit"));
-    expect(await outcome(petname({ a: { b: { c: { d: { e: { f: {} } } } } } }))).toEqual(client("ResourceLimit"));
     expect(await outcome(view.daemon.restoreIdentity({ backup: new Uint8Array(101), passphrase: "p" }))).toEqual(client("ResourceLimit"));
     expect(s.calls()).toHaveLength(1);
     expect(view.connection.state).toBe("connected");
   });
 
-  it.each(transports)("refuses locally an input the method's schema does not take, a base64 record at a byte member included, alike on a %s port", async (transport) => {
+  it("refuses locally an input the method's schema does not take, a record shaped like the old base64 wrapper at a byte member included", async () => {
     const backups: Uint8Array[] = [];
-    const daemon = served(transport, {
+    const daemon = served({
       methods: handlers({
         restoreIdentity: (input) => {
           backups.push(input.backup);
@@ -257,28 +260,46 @@ describe("a call", () => {
     await outcome(fitting);
   });
 
-  it("refuses a text frame over the frame bound before the port takes it, where a structured-clone port has no such bound", async () => {
-    for (const transport of transports) {
-      const s = scripted(transport);
-      const view = connect(s.port);
-      await s.welcome({ maxFrameBytes: 200 });
-      await s.attach();
-      const call = view.daemon.renameContact({ contactId: as("c-1"), petname: "é".repeat(120) });
-      await settle();
-      if (transport === "text") {
-        expect(await outcome(call)).toEqual(client("ResourceLimit"));
-        expect(s.calls()).toHaveLength(1);
-      } else {
-        expect(s.calls()).toHaveLength(2);
-        s.close();
-        await outcome(call);
-      }
-    }
+  it("refuses a frame over the frame bound once written, before the port takes it, and sends the next call that fits", async () => {
+    const s = scripted();
+    const view = connect(s.port);
+    await s.welcome({ maxFrameBytes: 200 });
+    await s.attach();
+    expect(await outcome(view.daemon.renameContact({ contactId: as("c-1"), petname: "é".repeat(100) }))).toEqual({ ...client("ResourceLimit"), message: expect.stringMatching(/200 bytes/) as string });
+    expect(s.calls()).toHaveLength(1);
+    const fitting = view.daemon.renameContact({ contactId: as("c-1"), petname: "é".repeat(50) });
+    await settle();
+    expect(s.calls()).toHaveLength(2);
+    expect(view.connection.state).toBe("connected");
+    s.close();
+    await outcome(fitting);
   });
 
-  it.each(transports)("carries a backup in and an export out, byte for byte, on a %s port", async (transport) => {
+  it("refuses locally a string or a key that is not well-formed Unicode, sending nothing, and carries a surrogate pair and the replacement character as they are", async () => {
+    const bodies: unknown[] = [];
+    const daemon = served({
+      methods: handlers({
+        send: (input) => {
+          bodies.push(input.content.body);
+          return { outcome: "submitted", because: null, messageId: as("m-1"), channelId: as("ch") };
+        },
+      }),
+    });
+    const view = connect(daemon.port);
+    await view.connected();
+    const send = (body: JsonObject) => outcome(view.daemon.send({ target: { channelId: as("ch") }, content: { type: BASIC_MESSAGE, body } }));
+    const before = daemon.link.toRight.length;
+    expect(await send({ text: "half \ud83d" })).toEqual(client("InvalidArgument"));
+    expect(await send({ ["\udc00"]: "x", "\ufffd": "y" })).toEqual(client("InvalidArgument"));
+    expect(daemon.link.toRight).toHaveLength(before);
+    expect(await send({ text: "😀 \ufffd", "\ufffd": "😀" })).toMatchObject({ outcome: "submitted" });
+    expect(bodies).toEqual([{ text: "😀 \ufffd", "\ufffd": "😀" }]);
+    expect(view.connection.state).toBe("connected");
+  });
+
+  it("carries a backup in and an export out, byte for byte", async () => {
     const backups: Uint8Array[] = [];
-    const daemon = served(transport, {
+    const daemon = served({
       methods: handlers({
         restoreIdentity: (input) => {
           backups.push(input.backup);
@@ -298,8 +319,8 @@ describe("a call", () => {
     expect([...exported.bytes]).toEqual([0, 1, 254, 255]);
   });
 
-  it.each(transports)("rejects an export over the advertised backup bound as a protocol error, and ends the session, on a %s port", async (transport) => {
-    const s = scripted(transport);
+  it("rejects an export over the advertised backup bound as a protocol error, and ends the session", async () => {
+    const s = scripted();
     const view = connect(s.port);
     await s.greet();
     const { id, promise } = await inFlight(s, view.daemon.exportBackup({}));
@@ -473,21 +494,21 @@ describe("the refresh barrier", () => {
 
   it.each(["a new epoch", "the port closing"])("is judged as the reply is read, so that %s in the same batch of frames does not undo a met barrier", async (next) => {
     let handlers: PortHandlers | null = null;
-    const port: Port = { transport: "clone", async send() {}, listen: (installed) => (handlers = installed), close() {} };
+    const port: Port = { async send() {}, listen: (installed) => (handlers = installed), close() {} };
     const view = connect(port);
-    handlers!.message({ kind: "welcome", wire: 1, api: 1, implementation: "", limits });
-    handlers!.message({ kind: "result", id: 1, value: baseline });
+    handlers!.message(writeBootstrap(welcome));
+    handlers!.message(frame({ kind: "result", id: 1, value: baseline }));
     const promise = outcome(view.refresh());
-    handlers!.message({ kind: "result", id: 2, value: { epoch: "epoch-1", revision: 3 } });
+    handlers!.message(frame({ kind: "result", id: 2, value: { epoch: "epoch-1", revision: 3 } }));
     if (next === "a new epoch") {
-      handlers!.message({ kind: "event", name: "state", value: at(1, "epoch-2") });
-      handlers!.message({ kind: "event", name: "lines", value: linesAt(1, "epoch-2") });
+      handlers!.message(frame({ kind: "event", name: "state", value: at(1, "epoch-2") }));
+      handlers!.message(frame({ kind: "event", name: "lines", value: linesAt(1, "epoch-2") }));
     } else handlers!.close();
     expect(await promise).toBeUndefined();
     const waiting = outcome(view.refresh());
     if (next === "a new epoch") {
-      handlers!.message({ kind: "result", id: 3, value: { epoch: "epoch-2", revision: 5 } });
-      handlers!.message({ kind: "event", name: "state", value: at(1, "epoch-3") });
+      handlers!.message(frame({ kind: "result", id: 3, value: { epoch: "epoch-2", revision: 5 } }));
+      handlers!.message(frame({ kind: "event", name: "state", value: at(1, "epoch-3") }));
       expect(await waiting).toEqual(client("StateChanged"));
     } else expect(await waiting).toEqual(client("NotConnected"));
   });
@@ -561,7 +582,7 @@ describe("a publication", () => {
     const { s, view } = await shown();
     await s.frame({ kind: "event", name: "state", value: { epoch: "epoch-1", revision: 4, value: { phase: "elsewhere" } } });
     expect(view.connection).toEqual(disconnected(client("ProtocolError")));
-    const early = await shown("clone", false);
+    const early = await shown(false);
     await early.s.welcome();
     await early.s.frame({ kind: "event", name: "state", value: at(4) });
     expect(early.view.connection).toEqual(disconnected(client("ProtocolError")));
@@ -569,8 +590,8 @@ describe("a publication", () => {
     const wrong = await shown();
     await wrong.s.frame({ kind: "call", id: 7, method: "lock", input: {} });
     expect(wrong.view.connection).toEqual(disconnected(client("ProtocolError")));
-    const junk = await shown("text");
-    await junk.s.say("junk");
+    const junk = await shown();
+    await junk.s.say(hex("ff"));
     expect(junk.view.connection).toEqual(disconnected(client("ProtocolError")));
   });
 });

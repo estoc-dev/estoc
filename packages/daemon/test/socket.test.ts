@@ -5,8 +5,8 @@ import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { connect, type Client } from "@estoc/daemon-api/client";
-import type { Snapshot } from "@estoc/daemon-api/contract";
-import { webSocketOf } from "@estoc/daemon-api/wire";
+import { API_VERSION, WIRE_VERSION, type Snapshot } from "@estoc/daemon-api/contract";
+import { ownFrame, readBootstrap, readFrame, webSocketOf, writeBootstrap, writeFrame, type RawFrame } from "@estoc/daemon-api/wire";
 import type { Channel } from "@estoc/vault";
 
 import { channelIdOf } from "../src/channels.js";
@@ -43,12 +43,12 @@ async function connected(url: string): Promise<Client> {
   return client;
 }
 
-async function frameClient(url: string): Promise<{ say(frame: unknown): void; text(data: string | Buffer): void; next(): Promise<unknown>; closed: Promise<number>; close(): void }> {
+async function frameClient(url: string): Promise<{ greet(): void; say(frame: RawFrame, bytesAt?: readonly string[]): void; bytes(data: Uint8Array): void; text(data: string | Buffer): void; next(): Promise<unknown>; closed: Promise<number>; close(): void }> {
   const ws = new WebSocket(url);
   const received: unknown[] = [];
   const waiting: ((frame: unknown) => void)[] = [];
   ws.on("message", (data) => {
-    const frame: unknown = JSON.parse(data.toString());
+    const frame: unknown = readFrame(data) ?? readBootstrap(data);
     const waiter = waiting.shift();
     if (waiter === undefined) received.push(frame);
     else waiter(frame);
@@ -59,15 +59,15 @@ async function frameClient(url: string): Promise<{ say(frame: unknown): void; te
     ws.once("error", reject);
   });
   return {
-    say: (frame) => ws.send(JSON.stringify(frame)),
+    greet: () => ws.send(writeBootstrap({ kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] })),
+    say: (frame, bytesAt) => ws.send(writeFrame(ownFrame(frame, bytesAt))),
+    bytes: (data) => ws.send(data, { binary: true }),
     text: (data) => ws.send(data, { binary: false }),
     next: () => (received.length > 0 ? Promise.resolve(received.shift()) : new Promise((resolve) => waiting.push(resolve))),
     closed,
     close: () => ws.close(),
   };
 }
-
-const HELLO = { kind: "hello", wire: 1, apis: [1] };
 
 async function until(what: string, condition: () => boolean, ms = 20_000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -94,7 +94,7 @@ describe("the endpoint", () => {
     const waiting = other.daemon.boot();
     const client = await connected(other.url);
     await until("the view is shown the wait", () => client.state?.value.phase === "elsewhere");
-    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 512 * 1024 * 1024, maxDepth: 64 } });
+    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 512 * 1024 * 1024 } });
     expect(client.lines).toMatchObject({ value: { connections: [], waiting: [], discarded: [] } });
     await expect(client.daemon.createIdentity({ name: "Mallory", passphrase: PASSPHRASE })).rejects.toMatchObject({ code: "WrongPhase", message: "the vault is held elsewhere", effect: "none" });
     await other.close();
@@ -108,18 +108,18 @@ describe("the endpoint", () => {
     const server = await serve(nodeHost(root), { maxBackupBytes: 64 });
     await server.daemon.boot();
     const client = await connected(server.url);
-    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 64, maxValueBytes: 64 + 64 * 1024, maxFrameBytes: Math.ceil((64 * 4) / 3) + 64 * 1024 } });
+    expect(client.connection).toMatchObject({ state: "connected", limits: { maxBackupBytes: 64, maxValueBytes: 64 + 64 * 1024, maxFrameBytes: 64 + 64 * 1024 } });
     await expect(client.daemon.restoreIdentity({ backup: new Uint8Array(65), passphrase: PASSPHRASE })).rejects.toMatchObject({ origin: "client", code: "ResourceLimit", effect: "none" });
 
     const raw = await frameClient(server.url);
-    raw.say(HELLO);
+    raw.greet();
     await raw.next();
     raw.say({ kind: "call", id: 1, method: "attach", input: {} });
     await raw.next();
-    const backup = { encoding: "base64", data: Buffer.alloc(65, 1).toString("base64") };
-    raw.say({ kind: "call", id: 2, method: "restoreIdentity", input: { backup, passphrase: PASSPHRASE } });
-    expect(await raw.next()).toEqual({ kind: "error", id: 2, error: { code: "ResourceLimit", message: expect.stringMatching(/backup decodes to 65 bytes, over 64/) as string, effect: "none", messageId: null } });
-    raw.say({ kind: "call", id: 3, method: "mergeBackup", input: { backup } });
+    const backup = new Uint8Array(65).fill(1);
+    raw.say({ kind: "call", id: 2, method: "restoreIdentity", input: { backup, passphrase: PASSPHRASE } }, ["backup"]);
+    expect(await raw.next()).toEqual({ kind: "error", id: 2, error: { code: "ResourceLimit", message: expect.stringMatching(/backup carries 65 bytes, over 64/) as string, effect: "none", messageId: null } });
+    raw.say({ kind: "call", id: 3, method: "mergeBackup", input: { backup } }, ["backup"]);
     expect(await raw.next()).toMatchObject({ kind: "error", id: 3, error: { code: "ResourceLimit", effect: "none" } });
     expect(client.state?.value.phase).toBe("onboarding");
     await expect(stat(path.join(root, ".estoc", "vault.sqlite"))).rejects.toThrow();
@@ -137,7 +137,7 @@ describe("the endpoint", () => {
     const attached = await connected(server.url).catch((error: unknown) => error);
     expect(attached).toMatchObject({ origin: "client", code: "TransportDisconnected" });
 
-    idle[0]!.say(HELLO);
+    idle[0]!.greet();
     await idle[0]!.next();
     idle[0]!.say({ kind: "call", id: 1, method: "attach", input: {} });
     expect(await idle[0]!.next()).toMatchObject({ kind: "result", id: 1 });
@@ -150,8 +150,11 @@ describe("the endpoint", () => {
     const server = await serve(nodeHost(await folder()), { maxBackupBytes: 64 });
     await server.daemon.boot();
     const oversized = await frameClient(server.url);
-    oversized.text("x".repeat(Math.ceil((64 * 4) / 3) + 64 * 1024 + 1));
+    oversized.bytes(new Uint8Array(64 + 64 * 1024 + 1));
     expect(await oversized.closed).toBe(1009);
+    const texting = await frameClient(server.url);
+    texting.text(JSON.stringify({ kind: "hello", wire: 1, apis: [1] }));
+    expect(await texting.closed).toBe(1003);
     const garbled = await frameClient(server.url);
     garbled.text(Buffer.from([0xff]));
     expect(await garbled.closed).toBe(1007);

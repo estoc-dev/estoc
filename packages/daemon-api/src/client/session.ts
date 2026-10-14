@@ -11,7 +11,7 @@
  */
 
 import { API_VERSION, WIRE_VERSION, schemas, type Baseline, type CallError, type CallId, type Hello, type Limits, type LinesState, type LogLine, type MethodInput, type MethodName, type MethodResult, type RevisionMarker, type State } from "../contract/index.js";
-import { readBootstrap, readFrame, readPayload, readValue, requestBudget, utf8Length, writeBootstrap, writeFrame, type Port, type RawFrame, type Reading } from "../wire/index.js";
+import { readBootstrap, readFrame, readPayload, readValue, requestBudget, writeBootstrap, writeFrame, type Port, type RawFrame, type Reading } from "../wire/index.js";
 import { daemonMethodsOf, isCalledMethod, type CalledMethod, type Client, type ConnectionState, type DaemonMethods } from "./client.js";
 import { clientError } from "./errors.js";
 import { Listeners } from "./listeners.js";
@@ -68,7 +68,7 @@ export class Session implements Client {
       close: () => this.finish({ state: "disconnected", because: this.closing ? null : clientError("TransportDisconnected", "the port closed") }),
     });
     const hello: Hello = { kind: "hello", wire: WIRE_VERSION, apis: [API_VERSION] };
-    this.transmit(writeBootstrap(hello, this.port.transport));
+    this.transmit(writeBootstrap(hello));
   }
 
   call<Name extends CalledMethod>(name: Name, input: MethodInput<Name>): Promise<MethodResult<Name>> {
@@ -136,30 +136,28 @@ export class Session implements Client {
     const call: RawFrame = { kind: "call", id, method: name, input: null };
     const budget = requestBudget(limits, call);
     if (!budget.ok) return clientError(budget.code, budget.message);
-    const read = readPayload(input, "clone", { bytesAt: schema.bytes.input, maxBytes: limits.maxBackupBytes, budget: budget.value });
+    const read = readPayload(input, { bytesAt: schema.bytes.input, maxBytes: limits.maxBackupBytes, budget: budget.value });
     if (!read.ok) return clientError(read.code, read.message);
     const parsed = schema.input.safeParse(read.value);
     if (!parsed.success) return clientError("InvalidArgument", parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
-    const data = writeFrame({ ...call, input: read.value }, this.port.transport);
-    if (limits.maxFrameBytes !== null && typeof data === "string" && (data.length > limits.maxFrameBytes || utf8Length(data) > limits.maxFrameBytes)) {
-      return clientError("ResourceLimit", `the frame is larger than ${limits.maxFrameBytes} bytes`);
-    }
+    const data = writeFrame({ ...call, input: read.value });
+    if (data.byteLength > limits.maxFrameBytes) return clientError("ResourceLimit", `the frame is larger than ${limits.maxFrameBytes} bytes`);
     this.pending.set(id, answered);
     this.transmit(data);
     return null;
   }
 
-  private transmit(data: unknown): void {
+  private transmit(data: Uint8Array): void {
     this.port.send(data).catch(() => this.finish({ state: "disconnected", because: clientError("TransportDisconnected", "the port refused a frame") }));
   }
 
-  private receive(data: unknown): void {
+  private receive(data: Uint8Array): void {
     if (this.ended) return;
     if (this.limits === null) {
       this.negotiate(data);
       return;
     }
-    const frame = readFrame(data, this.port.transport);
+    const frame = readFrame(data);
     if (frame === null) return this.protocolError("a frame the SDK cannot read");
     switch (frame.kind) {
       case "result":
@@ -174,8 +172,8 @@ export class Session implements Client {
     }
   }
 
-  private negotiate(data: unknown): void {
-    const record = readBootstrap(data, this.port.transport);
+  private negotiate(data: Uint8Array): void {
+    const record = readBootstrap(data);
     if (record === null || record.kind === "hello") return this.protocolError("no welcome");
     if (record.kind === "incompatible") return this.finish({ state: "incompatible", supported: record.supported, message: record.message });
     if (record.api !== API_VERSION) return this.protocolError(`the daemon selected API ${record.api}, which the view did not offer`);
@@ -213,7 +211,7 @@ export class Session implements Client {
     }
     const schema = schemas.methods[pending.name];
     const limits = this.limits as Limits;
-    const result = this.accept<unknown>(schema.result, readPayload(frame.value, this.port.transport, { bytesAt: schema.bytes.result, maxBytes: limits.maxBackupBytes }), `a ${pending.name} result the SDK cannot read`, pending);
+    const result = this.accept<unknown>(schema.result, readPayload(frame.value, { bytesAt: schema.bytes.result, maxBytes: limits.maxBackupBytes }), `a ${pending.name} result the SDK cannot read`, pending);
     if (result !== null) pending.resolve(result.value);
   }
 

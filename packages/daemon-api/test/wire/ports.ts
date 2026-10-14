@@ -1,9 +1,11 @@
-import type { Port, PortHandlers, Transport } from "../../src/wire/index.js";
+import { encode } from "cbor2/encoder";
+
+import type { Port, PortHandlers } from "../../src/wire/index.js";
 
 interface End {
   handlers: PortHandlers | null;
   /** frames delivered before the handlers were installed */
-  held: unknown[];
+  held: Uint8Array[];
   closed: boolean;
 }
 
@@ -11,22 +13,22 @@ export interface Pair {
   left: Port;
   right: Port;
   /** every frame the right end was handed, in order */
-  toRight: unknown[];
-  toLeft: unknown[];
+  toRight: Uint8Array[];
+  toLeft: Uint8Array[];
   /** makes the left end a slow reader: what the right end sends waits until released */
   stall(): () => void;
 }
 
 /** Two ends of one in-memory link: what one sends the other receives, on the next microtask, in order. */
-export function pair(transport: Transport): Pair {
+export function pair(): Pair {
   const ends: [End, End] = [
     { handlers: null, held: [], closed: false },
     { handlers: null, held: [], closed: false },
   ];
-  const logs: [unknown[], unknown[]] = [[], []];
+  const logs: [Uint8Array[], Uint8Array[]] = [[], []];
   let stalled: Promise<void> | null = null;
   let release: (() => void) | null = null;
-  const deliver = (to: 0 | 1, data: unknown): void => {
+  const deliver = (to: 0 | 1, data: Uint8Array): void => {
     const end = ends[to];
     if (end.closed) return;
     logs[to].push(data);
@@ -41,7 +43,6 @@ export function pair(transport: Transport): Pair {
     }
   };
   const portOf = (own: 0 | 1, other: 0 | 1): Port => ({
-    transport,
     async send(data) {
       if (ends[own].closed) throw new Error("closed");
       if (other === 0 && stalled !== null) await stalled;
@@ -75,3 +76,19 @@ export function pair(transport: Transport): Pair {
 export async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
+
+/** `value` as one CBOR data item, written as the encoder writes it whatever it holds: a frame no writer of the wire's would send. */
+export const cbor = (value: unknown): Uint8Array => encode(value);
+
+/** The bytes a string of hex digits spells. */
+export const hex = (digits: string): Uint8Array => Uint8Array.from(digits.match(/../g) ?? [], (byte) => parseInt(byte, 16));
+
+export const concat = (...parts: Uint8Array[]): Uint8Array => {
+  const whole = new Uint8Array(parts.reduce((length, part) => length + part.byteLength, 0));
+  let at = 0;
+  for (const part of parts) {
+    whole.set(part, at);
+    at += part.byteLength;
+  }
+  return whole;
+};

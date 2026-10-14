@@ -46,6 +46,7 @@
     "dev": "tsc --watch --preserveWatchOutput"
   },
   "dependencies": {
+    "cbor2": "2.4.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {

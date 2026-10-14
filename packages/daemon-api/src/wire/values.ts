@@ -1,16 +1,15 @@
 /**
- * One reading of every value that crosses a port, on both transports:
- * what is wire data is copied into a plain, normalized tree, with its
- * logical size and depth charged against a budget as it goes, so that
- * a request over the bounds is refused before all of it is read.
+ * One reading of every value that crosses a port: what is wire data is
+ * copied into a plain, normalized tree, with its logical size charged
+ * against a budget as it goes, so that a request over the bound is
+ * refused before all of it is read.
  */
 
 import type { ApiValue } from "../contract/index.js";
 
-/** The bounds of one request: its logical size, and its nesting with the root at depth 1. */
+/** The bound of one request: its logical size. */
 export interface Budget {
   maxValueBytes: number;
-  maxDepth: number;
 }
 
 /** A value as `readValue` copies it out: only that reading makes one, so what takes it needs no second look. */
@@ -50,6 +49,9 @@ export function utf8Length(text: string): number {
   return length;
 }
 
+/** A lone surrogate has no UTF-8 encoding: written out, it would turn into another character. */
+const LONE_SURROGATE = /\p{Cs}/u;
+
 const isPlainRecord = (value: object): boolean => {
   const prototype: unknown = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
@@ -76,8 +78,7 @@ class Walk {
     private readonly bytesAt: ReadonlySet<string>,
   ) {}
 
-  read(value: unknown, depth: number, slot: boolean): ApiValue {
-    if (this.budget !== null && depth > this.budget.maxDepth) throw new Refused("ResourceLimit", `the value nests deeper than ${this.budget.maxDepth}`);
+  read(value: unknown, slot: boolean, root = false): ApiValue {
     this.charge(VALUE_CHARGE);
     switch (typeof value) {
       case "boolean":
@@ -85,6 +86,7 @@ class Walk {
       case "string":
         // The shorter UTF-16 length first, so that a string far over the budget is refused unmeasured.
         this.charge(value.length);
+        if (LONE_SURROGATE.test(value)) throw new Refused("InvalidArgument", "a string is not well-formed Unicode");
         this.charge(utf8Length(value) - value.length);
         return value;
       case "number":
@@ -100,7 +102,7 @@ class Walk {
         if (this.ancestors.has(value)) throw new Refused("InvalidArgument", "the value contains itself");
         this.ancestors.add(value);
         try {
-          return Array.isArray(value) ? this.readArray(value, depth) : this.readRecord(value, depth);
+          return Array.isArray(value) ? this.readArray(value) : this.readRecord(value, root);
         } finally {
           this.ancestors.delete(value);
         }
@@ -109,7 +111,7 @@ class Walk {
     }
   }
 
-  private readArray(value: unknown[], depth: number): ApiValue[] {
+  private readArray(value: unknown[]): ApiValue[] {
     if (Object.getPrototypeOf(value) !== Array.prototype) throw new Refused("InvalidArgument", "an array of a class is not wire data");
     const items: ApiValue[] = [];
     for (let i = 0; i < value.length; i++) {
@@ -117,12 +119,12 @@ class Walk {
       if (descriptor === undefined) throw new Refused("InvalidArgument", "an array has a hole");
       const item = held(descriptor);
       if (item === undefined) throw new Refused("InvalidArgument", "an array element is undefined");
-      items.push(this.read(item, depth + 1, false));
+      items.push(this.read(item, false));
     }
     return items;
   }
 
-  private readRecord(value: object, depth: number): ApiValue {
+  private readRecord(value: object, root: boolean): ApiValue {
     if (!isPlainRecord(value)) throw new Refused("InvalidArgument", "an object of a class is not wire data");
     const entries: [string, ApiValue][] = [];
     for (const key of Object.keys(value)) {
@@ -130,8 +132,9 @@ class Walk {
       if (descriptor === undefined) continue;
       const member = held(descriptor);
       if (member === undefined) continue;
+      if (LONE_SURROGATE.test(key)) throw new Refused("InvalidArgument", "a key is not well-formed Unicode");
       this.charge(VALUE_CHARGE + utf8Length(key));
-      entries.push([key, this.read(member, depth + 1, depth === 1 && this.bytesAt.has(key))]);
+      entries.push([key, this.read(member, root && this.bytesAt.has(key))]);
     }
     return Object.fromEntries(entries);
   }
@@ -147,7 +150,7 @@ export function readValue(value: unknown, options: ReadOptions = {}): Reading<Wi
   const walk = new Walk(options.budget ?? null, new Set(options.bytesAt ?? []));
   try {
     if (value === undefined) throw new Refused("InvalidArgument", "the value is undefined");
-    const read = walk.read(value, 1, false) as WireValue;
+    const read = walk.read(value, false, true) as WireValue;
     return { ok: true, value: read, size: walk.size };
   } catch (error) {
     if (error instanceof Refused) return { ok: false, code: error.code, message: error.message };
