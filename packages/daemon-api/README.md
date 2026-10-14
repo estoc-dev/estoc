@@ -40,10 +40,12 @@ The wire then reads every value the same way: a plain, finite, acyclic
 tree whose strings are well-formed Unicode, negative zero as zero, an
 undefined member left out, bytes only where a method's schema places
 them and copied out of the frame. A frame over the advertised byte
-bound is refused before it is decoded; a request is charged as it is
-read and refused at the advertised bound before the rest is read, the
-whole frame counted, the attachment request like any other. `serveApi` answers calls from
-the method table alone, puts the attachment baseline ahead of every
+bound is refused before it is decoded, the whole frame counted, the
+members its envelope does not know and the attachment request
+included; the client refuses such a call once it has encoded it, and
+sends nothing. A byte member over `maxBackupBytes` is refused before
+the rest of its payload is read. `serveApi` answers calls from the
+method table alone, puts the attachment baseline ahead of every
 later publication, and replaces, drops or ends what a slow port cannot
 take: a newer state or lines of the same epoch takes the place of an
 unsent one, logs go first, and a port that can no longer take what it
